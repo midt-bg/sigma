@@ -223,12 +223,31 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
     {
       key: 'signals',
       header: 'Признаци',
-      // Keep the one signal whose meaning is useful at row level; period coverage is already in its column.
-      cell: (r) => (
-        <span className="signal-chips">
-          {r.ownInstitution && <Chip>от собствената институция</Chip>}
-        </span>
-      ),
+      // The column states the facts the reader has no other column for, and says „—" when there are
+      // none. Carrying the own-institution chip alone left it blank on 98% of the rows, which reads as
+      // a broken column rather than as „nothing to note here".
+      cell: (r) => {
+        const disputed = r.companies?.some((c) => c.missingYears?.length);
+        const chips = [
+          r.ownInstitution && (
+            <Chip key="own" tone="strong">
+              от собствената институция
+            </Chip>
+          ),
+          r.hasContemporaneous && (
+            <Chip key="window" tone="window">
+              в декларирания период
+            </Chip>
+          ),
+          r.stakeKind === 'registry' && <Chip key="registry">само по Търговския регистър</Chip>,
+          disputed && <Chip key="disputed">не е посочено в декларация</Chip>,
+        ].filter(Boolean);
+        return chips.length ? (
+          <span className="signal-chips">{chips}</span>
+        ) : (
+          <span className="muted">—</span>
+        );
+      },
     },
   ];
 }

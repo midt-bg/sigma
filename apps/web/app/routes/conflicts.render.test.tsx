@@ -365,6 +365,37 @@ describe('/conflicts route — render', () => {
     expect(soleCell.textContent).toContain('ТЕСТ ГРУП ХОЛД АД');
   });
 
+  it('признаци name every fact the row has no other column for, and „—" when it has none', async () => {
+    // Carrying the own-institution chip alone left the column blank on all but a handful of rows, which
+    // reads as broken rather than as „nothing to note". A row with none of the facts says so explicitly.
+    const plain = link({
+      officialSlug: 'plain',
+      official: 'Тихомир Тестов',
+      linkKey: 'p-1',
+      eik: '601',
+      ownInstitution: false,
+      contemporaneousContractCount: 0,
+      contemporaneousValueEur: null,
+    });
+    const inPeriod = link({
+      officialSlug: 'period',
+      official: 'Периодин Тестов',
+      linkKey: 'p-2',
+      eik: '602',
+      ownInstitution: false,
+      contemporaneousContractCount: 2,
+      contemporaneousValueEur: 5_000,
+    });
+    await renderConflicts([plain, inPeriod]);
+    const cell = (name: string) =>
+      bodyRows()
+        .find((r) => r.textContent?.includes(name))!
+        .querySelector('td[data-label="Признаци"]')!;
+    expect(cell('Тихомир Тестов').textContent).toBe('—');
+    expect(cell('Тихомир Тестов').querySelectorAll('.chip').length).toBe(0);
+    expect(cell('Периодин Тестов').textContent).toContain('в декларирания период');
+  });
+
   it('признаци stay visible and a flag sourced from a SECOND link still renders', async () => {
     // A person whose FIRST link has no own-institution but a SECOND link does — the OR across links must
     // surface the chip. Both signals rendered as restrained chips (no inline colour/style).
