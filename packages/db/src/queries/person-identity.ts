@@ -175,6 +175,15 @@ export async function getPersonNamedBy(db: D1Database, indent: string): Promise<
 }
 
 /** An attributed source archive can remain readable without a published company connection. */
+/** The name a declarant filed under, for a profile that has no registry entry and no published link. */
+export async function getPersonName(db: D1Database, id: string): Promise<string | null> {
+  const person = await db
+    .prepare('SELECT name FROM persons WHERE id=?')
+    .bind(id)
+    .first<{ name: string }>();
+  return person?.name ?? null;
+}
+
 export async function getPersonSourceArchive(db: D1Database, id: string) {
   const person = await db
     .prepare('SELECT name FROM persons WHERE id=?')

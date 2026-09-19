@@ -21,6 +21,9 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
   // Declared stakes make the person a related-persons case; any declaration makes them an official.
   const official = p.links.length > 0;
   const filed = official || p.declarations.length > 0;
+  // A declarant with no company at all gets no contracts section: it would be a heading over filters
+  // that count nothing, which reads as a broken panel rather than as „there is nothing here".
+  const hasCompanies = p.totals.companies > 0;
   const companies = timelineCompanies(p);
   const name = personName(p.name);
   return (
@@ -64,7 +67,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
               <a href="#roles">Роли</a>
             </>
           )}
-          <a href="#contracts">Договори</a>
+          {hasCompanies && <a href="#contracts">Договори</a>}
         </nav>
         {official && (
           <Section
@@ -200,7 +203,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
             <Link to="/conflicts/methodology">Методология →</Link>
           </p>
         )}
-        <PersonActivity activity={p.activity} hasDeclarations={filed} />
+        {hasCompanies && <PersonActivity activity={p.activity} hasDeclarations={filed} />}
       </main>
     </>
   );
