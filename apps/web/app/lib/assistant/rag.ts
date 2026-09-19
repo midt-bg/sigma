@@ -4,21 +4,33 @@
 // with NO vector retrieval. RAG is added here deliberately (per the implementation request) where it
 // pays off most for a weak 27B model:
 //
-//   1. Schema/cookbook grounding (primary). Embed the data-dictionary trap-rules + canonical queries
+//   1. Schema/cookbook grounding (primary). Embed the data-dictionary canonical queries + table docs
 //      (describe-schema.ts) and retrieve the few MOST RELEVANT chunks for the user's question, to
 //      prepend to the system prompt. This is the retrieval-augmented form of spec §9 point 2 — the
 //      single highest-leverage lever on SQL correctness — instead of dumping the whole dictionary.
+//      (The imperative DATA_TRAPS are NOT part of this corpus — they enter every prompt
+//      unconditionally via hardTraps(), system-prompt.ts.)
 //   2. Semantic corpus search (`semantic_search` tool). Embed entity/contract titles into Vectorize
 //      so paraphrase/synonym queries ("детски градини" ~ "обединено детско заведение") match where
-//      the FTS `search_entities` keyword tool misses. Complements, does not replace, FTS.
+//      keyword search misses. Intended to COMPLEMENT keyword/FTS lookup, not replace it — note the
+//      spec's `search_entities` FTS tool is NOT implemented yet, and the entity corpus itself is
+//      still unindexed (see README "Какво остава"): today this tool returns 0 hits by design.
 //
 // Embedding model: @cf/baai/bge-m3 — multilingual (Bulgarian-capable), 1024-dim, runs on Workers AI.
 //
 // Bindings required at runtime (add to wrangler.jsonc; see assistant/README.md): `AI` (Workers AI)
 // and `VECTORIZE` (a 1024-dim, cosine Vectorize index). Typed structurally below so this module is
-// deploy-independent and unit-testable; `env.AI` / `env.VECTORIZE` satisfy these interfaces.
+// deploy-independent and unit-testable. Two different contracts, per interface (issue #316):
+//   - VectorIndex is a NARROWED view of VectorizeIndex kept structurally ASSIGNABLE from it — the
+//     route binds `env.VECTORIZE` with no cast, so tsc proves the contract. Keep it assignable: a
+//     member typed too loosely breaks that proof (the old `filter?: Record<string, unknown>` did —
+//     Vectorize's own filter type is the stricter VectorizeVectorMetadataFilter, and filtering
+//     additionally needs a provisioned metadata index, which this repo does not create).
+//   - EmbeddingRunner is NOT assignable from `Ai` (its run() is generic per-model and returns an
+//     output UNION); the one sanctioned bridge is embeddingRunnerFor() in bindings.ts, which calls
+//     the real @cf/baai/bge-m3 overload — also compiler-checked. Never bridge with `as unknown as`.
 
-import { CANONICAL_QUERIES, DATA_TRAPS, TABLES } from './describe-schema';
+import { CANONICAL_QUERIES, TABLES } from './describe-schema';
 
 export const EMBED_MODEL = '@cf/baai/bge-m3';
 export const EMBED_DIM = 1024;
@@ -27,12 +39,22 @@ export const EMBED_DIM = 1024;
 export const MAX_EMBED_CHARS = 2048;
 
 export interface EmbeddingRunner {
-  run(model: string, inputs: { text: string[] }): Promise<{ data: number[][] }>;
+  // `model` is the EMBED_MODEL literal, not string: the production adapter (bindings.ts) forwards
+  // it into the per-model-typed Ai.run overload, so a second, different-model call added here
+  // would be a compile error instead of silently embedding with the wrong model.
+  run(model: typeof EMBED_MODEL, inputs: { text: string[] }): Promise<{ data: number[][] }>;
 }
+// The metadata values Vectorize accepts (mirrors VectorizeVectorMetadataValue). Typed narrowly on
+// the WRITE side so VectorRecord[] stays assignable to VectorizeVector[] — that assignability is
+// what lets the route bind `env.VECTORIZE` without a cast (issue #316). Reads stay `unknown`:
+// consuming code must not trust index contents structurally.
+export type VectorMetadataValue = string | number | boolean | string[];
+
 export interface VectorRecord {
   id: string;
   values: number[];
-  metadata?: Record<string, unknown>;
+  namespace?: string;
+  metadata?: Record<string, VectorMetadataValue>;
 }
 export interface VectorIndex {
   upsert(vectors: VectorRecord[]): Promise<unknown>;
@@ -41,12 +63,16 @@ export interface VectorIndex {
     opts: {
       topK: number;
       returnMetadata?: boolean | 'all' | 'indexed';
-      filter?: Record<string, unknown>;
+      namespace?: string;
     },
   ): Promise<{ matches: { id: string; score: number; metadata?: Record<string, unknown> }[] }>;
 }
 
 export async function embed(ai: EmbeddingRunner, texts: string[]): Promise<number[][]> {
+  // This early return IS the adapter's contract: embeddingRunnerFor() (bindings.ts) reads an empty
+  // `data` array as a provider fault ("empty batch for a NON-empty input") and never expects to be
+  // called with zero texts. Keep it above the run() so the contract holds for EVERY caller, not just
+  // today's three (review f/u, ydimitrof) — rag.test.ts pins that the model is not called for [].
   if (texts.length === 0) return [];
   const capped = texts.map((t) => (t.length > MAX_EMBED_CHARS ? t.slice(0, MAX_EMBED_CHARS) : t));
   const { data } = await ai.run(EMBED_MODEL, { text: capped });
@@ -63,15 +89,17 @@ export async function embed(ai: EmbeddingRunner, texts: string[]): Promise<numbe
 // ── Schema/cookbook grounding ─────────────────────────────────────────────────────────────────────
 
 // Stable chunks from the data dictionary. `text` is what gets embedded + retrieved into the prompt.
+// DATA_TRAPS are deliberately NOT indexed: buildSystemPrompt injects every trap unconditionally
+// (hardTraps(), system-prompt.ts), so a retrieved trap chunk could only ever duplicate prompt text —
+// retrieval's job is picking the tables/example-queries relevant to the question (review, ydimitrof).
 export interface SchemaChunk {
   id: string;
-  kind: 'trap' | 'query' | 'table';
+  kind: 'query' | 'table';
   text: string;
 }
 
 export function buildSchemaChunks(): SchemaChunk[] {
   return [
-    ...DATA_TRAPS.map((t, i) => ({ id: `trap:${i}`, kind: 'trap' as const, text: t })),
     ...CANONICAL_QUERIES.map((q, i) => ({
       id: `query:${i}`,
       kind: 'query' as const,
@@ -85,7 +113,22 @@ export function buildSchemaChunks(): SchemaChunk[] {
   ];
 }
 
-/** One-time / on-deploy: embed the schema chunks and upsert them into the `schema` namespace. */
+// Versioned NATIVE Vectorize namespace for the schema corpus. Why this shape:
+//   - Native namespaces work without a metadata index and are applied before any metadata filter,
+//     so vectors from an older corpus generation (e.g. pre-v2 `schema:trap:N`) can NEVER reach
+//     retrieval — no per-query filtering, no topK slots wasted on stale matches.
+//   - The version is in the vector ids too, so a BUMPED re-index writes a NEW cohort next to the
+//     old one: rolling the Worker back to a previous release keeps working against the old cohort.
+//   - An environment that has not (re-)indexed yet returns zero matches, and buildSystemPrompt
+//     falls back to the full static dictionary — the module's documented safe outcome.
+// WHEN TO BUMP (then re-run indexSchemaCorpus): any corpus change that removes, reorders, or
+// re-purposes chunk ids. Within a version, upsert mutates ids IN PLACE and never deletes — a
+// removal would leave an orphan vector forever eligible for topK, and `query:${i}` ids are
+// positional, so a mid-array insert re-points every later id at different content. Pure appends
+// and in-place refinements of an existing chunk's text are safe without a bump.
+export const SCHEMA_NS = 'schema-v2';
+
+/** On provisioning / after a SCHEMA_NS bump: embed the schema chunks and upsert them into SCHEMA_NS. */
 export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex): Promise<number> {
   const chunks = buildSchemaChunks();
   const vectors = await embed(
@@ -94,13 +137,25 @@ export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex)
   );
   await index.upsert(
     chunks.map((c, i) => ({
-      id: `schema:${c.id}`,
+      id: `${SCHEMA_NS}:${c.id}`,
       values: vectors[i]!,
-      metadata: { ns: 'schema', kind: c.kind, text: c.text },
+      namespace: SCHEMA_NS,
+      // `ns` in metadata is FORENSIC only (wrangler vectorize get / debugging which cohort a
+      // vector belongs to). It is NOT filterable — no metadata index exists (#317); all scoping
+      // goes through the native `namespace` above. Do not re-arm metadata filtering on it.
+      metadata: { ns: SCHEMA_NS, kind: c.kind, text: c.text },
     })),
   );
   return chunks.length;
 }
+
+// Cosine-similarity floor for a schema match to count as "relevant". Without it, top-K always returns
+// its K least-distant chunks even when ALL are off-topic, and buildSystemPrompt would then use those
+// few chunks INSTEAD of the full dictionary — i.e. partial grounding strictly weaker than the no-RAG
+// fallback. Below the floor we return fewer (or zero) chunks; zero makes buildSystemPrompt fall back to
+// the full static dictionary, which is the safe outcome. bge-m3 cosine puts genuinely relevant chunks
+// well above this; the value is deliberately conservative (review follow-up).
+export const MIN_SCHEMA_SCORE = 0.35;
 
 /** Retrieve the most relevant data-dictionary chunks for a question, to prepend to the prompt. */
 export async function retrieveSchemaContext(
@@ -108,18 +163,53 @@ export async function retrieveSchemaContext(
   index: VectorIndex,
   question: string,
   topK = 6,
+  minScore = MIN_SCHEMA_SCORE,
 ): Promise<string[]> {
   const [vec] = await embed(ai, [question]);
   if (!vec) return [];
+  // Native namespace, not a metadata filter: it needs no metadata index and excludes every vector
+  // outside SCHEMA_NS at the source — stale cohorts (e.g. pre-v2 trap chunks) cannot occupy topK
+  // slots, so retrieval always ranks topK eligible chunks.
   const { matches } = await index.query(vec, {
     topK,
     returnMetadata: 'all',
-    filter: { ns: 'schema' },
+    namespace: SCHEMA_NS,
   });
-  return matches.map((m) => String(m.metadata?.text ?? '')).filter(Boolean);
+  return (
+    matches
+      // Keep only matches at/above the relevance floor. `?? 0` is defensive, not decorative: our typed
+      // contract promises a numeric `score`, but if an index backend ever omits it, a scoreless match must
+      // read as below the floor (dropped) — never injected as unranked "context". Zero survivors makes
+      // buildSystemPrompt fall back to the full static dictionary, which is the safe outcome (review, ydimitrof).
+      // Number.isFinite, not `?? 0`: the drop must not depend on the floor's VALUE. With an explicit
+      // minScore = 0, `(undefined ?? 0) >= 0` would let a scoreless match through as context — the
+      // same rule the entity path below states, kept identical here (review f/u, ydimitrof).
+      .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
+      .map((m) => String(m.metadata?.text ?? ''))
+      .filter(Boolean)
+  );
 }
 
 // ── Semantic corpus search (the `semantic_search` tool) ─────────────────────────────────────────────
+
+// Versioned NATIVE Vectorize namespace for the entity corpus — it removes the module's last
+// metadata `filter`, which Vectorize only honours on properties with a provisioned metadata index
+// (none exists in this repo — issue #317). No entity vectors have ever been indexed (the entity
+// indexer is a "Какво остава" item), so there is no legacy cohort to migrate: the future indexer
+// must upsert with `namespace: ENTITY_NS`. NB for that indexer: the SCHEMA_NS "WHEN TO BUMP" rule
+// does NOT transfer — it assumes a hand-authored, append-only, code-resident corpus. The entity
+// corpus is DATA-DERIVED: entities genuinely disappear (dedup, re-attribution, quarantine), so the
+// indexer needs a real reconciliation/delete path of its own (and must track its ids — Vectorize
+// deletes only by explicit id list); versioning alone would force a full re-embed per removal.
+export const ENTITY_NS = 'entity-v1';
+
+// Relevance floor for an entity match — symmetric with MIN_SCHEMA_SCORE (see its rationale): once
+// the entity corpus is populated, top-K always returns its K least-distant neighbours EVEN when all
+// are off-topic, and without a floor they would reach the model as real "hits" (tools.ts renders
+// them with score.toFixed). Zero survivors is the honest outcome for an off-topic query. Scoreless
+// matches read as below the floor (dropped) — the same defensive rule as the schema path.
+// (review f/u on #319, ydimitrof)
+export const MIN_ENTITY_SCORE = 0.35;
 
 export interface SemanticHit {
   kind: string;
@@ -134,18 +224,26 @@ export async function semanticSearch(
   index: VectorIndex,
   query: string,
   topK = 8,
+  minScore = MIN_ENTITY_SCORE,
 ): Promise<SemanticHit[]> {
   const [vec] = await embed(ai, [query]);
   if (!vec) return [];
   const { matches } = await index.query(vec, {
     topK,
     returnMetadata: 'all',
-    filter: { ns: 'entity' },
+    namespace: ENTITY_NS,
   });
-  return matches.map((m) => ({
-    kind: String(m.metadata?.kind ?? ''),
-    ref: String(m.metadata?.ref ?? ''),
-    title: String(m.metadata?.title ?? ''),
-    score: m.score,
-  }));
+  return (
+    matches
+      // Number.isFinite, not `?? 0`: a scoreless match must be dropped for EVERY minScore, including
+      // an explicit 0 (where `(undefined ?? 0) >= 0` would smuggle it through as a "hit"). After this
+      // filter the score is a real number, so the DTO below needs no fallback (review f/u, ydimitrof).
+      .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
+      .map((m) => ({
+        kind: String(m.metadata?.kind ?? ''),
+        ref: String(m.metadata?.ref ?? ''),
+        title: String(m.metadata?.title ?? ''),
+        score: m.score,
+      }))
+  );
 }

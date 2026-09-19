@@ -230,11 +230,25 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   /\d(?:[.,]\d+)?[eE][+-]?\d+/gu, // scientific notation: 1.2e10, 12E9
   /\d{5,}/gu, // 10000+ (years are ≤4 digits)
   // Spelled-out magnitudes / percentages / ratios bypassed the digit-only patterns above — a model could
-  // write "12 милиарда", "два милиарда", "5 милиона", "95%", "деветдесет процента", "12 на сто",
-  // "3,5 пъти" and land an unbound quantity on the public report (review #80). Flag the unit words too.
-  // NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches after a
-  // space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
-  /милиард|милион|хиляд/giu, // spelled magnitudes (incl. word-only "два милиарда", "триста хиляди")
+  // write "12 милиарда", "два милиарда", "5 милиона", "три трилиона", "95%", "деветдесет процента",
+  // "12 на сто", "3,5 пъти" and land an unbound quantity on the public report (review #80). Flag the unit
+  // words too. NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches
+  // after a space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
+  // The magnitude family shares two suffixes: -ИЛИОН (милион, билион, трилион, квадрилион, квинтилион,
+  // секстилион, … — note "мил-ион" ⊃ "илион") and -ИЛИАРД (милиард; "мил-иард" ⊃ "илиард").
+  // Matching the SUFFIXES — not an explicit list — closes the row upward for good: an earlier list stopped
+  // at квадрилион and let "3 квинтилиона лева" slip (the currency pattern can't bridge the digit to "лева"
+  // across the word), the exact "12 млрд." defamation vector some orders up (review #80 + f/u, ydimitrof).
+  // Near-collisions exist only on the -лион side ("Илион"/Троя — or any other word ending in -лион)
+  // and are ACCEPTED: for a gate that must fail TOWARD flagging an unbound figure, over-flagging is
+  // the safe direction, and the procurement/currency register rarely contains such words. If
+  // legitimate reports ever get rejected over this, reach for a `\p{L}` lookaround word boundary
+  // (JS `\b` is ASCII-only) rather than growing an exception list (review f/u, ydimitrof).
+  // Digit forms are already caught by `\d{5,}` above.
+  // млрд/млн are stems too: "дванадесет млрд." has neither a digit (the \d…млрд pattern above needs
+  // one) nor a full-word suffix — the abbreviation must flag on its own (review f/u, ydimitrof).
+  // The digit-less "хил." residue stays accepted: thousands are not the defamation-scale vector.
+  /илион|илиард|хиляд|млрд|млн/giu, // spelled magnitudes + inflections; хиляд(а/и); млрд/млн
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
@@ -467,7 +481,16 @@ export function bindReport(
         if (r) {
           for (const col of b.columns)
             gateProse(col.header, `${at}: material number in column header "${col.key}"`, errors);
-          const columns = b.columns.map((c) => ({ ...c, header: sanitizeProse(c.header) }));
+          // Build each resolved column EXPLICITLY (not `{ ...c }`) so only the known fields reach the
+          // renderer — a spread would carry any extra model-supplied property (validateEmitShape does
+          // not reject unknown keys) straight through. `align` is enum-validated upstream.
+          const columns: EmitTableColumn[] = b.columns.map((c) => ({
+            key: c.key,
+            header: sanitizeProse(c.header),
+            ...(c.align !== undefined ? { align: c.align } : {}),
+            format: c.format,
+            ...(c.link !== undefined ? { link: c.link } : {}),
+          }));
           if (r.rows.length === 0) {
             // An empty (0-row) result carries no column metadata, so requireCols would reject every
             // reference and force the model to retry on dangling errors — render an empty table instead
