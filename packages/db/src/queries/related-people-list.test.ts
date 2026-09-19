@@ -306,7 +306,10 @@ it('counts the governing body of a private winner, not the seats that only overs
     for (const role of ['manager', 'board_of_directors', 'management_board', 'governing_body']) {
       const rows = await rolesFor(role);
       expect(rows, role).toHaveLength(1);
-      expect(rows[0].companies[0], role).toMatchObject({ eik: '333333333', registryRole: 'manager' });
+      expect(rows[0]?.companies?.[0], role).toMatchObject({
+        eik: '333333333',
+        registryRole: 'manager',
+      });
     }
     for (const role of ['supervisory_board', 'controlling_board', 'procurator', 'branch_manager'])
       expect(await rolesFor(role), role).toEqual([]);
