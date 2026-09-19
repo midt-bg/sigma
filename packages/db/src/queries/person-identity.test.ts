@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
-import { getPersonRelatives, getPersonNamedBy } from './person-identity';
+import { getPersonRelatives, getPersonNamedBy, getPersonName } from './person-identity';
 import {
   getPersonDestinations,
   getPersonScope,
@@ -196,6 +196,22 @@ describe('relatives the register confirms', () => {
         ],
         ['Иван Петров', '/persons/' + Buffer.from('p').toString('base64url'), '111'],
       ]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// The name is what a profile with no registry entry and no published link has left to show, so the
+// lookup has to answer for a person it does not find rather than throw on the way to the page.
+describe('getPersonName', () => {
+  it('returns the filed name, and null for an id the table does not hold', async () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      db.exec(`CREATE TABLE persons(id,name);
+        INSERT INTO persons VALUES('p','ИВАН ТЕСТОВ');`);
+      expect(await getPersonName(d1FromSqlite(db), 'p')).toBe('ИВАН ТЕСТОВ');
+      expect(await getPersonName(d1FromSqlite(db), 'missing')).toBeNull();
     } finally {
       db.close();
     }
