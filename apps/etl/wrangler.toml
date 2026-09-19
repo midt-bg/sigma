@@ -69,7 +69,7 @@ class_name = "DeclarationContainer"
 image = "../../containers/declarations/Dockerfile"
 image_build_context = "../.."
 max_instances = 1
-instance_type = { vcpu = 2, memory_mib = 10240, disk_mb = 20000 }
+instance_type = "standard-3"
 
 [[durable_objects.bindings]]
 name = "DECLARATIONS"
