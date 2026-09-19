@@ -144,6 +144,10 @@ it('lists people the register records as owners of a winner without a declared s
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
       CREATE TABLE interest_links(person_id,status,interest_class);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
+      -- An open role counts only up to the last successful read of the partida.
+      CREATE TABLE registry_deeds(eik,outcome,fetched_at);
+      INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01'),('222222222','ok','2026-09-01'),
+        ('333333333','ok','2026-09-01');
       CREATE TABLE declarations(id,person_id,institution,position,declared_year);
       CREATE TABLE declaration_metadata(declaration_id,declaration_type);
       CREATE TABLE declared_interests(declaration_id,entity_raw);
@@ -155,7 +159,11 @@ it('lists people the register records as owners of a winner without a declared s
       INSERT INTO persons VALUES('p','Лице Роля'),('q','Лице Дял'),('r','Лице Без');
       INSERT INTO person_registry_links VALUES('p','${H}'),('q','${'q'.repeat(64)}');
       INSERT INTO interest_links VALUES('q','published','private_ownership');
-      INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','partner','111111111'),('${H}','person','manager','222222222'),
+      -- The partner role at 111111111 ENDS at the start of 2021, so the 2022 contract falls outside it —
+      -- even though 2022 is one of this person's office years. „Стойност в периода" must ask about the
+      -- company, not about whether the person held some office that year.
+      INSERT INTO registry_roles(subject_id,subject_kind,role,eik,removed_on) VALUES('${H}','person','partner','111111111','2021-01-01');
+      INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','manager','222222222'),
         ('${'q'.repeat(64)}','person','partner','111111111'),('${'r'.repeat(64)}','person','partner','111111111');
       INSERT INTO declarations VALUES('d20','p','Община','Кмет','2020'),('d21','p','Община','','2021'),
         ('d22','p','Община','','2022'),('d18','p','Община','','2018'),('e20','p','Община','Кмет','2020');
@@ -180,7 +188,9 @@ it('lists people the register records as owners of a winner without a declared s
       companyCount: 2, // a private company's manager counts; a state enterprise's does not
       contractCount: 3,
       contractValueEur: 157,
-      contemporaneousValueEur: 100,
+      // c1 (2020, inside the partner role) + c4 (2019, inside the open role at 333333333). c2 (2022) is
+      // outside the role although 2022 is an office year — the old, company-agnostic rule counted it.
+      contemporaneousValueEur: 107,
       hasContemporaneous: true,
       companies: [
         {
@@ -286,6 +296,10 @@ it('counts the governing body of a private winner, not the seats that only overs
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
       CREATE TABLE interest_links(person_id,status,interest_class);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
+      -- An open role counts only up to the last successful read of the partida.
+      CREATE TABLE registry_deeds(eik,outcome,fetched_at);
+      INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01'),('222222222','ok','2026-09-01'),
+        ('333333333','ok','2026-09-01');
       CREATE TABLE declarations(id,person_id,institution,position,declared_year);
       CREATE TABLE declaration_metadata(declaration_id,declaration_type);
       CREATE TABLE declared_interests(declaration_id,entity_raw);

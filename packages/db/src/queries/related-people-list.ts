@@ -137,7 +137,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     WHERE NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=pl.person_id AND il.status='published'
         AND il.interest_class IN ('private_ownership','family_ownership'))
   ), roles AS MATERIALIZED (
-    SELECT pe.person_id, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner
+    SELECT pe.person_id, pe.identity, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner
     FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
       AND r.role IN ('sole_owner','partner','trader','manager',
                      'board_of_directors','management_board','governing_body')
@@ -145,17 +145,28 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
     WHERE ?1 IS NULL OR r.eik IN (SELECT eik FROM paid)
     GROUP BY pe.person_id, r.eik
-  ), office_years AS MATERIALIZED (
-    SELECT DISTINCT d.person_id, d.declared_year year FROM declarations d
-    WHERE d.person_id IN (SELECT person_id FROM roles) AND ${declaredOfficeYear()}
   ), company_contracts AS MATERIALIZED (
     SELECT c.id, b.eik_normalized eik, c.amount_eur, c.signed_at
     FROM bidders b JOIN contracts c ON c.bidder_id=b.id
     WHERE b.eik_normalized IN (SELECT eik FROM roles)
   ), person_contracts AS (
-    SELECT ro.person_id, c.id, c.eik, c.amount_eur, MAX(oy.person_id IS NOT NULL) in_window
+    -- „Стойност в периода" asks about THIS company: was the role registered when the contract was
+    -- signed? The years the person held SOME office answer a different question and answer it wrongly —
+    -- a man who ran the state electricity company until March 2025 and joined a private trader's board
+    -- that October had the trader's 2022-2024 contracts counted, 419 of 472 млн. € against a tie worth
+    -- 64 contracts. Same predicate as during_role (person-activity.ts), so the list and the profile
+    -- cannot disagree: an open role counts only up to the last successful read of the partida.
+    SELECT ro.person_id, c.id, c.eik, c.amount_eur,
+      MAX(EXISTS (SELECT 1 FROM registry_roles rr
+        WHERE rr.subject_id=ro.identity AND rr.subject_kind='person' AND rr.eik=ro.eik
+          AND rr.role IN ('sole_owner','partner','trader','manager',
+                          'board_of_directors','management_board','governing_body')
+          AND c.signed_at IS NOT NULL AND rr.added_on<>'' AND date(c.signed_at)>=date(rr.added_on)
+          AND (rr.uncertain_after IS NULL OR date(c.signed_at)<date(rr.uncertain_after))
+          AND (date(c.signed_at)<date(rr.removed_on) OR (rr.removed_on IS NULL AND EXISTS (
+            SELECT 1 FROM registry_deeds rd WHERE rd.eik=rr.eik AND rd.outcome='ok'
+              AND date(c.signed_at)<=date(rd.fetched_at)))))) in_window
     FROM roles ro JOIN company_contracts c ON c.eik=ro.eik
-    LEFT JOIN office_years oy ON oy.person_id=ro.person_id AND oy.year=strftime('%Y',c.signed_at)
     GROUP BY ro.person_id, c.id
   ), totals AS (
     SELECT person_id, COUNT(*) contract_count, COUNT(DISTINCT eik) company_count, SUM(amount_eur) total_eur,
