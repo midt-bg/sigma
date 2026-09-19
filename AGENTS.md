@@ -43,6 +43,12 @@ No `develop`, no `staging`. Maintainers with write access work on short-lived fe
 ## Things not to do
 
 - Do not commit secrets, `.env*` files, or anything in `.dev.vars`. Treat national-registry credentials (НАП, Търговски регистър, АОП) as production secrets.
+- **Never put a real person in a file under version control** — not in code, not in a test fixture, not in a comment, not in a commit message, not in a PR description. This repo is public and its history is permanent.
+  - It covers the name itself and anything that singles one person out: a post plus an organisation plus a year, a declaration's document id, a personal ЕГН-derived identifier, an address.
+  - That the site publishes the same fact is not a licence to record it here. On the site the fact sits in its own context, with the methodology beside it and a way to contest it. In the repo the same person is written down as the EXAMPLE OF A DEFECT — „this one splits into two profiles", „this one has a typo" — and that is a claim about them, not about the code, which no later commit can take back.
+  - Instead: invent a name of the same shape (one letter apart, three parts, the casing you need) and describe the case generically — „the head of a state company filed under a parliamentary category", not the post, the company and the year. The test still proves the same thing.
+  - Organisations are not personal data; institutions, companies and their ЕИК are fine.
+  - Check the whole change before opening a PR, including the commit messages, and check what you ADD after an earlier clean-up — a real name reintroduced later looks clean in the history that precedes it.
 - Do not amend commits that have already been pushed.
 - Do not force-push to a branch someone else might be reading.
 - Do not delete branches you didn't create.
