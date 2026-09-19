@@ -463,3 +463,33 @@ it('gives up on a run that never gets a container, but not before it has waited'
   expect(f.run().state).toBe('failed');
   expect(f.run().reason).toMatch(/Container gave no sign of life/);
 });
+
+// A resumed attempt must REPLAY its way back to the durable high-water mark before anything it reports
+// counts as progress — and that replay grows with the corpus. Counting only the durable mark called
+// every such attempt „without progress", so the run died after three, the more surely the further it
+// had got. Reproduced live twice on stage, at 199 804 and at 208 053 documents.
+it('counts an attempt that replays below the high-water mark as progress, not as a failure', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-replay');
+  await f.job().alarm(); // attempt 1 starts
+  f.answer({ stage: 'fetch', completed: 500 });
+  vi.advanceTimersByTime(60_000);
+  await f.job().alarm(); // the durable mark reaches 500
+  expect(f.run().completed).toBe(500);
+
+  f.container.running = false;
+  await f.job().alarm(); // interrupted after real progress: no failure
+  expect(f.run().failures ?? 0).toBe(0);
+
+  await f.resume(); // attempt 2 starts and replays from the beginning of the corpus
+  f.answer({ stage: 'fetch', completed: 100 });
+  vi.advanceTimersByTime(60_000);
+  await f.job().alarm(); // 100 is below 500 — replay, not a new high-water mark
+  expect(f.run().completed, 'the durable mark does not move backwards').toBe(500);
+
+  f.container.running = false;
+  await f.job().alarm();
+  // The attempt did move; the platform took the container away mid-replay. That is not this run failing.
+  expect(f.run().failures ?? 0, 'replay is progress').toBe(0);
+  expect(f.run().state).toBe('running');
+});

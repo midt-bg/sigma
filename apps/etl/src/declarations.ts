@@ -202,9 +202,24 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       return false;
     }
   }
-  private async retry(run: DeclarationRun, reason: string, yielded = false) {
+  private async retry(run: DeclarationRun, reason: string, yielded = false, stalled = false) {
     if (NO_CAPACITY.test(reason)) return this.waitForCapacity(run, reason);
-    const failures = run.progressVersion > run.attemptProgressVersion ? 0 : run.failures + 1;
+    // A resumed attempt must first REPLAY its way back to the durable high-water mark, and that replay
+    // grows with the corpus: at two hundred thousand documents it costs about ten minutes, while a
+    // container the platform keeps taking away lives five to ten. Measuring only against the durable
+    // mark therefore called every one of those attempts „without progress" and ended the run after
+    // three — the further the run had got, the surer it was to die (seen twice on stage, at 199 804 and
+    // at 208 053 documents).
+    //
+    // So the question is not whether the attempt passed the mark; it is whether the attempt was MOVING
+    // when it was cut short. A stall is the other case and still counts: there the container is alive
+    // and simply not advancing, which is this run failing, and `stalled` says so at the one call site
+    // that knows it. `lastProgressAt` carries the attempt's own advance, replay included.
+    const advanced =
+      !stalled &&
+      (run.progressVersion > run.attemptProgressVersion ||
+        run.lastProgressAt > run.attemptStartedAt);
+    const failures = advanced ? 0 : run.failures + 1;
     if (failures >= MAX_FAILURES) {
       await this.finish(run, 'failed', `${reason}; ${failures} attempts without progress`);
       return;
@@ -362,7 +377,9 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       }
     }
     if (Date.now() - Math.max(run.lastProgressAt, run.attemptStartedAt) > STALL_MS) {
-      await this.retry(run, readError);
+      // A live container that has not advanced for twenty minutes is this run failing, whether or not it
+      // advanced earlier in the attempt — the one retry that always spends the budget.
+      await this.retry(run, readError, false, true);
       return;
     }
     await container.setInactivityTimeout(10 * MINUTE);
