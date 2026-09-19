@@ -160,7 +160,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   ), person_contracts AS (
     -- „Стойност в периода" needs BOTH at the moment of signing: the role registered at THIS company AND
     -- a public office. Either condition alone answers a different question and answers it wrongly —
-    -- a man who ran the state electricity company until March 2025 and joined a private trader's board
+    -- somebody who led a state company until the spring and joined a private trader's board
     -- that October had the trader's 2022-2024 contracts counted, 419 of 472 млн. € against a tie worth
     -- 64 contracts. Same predicate as during_role (person-activity.ts), so the list and the profile
     -- cannot disagree: an open role counts only up to the last successful read of the partida.
