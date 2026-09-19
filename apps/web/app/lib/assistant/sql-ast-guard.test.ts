@@ -44,6 +44,29 @@ describe('guardSelect', () => {
     if (!r.ok) expect(r.reason).toMatch(/could not be parsed/);
   });
 
+  // The dictionary is procurement only: no person, declaration or link table is in it, and the guard is
+  // what keeps it that way. A model that asks for them — in FROM, in a JOIN, in a sub-query, behind a
+  // CTE alias or through UNION — must be refused, because these carry the declared-interest surface and
+  // `related_persons_internal` carries names the site never publishes at all (ADR-0032).
+  it('refuses every route to the person and declaration tables', () => {
+    for (const sql of [
+      'SELECT * FROM persons',
+      'SELECT * FROM related_persons_internal',
+      'SELECT * FROM interest_links',
+      'SELECT * FROM declarations',
+      'SELECT c.id FROM contracts c JOIN interest_links il ON il.eik = c.id',
+      'SELECT (SELECT COUNT(*) FROM persons) FROM contracts',
+      'WITH p AS (SELECT * FROM persons) SELECT * FROM p',
+      'SELECT id FROM contracts UNION SELECT person_id FROM interest_links',
+      'SELECT * FROM person_relatives',
+      'SELECT * FROM declared_interests',
+    ]) {
+      const r = guardSelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason, sql).toMatch(/table not allowed|not a single read-only SELECT/i);
+    }
+  });
+
   it('rejects a non-allowlisted table (sqlite_master enumeration)', () => {
     const r = guardSelect('SELECT name, sql FROM sqlite_master');
     expect(r.ok).toBe(false);
