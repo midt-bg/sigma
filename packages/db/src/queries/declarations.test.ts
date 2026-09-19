@@ -137,6 +137,61 @@ it('explains both conflicting documents without inventing a stake in the empty f
   }
 });
 
+it('notes ownership the register holds at the end of a reporting year that the annual filing does not name', async () => {
+  const db = new DatabaseSync(':memory:');
+  const H = 'h'.repeat(64);
+  try {
+    db.exec(`CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
+   CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+   CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
+   CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+   CREATE TABLE person_registry_links(person_id,registry_indent);
+   CREATE TABLE bidders(id,name);
+   CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id);
+   CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+   CREATE TABLE declaration_companies(declaration_id,eik,match_method);
+   CREATE TABLE person_entities(id,registry_indent,created_at);
+   CREATE TABLE registry_deeds(eik,name,legal_form);
+   CREATE TABLE registry_roles(eik,subject_id,subject_kind,role,entry_number,added_on,removed_on,uncertain_after);
+   INSERT INTO declarations VALUES('a','p','2020','assets','','Община А','Кмет','u/a'),('b','p','2021','assets','','Община А','Кмет','u/b'),('c','p','2022','assets','','Община А','Кмет','u/c'),('d','p','2023','assets','','Община А','Кмет','u/d');
+   INSERT INTO declaration_metadata VALUES('a','Annual',NULL,NULL),('b','Annual',NULL,NULL),('c','Entry',NULL,NULL),('d','Annual',NULL,NULL);
+   INSERT INTO declared_interests VALUES('b','gama','"ГАМА" ЕООД','shares','annual'),
+     ('d','alfa-a','АЛФА-А ООД','shares','annual'),('d','gama','Гамма ЕООД','shares','annual'),
+     ('d','epsilon','Епсилон Инжинеринг ЕООД','shares','annual');
+   INSERT INTO person_entities VALUES('p','${H}','2026-01-01');
+   INSERT INTO registry_deeds VALUES('111111111','АЛФА','OOD'),('222222222','ГАМА','EOOD'),('333333333','ДЕЛТА','AD'),('444444444','ЕПСИЛОН ИНЖЕНЕРИНГ','EOOD');
+   INSERT INTO registry_roles VALUES
+     ('111111111','${H}','person','partner','e1','2019-05-01',NULL,NULL),
+     ('222222222','${H}','person','sole_owner','e2','2021-03-01',NULL,NULL),
+     ('333333333','${H}','person','board_of_directors','e3','2019-01-01',NULL,NULL),
+     ('111111111','${H}','person','manager','e1','2019-05-01',NULL,NULL),
+     ('444444444','${H}','person','sole_owner','e4','2022-02-01',NULL,NULL);
+   INSERT INTO declaration_companies VALUES('a','111111111','eik');`);
+    const docs = await getPersonDeclarations(d1FromSqlite(db), 'p');
+    const byId = Object.fromEntries(docs.map((d) => [d.id, d.registryOmissions]));
+    // 2020: АЛФА is named (resolved ЕИК); ГАМА not owned yet; the board seat never counts.
+    expect(byId.a).toEqual([]);
+    // 2021: АЛФА is owned and unnamed (the note spells the form the register keeps as a code); ГАМА is
+    // named by spelling only, so it is not an omission.
+    expect(byId.b).toEqual([
+      {
+        eik: '111111111',
+        company: 'АЛФА ООД',
+        role: 'partner',
+        entryNumber: 'e1',
+        addedOn: '2019-05-01',
+      },
+    ]);
+    // An entry declaration is not an annual account of the year.
+    expect(byId.c).toEqual([]);
+    // 2023: a typo in a long name (Инжинеринг) still names the company; АЛФА-А is another firm, and one
+    // letter is the whole difference between two short names (Гамма is not ГАМА), so both stay unnamed.
+    expect(byId.d!.map((o) => o.company)).toEqual(['АЛФА ООД', 'ГАМА ЕООД']);
+  } finally {
+    db.close();
+  }
+});
+
 it('fails loudly when the declarations themselves are missing, not only an optional table', async () => {
   const db = new DatabaseSync(':memory:');
   try {

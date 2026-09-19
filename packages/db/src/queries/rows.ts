@@ -55,7 +55,6 @@ export function toCompanyListItem(r: CompanyTotalsRow): CompanyListItem {
     kind: r.kind,
     isConsortium: r.kind === 'consortium',
     eik: r.eik,
-    eikValid: r.eik_valid === 1,
     hasEik,
     ownershipKind: r.ownership_kind,
     settlement: r.settlement,

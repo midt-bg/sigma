@@ -72,7 +72,10 @@ interface TotalsRow {
 // single offer — by contract count, and by VALUE. The value share sums POSITIVE amount_eur only
 // (CASE … > 0); a negative upstream value_low value would otherwise push the share outside [0,1]
 // (#153 review). The count share is unaffected — it counts rows, not value.
-async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<CompetitionTotals> {
+export async function competitionTotals(
+  db: D1Database,
+  p: CompetitionParams,
+): Promise<CompetitionTotals> {
   const s = scope(p);
   const where = ['c.bids_received IS NOT NULL', 'c.bids_received >= 1', ...s.where];
   const row = await db
@@ -98,20 +101,6 @@ async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<
     singleOfferValueEur: singleValueEur,
     singleOfferValueShare: valueEur > 0 ? singleValueEur / valueEur : 0,
   };
-}
-
-export async function getAuthoritySingleOffer(
-  db: D1Database,
-  authorityId: string,
-): Promise<CompetitionTotals> {
-  return competitionTotals(db, { authorityId });
-}
-
-export async function getAuthorityProcedureCompetition(
-  db: D1Database,
-  authorityId: string,
-): Promise<ProcedureCompetition> {
-  return procedureCompetition(db, { authorityId });
 }
 
 interface AuthorityShareRow {
@@ -234,7 +223,7 @@ interface ProcedureRow {
 // folds facet_counts). „Direct award" = a non-competitive procedure (awarded without a call for bids).
 // The share denominator is the classified set (competitive + non-competitive); neutral and synthetic
 // („Неизвестна") procedures are reported on the side, never folded into the share.
-async function procedureCompetition(
+export async function procedureCompetition(
   db: D1Database,
   p: CompetitionParams,
 ): Promise<ProcedureCompetition> {
@@ -242,8 +231,7 @@ async function procedureCompetition(
   const where = s.where.length ? `WHERE ${s.where.join(' AND ')}` : '';
   const { results } = await db
     .prepare(
-      // value sums positive amount_eur only, so nonCompetitiveValueShare stays in [0,1] (#153 review);
-      // contracts (the count) is unaffected.
+      // value sums positive amount_eur only (#153 review); contracts (the count) is unaffected.
       `SELECT t.procedure_type AS procedure_type,
               COUNT(*) AS contracts,
               COALESCE(SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_eur
@@ -254,42 +242,27 @@ async function procedureCompetition(
     .bind(...s.params)
     .all<ProcedureRow>();
 
-  let competitiveContracts = 0;
+  let classifiedContracts = 0;
   let nonCompetitiveContracts = 0;
-  let neutralContracts = 0;
-  let unknownContracts = 0;
-  let classifiedValueEur = 0;
   let nonCompetitiveValueEur = 0;
   let totalContracts = 0;
   for (const r of results) {
     const g = procedureGroup(r.procedure_type);
     totalContracts += r.contracts;
     if (g.competitive === true) {
-      competitiveContracts += r.contracts;
-      classifiedValueEur += r.value_eur;
+      classifiedContracts += r.contracts;
     } else if (g.competitive === false) {
+      classifiedContracts += r.contracts;
       nonCompetitiveContracts += r.contracts;
       nonCompetitiveValueEur += r.value_eur;
-      classifiedValueEur += r.value_eur;
-    } else if (g.key === PROCEDURE_UNKNOWN_KEY) {
-      unknownContracts += r.contracts;
-    } else {
-      neutralContracts += r.contracts;
     }
   }
-  const classifiedContracts = competitiveContracts + nonCompetitiveContracts;
   return {
     classifiedContracts,
     nonCompetitiveContracts,
     nonCompetitiveShare:
       classifiedContracts > 0 ? nonCompetitiveContracts / classifiedContracts : 0,
-    classifiedValueEur,
     nonCompetitiveValueEur,
-    nonCompetitiveValueShare:
-      classifiedValueEur > 0 ? nonCompetitiveValueEur / classifiedValueEur : 0,
-    competitiveContracts,
-    neutralContracts,
-    unknownContracts,
     totalContracts,
   };
 }

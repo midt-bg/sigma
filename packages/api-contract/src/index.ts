@@ -74,7 +74,6 @@ export interface CompanyListItem {
   kind: EntityKind;
   isConsortium: boolean;
   eik: string | null;
-  eikValid: boolean;
   hasEik: boolean;
   ownershipKind: OwnershipKind | null;
   settlement: string | null;
@@ -118,7 +117,6 @@ export interface CompanyDetail {
   kind: EntityKind;
   isConsortium: boolean;
   eik: string | null;
-  eikValid: boolean;
   hasEik: boolean;
   ownershipKind: OwnershipKind | null;
   settlement: string | null;
@@ -551,6 +549,8 @@ export interface RoleHolder {
   eik: string | null;
   /** A company's country, where the register gives one. Never set for a person. */
   country: string | null;
+  /** A person who has filed a declaration of interests published here. */
+  official?: boolean;
 }
 
 /** One registered role at a company: who holds it, since when, until when, and the entry it rests on. */
@@ -578,7 +578,8 @@ export interface CompanyPeople {
 
 /** One role a person holds, or held, at one company. */
 export interface PersonRole {
-  company: { name: string; eik: string; href: string | null };
+  /** `ownershipKind`: a public enterprise, where a role is a held position (ADR-0047). */
+  company: { name: string; eik: string; href: string | null; ownershipKind?: OwnershipKind };
   role: RegistryRoleKind;
   share: string | null;
   sharePct: number | null;
@@ -733,13 +734,8 @@ export interface ProcedureCompetition {
   classifiedContracts: number; // competitive + non-competitive (the share denominator)
   nonCompetitiveContracts: number; // awarded without a call for bids
   nonCompetitiveShare: number; // 0 to 1, by contract count
-  classifiedValueEur: number; // value over classified contracts (positive amount_eur only)
   nonCompetitiveValueEur: number;
-  nonCompetitiveValueShare: number; // 0 to 1, by value
-  competitiveContracts: number;
-  neutralContracts: number; // negotiated-with-invitation / other — competitiveness not asserted
-  unknownContracts: number; // synthetic, contract-only tenders („Неизвестна")
-  totalContracts: number; // every contract in scope (the four buckets above sum to this)
+  totalContracts: number; // every contract in scope
 }
 
 /** One authority on the direct-award (non-competitive procedure) leaderboard. */
@@ -787,7 +783,7 @@ export interface CompetitionData {
 // ── Search ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface SearchHit {
-  kind: 'authority' | 'company' | 'contract' | 'official';
+  kind: 'authority' | 'company' | 'contract' | 'official' | 'person';
   slug: string;
   href: string;
   title: string;
@@ -803,7 +799,7 @@ export interface SearchHit {
 }
 
 export interface SearchGroup {
-  kind: 'authority' | 'company' | 'contract' | 'official';
+  kind: 'authority' | 'company' | 'contract' | 'official' | 'person';
   label: string;
   total: number;
   hits: SearchHit[];
@@ -834,7 +830,7 @@ export interface ConflictLink {
   disputedYears?: string[];
   declarations?: PersonDeclaration[];
   linkKey: string;
-  officialSlug: string; // URL-safe person id → /conflicts/official/:slug (base64url, never the raw key)
+  officialSlug: string; // URL-safe person id → /persons/:slug (base64url, never the raw key)
   official: string; // declarant (office-holder) name as declared
   institution: string | null; // the official's latest declared institution — disambiguates namesakes
   //   (person grain is (name, institution), ADR-0026): two „Георги Иванов" at different bodies are distinct
@@ -856,7 +852,6 @@ export interface ConflictLink {
   /** Union of this person's declared windows in this company; each contract once. */
   personCompanyValueEur?: number | null;
   declaredOffices?: { institution: string; position: string | null; year: string | null }[];
-  matchMethod: string;
   contractCount: number;
   contractValueEur: number | null;
   // Contemporaneous split: the subset of the winner's contracts SIGNED while the declared stake was held
@@ -904,12 +899,6 @@ export interface ConflictContract {
  *  contract set once per official (ydimitrof #312 HIGH 1). */
 export type ConflictContractFacts = Omit<ConflictContract, 'temporal'>;
 
-/** The on-demand per-link contract list (the standalone lazy resource route). */
-export interface LinkContracts {
-  linkKey: string;
-  contracts: ConflictContract[];
-}
-
 /** One office-holder's declared ownership links, with each WINNER's contracts loaded EAGERLY and deduped by
  *  ЕИК. The detail page renders the full case (timeline, per-authority shares, contract split) for every link
  *  with no lazy fetch. `contracts[ЕИК]` is that winner's contract FACTS (read-time ordered union-declared-window
@@ -933,6 +922,15 @@ export interface CompanyConflicts {
 
 /** A source document, with dates kept distinct from the reporting year. */
 export interface PersonDeclaration {
+  /** Ownership the Trade Register recorded for the declarant at the end of the reporting year, in a
+   *  company this document does not name. Only partidas the site has read; never a finding by itself. */
+  registryOmissions?: {
+    eik: string;
+    company: string;
+    role: RegistryRoleKind;
+    entryNumber: string;
+    addedOn: string;
+  }[];
   /** Comparison notes, separate from interests actually declared in this document. */
   discrepancies?: {
     eik: string;

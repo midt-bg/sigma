@@ -18,7 +18,7 @@ describe('company slug', () => {
     expect(bidderIdFromSlug('103267194')).toBe('eik:103267194');
   });
   it('reversibly encodes name-keyed bidders (incl. Cyrillic, no collisions)', () => {
-    const id = 'name:МЕДЕКС ООД; АЛТА ФАРМАСЮТИКЪЛС ООД';
+    const id = 'name:МЕДПРИМЕР ООД; АЛФА ФАРМА ООД';
     const slug = companySlug(id);
     expect(slug.startsWith('n')).toBe(true);
     expect(slug).not.toContain(' ');

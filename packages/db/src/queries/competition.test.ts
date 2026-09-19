@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, type FakeD1, type FakeD1Call } from '@sigma/test-support';
 import {
-  getAuthorityProcedureCompetition,
-  getAuthoritySingleOffer,
+  competitionTotals,
+  procedureCompetition,
   getCompetition,
   getCompetitionSummary,
 } from './competition';
@@ -163,15 +163,12 @@ describe('getCompetition', () => {
   it('folds the procedure mix into the direct-award headline', async () => {
     const { procedure } = await getCompetition(fakeDb().db, {});
     expect(procedure).toMatchObject({
-      competitiveContracts: 6,
       nonCompetitiveContracts: 2,
       classifiedContracts: 8, // competitive + non-competitive (neutral/synthetic excluded)
-      neutralContracts: 1,
-      unknownContracts: 1,
+      nonCompetitiveValueEur: 2000,
       totalContracts: 10,
     });
     expect(procedure.nonCompetitiveShare).toBeCloseTo(0.25); // 2 / 8
-    expect(procedure.nonCompetitiveValueShare).toBeCloseTo(0.25); // 2000 / 8000
   });
 
   it('maps the direct-award leaderboard with per-row share', async () => {
@@ -270,7 +267,6 @@ describe('getCompetition', () => {
     expect(data.bySingleOffer[0]?.singleOfferShare).toBe(0); // r.contracts 0 → 0
     expect(data.byDirectAward[0]?.nonCompetitiveShare).toBe(0); // r.classified 0 → 0
     expect(data.procedure.nonCompetitiveShare).toBe(0); // classifiedContracts 0 → 0
-    expect(data.procedure.nonCompetitiveValueShare).toBe(0); // classifiedValueEur 0 → 0
     expect(data.scope.year).toBe(2024); // year scoped through Number()
   });
 
@@ -338,16 +334,16 @@ describe('getCompetition', () => {
 });
 
 describe('authority-detail wrappers', () => {
-  it('getAuthoritySingleOffer returns the single-offer totals for one authority', async () => {
+  it('competitionTotals returns the single-offer totals for one authority', async () => {
     const calls = fakeDb();
-    const totals = await getAuthoritySingleOffer(calls.db, 'auth:111');
+    const totals = await competitionTotals(calls.db, { authorityId: 'auth:111' });
     expect(totals.singleOfferShare).toBeCloseTo(0.3); // 3 / 10 from TOTALS
     expect(calls.sql.some((s) => s.includes('t.authority_id = ?'))).toBe(true); // scoped
   });
 
-  it('getAuthorityProcedureCompetition folds the procedure mix for one authority', async () => {
+  it('procedureCompetition folds the procedure mix for one authority', async () => {
     const calls = fakeDb();
-    const proc = await getAuthorityProcedureCompetition(calls.db, 'auth:111');
+    const proc = await procedureCompetition(calls.db, { authorityId: 'auth:111' });
     expect(proc).toMatchObject({ classifiedContracts: 8, nonCompetitiveContracts: 2 });
     expect(proc.nonCompetitiveShare).toBeCloseTo(0.25); // 2 / 8
     expect(calls.sql.some((s) => s.includes('t.authority_id = ?'))).toBe(true);

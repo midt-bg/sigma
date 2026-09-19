@@ -636,7 +636,6 @@ describe('getCompany', () => {
   it('marks hasEik false when the ЕИК is not validated', async () => {
     const d = (await getCompany(companyDb({ ...companyRow, eik_valid: 0 }), 'eik:111111111'))!;
     expect(d.hasEik).toBe(false);
-    expect(d.eikValid).toBe(false);
   });
 
   it('fills every fallback when metadata/bids/suspect rows and the procedure value are absent', async () => {

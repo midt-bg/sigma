@@ -1,7 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
-import { getPersonDestinations, getPersonScope, getPersonSourceArchive } from './person-identity';
+import { getPersonRelatives, getPersonNamedBy } from './person-identity';
+import {
+  getPersonDestinations,
+  getPersonScope,
+  getPersonSourceArchive,
+  getPersonSourceNames,
+} from './person-identity';
 
 it('keeps unresolved source archives alongside a proven profile when an old URL splits', async () => {
   const db = new DatabaseSync(':memory:');
@@ -45,10 +51,10 @@ describe('getPersonScope', () => {
       expect(await getPersonScope(d1, { indent: 'indent' })).toEqual(identified);
       // An old declarant URL reaches the same scope through the bridge.
       expect(await getPersonScope(d1, { officialId: 'alias' })).toEqual(identified);
-      // Bridged, but nothing surfaces under that identity: no declarant is brought into the scope.
+      // Bridged without a published stake: the declarant still belongs to the identity's page.
       expect(await getPersonScope(d1, { officialId: 'quiet' })).toEqual({
         indent: 'withheld',
-        officialIds: [],
+        officialIds: ['quiet'],
       });
       expect(await getPersonScope(d1, { officialId: 'loner' })).toEqual({
         indent: null,
@@ -95,6 +101,101 @@ describe('getPersonSourceArchive', () => {
         CREATE TABLE bidders(id,name);
         INSERT INTO persons VALUES('p','Иван Тестов');`);
       expect(await getPersonSourceArchive(d1FromSqlite(db), 'p')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('getPersonSourceNames', () => {
+  it('returns the active declaration names for every source in the profile', async () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      db.exec(`CREATE TABLE person_sources(id,name,active,namespace,entity_id,legacy_person_id);
+        INSERT INTO person_sources VALUES
+          ('current','Иван Петров Тестов',1,'cacbg','person-a','legacy-a'),
+          ('legacy','Иван Петров Тестов — архив',1,'cacbg',NULL,'person-b'),
+          ('inactive','Неактивно Име Тестово',0,'cacbg','person-a',NULL),
+          ('foreign','Чуждо Име Тестово',1,'other','person-a',NULL);`);
+      const d1 = d1FromSqlite(db);
+
+      expect(await getPersonSourceNames(d1, [])).toEqual([]);
+      expect(await getPersonSourceNames(d1, ['person-a', 'person-b'])).toEqual([
+        'Иван Петров Тестов',
+        'Иван Петров Тестов — архив',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('relatives the register confirms', () => {
+  it('names each relative once per company and links only those with a page here, both ways', async () => {
+    const db = new DatabaseSync(':memory:');
+    const H = 'h'.repeat(64);
+    try {
+      db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+        CREATE TABLE person_relatives(person_id,relative_indent,eik,relative_name);
+        CREATE TABLE bidders(id,eik_normalized,name);
+        CREATE TABLE company_totals(bidder_id,contracts);
+        CREATE TABLE registry_roles(eik,subject_id,subject_kind,role,removed_on);
+        CREATE TABLE registry_deeds(eik,name,legal_form);
+        CREATE TABLE interest_links(link_key,person_id,eik,interest_class);
+        CREATE TABLE interest_link_observations(link_key,reported_year);
+        INSERT INTO interest_links VALUES('p|111|family','p','111','family_ownership'),('p|222','p','222','private_ownership');
+        INSERT INTO interest_link_observations VALUES('p|111|family','2021'),('p|111|family','2020'),('p|111|family',NULL),('p|222','2019');
+        INSERT INTO registry_deeds VALUES('222','БЕТА','EOOD');
+        INSERT INTO persons VALUES('p','Иван Петров'),('q','Георги Иванов');
+        INSERT INTO person_relatives VALUES('p','${H}','111','Мария Петрова'),('q','${H}','111','Мария Петрова'),('p','${'z'.repeat(64)}','222','Зоя Иванова'),('p','${'y'.repeat(64)}','333','Тестова Роднина');
+        INSERT INTO bidders VALUES('eik:111','111','АЛФА');
+        INSERT INTO company_totals VALUES('eik:111',3);
+        INSERT INTO registry_roles VALUES('111','${H}','person','partner',NULL),('111','${H}','person','partner','2019-01-01'),
+          ('111','${H}','person','manager','2018-01-01'),('111','${H}','person','beneficial_owner',NULL);`);
+      const d1 = d1FromSqlite(db);
+      expect(await getPersonRelatives(d1, ['p'])).toEqual([
+        {
+          name: 'Зоя Иванова',
+          indent: 'z'.repeat(64),
+          company: { name: 'БЕТА ЕООД', eik: '222' },
+          href: null,
+          roles: [],
+          years: [],
+        },
+        {
+          name: 'Мария Петрова',
+          indent: H,
+          company: { name: 'АЛФА', eik: '111' },
+          href: `/persons/${H}`,
+          roles: [
+            { role: 'manager', ended: true },
+            { role: 'partner', ended: false },
+          ],
+          years: ['2020', '2021'],
+        },
+        {
+          name: 'Тестова Роднина',
+          indent: 'y'.repeat(64),
+          company: { name: '333', eik: '333' },
+          href: null,
+          roles: [],
+          years: [],
+        },
+      ]);
+      expect(await getPersonRelatives(d1, [])).toEqual([]);
+      expect(
+        (await getPersonNamedBy(d1, H)).map((n) => [n.official, n.href, n.company.eik]),
+      ).toEqual([
+        [
+          'Георги Иванов',
+          `/persons/${'q'}`.replace(
+            '/persons/q',
+            '/persons/' + Buffer.from('q').toString('base64url'),
+          ),
+          '111',
+        ],
+        ['Иван Петров', '/persons/' + Buffer.from('p').toString('base64url'), '111'],
+      ]);
     } finally {
       db.close();
     }

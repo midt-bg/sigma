@@ -16,6 +16,7 @@ import { registryPersonIdFromSlug, registryPersonSlug } from './identity';
 import {
   PUBLIC_ROLES,
   getCompanyPeople,
+  getRegistryCompany,
   getRegistryPerson,
   orderRoles,
   partidaEik,
@@ -58,6 +59,9 @@ INSERT INTO registry_deeds (eik, name, legal_form, status, outcome, fetched_at) 
   ('222222222', 'БЕТА АД', 'AD', 'N', 'ok', '2026-09-09T03:00:00Z'),
   ('333333333', 'ГАМА ЕООД', 'EOOD', 'N', 'ok', '2026-09-08T03:00:00Z'),
   ('555555555', NULL, NULL, NULL, 'absent', '2026-09-08T03:00:00Z');
+INSERT INTO persons (id, name) VALUES ('person:identity:anna', 'Анна Петрова');
+INSERT INTO person_registry_links (person_id, registry_indent, evidence_link_key, evidence_entry_number, matched_at)
+  VALUES ('person:identity:anna', '${ANNA}', 'person-entity:anna', '', '2026-09-10');
 INSERT INTO registry_persons (indent, name, indent_type) VALUES
   ('${ANNA}', 'АННА ПЕТРОВА', 'EGN'),
   ('${BORIS}', 'БОРИС ИВАНОВ', 'EGN'),
@@ -154,7 +158,9 @@ describe('getCompanyPeople', () => {
       href: `/persons/${ANNA}`,
       eik: null,
       country: null,
+      official: true, // she filed declarations here
     });
+    expect(by('БОРИС ИВАНОВ').official).toBeUndefined();
     expect(by('ХОЛДИНГ АД')).toMatchObject({
       kind: 'entity',
       href: '/companies/444444444',
@@ -513,5 +519,36 @@ describe('holders and roles at the edges of the register', () => {
     await expect(registryRead(() => Promise.reject('D1_ERROR: boom'), 'empty')).rejects.toBe(
       'D1_ERROR: boom',
     );
+  });
+});
+
+describe('getRegistryCompany', () => {
+  it('reads a partida the site has, with its legal form and a standing liquidator', async () => {
+    const sqlite = new DatabaseSync(':memory:');
+    try {
+      sqlite.exec(`CREATE TABLE registry_deeds(eik,name,legal_form,seat_settlement,outcome,fetched_at);
+        CREATE TABLE registry_roles(eik,role,removed_on,uncertain_after);
+        INSERT INTO registry_deeds VALUES('300000003','САМО РЕГИСТЪР','OOD','гр. Русе','ok','2026-09-01T10:00:00Z'),
+          ('300000004',NULL,NULL,NULL,'absent','2026-09-01T10:00:00Z'),
+          ('300000005','ИВА','ET',NULL,'ok','2026-09-01T10:00:00Z');
+        INSERT INTO registry_roles VALUES('300000003','liquidator',NULL,NULL),('300000005','liquidator','2020-01-01',NULL);`);
+      const db = d1FromSqlite(sqlite);
+      expect(await getRegistryCompany(db, 'eik:300000003')).toEqual({
+        eik: '300000003',
+        name: 'САМО РЕГИСТЪР ООД',
+        legalForm: 'OOD',
+        seat: 'гр. Русе',
+        inLiquidation: true,
+        asOf: '2026-09-01',
+      });
+      expect(await getRegistryCompany(db, 'eik:300000005')).toMatchObject({
+        name: 'ЕТ ИВА',
+        inLiquidation: false,
+      });
+      expect(await getRegistryCompany(db, 'eik:300000004')).toBeNull();
+      expect(await getRegistryCompany(db, 'name:ФИРМА')).toBeNull();
+    } finally {
+      sqlite.close();
+    }
   });
 });

@@ -32,8 +32,6 @@ const CONFLICT_TABLES = [
   'interest_link_evidence',
   'interest_link_history',
   'person_registry_links',
-  // 0012 (ADR-0040): an environment without it has no old ids to redirect — a 404, not a 500.
-  'person_redirects',
 ];
 // „D1_ERROR: no such table: interest_links: SQLITE_ERROR" → capture the table name and test membership.
 const MISSING_TABLE = /no such table:\s*(?:main\.)?"?([a-z_]+)"?/i;
@@ -281,7 +279,6 @@ function toLink(r: LinkRow): ConflictLink {
     registryPersonId: r.registry_person_id ?? null,
     personCompanyValueEur: r.person_company_value_eur ?? null,
     declaredOffices: JSON.parse(r.declared_offices ?? '[]'),
-    matchMethod: r.match_method,
     contractCount: r.contract_count,
     contractValueEur: r.contract_value_eur,
     contemporaneousContractCount: r.contemporaneous_contract_count,
@@ -626,19 +623,4 @@ export async function getLinkContracts(
     throw e;
   }
   return rows.map(toContract);
-}
-
-/** Where an official page asked for under an id that no longer exists moved to (ADR-0040): the id the loader
- *  carried it to, or null. Soft-fails to null where the table is not there yet. */
-export async function getPersonRedirect(db: D1Database, personId: string): Promise<string | null> {
-  try {
-    const r = await db
-      .prepare('SELECT new_id FROM person_redirects WHERE old_id = ?')
-      .bind(personId)
-      .first<{ new_id: string }>();
-    return r?.new_id ?? null;
-  } catch (e) {
-    if (conflictSchemaAbsent(e, 'person redirect')) return null;
-    throw e;
-  }
 }

@@ -4,7 +4,7 @@
 import type { ContractListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
-import { csvCell } from './csv';
+import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import {
   authoritySlug,
@@ -439,66 +439,39 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
   const filters = buildFilters(p);
   const CHUNK = 1000;
   let afterRowid = 0;
-  let done = false;
-  const encoder = new TextEncoder();
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode('﻿' + CSV_COLUMNS.join(',') + '\n'));
-    },
-    async pull(controller) {
-      if (done) return;
-      const where = filters.sql ? filters.sql + ' AND c.rowid > ?' : ' WHERE c.rowid > ?';
-      const sql = `${SELECT}, c.rowid AS rowid, a.bulstat AS authority_eik, b.eik_normalized AS contractor_eik
+  const where = filters.sql ? filters.sql + ' AND c.rowid > ?' : ' WHERE c.rowid > ?';
+  const sql = `${SELECT}, c.rowid AS rowid, a.bulstat AS authority_eik, b.eik_normalized AS contractor_eik
         ${FROM}${where} ORDER BY c.rowid LIMIT ?`;
+  return csvResponse(
+    CSV_COLUMNS,
+    CHUNK,
+    async () => {
       const { results } = await db
         .prepare(sql)
         .bind(...filters.params, afterRowid, CHUNK)
         .all<CsvRow>();
-      if (results.length === 0) {
-        done = true;
-        controller.close();
-        return;
-      }
-      let block = '';
-      for (const r of results) {
-        block +=
-          [
-            // CSV carries the RAW id (no URL escaping): literal `/`, `%`, … — not the `%2F`/`%25`
-            // path-safe slug (contractSlug), which exists only for hrefs. A data export wants the true
-            // id for joins/lookups, so this is deliberately NOT the URL form (#221 review).
-            bareContractId(r.id),
-            r.unp,
-            r.subject,
-            cleanName(r.authority_name),
-            r.authority_eik,
-            entityName(cleanName(r.bidder_name), r.bidder_kind),
-            r.contractor_eik,
-            r.bidder_kind,
-            r.cpv_code ? r.cpv_code.slice(0, 2) : '',
-            procedureGroup(r.procedure_type).label,
-            r.signed_at,
-            r.amount_eur,
-            r.eu_funded === 1 ? '1' : '0',
-            r.bids_received,
-          ]
-            .map(csvCell)
-            .join(',') + '\n';
-        afterRowid = r.rowid;
-      }
-      controller.enqueue(encoder.encode(block));
-      if (results.length < CHUNK) {
-        done = true;
-        controller.close();
-      }
+      if (results.length) afterRowid = results[results.length - 1]!.rowid;
+      return results;
     },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="sigma-contracts.csv"',
-      'Cache-Control': 'public, max-age=3600',
-    },
-  });
+    (r) => [
+      // CSV carries the RAW id (no URL escaping): literal `/`, `%`, … — not the `%2F`/`%25`
+      // path-safe slug (contractSlug), which exists only for hrefs. A data export wants the true
+      // id for joins/lookups, so this is deliberately NOT the URL form (#221 review).
+      bareContractId(r.id),
+      r.unp,
+      r.subject,
+      cleanName(r.authority_name),
+      r.authority_eik,
+      entityName(cleanName(r.bidder_name), r.bidder_kind),
+      r.contractor_eik,
+      r.bidder_kind,
+      r.cpv_code ? r.cpv_code.slice(0, 2) : '',
+      procedureGroup(r.procedure_type).label,
+      r.signed_at,
+      r.amount_eur,
+      r.eu_funded === 1 ? '1' : '0',
+      r.bids_received,
+    ],
+    'sigma-contracts.csv',
+  );
 }

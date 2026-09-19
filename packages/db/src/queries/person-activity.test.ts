@@ -24,11 +24,11 @@ function fixture() {
   db.exec(`CREATE TABLE registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on);
     CREATE TABLE registry_deeds(eik,outcome,fetched_at);
     INSERT INTO registry_deeds VALUES('111111111','ok','2026-08-30T12:00:00Z');
-    CREATE TABLE interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year);
+    CREATE TABLE interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year,relation);
     CREATE TABLE interest_link_evidence(link_key,evidence_kind);
     CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
     CREATE TABLE person_registry_links(person_id,registry_indent);
-    CREATE TABLE bidders(id,name,eik_normalized);
+    CREATE TABLE bidders(id,name,eik_normalized,ownership_kind);
     CREATE TABLE company_totals(bidder_id,contracts);
     INSERT INTO company_totals VALUES('eik:111111111',4);
     CREATE TABLE tenders(id,title,authority_id);
@@ -40,10 +40,10 @@ function fixture() {
     INSERT INTO declarations VALUES('official','Община','Съветник','2020'),('official','Община','Съветник','2021');
     CREATE TABLE contracts(id,contract_subject,bidder_id,tender_id,signed_at,amount_eur);
     INSERT INTO authorities VALUES('auth:1','Община');
-    INSERT INTO bidders VALUES('eik:111111111','Компания','111111111');
+    INSERT INTO bidders(id,name,eik_normalized) VALUES('eik:111111111','Компания','111111111');
     INSERT INTO tenders VALUES('t','Предмет','auth:1');
     INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','111111111','manager','2020-01-01','2021-01-01'),('person','person','111111111','partner','2020-01-01','2021-01-01'),('person','person','111111111','manager','2022-01-01',NULL);
-    INSERT INTO interest_links VALUES('official','111111111','l','published','private_ownership','2020','2021');
+    INSERT INTO interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year) VALUES('official','111111111','l','published','private_ownership','2020','2021');
     INSERT INTO interest_link_evidence VALUES('l','document');
     INSERT INTO contracts VALUES('a','Първи','eik:111111111','t','2020-06-01',100),('b','Прекъсване','eik:111111111','t','2021-01-01',200),('c','Повторна роля','eik:111111111','t','2022-06-01',300),('d','Без дата','eik:111111111','t',NULL,NULL);`);
   db.exec('ALTER TABLE registry_roles ADD COLUMN uncertain_after');
@@ -78,7 +78,7 @@ it('deduplicates roles and declaration overlap, preserving gaps and unknown date
 it('excludes recipients without a procurement profile from contracts, facets and the timeline', async () => {
   const d1 = fixture();
   db.exec(`
-    INSERT INTO bidders VALUES('eik:222222222','Без профил','222222222'),('eik:333333333','Без поръчки','333333333');
+    INSERT INTO bidders(id,name,eik_normalized) VALUES('eik:222222222','Без профил','222222222'),('eik:333333333','Без поръчки','333333333');
     INSERT INTO company_totals VALUES('eik:333333333',0);
     INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','222222222','manager','2000-01-01',NULL),('person','person','333333333','manager','2000-01-01',NULL);
     INSERT INTO contracts VALUES('missing','Без профил','eik:222222222','t','2020-01-01',999),('zero','Без поръчки','eik:333333333','t','2020-01-01',999);
@@ -97,6 +97,26 @@ it('excludes recipients without a procurement profile from contracts, facets and
   );
   expect(empty.total).toBe(0);
   expect(empty.companies).toEqual(activity.companies);
+});
+it('a role in a public enterprise brings none of its contracts; a declared management has its own basis', async () => {
+  const d1 = fixture();
+  db.exec(`
+    INSERT INTO bidders(id,name,eik_normalized,ownership_kind) VALUES('eik:444444444','Общинско','444444444','municipal');
+    INSERT INTO company_totals VALUES('eik:444444444',1);
+    INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','444444444','manager','2000-01-01',NULL);
+    INSERT INTO contracts VALUES('public','Общински','eik:444444444','t','2020-01-01',50);
+    UPDATE interest_links SET relation='manages';
+  `);
+  const activity = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(activity.contracts.some((r) => r.id === 'public')).toBe(false);
+  expect(activity.contracts.find((r) => r.id === 'a')!.declarationBasis).toBe(4);
+  const own = await getPersonActivity(
+    d1,
+    'person',
+    ['official'],
+    new URLSearchParams('basis=self'),
+  );
+  expect(own.contracts.map((r) => r.id).sort()).toEqual(['a', 'b']);
 });
 it('an open role supports contracts only through the last successful registry observation', async () => {
   const d1 = fixture();
@@ -143,11 +163,11 @@ it('counts each filter option against the other selections, including zero resul
   db.exec(`
     INSERT INTO authorities VALUES('auth:2','Втора община');
     INSERT INTO tenders VALUES('t2','Друг предмет','auth:2');
-    INSERT INTO bidders VALUES('eik:222222222','Втора фирма','222222222'),('alias','Друго име на първата фирма','111111111');
+    INSERT INTO bidders(id,name,eik_normalized) VALUES('eik:222222222','Втора фирма','222222222'),('alias','Друго име на първата фирма','111111111');
     INSERT INTO company_totals VALUES('eik:222222222',4);
     UPDATE contracts SET bidder_id='alias' WHERE id='c';
     INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','222222222','manager','2020-01-01','2021-01-01');
-    INSERT INTO interest_links VALUES('official','222222222','family','published','family_ownership','2022','2023');
+    INSERT INTO interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year) VALUES('official','222222222','family','published','family_ownership','2022','2023');
     INSERT INTO interest_link_evidence VALUES('family','document');
     INSERT INTO contracts VALUES
       ('e','Втора фирма — роля','eik:222222222','t','2020-06-01',500),
@@ -278,7 +298,7 @@ it('the shared timeline covers all contracts without the 500-card limit and sepa
   expect(result.observations.find((o) => o.timing === 'prior')!.reportedYear).toBe('2025');
 });
 
-it('includes every proven source identity only when the canonical person has a public interest', async () => {
+it('includes every proven source identity of the register identity, with or without a public interest', async () => {
   const d1 = fixture();
   db.exec(
     "INSERT INTO person_registry_links VALUES('official','canonical'),('alias-without-own-link','canonical'),('unrelated','other')",
@@ -287,7 +307,8 @@ it('includes every proven source identity only when the canonical person has a p
     'alias-without-own-link',
     'official',
   ]);
-  expect(await getRegistryOfficials(d1, 'other')).toEqual([]);
+  expect(await getRegistryOfficials(d1, 'other')).toEqual(['unrelated']);
+  expect(await getRegistryOfficials(d1, 'nobody')).toEqual([]);
 });
 
 it('defaults to all contracts, preserving unknown dates and separating contextual amounts', async () => {
@@ -327,7 +348,7 @@ it('disputed inventories retain all company contracts, exclude disputed years, a
   const d1 = fixture();
   db.exec(`INSERT INTO interest_link_observations VALUES('l','positive','shares','annual','2020'),('l','other','shares','not_listed','2020');
     INSERT INTO person_registry_links VALUES('official','person'),('alias','person');
-    INSERT INTO interest_links VALUES('alias','111111111','alias-l','published','private_ownership','2020','2021');
+    INSERT INTO interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year) VALUES('alias','111111111','alias-l','published','private_ownership','2020','2021');
     INSERT INTO interest_link_evidence VALUES('alias-l','document');`);
   const all = await getPersonActivity(d1, 'person', ['official', 'alias'], new URLSearchParams());
   expect(all.total).toBe(4);
@@ -409,12 +430,9 @@ it('resolves a declarant to the register identity only through the evidenced bri
 });
 
 it('rethrows every other failure of the identity reads', async () => {
-  const d1 = fixture();
-  db.exec('DROP TABLE interest_links');
-  await expect(getRegistryOfficials(d1, 'canonical')).rejects.toThrow(
-    /no such table: interest_links/,
-  );
+  fixture();
   const locked = throwingD1(new Error('D1_ERROR: database is locked'));
+  await expect(getRegistryOfficials(locked.db, 'canonical')).rejects.toThrow(/locked/);
   await expect(getRegistryIdentity(locked.db, 'official')).rejects.toThrow(/locked/);
 });
 

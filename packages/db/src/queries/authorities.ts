@@ -4,7 +4,7 @@
 
 import type { AuthorityListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS } from '@sigma/config';
-import { csvCell } from './csv';
+import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
@@ -215,56 +215,31 @@ export function streamAuthoritiesCsv(db: D1Database, p: AuthorityListParams): Re
   ];
   const CHUNK = 2000;
   let afterId = '';
-  let done = false;
-  const enc = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(c) {
-      c.enqueue(enc.encode('﻿' + cols.join(',') + '\n'));
-    },
-    async pull(controller) {
-      if (done) return;
-      const conds = [ew.sql, 'authority_id > ?'].filter(Boolean).join(' AND ');
+  const conds = [ew.sql, 'authority_id > ?'].filter(Boolean).join(' AND ');
+  return csvResponse(
+    cols,
+    CHUNK,
+    async () => {
       const { results } = await db
         .prepare(`SELECT ${COLS} FROM ${src.from} WHERE ${conds} ORDER BY authority_id LIMIT ?`)
         .bind(...src.params, ...ew.params, afterId, CHUNK)
         .all<AuthorityTotalsRow>();
-      if (!results.length) {
-        done = true;
-        controller.close();
-        return;
-      }
-      let block = '';
-      for (const r of results) {
-        block +=
-          [
-            r.authority_id.replace(/^auth:/, ''),
-            r.name,
-            r.type_group,
-            r.settlement,
-            r.region,
-            r.spent_eur,
-            r.contracts,
-            r.suppliers,
-            Math.round(r.avg_eur),
-          ]
-            .map(csvCell)
-            .join(',') + '\n';
-        afterId = r.authority_id;
-      }
-      controller.enqueue(enc.encode(block));
-      if (results.length < CHUNK) {
-        done = true;
-        controller.close();
-      }
+      if (results.length) afterId = results[results.length - 1]!.authority_id;
+      return results;
     },
-  });
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="sigma-authorities.csv"',
-      'Cache-Control': 'public, max-age=3600',
-    },
-  });
+    (r) => [
+      r.authority_id.replace(/^auth:/, ''),
+      r.name,
+      r.type_group,
+      r.settlement,
+      r.region,
+      r.spent_eur,
+      r.contracts,
+      r.suppliers,
+      Math.round(r.avg_eur),
+    ],
+    'sigma-authorities.csv',
+  );
 }
 
 /** An institution's name by id — for a page about something else that only needs to say whose it is (the

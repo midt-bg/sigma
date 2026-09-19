@@ -7,7 +7,6 @@ import {
   LINK_CONTRACTS_SQL,
   getAuthorityConflictSummary,
   getCompanyConflicts,
-  getPersonRedirect,
   isMissingConflictTableError,
   getConflictLeaderboard,
   getLinkContracts,
@@ -26,7 +25,7 @@ function row(over: Record<string, unknown> = {}) {
     person_id: 'person:ИВАН МИНЕВ',
     official: 'Иван Минев',
     institution: 'Община Русе',
-    company: 'ТРЕЙС ГРУП ХОЛД АД',
+    company: 'ТЕСТ ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
     contemporaneous: 1,
@@ -70,6 +69,7 @@ function fakeDb(byKey: Record<string, unknown[]>): D1Database & { calls: FakeD1C
     };
   const fake = fakeD1([
     { when: 'SELECT d.id, d.declared_year', all: [] },
+    { when: 'SELECT d.id declaration_id, r.eik', all: [] },
     { when: EIK_CONTRACTS_SQL, all: contracts(EIK_CONTRACTS_SQL) },
     { when: LINK_CONTRACTS_SQL, all: contracts(LINK_CONTRACTS_SQL) },
     { when: 'FROM interest_links il', all: (call) => byKey[String(call.binds[0])] ?? [] },
@@ -123,7 +123,7 @@ describe('related-persons queries', () => {
     const db = fakeDb({ '111': [row(), row({ link_key: 'p2|111', official: 'Друг' })] });
     const res = await getCompanyConflicts(db, '111');
     expect(res?.eik).toBe('111');
-    expect(res?.company).toBe('ТРЕЙС ГРУП ХОЛД АД');
+    expect(res?.company).toBe('ТЕСТ ГРУП ХОЛД АД');
     expect(res?.links).toHaveLength(2);
     expect(await getCompanyConflicts(fakeDb({}), '999')).toBeNull();
   });
@@ -406,25 +406,6 @@ describe('getConflictLeaderboard — narrowed to one awarding body', () => {
     expect(calls[0]!.sql).toBe(AUTHORITY_LEADERBOARD_SQL);
     expect(calls[0]!.binds).toEqual(['auth:1', 10]);
     expect(calls[1]!.binds).toEqual([10]);
-  });
-});
-
-describe('getPersonRedirect', () => {
-  it('names the id an old official id became, and null when it became none', async () => {
-    const moved = fakeD1([{ when: 'FROM person_redirects', first: { new_id: 'person:new' } }]);
-    expect(await getPersonRedirect(moved.db, 'person:old')).toBe('person:new');
-    expect(moved.calls[0]!.binds).toEqual(['person:old']);
-    const stayed = fakeD1([{ when: 'FROM person_redirects', first: null }]);
-    expect(await getPersonRedirect(stayed.db, 'person:x')).toBeNull();
-  });
-
-  it('is a 404, not a 500, where the table is not there yet — and rethrows anything else', async () => {
-    const missing = throwingD1(
-      new Error('D1_ERROR: no such table: person_redirects: SQLITE_ERROR'),
-    );
-    expect(await getPersonRedirect(missing.db, 'person:old')).toBeNull();
-    const boom = throwingD1(new Error('D1_ERROR: near "SELEC": syntax error'));
-    await expect(getPersonRedirect(boom.db, 'person:old')).rejects.toThrow(/syntax error/);
   });
 });
 

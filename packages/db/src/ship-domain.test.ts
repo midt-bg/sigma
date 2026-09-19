@@ -17,22 +17,15 @@ function readScript(dbPath: string, path: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
 }
 
+// Wrangler is called by its own binary, not through `pnpm exec`: pnpm writes its own lines to stdout
+// (`../.. | WARN …`) whenever another workspace command touches the store, and one of those in front of
+// the JSON fails the parse. That only happens when the suite runs in parallel, which is every CI run.
+const wranglerBin = resolve(apiDir, 'node_modules/.bin/wrangler');
+
 function d1Json<T>(persistTo: string, sql: string): T[] {
   const out = execFileSync(
-    'pnpm',
-    [
-      'exec',
-      'wrangler',
-      'd1',
-      'execute',
-      'sigma',
-      '--local',
-      '--persist-to',
-      persistTo,
-      '--json',
-      '--command',
-      sql,
-    ],
+    wranglerBin,
+    ['d1', 'execute', 'sigma', '--local', '--persist-to', persistTo, '--json', '--command', sql],
     { cwd: apiDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   ).trim();
   return (JSON.parse(out)[0]?.results ?? []) as T[];

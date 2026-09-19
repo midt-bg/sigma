@@ -20,9 +20,9 @@ export function companyNode(
     slug,
     valueEur: wonEur ?? 0,
     hop,
-    // Only offered when the company actually has a published link — otherwise the reader is sent to a 404,
-    // and an empty page under a company's name is exactly what the conflicts surface refuses to render.
-    conflictsHref: conflicts > 0 ? `/conflicts/company/${slug}` : null,
+    // Only offered when the company actually has a published link — the declared-people section exists
+    // on its page only then.
+    conflictsHref: conflicts > 0 ? `/companies/${slug}#declared-people` : null,
   };
 }
 

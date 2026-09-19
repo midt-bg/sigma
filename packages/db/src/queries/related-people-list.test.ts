@@ -1,7 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
-import { getRelatedPersonRows, getRelatedPersonHeadline } from './related-people-list';
+import {
+  getRelatedPersonRows,
+  getRelatedPersonHeadline,
+  getRegistryRolePersonRows,
+} from './related-people-list';
 it('groups beyond 1000 source links, preserving identity, distinct pairs and contract unions', async () => {
   const db = new DatabaseSync(':memory:');
   try {
@@ -61,7 +65,10 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
         ('rest-big-c','rest-big-b','t','2010-01-01',10000),
         ('rest-small-c','rest-small-b','t','2010-01-01',1),
         ('window-small-c','window-small-b','t','2020-01-01',50),
-        ('window-big-c','window-big-b','t','2020-01-01',5000);`);
+        ('window-big-c','window-big-b','t','2020-01-01',5000);
+      ALTER TABLE interest_links ADD COLUMN relation TEXT;
+      UPDATE interest_links SET relation=CASE interest_class WHEN 'family_ownership' THEN 'related' ELSE 'owns' END;
+    `);
     const d1 = d1FromSqlite(db);
     const rows = await getRelatedPersonRows(d1);
     expect(rows).toHaveLength(1210);
@@ -125,6 +132,80 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
   }
 });
 
+it('lists people the register records as owners of a winner without a declared stake, by their office years', async () => {
+  const db = new DatabaseSync(':memory:');
+  const H = 'h'.repeat(64);
+  try {
+    db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+      CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
+      CREATE TABLE interest_links(person_id,status,interest_class);
+      CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type);
+      CREATE TABLE declared_interests(declaration_id,entity_raw);
+      CREATE TABLE declaration_companies(declaration_id,eik);
+      CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name,ownership_kind);
+      CREATE TABLE company_totals(bidder_id,contracts);
+      CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
+      CREATE TABLE tenders(id PRIMARY KEY,authority_id);
+      INSERT INTO persons VALUES('p','Лице Роля'),('q','Лице Дял'),('r','Лице Без');
+      INSERT INTO person_registry_links VALUES('p','${H}'),('q','${'q'.repeat(64)}');
+      INSERT INTO interest_links VALUES('q','published','private_ownership');
+      INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','partner','111111111'),('${H}','person','manager','222222222'),
+        ('${'q'.repeat(64)}','person','partner','111111111'),('${'r'.repeat(64)}','person','partner','111111111');
+      INSERT INTO declarations VALUES('d20','p','Община','Кмет','2020'),('d21','p','Община','','2021'),
+        ('d22','p','Община','','2022'),('d18','p','Община','','2018'),('e20','p','Община','Кмет','2020');
+      -- 2020 is blank, 2021 names the company in its own spelling, 2022 is tied to the ЕИК, 2018 precedes
+      -- the ownership, and e20 is not an annual declaration.
+      INSERT INTO declaration_metadata VALUES('d20','Annualy'),('d21','Annualy'),('d22','Annualy'),('d18','Annualy'),('e20','Entry');
+      INSERT INTO declared_interests VALUES('d21','„Изпълнител“ ЕООД');
+      INSERT INTO declaration_companies VALUES('d22','111111111');
+      INSERT INTO bidders VALUES('b1','111111111','Изпълнител',NULL),('b2','222222222','Държавно','state'),
+        ('b3','333333333','Частно',NULL);
+      INSERT INTO company_totals VALUES('b1',2),('b2',1),('b3',1);
+      INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','manager','333333333');
+      INSERT INTO tenders VALUES('t','a'),('t2','other');
+      INSERT INTO contracts VALUES('c1','b1','t','2020-05-01',100),('c2','b1','t2','2022-05-01',50),('c3','b2','t','2020-01-01',999),
+        ('c4','b3','t','2019-01-01',7);`);
+    const rows = await getRegistryRolePersonRows(d1FromSqlite(db));
+    expect(rows).toHaveLength(1); // q has a declared stake, r is not a declarant the register identifies
+    expect(rows[0]).toMatchObject({
+      official: 'Лице Роля',
+      personIdentity: H,
+      stakeKind: 'registry',
+      companyCount: 2, // a private company's manager counts; a state enterprise's does not
+      contractCount: 3,
+      contractValueEur: 157,
+      contemporaneousValueEur: 100,
+      hasContemporaneous: true,
+      companies: [
+        {
+          eik: '111111111',
+          company: 'Изпълнител',
+          self: 0,
+          family: 0,
+          registry: 1,
+          registryRole: 'owner',
+          missingYears: ['2020'],
+        },
+        {
+          eik: '333333333',
+          company: 'Частно',
+          self: 0,
+          family: 0,
+          registry: 1,
+          registryRole: 'manager',
+          missingYears: [],
+        },
+      ],
+    });
+    expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'other')).toHaveLength(1);
+    expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'nobody')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
 it('names the only company of a single-company declarant, and tells own, family and mixed stakes apart', async () => {
   const db = new DatabaseSync(':memory:');
   try {
@@ -146,7 +227,12 @@ it('names the only company of a single-company declarant, and tells own, family 
         ('f','person:family','222222222','published','family_ownership','none','2020','2020'),
         ('m1','person:mixed','111111111','published','private_ownership','none','2020','2020'),
         ('m2','person:mixed','222222222','published','family_ownership','none','2020','2020');
-      INSERT INTO interest_link_evidence SELECT link_key,'document' FROM interest_links;`);
+      INSERT INTO interest_link_evidence SELECT link_key,'document' FROM interest_links;
+      ALTER TABLE interest_links ADD COLUMN relation TEXT;
+      UPDATE interest_links SET relation=CASE interest_class WHEN 'family_ownership' THEN 'related' ELSE 'owns' END;
+      INSERT INTO persons VALUES('person:manager','Управител');
+      INSERT INTO interest_links VALUES('g','person:manager','111111111','published','private_ownership','none','2020','2020','manages');
+      INSERT INTO interest_link_evidence VALUES('g','document');`);
     const rows = await getRelatedPersonRows(d1FromSqlite(db));
     const by = (official: string) => rows.find((r) => r.official === official)!;
     expect(by('Собствен дял')).toMatchObject({
@@ -164,9 +250,14 @@ it('names the only company of a single-company declarant, and tells own, family 
       soleCompany: null,
       contractValueEur: 300,
       companies: [
-        { eik: '222222222', company: 'Втора', self: 0, family: 1 },
-        { eik: '111111111', company: 'Първа', self: 1, family: 0 },
+        { eik: '222222222', company: 'Втора', self: 0, family: 1, manages: 0 },
+        { eik: '111111111', company: 'Първа', self: 1, family: 0, manages: 0 },
       ],
+    });
+    // A private company's manager is listed like an owner, and the company says it is a management.
+    expect(by('Управител')).toMatchObject({
+      stakeKind: 'self',
+      companies: [{ eik: '111111111', company: 'Първа', self: 0, family: 0, manages: 1 }],
     });
   } finally {
     db.close();

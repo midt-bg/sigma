@@ -120,18 +120,11 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
   };
 
   /**
-   * The response the first matching route gives for this method, or `undefined` when none answers
-   * it. Returning the response rather than the route keeps `first: null` — a route that means "no
-   * such row" — distinguishable from no route at all.
+   * The first route answering `method` for this SQL — the route itself, where `meta` lives, or
+   * `undefined` when none answers. Matching on the route rather than its response keeps
+   * `first: null` — a route that means "no such row" — distinguishable from no route at all.
    */
-  const responder = <K extends 'all' | 'first' | 'run'>(
-    method: K,
-    call: FakeD1Call,
-  ): FakeD1Route[K] | undefined =>
-    routes.find((r) => r[method] !== undefined && matches(r, call.sql))?.[method];
-
-  /** The first route answering `method` for this SQL — the route itself, where `meta` lives. */
-  const answering = (method: 'all' | 'run', call: FakeD1Call): FakeD1Route | undefined =>
+  const answering = (method: 'all' | 'first' | 'run', call: FakeD1Call): FakeD1Route | undefined =>
     routes.find((r) => r[method] !== undefined && matches(r, call.sql));
 
   const statement = (call: FakeD1Call) => {
@@ -141,9 +134,8 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         return self;
       },
       async all() {
-        // The route itself, not `responder()`'s response: `meta` belongs to whichever route
-        // answered, so all() needs the pair. `=== undefined` rather than a falsy test — `all: []`
-        // is a route that deliberately answers "no rows".
+        // `=== undefined` rather than a falsy test — `all: []` is a route that deliberately
+        // answers "no rows".
         const hit = answering('all', call);
         if (hit?.all === undefined) {
           if (!lenient) throw unmatched('all', call.sql, routes);
@@ -156,12 +148,12 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         };
       },
       async first() {
-        const row = responder('first', call);
-        if (row === undefined) {
+        const hit = answering('first', call);
+        if (hit?.first === undefined) {
           if (!lenient) throw unmatched('first', call.sql, routes);
           return null;
         }
-        return resolve(row, call) ?? null;
+        return resolve(hit.first, call) ?? null;
       },
       async run() {
         const hit = answering('run', call);
@@ -258,32 +250,8 @@ export function recordingD1(routes: FakeD1Route[] = []): FakeD1 {
  * is still recorded, so the SQL that failed is inspectable.
  */
 export function throwingD1(error: Error = new Error('D1_ERROR: statement failed')): FakeD1 {
-  const calls: FakeD1Call[] = [];
-  const sql: string[] = [];
-  const db = {
-    prepare(statement: string) {
-      // Capture this statement's own record: reading back the last entry would attribute a bind() to
-      // whichever statement was prepared most recently, not the one it was called on.
-      const call: FakeD1Call = { sql: statement, binds: [], via: 'prepare' };
-      calls.push(call);
-      sql.push(statement);
-      const self = {
-        bind(...args: unknown[]) {
-          call.binds = args;
-          return self;
-        },
-        all(): Promise<never> {
-          return Promise.reject(error);
-        },
-        first(): Promise<never> {
-          return Promise.reject(error);
-        },
-        run(): Promise<never> {
-          return Promise.reject(error);
-        },
-      };
-      return self;
-    },
-  } as unknown as D1Database;
-  return { db, calls, sql };
+  const fail = () => {
+    throw error;
+  };
+  return fakeD1([{ when: [], all: fail, first: fail, run: fail }]);
 }

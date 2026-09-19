@@ -6,7 +6,11 @@ export * from './queries/person-identity';
 export { readonlyD1, getDb } from './readonly-d1';
 export { isReadOnlySql, assertReadOnly } from './readonly-sql';
 
-export { getRelatedPersonRows, getRelatedPersonHeadline } from './queries/related-people-list';
+export {
+  getRelatedPersonRows,
+  getRelatedPersonHeadline,
+  getRegistryRolePersonRows,
+} from './queries/related-people-list';
 export {
   getPersonTimeline,
   type InterestObservation,

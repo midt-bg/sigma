@@ -1,4 +1,6 @@
-import { companySlug } from './identity';
+import type { RegistryRoleKind } from '@sigma/api-contract';
+import { registryCompanyName } from '@sigma/shared';
+import { companySlug, personSlug } from './identity';
 import { publicRole, registryRead } from './registry';
 import { getRegistryIdentity, getRegistryOfficials } from './person-activity';
 import { getPersonDeclarations } from './declarations';
@@ -45,6 +47,131 @@ export async function getPersonDestinations(db: D1Database, id: string) {
     if (/no such table:?\s*person_(source_aliases|sources)/i.test(String(e))) return [];
     throw e;
   }
+}
+
+/** Every name the person's declarations were filed under, for the ids that make up one profile. */
+export async function getPersonSourceNames(db: D1Database, ids: string[]): Promise<string[]> {
+  if (!ids.length) return [];
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT s.name FROM person_sources s
+       WHERE s.active=1 AND s.namespace='cacbg'
+         AND coalesce(s.entity_id,s.legacy_person_id) IN (${ids.map(() => '?').join(',')})
+       ORDER BY s.name`,
+    )
+    .bind(...ids)
+    .all<{ name: string }>();
+  return rows.results.map((r) => r.name);
+}
+
+/** A relative the register confirms at a declared company: named, and linked when they have a page here. */
+export interface PersonRelative {
+  name: string;
+  indent: string;
+  company: { name: string; eik: string };
+  href: string | null;
+  /** The relative's roles at the company, as registered; `ended` once the register ended the role. */
+  roles: { role: RegistryRoleKind; ended: boolean }[];
+  /** The years of the declarations that name the stake. */
+  years: string[];
+}
+
+/** The same fact from the register's side: the officials whose declarations name this person. */
+export interface PersonNamedBy {
+  official: string;
+  href: string;
+  company: { name: string; eik: string };
+}
+
+const RELATIVE_PAGE = `EXISTS (SELECT 1 FROM registry_roles r JOIN bidders b ON b.id='eik:'||r.eik
+  JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
+  WHERE r.subject_id=pr.relative_indent AND r.subject_kind='person' AND ${publicRole('r')})`;
+
+type CompanyNameRow = {
+  eik: string;
+  bidder_name: string | null;
+  registry_name: string | null;
+  legal_form: string | null;
+};
+/** The winner's name where the company won; otherwise the register's фирма with its form; else the ЕИК. */
+const companyName = (r: CompanyNameRow) =>
+  r.bidder_name ?? (r.registry_name ? registryCompanyName(r.registry_name, r.legal_form) : r.eik);
+
+/** Relatives the official declared a stake for, whom the register lists at that company (ADR-0044). */
+export async function getPersonRelatives(db: D1Database, ids: string[]): Promise<PersonRelative[]> {
+  if (!ids.length) return [];
+  const marks = ids.map(() => '?').join(',');
+  const rows = await registryRead(
+    () =>
+      db
+        .prepare(
+          `SELECT pr.relative_name name, pr.relative_indent indent, pr.eik,
+            b.name bidder_name, rd.name registry_name, rd.legal_form, ${RELATIVE_PAGE} has_page,
+            (SELECT json_group_array(DISTINCT r.role || CASE WHEN r.removed_on IS NULL THEN '' ELSE ':ended' END)
+              FROM registry_roles r WHERE r.subject_id=pr.relative_indent AND r.eik=pr.eik
+              AND r.subject_kind='person' AND ${publicRole('r')}) roles,
+            (SELECT json_group_array(DISTINCT o.reported_year) FROM interest_links il
+              JOIN interest_link_observations o ON o.link_key=il.link_key
+              WHERE il.person_id IN (${marks}) AND il.eik=pr.eik
+                AND il.interest_class='family_ownership' AND o.reported_year IS NOT NULL) years
+          FROM person_relatives pr LEFT JOIN bidders b ON b.eik_normalized=pr.eik
+          LEFT JOIN registry_deeds rd ON rd.eik=pr.eik
+          WHERE pr.person_id IN (${marks})
+          GROUP BY pr.relative_indent, pr.eik ORDER BY pr.relative_name, pr.eik`,
+        )
+        .bind(...ids, ...ids)
+        .all<
+          {
+            name: string;
+            indent: string;
+            eik: string;
+            has_page: number;
+            roles: string;
+            years: string;
+          } & CompanyNameRow
+        >()
+        .then((r) => r.results),
+    [],
+  );
+  return rows.map((r) => ({
+    name: r.name,
+    indent: r.indent,
+    company: { name: companyName(r), eik: r.eik },
+    href: r.has_page ? `/persons/${r.indent}` : null,
+    roles: (JSON.parse(r.roles) as string[])
+      .sort()
+      .map((v) => {
+        const [role, ended] = v.split(':');
+        return { role: role as RegistryRoleKind, ended: !!ended };
+      })
+      // A role standing again after it once ended is standing.
+      .filter((x, _, all) => !x.ended || !all.some((y) => y.role === x.role && !y.ended)),
+    years: (JSON.parse(r.years) as string[]).sort(),
+  }));
+}
+
+/** The officials whose declarations name the person the register identifies by `indent`. */
+export async function getPersonNamedBy(db: D1Database, indent: string): Promise<PersonNamedBy[]> {
+  const rows = await registryRead(
+    () =>
+      db
+        .prepare(
+          `SELECT p.id, p.name official, pr.eik, b.name bidder_name, rd.name registry_name, rd.legal_form
+          FROM person_relatives pr JOIN persons p ON p.id=pr.person_id
+          LEFT JOIN bidders b ON b.eik_normalized=pr.eik
+          LEFT JOIN registry_deeds rd ON rd.eik=pr.eik
+          WHERE pr.relative_indent=? ORDER BY p.name, pr.eik`,
+        )
+        .bind(indent)
+        .all<{ id: string; official: string; eik: string } & CompanyNameRow>()
+        .then((r) => r.results),
+    [],
+  );
+  return rows.map((r) => ({
+    official: r.official,
+    href: `/persons/${personSlug(r.id)}`,
+    company: { name: companyName(r), eik: r.eik },
+  }));
 }
 
 /** An attributed source archive can remain readable without a published company connection. */

@@ -5,7 +5,7 @@
 // (it depends only on the normalised name). These entities are flagged „непотвърден ЕИК" and may
 // fragment across name variants — a known limit until the Trade Register lands.
 
-function b64urlEncode(s: string): string {
+export function b64urlEncode(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
@@ -49,7 +49,7 @@ export function personSlug(personId: string): string {
   return b64urlEncode(personId.startsWith('person:') ? personId.slice(7) : personId);
 }
 
-/** `/conflicts/official/:slug` segment → person id, or null if the slug cannot be decoded. */
+/** `/persons/:slug` segment (declaration-derived id) → person id, or null if the slug cannot be decoded. */
 export function personIdFromSlug(slug: string): string | null {
   try {
     return 'person:' + b64urlDecode(slug);
@@ -115,11 +115,12 @@ export function contractIdFromSlug(slug: string): string {
 
 /** Map a raw domain id to its explorer route. Used to turn FTS `ref`s into hrefs. */
 export function hrefForEntity(
-  kind: 'authority' | 'company' | 'contract' | 'official',
+  kind: 'authority' | 'company' | 'contract' | 'official' | 'person',
   id: string,
 ): string {
   if (kind === 'authority') return `/authorities/${authoritySlug(id)}`;
   if (kind === 'company') return `/companies/${companySlug(id)}`;
-  if (kind === 'official') return `/conflicts/official/${personSlug(id)}`;
+  if (kind === 'official') return `/persons/${personSlug(id)}`;
+  if (kind === 'person') return `/persons/${registryPersonIdFromSlug(id) ?? personSlug(id)}`;
   return `/contracts/${contractSlug(id)}`;
 }

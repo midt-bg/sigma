@@ -9,12 +9,13 @@ import type {
   CompanyRole,
   CompanyTieEdge,
   CompanyTieNode,
+  OwnershipKind,
   PersonProfile,
   PersonRole,
   RegistryRoleKind,
   RoleHolder,
 } from '@sigma/api-contract';
-import { cleanName } from '@sigma/shared';
+import { cleanName, registryCompanyName } from '@sigma/shared';
 import { companySlug, registryPersonSlug } from './identity';
 import { companyNode, personNode } from './tie-node';
 
@@ -135,6 +136,7 @@ interface CompanyRoleRow {
   added_on: string;
   removed_on: string | null;
   uncertain_after: string | null;
+  official: number;
 }
 
 const COMPANY_DEED_SQL = `SELECT fetched_at FROM registry_deeds WHERE eik = ?1 AND outcome = 'ok'`;
@@ -168,7 +170,8 @@ END`;
 const COMPANY_ROLES_SQL = `
   SELECT r.role, r.subject_kind, r.subject_id, r.subject_name, p.name AS person_name,
          b.id AS entity_bidder, r.share, ${sharePct('r')} AS share_pct,
-         r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after
+         r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after,
+         EXISTS (SELECT 1 FROM person_registry_links pl WHERE pl.registry_indent = r.subject_id) AS official
   FROM registry_roles r
   LEFT JOIN registry_persons p ON r.subject_kind = 'person' AND p.indent = r.subject_id
   LEFT JOIN bidders b ON r.subject_kind = 'entity' AND b.id = 'eik:' || r.subject_id
@@ -185,6 +188,7 @@ function holderOf(r: CompanyRoleRow): RoleHolder {
       href: joinable ? `/persons/${registryPersonSlug(r.subject_id)}` : null,
       eik: null,
       country: null,
+      ...(r.official ? { official: true } : {}),
     };
   }
   return {
@@ -224,6 +228,40 @@ export async function getCompanyPeople(db: D1Database, bidderId: string): Promis
   }, noPeople());
 }
 
+/** A company the site knows only from its partida: the фирма with its form, the seat, and whether a
+ *  liquidator stands — the facts the register states plainly. */
+export async function getRegistryCompany(db: D1Database, bidderId: string) {
+  const eik = partidaEik(bidderId);
+  if (!eik) return null;
+  return registryRead(async () => {
+    const r = await db
+      .prepare(
+        `SELECT d.name, d.legal_form, d.seat_settlement, d.fetched_at,
+          EXISTS (SELECT 1 FROM registry_roles r WHERE r.eik=d.eik AND r.role='liquidator'
+            AND r.removed_on IS NULL AND r.uncertain_after IS NULL) in_liquidation
+        FROM registry_deeds d WHERE d.eik=?1 AND d.outcome='ok'`,
+      )
+      .bind(eik)
+      .first<{
+        name: string | null;
+        legal_form: string | null;
+        seat_settlement: string | null;
+        fetched_at: string;
+        in_liquidation: number;
+      }>();
+    return r
+      ? {
+          eik,
+          name: registryCompanyName(r.name ?? eik, r.legal_form),
+          legalForm: r.legal_form,
+          seat: r.seat_settlement,
+          inLiquidation: !!r.in_liquidation,
+          asOf: r.fetched_at.slice(0, 10),
+        }
+      : null;
+  }, null);
+}
+
 /** Companies drawn around a person. */
 const MAX_PERSON_COMPANIES = 12;
 
@@ -242,6 +280,7 @@ interface PersonRoleRow {
   bidder_name: string | null;
   bidder_kind: 'company' | 'consortium' | null;
   won_eur: number | null;
+  ownership_kind: OwnershipKind | null;
 }
 
 const PERSON_SQL = `SELECT name FROM registry_persons WHERE indent = ?1`;
@@ -249,7 +288,8 @@ const PERSON_SQL = `SELECT name FROM registry_persons WHERE indent = ?1`;
 const PERSON_ROLES_SQL = `
   SELECT r.eik, r.role, r.share, ${sharePct('r')} AS share_pct,
          r.entry_number, r.added_on, r.removed_on, r.uncertain_after, d.name AS deed_name,
-         d.fetched_at, b.id AS bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, ct.won_eur
+         d.fetched_at, b.id AS bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, ct.won_eur,
+         b.ownership_kind
   FROM registry_roles r
   JOIN registry_deeds d ON d.eik = r.eik
   JOIN bidders b ON b.id = 'eik:' || r.eik
@@ -277,6 +317,7 @@ export async function getRegistryPerson(
           name: cleanName(r.bidder_name ?? r.deed_name ?? r.eik),
           eik: r.eik,
           href: r.bidder_id ? `/companies/${companySlug(r.bidder_id)}` : null,
+          ...(r.ownership_kind ? { ownershipKind: r.ownership_kind } : {}),
         },
         role: r.role,
         share: r.share,

@@ -1,3 +1,4 @@
+import { companyNamesAlike } from '@sigma/shared';
 import { declaredOfficeYear } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
@@ -44,8 +45,9 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
     .prepare(
       `${CTE}
     SELECT p.*,r.name,r.person_id,t.*,
-      (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',co.self,'family',co.family)) FROM (
-        SELECT l.eik,COALESCE(b.name,l.eik) company,MAX(l.interest_class='private_ownership') self,MAX(l.interest_class='family_ownership') family
+      (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',co.self,'family',co.family,'manages',co.manages)) FROM (
+        SELECT l.eik,COALESCE(b.name,l.eik) company,MAX(l.relation IN ('owns','owns+manages')) self,
+          MAX(l.interest_class='family_ownership') family,MAX(l.relation='manages') manages
         FROM links l JOIN bidders b ON b.eik_normalized=l.eik WHERE l.identity=p.identity GROUP BY l.eik ORDER BY b.name
       ) co) companies,
       (SELECT b.name FROM bidders b WHERE b.eik_normalized=r.eik ORDER BY b.id LIMIT 1) company,r.eik,
@@ -85,6 +87,7 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       eik: string;
       self: number;
       family: number;
+      manages: number;
     }[],
     soleCompany: r.company_count === 1 ? { company: r.company, eik: r.eik } : null,
     contractCount: r.contract_count,
@@ -95,6 +98,125 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       | 'self'
       | 'family',
     ownInstitution: !!r.own_institution,
+    hasContemporaneous: !!r.has_window,
+    declaredOffices: JSON.parse(r.offices) as {
+      institution: string | null;
+      position: string | null;
+      year: string | null;
+    }[],
+  }));
+}
+
+/** People with declarations whom the register records as an owner — partner, sole owner or sole trader — or
+ *  a manager of a private procurement winner, and who have no published declared interest: the same row shape
+ *  as the declared list, so the two read as one. A public enterprise is left out: a role there is a held
+ *  position (ADR-0047). The period figures follow the declared office years. */
+export async function getRegistryRolePersonRows(db: D1Database, authorityId?: string) {
+  const result = await db
+    .prepare(
+      `WITH people AS MATERIALIZED (
+    SELECT pl.person_id, pl.registry_indent identity, p.name
+    FROM person_registry_links pl JOIN persons p ON p.id=pl.person_id
+    WHERE NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=pl.person_id AND il.status='published'
+        AND il.interest_class IN ('private_ownership','family_ownership'))
+  ), roles AS MATERIALIZED (
+    SELECT pe.person_id, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner
+    FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
+      AND r.role IN ('sole_owner','partner','trader','manager')
+    JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
+    JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
+    WHERE ?1 IS NULL OR EXISTS (SELECT 1 FROM contracts c JOIN tenders t ON t.id=c.tender_id
+      JOIN bidders bb ON bb.id=c.bidder_id WHERE bb.eik_normalized=r.eik AND t.authority_id=?1)
+    GROUP BY pe.person_id, r.eik
+  ), office_years AS MATERIALIZED (
+    SELECT DISTINCT d.person_id, d.declared_year year FROM declarations d
+    WHERE d.person_id IN (SELECT person_id FROM roles) AND ${declaredOfficeYear()}
+  ), company_contracts AS MATERIALIZED (
+    SELECT c.id, b.eik_normalized eik, c.amount_eur, c.signed_at
+    FROM bidders b JOIN contracts c ON c.bidder_id=b.id
+    WHERE b.eik_normalized IN (SELECT eik FROM roles)
+  ), person_contracts AS (
+    SELECT ro.person_id, c.id, c.eik, c.amount_eur, MAX(oy.person_id IS NOT NULL) in_window
+    FROM roles ro JOIN company_contracts c ON c.eik=ro.eik
+    LEFT JOIN office_years oy ON oy.person_id=ro.person_id AND oy.year=strftime('%Y',c.signed_at)
+    GROUP BY ro.person_id, c.id
+  ), totals AS (
+    SELECT person_id, COUNT(*) contract_count, COUNT(DISTINCT eik) company_count, SUM(amount_eur) total_eur,
+      SUM(CASE WHEN in_window THEN amount_eur END) window_eur, MAX(in_window) has_window
+    FROM person_contracts GROUP BY person_id
+  )
+  SELECT pe.person_id, pe.identity, pe.name, t.*,
+    (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1,
+      'registryRole',co.registry_role,'annual',json(co.annual))) FROM (
+      SELECT ro.eik, COALESCE(b.name, ro.eik) company,
+        CASE WHEN ro.owner THEN 'owner' ELSE 'manager' END registry_role,
+        -- The annual declarations for a year the register records the ownership that do not tie to this ЕИК,
+        -- with what each names; the name comparison is made below.
+        (SELECT json_group_array(json_object('year',d.declared_year,'named',json((SELECT json_group_array(di.entity_raw)
+          FROM declared_interests di WHERE di.declaration_id=d.id)))) FROM declarations d
+          JOIN declaration_metadata m ON m.declaration_id=d.id AND lower(m.declaration_type) IN ('annualy','annual','yearly')
+          WHERE d.person_id=pe.person_id AND d.declared_year IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM declaration_companies dc WHERE dc.declaration_id=d.id AND dc.eik=ro.eik)
+            AND EXISTS (SELECT 1 FROM registry_roles r WHERE r.subject_id=pe.identity AND r.subject_kind='person'
+              AND r.eik=ro.eik AND r.role IN ('sole_owner','partner','trader') AND r.added_on<>''
+              AND date(r.added_on)<=date(d.declared_year||'-12-31')
+              AND (r.removed_on IS NULL OR date(r.removed_on)>date(d.declared_year||'-12-31'))
+              AND (r.uncertain_after IS NULL OR date(r.uncertain_after)>date(d.declared_year||'-12-31')))) annual
+      FROM roles ro
+      LEFT JOIN bidders b ON b.eik_normalized=ro.eik WHERE ro.person_id=pe.person_id GROUP BY ro.eik ORDER BY b.name
+    ) co) companies,
+    (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year))
+      FROM declarations d WHERE d.person_id=pe.person_id) offices
+  FROM people pe JOIN totals t ON t.person_id=pe.person_id
+  ORDER BY t.has_window DESC, t.total_eur DESC, pe.identity`,
+    )
+    .bind(authorityId ?? null)
+    .all<{
+      person_id: string;
+      identity: string;
+      name: string;
+      contract_count: number;
+      company_count: number;
+      total_eur: number | null;
+      window_eur: number | null;
+      has_window: number;
+      companies: string;
+      offices: string;
+    }>();
+  return result.results.map((r) => ({
+    official: r.name,
+    officialSlug: personSlug(r.person_id),
+    personIdentity: r.identity,
+    institution: null,
+    position: null,
+    companyCount: r.company_count,
+    companies: (
+      JSON.parse(r.companies) as {
+        company: string;
+        eik: string;
+        self: number;
+        family: number;
+        registry: number;
+        registryRole: 'owner' | 'manager';
+        annual: { year: string; named: string[] }[];
+      }[]
+    ).map(({ annual, ...c }) => ({
+      ...c,
+      // A document naming the company under any spelling names it; a blank one names nothing.
+      missingYears: [
+        ...new Set(
+          annual
+            .filter((d) => !d.named.some((n) => companyNamesAlike(n, c.company)))
+            .map((d) => d.year),
+        ),
+      ].sort(),
+    })),
+    soleCompany: null,
+    contractCount: r.contract_count,
+    contractValueEur: r.total_eur,
+    contemporaneousValueEur: r.window_eur,
+    stakeKind: 'registry' as const,
+    ownInstitution: false,
     hasContemporaneous: !!r.has_window,
     declaredOffices: JSON.parse(r.offices) as {
       institution: string | null;
