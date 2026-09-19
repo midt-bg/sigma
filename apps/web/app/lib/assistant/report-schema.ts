@@ -56,6 +56,22 @@ export interface EmitTableColumn {
   format: CellFormat;
   link?: { kind: EntityKind; idCol: string }; // renderer builds the canonical /companies/:eik etc.
 }
+// Compile-time pin for the explicit column rebuild in bindReport (case 'table'): every key of
+// EmitTableColumn — and of its `link` — must be listed here, so a field added to the type without a
+// line in the rebuild is a tsc error (a missing property below), not a silent drop on the way to the
+// renderer (review f/u, ydimitrof). report-schema.test.ts pins the runtime side: the rebuild emits
+// exactly these keys.
+export const REBUILT_COLUMN_KEYS: Record<keyof EmitTableColumn, true> = {
+  key: true,
+  header: true,
+  align: true,
+  format: true,
+  link: true,
+};
+export const REBUILT_LINK_KEYS: Record<keyof NonNullable<EmitTableColumn['link']>, true> = {
+  kind: true,
+  idCol: true,
+};
 export interface EmitTable {
   type: 'table';
   resultId: string; // rows come wholesale from this result — the model cannot inject fabricated rows
@@ -225,16 +241,45 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // 40 chars of the unit, so no legitimate amount is missed.
   /(?:€|eur)\s*\d[\d.,\s]{0,40}/giu, // €1234, EUR 1 234 (currency-first)
   /\d[\d.,\s]{0,40}(?:€|лв\.?|eur|евро|лева)/giu, // 1 234 лв, 1234 евро
-  /\d[\d.,\s]{0,40}(?:млн|млрд|хил)\.?/giu, // 12 млрд, 1,2 млн
+  /\d[\d.,\s]{0,40}(?:трлн|млрд|млн|хил)\.?/giu, // 12 млрд, 1,2 млн, 12 трлн
   /\d{1,3}(?:[.,\s'’٫٬]\d{3})+/gu, // grouped: 1 234, 1,234,567, 12'000'000, 2٬500٬000 (Arabic sep)
   /\d(?:[.,]\d+)?[eE][+-]?\d+/gu, // scientific notation: 1.2e10, 12E9
   /\d{5,}/gu, // 10000+ (years are ≤4 digits)
   // Spelled-out magnitudes / percentages / ratios bypassed the digit-only patterns above — a model could
-  // write "12 милиарда", "два милиарда", "5 милиона", "95%", "деветдесет процента", "12 на сто",
-  // "3,5 пъти" and land an unbound quantity on the public report (review #80). Flag the unit words too.
-  // NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches after a
-  // space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
-  /милиард|милион|хиляд/giu, // spelled magnitudes (incl. word-only "два милиарда", "триста хиляди")
+  // write "12 милиарда", "два милиарда", "5 милиона", "три трилиона", "95%", "деветдесет процента",
+  // "12 на сто", "3,5 пъти" and land an unbound quantity on the public report (review #80). Flag the unit
+  // words too. NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches
+  // after a space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
+  // The magnitude family shares two suffixes: -ИЛИОН (милион, билион, трилион, квадрилион, квинтилион,
+  // секстилион, … — note "мил-ион" ⊃ "илион") and -ИЛИАРД (милиард; "мил-иард" ⊃ "илиард").
+  // Matching the SUFFIXES — not an explicit list — closes the row upward for good: an earlier list stopped
+  // at квадрилион and let "3 квинтилиона лева" slip (the currency pattern can't bridge the digit to "лева"
+  // across the word), the exact "12 млрд." defamation vector some orders up (review #80 + f/u, ydimitrof).
+  // The suffixes are ANCHORED to the numeral prefixes (м-, б-, тр-, квадр-, квинт-, секст-, септ-,
+  // окт-, нон-, дец-: every Bulgarian magnitude through 10^33) rather than matched bare: the bare
+  // suffix also matched "павилион(и)" — kiosks/bus-stop shelters, a ROUTINE tender subject — and
+  // rejected a legitimate title as an unbound number the model cannot rewrite (review f/u). A
+  // `\p{L}` lookaround cannot separate "пав-илион" from "секст-илион" (both start at a word edge),
+  // so the prefix list is the right tool; it stays closed upward for any real-world magnitude.
+  // Inflections (милиона/милиарди/милионен) and "милионер" still match — over-flagging toward an
+  // unbound figure is the safe direction; "Илион" (Troy) and "билярд" (the game) no longer do.
+  // Digit forms are already caught by `\d{5,}` above.
+  // млрд/млн/трлн flag when ANY word precedes them, not only a listed numeral: "дванадесет млрд." has
+  // neither a digit (the \d…млрд pattern above needs one) nor a full-word suffix (review f/u,
+  // ydimitrof), and a CLOSED numeral list proved leaky — "два и половина млрд." (the word before the
+  // unit is "половина"), "двайсет млн.", "стотина млн.", "четвърт млрд." all passed it (review f/u on
+  // #321). Bare, the abbreviation is a UNIT — "Стойност (млн. €)" is the site's own column-header
+  // style and carries no number — so it must not flag when only punctuation, a line start or a unit
+  // PREPOSITION ("в млн. лв.", "изразени във млрд.") precedes it. A noun directly before it
+  // ("Стойност млн. €") IS flagged: without a complete numeral dictionary it is indistinguishable from
+  // "стотина млн.", and over-flagging toward an unbound figure is the safe direction (the model is
+  // asked to parenthesise the unit). `трлн` rides this branch AND the digit branch above: "три трлн
+  // лева" / "12 трлн. лева" have no `-илион` stem and no млн/млрд (review f/u, ydimitrof). Only the
+  // abbreviations Bulgarian financial writing actually uses are listed — an invented "квдрлн" would
+  // be a pattern nobody writes, and the full word (квадрилион) is already caught by the stem above.
+  // The digit-less "хил." residue stays accepted: thousands are not the defamation-scale vector.
+  /(?:м|б|тр|квадр|квинт|секст|септ|окт|нон|дец)ил(?:ион|иард)|хиляд/giu, // spelled magnitudes
+  /(?<!\p{L})(?!(?:в|във|на|по|от|до|за|към|при|с|със|и|или)(?!\p{L}))\p{L}+[\s\u00a0]+(?:трлн|млрд|млн)(?!\p{L})/giu, // word (numeral, fraction, approximation…) + трлн/млрд/млн
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
@@ -467,7 +512,26 @@ export function bindReport(
         if (r) {
           for (const col of b.columns)
             gateProse(col.header, `${at}: material number in column header "${col.key}"`, errors);
-          const columns = b.columns.map((c) => ({ ...c, header: sanitizeProse(c.header) }));
+          // Build each resolved column EXPLICITLY (not `{ ...c }`) so only the known fields reach the
+          // renderer — a spread would carry any extra model-supplied property (validateEmitShape does
+          // not reject unknown keys) straight through. The same goes one level DOWN: `link` is rebuilt
+          // from its two known fields, not copied by reference, or an extra key inside it (an `href`)
+          // would ride into the frozen report. `align`/`link` are enum-validated upstream; a `null`
+          // (accepted there as "not given") folds to absent here. REBUILT_COLUMN_KEYS/REBUILT_LINK_KEYS
+          // (top of file) pin this field list to the type, so it cannot fall behind a type change.
+          const columns: EmitTableColumn[] = b.columns.map((c) => ({
+            key: c.key,
+            header: sanitizeProse(c.header),
+            ...(c.align != null ? { align: c.align } : {}),
+            // Unconditional, unlike `align`/`link`: `format` is MANDATORY on every column —
+            // validateEmitShape rejects the block unless `isFormat(c.format)` holds (emit-report-schema.ts),
+            // and EmitTableColumn types it required — so `format: undefined` is unreachable here and a
+            // conditional spread would only imply an optionality the contract does not have
+            // (review f/u, ydimitrof: the premise "if the schema allows a column without format" does
+            // not hold — it does not).
+            format: c.format,
+            ...(c.link != null ? { link: { kind: c.link.kind, idCol: c.link.idCol } } : {}),
+          }));
           if (r.rows.length === 0) {
             // An empty (0-row) result carries no column metadata, so requireCols would reject every
             // reference and force the model to retry on dangling errors — render an empty table instead

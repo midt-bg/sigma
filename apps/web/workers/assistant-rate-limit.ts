@@ -34,9 +34,14 @@ export async function rateLimitAssistantRoute(
 // not just POST — and assistant.chat exports only `action`, so a `PUT /assistant/chat` runs the full
 // embeddings + BgGPT loop. Gating on `method === 'POST'` let those non-POST methods reach the paid loop
 // completely unthrottled. Throttle any non-GET/HEAD request to the path instead (GET/HEAD hit no loader
-// and 405 cheaply) so no method that triggers the action can bypass the limiter (review #80, follow-up).
+// and fail cheaply — a 400 from the router, no work runs) so no method that triggers the action can
+// bypass the limiter (review #80, follow-up).
 function isAssistantRequest(request: Request): boolean {
+  const path = normalizedPathname(request);
+  // GET /assistant/health runs a Vectorize point read and, on a cold environment, ONE embedding batch
+  // (#328/#346) — cheap, but a public request that can spend Workers AI is throttled, any method.
+  if (path === '/assistant/health') return true;
   const method = request.method;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
-  return normalizedPathname(request) === '/assistant/chat';
+  return path === '/assistant/chat';
 }
