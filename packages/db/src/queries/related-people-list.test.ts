@@ -267,3 +267,50 @@ it('names the only company of a single-company declarant, and tells own, family 
     db.close();
   }
 });
+
+// ADR-0047 §3 put management of a private company beside a stake, but the query implemented only
+// `manager` — the ООД's word for it. A company limited by shares is run by its съвет на директорите or
+// управителен съвет, whose members decide whether it bids exactly as an управител does; leaving them out
+// showed the manager of a small ООД and hid the board of a large АД. Oversight seats stay out: they
+// appoint and check, they do not manage.
+it('counts the governing body of a private winner, not the seats that only oversee it', async () => {
+  const db = new DatabaseSync(':memory:');
+  const indent = 'a'.repeat(64);
+  const rolesFor = async (role: string) => {
+    db.exec(`DELETE FROM registry_roles;
+      INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${indent}','person','${role}','333333333');`);
+    return await getRegistryRolePersonRows(d1FromSqlite(db));
+  };
+  try {
+    db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+      CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
+      CREATE TABLE interest_links(person_id,status,interest_class);
+      CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type);
+      CREATE TABLE declared_interests(declaration_id,entity_raw);
+      CREATE TABLE declaration_companies(declaration_id,eik);
+      CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name,ownership_kind);
+      CREATE TABLE company_totals(bidder_id,contracts);
+      CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
+      CREATE TABLE tenders(id PRIMARY KEY,authority_id);
+      INSERT INTO persons VALUES('p','Лице Роля');
+      INSERT INTO person_registry_links VALUES('p','${indent}');
+      INSERT INTO declarations VALUES('d20','p','Община','Кмет','2020');
+      INSERT INTO declaration_metadata VALUES('d20','Annualy');
+      INSERT INTO bidders VALUES('b3','333333333','Частно',NULL);
+      INSERT INTO company_totals VALUES('b3',1);
+      INSERT INTO tenders VALUES('t','a');
+      INSERT INTO contracts VALUES('c4','b3','t','2020-01-01',7);`);
+
+    for (const role of ['manager', 'board_of_directors', 'management_board', 'governing_body']) {
+      const rows = await rolesFor(role);
+      expect(rows, role).toHaveLength(1);
+      expect(rows[0].companies[0], role).toMatchObject({ eik: '333333333', registryRole: 'manager' });
+    }
+    for (const role of ['supervisory_board', 'controlling_board', 'procurator', 'branch_manager'])
+      expect(await rolesFor(role), role).toEqual([]);
+  } finally {
+    db.close();
+  }
+});

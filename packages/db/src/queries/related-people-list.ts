@@ -116,9 +116,18 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
 }
 
 /** People with declarations whom the register records as an owner — partner, sole owner or sole trader — or
- *  a manager of a private procurement winner, and who have no published declared interest: the same row shape
- *  as the declared list, so the two read as one. A public enterprise is left out: a role there is a held
- *  position (ADR-0047). The period figures follow the declared office years. */
+ *  on the GOVERNING BODY of a private procurement winner, and who have no published declared interest: the
+ *  same row shape as the declared list, so the two read as one.
+ *
+ *  „Governing body" is the legal organ, not one legal form's word for it (ADR-0047 §3 decided management of a
+ *  private company shows beside a stake; `manager` alone implemented only the ООД's управител). A company
+ *  limited by shares is run by its съвет на директорите or управителен съвет, and its members decide whether
+ *  the company bids exactly as an управител does. Oversight-only seats — надзорен, контролен, проверителна
+ *  комисия — are NOT here: they appoint and check, they do not manage. Nor is a прокурист (an employee with
+ *  wide powers), a управител на клон (runs a branch, not the company), a ликвидатор or a синдик.
+ *
+ *  A public enterprise is left out whatever the role: a seat there is a held position (ADR-0047 §2). The
+ *  period figures follow the declared office years. */
 export async function getRegistryRolePersonRows(db: D1Database, authorityId?: string) {
   const result = await db
     .prepare(
@@ -130,7 +139,8 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   ), roles AS MATERIALIZED (
     SELECT pe.person_id, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner
     FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
-      AND r.role IN ('sole_owner','partner','trader','manager')
+      AND r.role IN ('sole_owner','partner','trader','manager',
+                     'board_of_directors','management_board','governing_body')
     JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
     JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
     WHERE ?1 IS NULL OR r.eik IN (SELECT eik FROM paid)
