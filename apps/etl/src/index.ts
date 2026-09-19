@@ -691,6 +691,13 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
  * `0 3 * * 0` outright, and `scheduled` compares this string to the one the platform sends. */
 export const DECLARATIONS_CRON = '0 3 * * 7';
 
+/** How long an operator-started run may be waited on before the workflow gives up with its OWN error.
+ * A Workflow instance is capped at 1,024 steps on the free plan, and each poll costs two (a sleep and a
+ * status read); an unbounded loop therefore ends in an opaque platform failure after about forty hours
+ * instead of a sentence naming what happened. The container has its own stall and failure limits — this
+ * is the outer bound, not the primary one. */
+const MAX_POLLS = { declarations: 288, rebuild: 288 } as const; // 24 h at 5 min, 48 h at 10 min
+
 /** An operator-started declarations run that waits for the container's outcome, so `wrangler workflows
  * trigger` reports the real result instead of a fire-and-forget. The cron starts the same run. */
 export class DeclarationsWorkflow extends WorkflowEntrypoint<Env> {
@@ -703,7 +710,7 @@ export class DeclarationsWorkflow extends WorkflowEntrypoint<Env> {
         .startRun(event.instanceId);
       return { runId, state };
     });
-    for (let poll = 0; ; poll++) {
+    for (let poll = 0; poll < MAX_POLLS.declarations; poll++) {
       await step.sleep(`wait-${poll}`, '5 minutes');
       const run = await step.do(`status-${poll}`, async () => {
         const current = await declarations.getByName('declarations').getRun();
@@ -729,6 +736,9 @@ export class DeclarationsWorkflow extends WorkflowEntrypoint<Env> {
       if (run.state !== 'running')
         throw new NonRetryableError(`Declaration run ${run.state}: ${run.reason ?? ''}`);
     }
+    throw new NonRetryableError(
+      `Declaration run still running after ${MAX_POLLS.declarations * 5} minutes; stop it or raise the bound`,
+    );
   }
 }
 
@@ -755,7 +765,7 @@ export class RebuildWorkflow extends WorkflowEntrypoint<
       });
       return { runId, state };
     });
-    for (let poll = 0; ; poll++) {
+    for (let poll = 0; poll < MAX_POLLS.rebuild; poll++) {
       await step.sleep(`wait-${poll}`, '10 minutes');
       const run = await step.do(`status-${poll}`, async () => {
         const current = await containers.getByName('rebuild').getRun();
@@ -775,6 +785,9 @@ export class RebuildWorkflow extends WorkflowEntrypoint<
       if (run.state !== 'running')
         throw new NonRetryableError(`Rebuild ${run.state}: ${run.reason ?? ''}`);
     }
+    throw new NonRetryableError(
+      `Rebuild still running after ${MAX_POLLS.rebuild * 10} minutes; stop it or raise the bound`,
+    );
   }
 }
 

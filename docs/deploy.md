@@ -60,6 +60,11 @@ wrangler deploy --config build/server/wrangler.deploy.json      # изпраща
 | `SIGMA_REBUILD_WORKFLOW_NAME` | *(незададена → `sigma-rebuild`)* | `sigma-rebuild-stage` | render → rebuild `[[workflows]] name` |
 | `SIGMA_DECLARATIONS_BUCKET` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → `r2_buckets[].bucket_name` и `DECLARATIONS_BUCKET` на etl worker-а |
 | `SUPPRESSION_SALT` / `SUPPRESSION_KEY_VERSION` | prod salt / версия | staging salt / версия | секрети на etl worker-а за контейнера на декларациите |
+
+> Секретите на etl worker-а се поставят в последната стъпка на деплоя, след самото качване. Между двете
+> има кратък прозорец, в който cron тик би заварил worker-а без токен. Ходът тогава не тръгва и в лога
+> стои `Missing declaration setting: …` — шумно и безвредно, нищо не се качва наполовина. Ако видите
+> това веднага след деплой, просто пуснете хода наново.
 | `SIGMA_D1_NAME` | *(незададена → `sigma`)* | активният `sigma-stage-blue` или `sigma-stage-green` | render → `database_name` **+** provisioning/seed скриптовете |
 | `SIGMA_CSV_CACHE_NAME` | *(незададена → `sigma-csv-cache`)* | `sigma-csv-cache-stage` | render → `r2_buckets[].bucket_name` на web worker-а |
 

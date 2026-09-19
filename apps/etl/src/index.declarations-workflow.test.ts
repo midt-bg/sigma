@@ -161,3 +161,24 @@ it('starts a rebuild of the named idle slot and waits for it', async () => {
     'Rebuild failed: counts',
   );
 });
+
+// A Workflow instance is capped at 1,024 steps on the free plan and each poll costs two, so an
+// unbounded wait ends in an opaque platform failure rather than a sentence naming what happened.
+it('gives up on a run that never finishes, with its own message', async () => {
+  const startRun = vi.fn(async () => ({ runId: 'run-1', state: 'running' }));
+  const getRun = vi.fn(async () => ({ runId: 'run-1', state: 'running' }));
+  const sleeps: string[] = [];
+  const step = {
+    do: async (_name: string, fn: () => unknown) => fn(),
+    sleep: async (name: string) => void sleeps.push(name),
+  };
+  await expect(
+    new DeclarationsWorkflow(
+      {} as never,
+      {
+        DECLARATIONS: { getByName: () => ({ startRun, getRun }) },
+      } as never,
+    ).run({ instanceId: 'workflow-1' } as never, step as never),
+  ).rejects.toThrow(/still running after 1440 minutes/);
+  expect(sleeps.length).toBe(288); // 24 hours at five minutes, well under the step cap
+});
