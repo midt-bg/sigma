@@ -42,16 +42,16 @@ test('declarationInstitution — the declaration names the institution, the list
   const regular = { institution: 'Община Ямбол', category: 'Кметове и общински съветници' };
   EQ(declarationInstitution({ ...regular, work: 'Общински съвет Ямбол' }), 'Общински съвет Ямбол');
 
-  // The case that forced the rule: the 2022 listing filed НЕК's executive director among the members of
-  // the European Parliament, between two actual MEPs. Trusting the listing published „Европейски
-  // парламент · Член" about a named man who is not an MEP.
+  // The case that forced the rule: a listing filed the head of a state company under a parliamentary
+  // category, while the document it points at names the company and the post. Trusting the listing
+  // publishes a named person as the holder of an office they never held.
   EQ(
     declarationInstitution({
-      institution: 'Европейски парламент',
-      category: 'Европейски парламент',
-      work: 'Национална електрическа компания ЕАД',
+      institution: 'Примерно събрание',
+      category: 'Примерно събрание',
+      work: 'Примерна държавна компания ЕАД',
     }),
-    'Национална електрическа компания ЕАД',
+    'Примерна държавна компания ЕАД',
   );
 
   // The listing still fills in where the document says nothing.

@@ -73,11 +73,10 @@ const LATIN_LOOKALIKE: Record<string, string> = {
  * The institution one declaration belongs to (ADR-0040).
  *
  * The DECLARATION decides. Its `<Work>` field is what the person signed; the register's listing is only
- * how the register arranged the documents, and the two can disagree. They did: the 2022 listing filed the
- * executive director of Национална електрическа компания among the members of the European Parliament,
- * between two actual MEPs, and the document that same row points at says „НАЦИОНАЛНА ЕЛЕКТРИЧЕСКА
- * КОМПАНИЯ ЕАД / ИЗПЪЛНИТЕЛЕН ДИРЕКТОР". Preferring the listing published „Европейски парламент · Член"
- * about a named man who is not an MEP.
+ * how the register arranged the documents, and the two can disagree. They do: a listing has been seen to
+ * file the head of a state company under a parliamentary category, while the document that same row
+ * points at names the company and the post. Preferring the listing then publishes a named person as the
+ * holder of an office they never held — the worst kind of error this site can make.
  *
  * The listing is the fallback, not the authority — in the folders of inaugural/final and of annual
  * declarations its node is the declaration TYPE (its name is the category's) and carries no institution
