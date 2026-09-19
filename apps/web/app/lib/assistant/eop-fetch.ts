@@ -102,7 +102,9 @@ export async function fetchEopDay(
           return { label, error: 'невалиден JSON' };
         }
       } catch (e) {
-        return { label, error: e instanceof Error ? e.message : 'fetch error' };
+        // An Error can carry an empty message, and an empty string is a FALSY error: reported as it is,
+        // the failed fetch reads downstream as a successful one with no rows.
+        return { label, error: (e instanceof Error && e.message) || 'fetch error' };
       }
     }),
   );

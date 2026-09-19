@@ -1,5 +1,14 @@
 // describe_schema — the curated data dictionary the model reads before writing any SQL.
 //
+// It is ALSO the allow-list the SQL guard enforces (`ALLOWED_TABLES`, sql-ast-guard.ts), so a table
+// listed here is a table the model can read. Every table naming a PERSON is therefore absent on
+// purpose: the assistant answers about institutions, companies and contracts, never about named
+// individuals. `search_index` used to be listed and quietly broke that — its rows include kinds
+// 'official' and 'person', i.e. the declarants' names with their post and their linked money, so a
+// plain `SELECT … FROM search_index` handed the model exactly the people the rest of the list keeps
+// out. Nothing used it (FTS MATCH is rejected by the parser anyway; free-text lookup goes through
+// `semantic_search`), so it is gone rather than fenced.
+//
 // Per spec §9 point 2 this is the highest-leverage prompt asset: a weak 27B writes correct SQL only
 // if the dictionary spells out the non-obvious traps it cannot guess. Getting `SUM(amount)` instead
 // of `SUM(amount_eur)` returns a garbage total attributed to АОП — defamation/disinfo by accident.
@@ -100,12 +109,6 @@ export const TABLES: TableDoc[] = [
     grain: 'поток възложител→изпълнител',
     columns:
       'authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts',
-  },
-  {
-    name: 'search_index',
-    grain: 'FTS5 индекс',
-    columns:
-      "kind ('authority'|'company'|'contract'), ref, title, ident, subtitle, amount UNINDEXED",
   },
   {
     name: 'data_freshness',
