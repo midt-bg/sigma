@@ -1,13 +1,12 @@
 // describe_schema — the curated data dictionary the model reads before writing any SQL.
 //
 // It is ALSO the allow-list the SQL guard enforces (`ALLOWED_TABLES`, sql-ast-guard.ts), so a table
-// listed here is a table the model can read. Every table naming a PERSON is therefore absent on
-// purpose: the assistant answers about institutions, companies and contracts, never about named
-// individuals. `search_index` used to be listed and quietly broke that — its rows include kinds
-// 'official' and 'person', i.e. the declarants' names with their post and their linked money, so a
-// plain `SELECT … FROM search_index` handed the model exactly the people the rest of the list keeps
-// out. Nothing used it (FTS MATCH is rejected by the parser anyway; free-text lookup goes through
-// `semantic_search`), so it is gone rather than fenced.
+// listed here is a table the model can read. The line is drawn at what the site PUBLISHES, not at
+// whether a row names a person: the assistant is a better way to search what is already on the page,
+// and refusing it there would only make the same public fact harder to reach. `search_index` is
+// therefore listed — its rows are the profiles the site serves, 'official' and 'person' included.
+// What the site does not publish stays out at every route: `related_persons_internal` carries names
+// that are never shown (ADR-0032), and the guard's own test walks every way of reaching it.
 //
 // Per spec §9 point 2 this is the highest-leverage prompt asset: a weak 27B writes correct SQL only
 // if the dictionary spells out the non-obvious traps it cannot guess. Getting `SUM(amount)` instead
@@ -109,6 +108,12 @@ export const TABLES: TableDoc[] = [
     grain: 'поток възложител→изпълнител',
     columns:
       'authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts',
+  },
+  {
+    name: 'search_index',
+    grain: 'FTS5 индекс',
+    columns:
+      "kind ('authority'|'company'|'contract'|'official'|'person'), ref, title, ident, subtitle, amount UNINDEXED",
   },
   {
     name: 'data_freshness',
