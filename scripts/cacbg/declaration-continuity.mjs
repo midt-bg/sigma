@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { declarantNameKey } from './source-identity.mjs';
 import { institutionMatchKey } from './institutions.mjs';
 
-export const CONTINUITY_RULE = 'declaration-continuity-3';
+export const CONTINUITY_RULE = 'declaration-continuity-4';
 export const COMPANY_AUTHOR_BASIS = 'company_author';
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const key = (...values) => JSON.stringify(values);
@@ -39,8 +39,20 @@ export function declarationContinuity(filings, resolveCompany) {
         .replace(/^ОБЩИНА\s+(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u, '')
         .replace(/^(?:ГР|С)\.\s*/u, '')
         .trim();
-    const work = employer(f.work),
-      role = text(f.declaredPosition);
+    // One field can name SEVERAL employers: a shared chief architect writes „ОБЩИНА ДВЕ МОГИЛИ; ОБЩИНА
+    // БОРОВО И ОБЩИНА ТУТРАКАН", and read as one string that matches no filing naming just one of them —
+    // his own next declaration included. Split only where the list is unmistakable: a semicolon, or „И"
+    // followed by a repeated body word. A plain comma is NOT a separator; institution names contain them
+    // („Министерство …, дирекция …") and splitting there would invent employers.
+    const works = [
+      ...new Set(
+        String(f.work ?? '')
+          .split(/;|\s+И\s+(?=ОБЩИНСКИ СЪВЕТ\b|ОБЩИНА\b|ОБЛАСТ\b|ОБЛАСТНА АДМИНИСТРАЦИЯ\b|ОБЩИНСКА АДМИНИСТРАЦИЯ\b)/iu)
+          .map(employer)
+          .filter(Boolean),
+      ),
+    ];
+    const role = text(f.declaredPosition);
     const doc = {
       id: `cacbg:${f.folder}:${f.xmlFile}`,
       hash: f.sourceHash,
@@ -62,8 +74,9 @@ export function declarationContinuity(filings, resolveCompany) {
       /\d/.test(act) &&
       /\d/.test(date)
     )
-      add('appointment_act', [name, work, role, year, f.declarationType, act, date], doc);
-    if (year) add('employment_years', [name, work, role], doc);
+      for (const work of works)
+        add('appointment_act', [name, work, role, year, f.declarationType, act, date], doc);
+    if (year) for (const work of works) add('employment_years', [name, work, role], doc);
     for (const p of [...(f.companyEvidence ?? [])].sort((a, b) => key(a).localeCompare(key(b)))) {
       if (
         !['self', 'related'].includes(p.holderRelation) ||
