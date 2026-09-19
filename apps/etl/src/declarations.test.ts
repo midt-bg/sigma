@@ -100,10 +100,10 @@ it('bounds automatic retries when containers repeatedly stop without advancing',
   const f = fixture();
   await f.job().startRun();
   await f.job().alarm();
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 6; attempt++) {
     f.container.running = false;
     await f.job().alarm();
-    if (attempt < 3) await f.resume();
+    if (attempt < 6) await f.resume();
   }
   // A container that never answers cannot be told from one the platform never provided, so the bound is
   // the short cold-start one — the run still ends after three silent attempts.
@@ -111,7 +111,7 @@ it('bounds automatic retries when containers repeatedly stop without advancing',
     state: 'failed',
     reason: expect.stringContaining('Container gave no sign of life'),
   });
-  expect(f.container.start).toHaveBeenCalledTimes(3);
+  expect(f.container.start).toHaveBeenCalledTimes(6);
 });
 
 it('allows useful progress beyond six hours and recovers a stalled attempt', async () => {
@@ -447,16 +447,19 @@ it('tells a container that broke from one that never appeared', async () => {
   expect(g.run().retryAt - Date.now()).toBeLessThan(5 * 60_000);
 });
 
-// A run that has never seen a live container could equally be a broken image, so the patience is short.
-it('gives up quickly when no container has ever run in this run', async () => {
+// A run that has never seen a live container could equally be a broken image, so the patience is shorter
+// than for one that has — but long enough to ride out an evening when the platform is busy.
+it('gives up on a run that never gets a container, but not before it has waited', async () => {
   const f = fixture();
   await f.job().startRun('workflow-cold');
   f.container.start.mockImplementation(() => {});
   await f.job().alarm();
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     await f.job().alarm();
-    if (f.run().state === 'running') await f.resume();
+    expect(f.run().state, `изчакване ${i + 1}`).toBe('running');
+    await f.resume();
   }
+  await f.job().alarm();
   expect(f.run().state).toBe('failed');
   expect(f.run().reason).toMatch(/Container gave no sign of life/);
 });

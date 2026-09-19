@@ -93,8 +93,12 @@ const MAX_FAILURES = 3;
 const NO_CAPACITY = /no container instance that can be provided/i;
 const MAX_CAPACITY_WAITS = 12;
 /** Until a container has run ONCE in this run, a silent attempt could equally be a broken image, so the
- *  patience is short: a bad build must fail in minutes, not sit out four hours of waiting. */
-const MAX_COLD_CAPACITY_WAITS = 3;
+ *  patience is shorter — but not as short as it first was. Three waits ended after about a quarter of an
+ *  hour, and a busy evening killed run after run before any of them got a machine at all, while the cost
+ *  of that patience is only a sleeping alarm: nothing runs, nothing is billed. Giving up too early costs
+ *  a week of data for the Sunday run; waiting costs a few hours. Six waits ride out an evening and still
+ *  surface a bad build inside the same working day. */
+const MAX_COLD_CAPACITY_WAITS = 6;
 const CAPACITY_BACKOFF_MS = 5 * MINUTE;
 const MAX_CAPACITY_BACKOFF_MS = 40 * MINUTE;
 
