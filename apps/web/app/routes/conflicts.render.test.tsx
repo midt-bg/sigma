@@ -461,3 +461,10 @@ describe('/conflicts route — render', () => {
     ).not.toBeNull();
   });
 });
+
+// The register behind the declarations is the Сметна палата's (чл. 75 ЗСП); КПКОНПИ was closed in 2023.
+it('names the register that actually publishes the declarations', async () => {
+  await renderConflicts([link()]);
+  expect(text()).toContain('Публичния регистър на Сметната палата');
+  expect(text()).not.toContain('КПКОНПИ');
+});
