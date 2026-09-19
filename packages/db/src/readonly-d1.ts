@@ -1,18 +1,25 @@
 import { assertReadOnly, assertReadOnlyExec } from './readonly-sql';
+import { retryingStatement } from './retrying-d1';
 
 // A read-only view over a D1Database for the web runtime (issue #199). Cloudflare has no read-only D1
 // binding, so env.DB is read+write; this gates the two SQL entry points (.prepare, .exec) on the
-// read-only predicate and throws on the three methods web never uses: .batch takes opaque prepared
+// read-only predicate, and throws on the three methods web never uses: .batch takes opaque prepared
 // statements it cannot re-inspect, .withSession returns an unguarded handle, and .dump exfils the whole
 // DB. SQL is fixed at .prepare() time and .bind() only supplies values, so gating .prepare/.exec closes
-// every write entry point. The real D1PreparedStatement is returned unchanged — no per-call proxy on the
-// hot .bind/.all/.first path. Only web goes through here; the ETL worker keeps the raw binding.
+// every write entry point. Only web goes through here; the ETL worker keeps the raw binding.
+//
+// Being the one handle web reads through, it is also where a transient D1 fault is retried, so no route
+// can forget to (retrying-d1.ts). That costs one small wrapper object per .prepare() — nothing beside a
+// D1 round trip, and the reason the statement is no longer handed back untouched.
 class ReadonlyD1 implements D1Database {
   constructor(private readonly db: D1Database) {}
 
   prepare(query: string): D1PreparedStatement {
     assertReadOnly(query);
-    return this.db.prepare(query);
+    // Every statement past the guard is a SELECT, which is what makes a blind retry provably safe here
+    // — see retrying-d1.ts. A new route therefore cannot forget it the way loader-level retries were
+    // forgotten on most pages.
+    return retryingStatement(this.db.prepare(query));
   }
 
   exec(query: string): Promise<D1ExecResult> {

@@ -472,3 +472,24 @@ describe('recordingD1', () => {
     expect((await fake.db.prepare('SELECT * FROM lots').all()).results).toEqual([]);
   });
 });
+
+// `.raw()` answers with rows of values, and with `{ columnNames: true }` the names come first — the
+// shape D1 itself returns, so a wrapper over D1 can be tested without casting a hand-made object.
+it('raw serves rows of values, with the column names first on request', async () => {
+  const { db } = fakeD1([{ when: 'FROM t', raw: [[1, 'a']], rawColumns: ['n', 'label'] }]);
+  expect(await db.prepare('SELECT n, label FROM t').raw()).toEqual([[1, 'a']]);
+  expect(await db.prepare('SELECT n, label FROM t').raw({ columnNames: true })).toEqual([
+    ['n', 'label'],
+    [1, 'a'],
+  ]);
+  // A route that gives rows but no names still answers — with an empty name row, not by throwing.
+  const bare = fakeD1([{ when: 'FROM t', raw: [[1]] }]);
+  expect(await bare.db.prepare('SELECT n FROM t').raw({ columnNames: true })).toEqual([[], [1]]);
+});
+
+it('raw with no route is an unmatched query, not an empty answer', async () => {
+  const { db } = fakeD1([{ when: 'FROM t', all: [] }]);
+  await expect(db.prepare('SELECT 1 FROM other').raw()).rejects.toThrow(/other/);
+  // The permissive double answers it with no rows instead, like its other readers.
+  expect(await recordingD1().db.prepare('SELECT 1 FROM other').raw()).toEqual([]);
+});
