@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cacheKey } from './cache-key';
-import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from '../app/lib/query-params';
+import { CANONICAL_QUERY_PARAMS } from '../app/lib/query-params';
 
 function cacheUrl(input: string): URL {
   return new URL(cacheKey(new Request(input), 'deploy-test').url);
@@ -132,8 +132,7 @@ describe('CANONICAL_QUERY_PARAMS drift guard', () => {
     expect(consumed.has('bids')).toBe(true);
     expect(consumed.has('page')).toBe(true);
 
-    const allowed = new Set([...CANONICAL_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
-    const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
+    const undeclared = [...consumed].filter((p) => !CANONICAL_QUERY_PARAMS.has(p)).sort();
     expect(undeclared).toEqual([]);
   });
 

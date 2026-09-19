@@ -31,6 +31,9 @@ const profile: LoadedPersonProfile = {
   activity: emptyActivity,
   totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
   tieLayout: null,
+  aliases: [],
+  relatives: [],
+  namedBy: [],
 };
 
 const sources = [
@@ -115,6 +118,73 @@ describe('/persons/:id — source records', () => {
   });
 });
 
+describe('/persons/:id — archived declarations', () => {
+  it('renders a standalone source archive without presenting it as a combined profile', async () => {
+    await mount({
+      source: {
+        name: 'ИВАН ПЕТРОВ ТЕСТОВ',
+        declarations: [
+          {
+            id: 'test-declaration',
+            year: '2025',
+            template: 'interests',
+            type: 'Annual',
+            declaredOn: '2026-03-01',
+            submittedOn: '2026-03-02',
+            institution: 'Община Тестово',
+            position: 'Тестова длъжност',
+            url: 'https://register.cacbg.bg/test-declaration.xml',
+            companyEiks: [],
+          },
+        ],
+      },
+    });
+
+    expect(container.querySelector('.kicker')?.textContent).toBe('Декларации от източника');
+    expect(container.querySelector('h1')?.textContent).toBe('Иван Петров Тестов');
+    expect(container.querySelector('#declarations')?.textContent).toContain('Всички декларации');
+    expect(container.querySelector('#declaration-test-declaration')).not.toBeNull();
+    expect(container.querySelector('.profile-nav')).toBeNull();
+  });
+});
+
+describe('/persons/:id — split destinations', () => {
+  it('lists each destination with its kind, declaration count and available institutions', async () => {
+    await mount({
+      destinations: [
+        {
+          id: 'person:test-profile',
+          kind: 'person',
+          name: 'Иван Петров Тестов',
+          declaration_count: 1,
+          institutions: 'Община Тестово',
+        },
+        {
+          id: 'source:test-archive',
+          kind: 'source',
+          name: 'Иван Петров Тестов — архив',
+          declaration_count: 2,
+          institutions: null,
+        },
+      ],
+    });
+
+    expect(container.querySelector('.kicker')?.textContent).toBe('Длъжностни лица');
+    expect(container.querySelector('h1')?.textContent).toBe('Профили и декларации');
+    const rows = [...container.querySelectorAll('main li')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain('Обединен профил · 1 декларация');
+    expect(rows[0]!.textContent).toContain('Община Тестово');
+    expect(rows[1]!.textContent).toContain(
+      'Декларации с непотвърдена принадлежност · 2 декларации',
+    );
+    expect(rows[1]!.querySelectorAll('p')).toHaveLength(1);
+    for (const row of rows) {
+      expect(row.querySelector('a')?.getAttribute('href')).toMatch(/\?view=profile$/);
+    }
+  });
+});
+
 describe('/persons/:id — profile', () => {
   it('renders the combined profile under the person’s name', async () => {
     await mount(profile);
@@ -140,6 +210,15 @@ describe('/persons/:id — meta and headers', () => {
       expect(titleOf(tags)).toBe('Лице — СИГМА');
       expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
     }
+  });
+
+  it('titles a standalone declaration archive with its source name', () => {
+    const tags = meta({
+      data: { source: { name: 'ИВАН ПЕТРОВ ТЕСТОВ' } },
+      params: { id: HASH },
+      matches: [],
+    } as never);
+    expect(titleOf(tags)).toBe('Иван Петров Тестов — СИГМА');
   });
 
   it('points the canonical link at the person’s address when the origin is known', () => {

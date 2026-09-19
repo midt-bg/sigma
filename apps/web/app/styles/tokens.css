@@ -39,25 +39,11 @@
   --pos: var(--color-pos);
 
   /* Legacy token aliases — keep page-local inline styles working */
-  --bg: var(--paper);
-  --canvas: var(--paper-warm);
-  --surface: var(--paper);
   --text: var(--ink);
   --text-muted: var(--ink-mid);
-  --text-faint: var(--ink-soft);
-  --border: var(--rule);
-  --border-soft: var(--rule-soft);
-  --border-strong: var(--ink);
-  --link: var(--ink);
-  --link-hover: var(--accent);
-  --link-visited: var(--ink);
-  --focus: var(--accent);
   --warning: var(--accent);
   --warning-bg: var(--accent-bg);
   --warning-strong: var(--accent);
-  --success: var(--pos);
-  --success-bg: oklch(94% 0.04 165);
-  --info: var(--ink-mid);
 
   /* Strict 8-pt spacing scale */
   --s-1: 4px;

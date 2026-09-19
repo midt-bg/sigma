@@ -1,6 +1,12 @@
 import { Link, useSearchParams, data } from 'react-router';
 import { count, moneyBare } from '@sigma/shared';
-import { authorityIdFromSlug, getAuthorityName, getRelatedPersonRows, getDb } from '@sigma/db';
+import {
+  authorityIdFromSlug,
+  getAuthorityName,
+  getRelatedPersonRows,
+  getRegistryRolePersonRows,
+  getDb,
+} from '@sigma/db';
 import type { Route } from './+types/conflicts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -68,19 +74,28 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
   const sp = new URL(request.url).searchParams;
   const filters = conflictListFilters(sp);
-  const everyone = (await withDbRetry(() => getRelatedPersonRows(db, authorityId))).map(
-    ({ declaredOffices, ...row }) => ({
+  // Declared stakes first; then people the register alone records as owners of a winner, in the same row shape.
+  const everyone = (
+    await withDbRetry(() =>
+      Promise.all([
+        getRelatedPersonRows(db, authorityId),
+        getRegistryRolePersonRows(db, authorityId),
+      ]),
+    )
+  )
+    .flat()
+    .map(({ declaredOffices, ...row }) => ({
       ...row,
       declaredInstitutions: groupDeclaredInstitutions(declaredOffices),
-    }),
-  );
+    }));
   const persons = sortConflictRows(filterConflictRows(everyone, filters), filters.sort);
   const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
   const asked = Number(sp.get('page') || 1);
   const page = Math.min(pageCount, Number.isSafeInteger(asked) && asked > 0 ? asked : 1);
   const facets = {
-    self: everyone.filter((r) => r.stakeKind !== 'family').length,
-    family: everyone.filter((r) => r.stakeKind !== 'self').length,
+    self: everyone.filter((r) => r.stakeKind === 'self' || r.stakeKind === 'mixed').length,
+    family: everyone.filter((r) => r.stakeKind === 'family' || r.stakeKind === 'mixed').length,
+    registry: everyone.filter((r) => r.stakeKind === 'registry').length,
     own: everyone.filter((r) => r.ownInstitution).length,
     window: everyone.filter((r) => r.hasContemporaneous).length,
     institutions: institutionOptions(everyone, filters.institutions),
@@ -161,6 +176,25 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
                   <Chip>{c.self ? 'собствен и свързан дял' : 'дял на свързано лице'}</Chip>
                 </div>
               )}
+              {!c.self && !c.family && !!c.manages && (
+                <div>
+                  <Chip>декларирано управление</Chip>
+                </div>
+              )}
+              {c.registry && (
+                <div>
+                  <Chip>
+                    {c.registryRole === 'manager'
+                      ? 'управление по Търговския регистър'
+                      : 'дял по Търговския регистър'}
+                  </Chip>
+                  {c.missingYears?.length ? (
+                    <div className="small muted">
+                      не е посочено в годишната декларация за {c.missingYears.join(', ')} г.
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -204,20 +238,25 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   const groups: FilterGroup[] = [
     {
       key: 'stake',
-      label: 'Чий е делът',
+      label: 'Основание',
       type: 'radio',
       allLabel: 'всички',
       selected: filters.stake ? [filters.stake] : [],
       options: [
         {
           value: 'self',
-          label: 'собствен',
+          label: 'собствен дял или управление',
           count: facets.self,
         },
         {
           value: 'family',
-          label: 'на свързано лице',
+          label: 'дял на свързано лице',
           count: facets.family,
+        },
+        {
+          value: 'registry',
+          label: 'роля по Търговския регистър',
+          count: facets.registry,
         },
       ],
     },
@@ -273,14 +312,15 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         <Callout titleAs="h2" title="Как се извежда връзката — и какво не твърди">
           <p className="m-0">
             Основата са <strong>собствените декларации</strong> на лицата пред КПКОНПИ (публичен
-            регистър). Дружеството се установява чрез ЕИК или съгласувани данни за наименование,
-            седалище и вписани роли в Търговския регистър. Неясните и противоречивите съпоставяния
-            се задържат за проверка. <strong>Доказаните исторически връзки се запазват</strong> с
-            периодите и източниците им. Показваме и дял, деклариран на{' '}
-            <strong>свързано лице</strong> — наравно със собствения — защото декларацията съществува
-            именно за да е видимо дали публични пари стигат до дружество, свързано с човек с власт
-            над тези пари. <strong>Името на близкия не се показва и не се съхранява</strong>, а
-            видът на връзката <strong>не се твърди</strong> — казваме само „свързано лице", не
+            регистър). Дружеството е неговият ЕИК — деклариран или този, до който води декларираното
+            наименование — и се потвърждава от вписаните в Търговския регистър лица. Неясните и
+            противоречивите съпоставяния се задържат за проверка.{' '}
+            <strong>Доказаните исторически връзки се запазват</strong> с периодите и източниците им.
+            Показваме и дял, деклариран на <strong>свързано лице</strong> — наравно със собствения —
+            защото декларацията съществува именно за да е видимо дали публични пари стигат до
+            дружество, свързано с човек с власт над тези пари.{' '}
+            <strong>Името на близкия показваме само когато Търговският регистър го вписва</strong>,
+            а видът на връзката <strong>не се твърди</strong> — казваме само „свързано лице", не
             „съпруг" или „дете". Връзката означава деклариран интерес, а <strong>не</strong>{' '}
             нарушение или конфликт по закон. Повече:{' '}
             <Link to="/conflicts/methodology#shown">Методология → Какво показваме</Link>. Сигнал за

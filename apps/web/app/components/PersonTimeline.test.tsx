@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest';
 import type { ConflictLink } from '@sigma/api-contract';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { emptyActivity } from '../lib/person-profile.test-support';
-import { timelineCompanies } from '../lib/person-timeline';
+import { timelineCompanies, type TimelineCompany } from '../lib/person-timeline';
 import { PersonProfile } from './PersonProfile';
 import { PersonTimeline } from './PersonTimeline';
 import { PersonRolesTables } from './RegistryRoles';
@@ -27,7 +27,6 @@ it('shows one company for multiple source identities, sequential sections and hi
     ownInstitution: false,
     firstDeclaredYear: null,
     lastDeclaredYear: null,
-    matchMethod: 'exact_name_key',
     contractCount: 2,
     contractValueEur: 100,
     contemporaneousContractCount: 0,
@@ -108,6 +107,9 @@ it('shows one company for multiple source identities, sequential sections and hi
     activity: emptyActivity,
     totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
     tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
   };
   const companies = timelineCompanies(p);
   expect(companies).toHaveLength(1);
@@ -291,5 +293,225 @@ it('shows one company for multiple source identities, sequential sections and hi
   } finally {
     act(() => root.unmount());
     el.remove();
+  }
+});
+
+it('puts offices and public enterprises under „Заемани длъжности", private companies under „Дружества"', () => {
+  const role = (eik: string, name: string, ownershipKind?: 'municipal') => ({
+    company: { eik, name, href: `/companies/${eik}`, ...(ownershipKind ? { ownershipKind } : {}) },
+    role: 'manager' as const,
+    share: null,
+    sharePct: null,
+    addedOn: '2020-01-01',
+    removedOn: null,
+    entryNumber: 'e',
+    fetchedAt: '2026-09-01',
+  });
+  const p = {
+    person: {
+      slug: 'a'.repeat(64),
+      name: 'АННА ПЕТРОВА',
+      roles: [role('222222222', 'ЧАСТНО ООД'), role('111111111', 'ОБЩИНСКО ЕООД', 'municipal')],
+      companies: 2,
+      wonEur: 0,
+      asOf: '2026-09-01',
+      network: { center: null, nodes: [], edges: [], omitted: 0 },
+    },
+    name: 'АННА ПЕТРОВА',
+    links: [],
+    declarations: [],
+    timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
+    activity: emptyActivity,
+    totals: { companies: 2, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as LoadedPersonProfile;
+  const companies = timelineCompanies(p);
+  expect(companies.map((c) => [c.eik, c.publicEnterprise])).toEqual([
+    ['111111111', true],
+    ['222222222', false],
+  ]);
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={companies} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub />));
+    const order = [...el.querySelectorAll('.person-time-section, .person-time-company')].map((n) =>
+      n.textContent!.slice(0, 20),
+    );
+    expect(order[0]).toBe('Заемани длъжности');
+    expect(order[1]).toContain('ОБЩИНСКО');
+    expect(order[2]).toBe('Дружества');
+    expect(order[3]).toContain('ЧАСТНО');
+  } finally {
+    act(() => root.unmount());
+    el.remove();
+  }
+});
+
+it('renders nothing when there are no dated facts or companies', () => {
+  const p = {
+    person: null,
+    name: 'Иван Петров Тестов',
+    links: [],
+    declarations: [],
+    timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
+    activity: emptyActivity,
+    totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as LoadedPersonProfile;
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={[]} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub />));
+    expect(el.textContent).toBe('');
+  } finally {
+    act(() => root.unmount());
+    el.remove();
+  }
+});
+
+it('detects overflow, scrolls the timeline and explains incomplete registry periods', () => {
+  const p = {
+    person: null,
+    name: 'Иван Петров Тестов',
+    links: [],
+    declarations: [],
+    timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
+    activity: emptyActivity,
+    totals: { companies: 1, contracts: 3, valueEur: 100, declaredCount: 0, declaredEur: null },
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as LoadedPersonProfile;
+  const role = {
+    company: { name: '„Тест Груп“ ЕООД', eik: '111111111', href: '/companies/111111111' },
+    share: null,
+    sharePct: null,
+    removedOn: null,
+    entryNumber: 'test-entry',
+    fetchedAt: '2026-09-01',
+  };
+  const company = {
+    eik: '111111111',
+    name: '„Тест Груп“ ЕООД',
+    href: '/companies/111111111',
+    links: [],
+    observations: [],
+    declarations: [],
+    asOf: '2026-09-01',
+    publicEnterprise: false,
+    roles: [
+      { ...role, role: 'manager', addedOn: '2023-01-01' },
+      { ...role, role: 'owner', addedOn: '2021-01-01', uncertainAfter: '2024-01-01' },
+      { ...role, role: 'partner', addedOn: 'unknown' },
+    ],
+    contracts: [
+      {
+        eik: '111111111',
+        company: '„Тест Груп“ ЕООД',
+        year: '2025',
+        contracts: 1,
+        role: 1,
+        declared: 0,
+        eligible: 1,
+        valueEur: 100,
+      },
+      {
+        eik: '111111111',
+        company: '„Тест Груп“ ЕООД',
+        year: null,
+        contracts: 2,
+        role: 0,
+        declared: 0,
+        eligible: 0,
+        valueEur: null,
+      },
+    ],
+  } as TimelineCompany;
+
+  let scrollWidth = 500;
+  const scrollWidthSpy = vi
+    .spyOn(HTMLElement.prototype, 'scrollWidth', 'get')
+    .mockImplementation(() => scrollWidth);
+  const clientWidthSpy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(200);
+  const scrollBy = vi.fn();
+  const originalScrollBy = HTMLElement.prototype.scrollBy;
+  Object.defineProperty(HTMLElement.prototype, 'scrollBy', {
+    configurable: true,
+    value: scrollBy,
+  });
+  const observe = vi.fn();
+  const disconnect = vi.fn();
+  let resize: ResizeObserverCallback = () => undefined;
+  class TestResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      resize = callback;
+    }
+    observe = observe;
+    unobserve = vi.fn();
+    disconnect = disconnect;
+  }
+  vi.stubGlobal('ResizeObserver', TestResizeObserver);
+
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={[company]} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub initialEntries={['/?view=profile']} />));
+    const canvas = el.querySelector<HTMLElement>('#person-time-canvas')!;
+    expect(canvas.scrollLeft).toBe(500);
+    expect(observe).toHaveBeenCalledWith(canvas);
+    expect(el.querySelector('.person-time-controls')?.textContent).toContain('2021–2026');
+    const buttons = [...el.querySelectorAll<HTMLButtonElement>('.person-time-controls button')];
+    act(() => buttons[0]!.click());
+    act(() => buttons[1]!.click());
+    expect(scrollBy).toHaveBeenNthCalledWith(1, { left: -180 });
+    expect(scrollBy).toHaveBeenNthCalledWith(2, { left: 180 });
+
+    expect(el.querySelector('.time-open')).not.toBeNull();
+    expect(el.querySelector('[aria-label*="неустановено след"]')).not.toBeNull();
+    expect(el.textContent).toContain('Няма установен период');
+    expect(el.textContent).toContain('Договори без дата: 2');
+    const eligible = el.querySelector<HTMLAnchorElement>('.time-contract.eligible')!;
+    expect(eligible.textContent).toBe('1');
+    expect(eligible.getAttribute('href')).toContain('basis=matched');
+    expect(eligible.getAttribute('href')).toContain('view=profile');
+    expect(el.querySelector('.time-contract.context')).toBeNull();
+
+    scrollWidth = 200;
+    act(() => resize([], {} as ResizeObserver));
+    expect(el.querySelector('.person-time-controls')).toBeNull();
+  } finally {
+    act(() => root.unmount());
+    expect(disconnect).toHaveBeenCalledOnce();
+    el.remove();
+    vi.unstubAllGlobals();
+    scrollWidthSpy.mockRestore();
+    clientWidthSpy.mockRestore();
+    if (originalScrollBy) {
+      Object.defineProperty(HTMLElement.prototype, 'scrollBy', {
+        configurable: true,
+        value: originalScrollBy,
+      });
+    } else {
+      delete (HTMLElement.prototype as Partial<HTMLElement>).scrollBy;
+    }
   }
 });

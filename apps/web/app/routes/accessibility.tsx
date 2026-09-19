@@ -1,9 +1,9 @@
 import type { Route } from './+types/accessibility';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { publicCache } from '../lib/cache';
-import { contactEmail } from '../lib/contact';
+import { cached } from '../lib/cache';
 import { seoMeta } from '../lib/meta';
+import { CONTACT_EMAIL } from '../lib/contact';
 
 export function meta({ matches }: Route.MetaArgs) {
   return seoMeta({
@@ -14,15 +14,9 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 
-export function loader({ context }: Route.LoaderArgs) {
-  return { contact: contactEmail(context.cloudflare.env) };
-}
-
-export default function Accessibility({ loaderData }: Route.ComponentProps) {
+export default function Accessibility() {
   return (
     <>
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Достъпност' }]} />
@@ -89,8 +83,8 @@ export default function Accessibility({ loaderData }: Route.ComponentProps) {
           <h2 id="feedback">Обратна връзка и контакт</h2>
           <p>
             Ако срещнете затруднение при достъп до съдържание или функционалност, изпратете сигнал
-            на <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>. Опишете страницата
-            или URL адреса, засегнатата функционалност и използваната помощна технология, когато е
+            на <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>. Опишете страницата или URL
+            адреса, засегнатата функционалност и използваната помощна технология, когато е
             приложимо.
           </p>
         </section>

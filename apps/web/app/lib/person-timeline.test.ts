@@ -94,6 +94,9 @@ function profile(over: {
     activity: emptyActivity,
     totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
     tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
   };
 }
 

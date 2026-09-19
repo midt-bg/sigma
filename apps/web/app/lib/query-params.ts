@@ -26,10 +26,6 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'top', // top-20 vs top-50 on /flows, /competition
   'type',
   'value',
-  'view', // /conflicts/official — the profile instead of the list of matching people
+  'view', // /persons — the profile instead of the list of matching people
   'year',
 ]);
-
-// Read but deliberately not response-affecting: excluded from the cache key, still kept in links. None
-// today; declared so a future one isn't silently absent.
-export const INTENTIONALLY_UNKEYED = new Set<string>([]);

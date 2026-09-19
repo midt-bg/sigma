@@ -7,7 +7,7 @@ import type { EntityKind } from '@sigma/api-contract';
 import { normalizeAuthoritySort, normalizeCompanySort, normalizeContractSort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
-import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from './query-params';
+import { CANONICAL_QUERY_PARAMS } from './query-params';
 
 export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25 } as const;
 export const MAX_MULTI_VALUES = 50;
@@ -229,8 +229,7 @@ export function withParams(
     return i === -1 ? PARAM_ORDER.length : i;
   };
 
-  const isKnown = (key: string) =>
-    CANONICAL_QUERY_PARAMS.has(key) || INTENTIONALLY_UNKEYED.has(key);
+  const isKnown = (key: string) => CANONICAL_QUERY_PARAMS.has(key);
 
   const keys = Array.from(new Set(next.keys()))
     .filter(isKnown)

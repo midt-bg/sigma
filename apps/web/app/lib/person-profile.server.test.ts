@@ -10,6 +10,9 @@ const q = vi.hoisted(() => ({
   getPersonDeclarations: vi.fn(),
   getPersonActivity: vi.fn(),
   getPersonTimeline: vi.fn(),
+  getPersonSourceNames: vi.fn(async (): Promise<string[]> => []),
+  getPersonRelatives: vi.fn(async () => []),
+  getPersonNamedBy: vi.fn(async () => []),
 }));
 vi.mock('@sigma/db', () => q);
 import { loadPersonProfile } from './person-profile.server';
@@ -90,4 +93,18 @@ it('limits company mentions to eligible profiles while retaining every source an
     interests: [],
   });
   expect(declarations[0]!.interests).toHaveLength(3); // source objects remain intact
+});
+
+it('lists the other names the declarations were filed under, never the shown name itself', async () => {
+  q.getPersonScope.mockResolvedValue({ indent: null, officialIds: ['p'] });
+  q.getOfficialConflicts.mockResolvedValue({ official: 'Ивана Петрова Тестова', links: [] });
+  q.getPersonDeclarations.mockResolvedValue([]);
+  q.getPersonActivity.mockResolvedValue(emptyActivity);
+  q.getPersonTimeline.mockResolvedValue({ contracts: [], reads: [], observations: [] });
+  q.getPersonSourceNames.mockResolvedValue(['ИВАНА ПЕТРОВА ТЕСТОВА', 'Ивана Петрова Примерова']);
+  const p = (await loadPersonProfile(fakeD1([]).db, {
+    officialId: 'p',
+    search: new URLSearchParams(),
+  }))!;
+  expect(p.aliases).toEqual(['Ивана Петрова Примерова']);
 });

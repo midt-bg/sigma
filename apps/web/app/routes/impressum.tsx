@@ -1,9 +1,9 @@
 import type { Route } from './+types/impressum';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { publicCache } from '../lib/cache';
-import { contactEmail } from '../lib/contact';
+import { cached } from '../lib/cache';
 import { seoMeta } from '../lib/meta';
+import { CONTACT_EMAIL } from '../lib/contact';
 
 export function meta({ matches }: Route.MetaArgs) {
   return seoMeta({
@@ -15,15 +15,9 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 
-export function loader({ context }: Route.LoaderArgs) {
-  return { contact: contactEmail(context.cloudflare.env) };
-}
-
-export default function Impressum({ loaderData }: Route.ComponentProps) {
+export default function Impressum() {
   return (
     <>
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Импресум' }]} />
@@ -48,7 +42,7 @@ export default function Impressum({ loaderData }: Route.ComponentProps) {
             <div className="row">
               <dt>Електронна поща</dt>
               <dd>
-                <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>
+                <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
               </dd>
             </div>
           </dl>

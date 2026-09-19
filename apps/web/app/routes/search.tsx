@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
 import { Form, Link } from 'react-router';
 import { count, money, plural, searchTokens } from '@sigma/shared';
-import { MAX_QUERY_TOKENS, search, getDb } from '@sigma/db';
+import { CYRILLIC, MAX_QUERY_TOKENS, deHomoglyph, search, getDb } from '@sigma/db';
 import type { SearchHit } from '@sigma/api-contract';
 import type { Route } from './+types/search';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { KIND_LABEL } from '../components/SmartSearch';
 import { Callout, Chip, OwnershipChip } from '../components/ui';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { personName } from '../lib/person-name';
 
 export function meta({ data }: Route.MetaArgs) {
@@ -18,39 +19,9 @@ export function meta({ data }: Route.MetaArgs) {
   ];
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(300) };
-}
+export const headers = cached(300);
 
 const MAX_HIGHLIGHT_TOKENS = 8;
-const HOMOGLYPHS: Record<string, string> = {
-  a: 'а',
-  c: 'с',
-  e: 'е',
-  o: 'о',
-  p: 'р',
-  x: 'х',
-  y: 'у',
-  k: 'к',
-  m: 'м',
-  t: 'т',
-  A: 'А',
-  B: 'В',
-  C: 'С',
-  E: 'Е',
-  H: 'Н',
-  K: 'К',
-  M: 'М',
-  O: 'О',
-  P: 'Р',
-  T: 'Т',
-  X: 'Х',
-};
-const CYRILLIC = /[\p{Script=Cyrillic}]/u;
-
-function deHomoglyph(q: string): string {
-  return q.replace(/[aceopxykmtABCEHKMOPTX]/g, (ch) => HOMOGLYPHS[ch] ?? ch);
-}
 
 // Share the FTS tokenizer with @sigma/db and the in-table search so all three agree on what counts as
 // a searchable term (incl. the ≥MIN_QUERY_TOKEN_CHARS filter — single chars no longer reach MATCH).
@@ -71,13 +42,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   return { results };
 }
 
-const KIND_LABEL: Record<string, string> = {
-  official: 'длъжностно лице',
-  authority: 'институция',
-  company: 'компания',
-  contract: 'договор',
-};
-
 function escapeRe(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -89,7 +53,10 @@ function highlight(text: string | null, re: RegExp | null): ReactNode {
 }
 
 function renderTitle(hit: SearchHit, re: RegExp | null) {
-  return highlight(hit.kind === 'official' ? personName(hit.title) : hit.title, re);
+  return highlight(
+    hit.kind === 'official' || hit.kind === 'person' ? personName(hit.title) : hit.title,
+    re,
+  );
 }
 
 // Search results are whole-card links; explanations remain on the destination profile.
@@ -105,7 +72,7 @@ function renderName(hit: SearchHit, re: RegExp | null): ReactNode {
   const ownershipBadge =
     hit.kind === 'company' && hit.ownershipKind ? <OwnershipChip kind={hit.ownershipKind} /> : null;
   // A company that appears in the свързани-лица surface carries a trailing flag; the card links to the
-  // company page, which links on to /conflicts/company/:eik (a nested <a> here would be invalid).
+  // company page, which lists the declared people (a nested <a> here would be invalid).
   const conflictBadge =
     hit.kind === 'company' && hit.hasConflict ? <Chip>свързани лица</Chip> : null;
   return (
@@ -244,10 +211,12 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                       )}
                     </p>
                   </span>
-                  <span className="amt">
-                    <span className="num">{h.amountEur != null ? money(h.amountEur) : '—'}</span>
-                    <span className="lab">{h.amountLabel}</span>
-                  </span>
+                  {h.kind !== 'person' && (
+                    <span className="amt">
+                      <span className="num">{h.amountEur != null ? money(h.amountEur) : '—'}</span>
+                      <span className="lab">{h.amountLabel}</span>
+                    </span>
+                  )}
                 </Link>
               ))}
             </section>

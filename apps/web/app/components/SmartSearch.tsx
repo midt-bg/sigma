@@ -6,10 +6,11 @@ import type { loader as suggestLoader } from '../routes/search.suggest';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { personName } from '../lib/person-name';
 
-const KIND_LABEL: Record<SearchHit['kind'], string> = {
+export const KIND_LABEL: Record<SearchHit['kind'], string> = {
   // The hit IS the office-holder — a длъжностно лице. „свързано лице" (related person) means the RELATIVE,
   // never the official themselves; mislabeling the official that way is a category error (todorkolev #226 — C14).
   official: 'длъжностно лице',
+  person: 'лице',
   authority: 'институция',
   company: 'компания',
   contract: 'договор',
@@ -22,9 +23,6 @@ const DEBOUNCE_MS = 150;
 interface SmartSearchProps {
   variant: 'hero' | 'drawer';
   defaultValue?: string;
-  placeholder?: string;
-  inputLabel?: string;
-  submitLabel?: string;
   // Drawer wants to close itself once a suggestion navigates away.
   onNavigate?: () => void;
   inputRef?: React.RefObject<HTMLInputElement | null>;
@@ -37,9 +35,6 @@ interface SmartSearchProps {
 export function SmartSearch({
   variant,
   defaultValue = '',
-  placeholder = 'Институция, компания или договор',
-  inputLabel = 'Търсене',
-  submitLabel = 'Намери',
   onNavigate,
   inputRef: externalInputRef,
 }: SmartSearchProps) {
@@ -174,8 +169,8 @@ export function SmartSearch({
           name="q"
           className="smart-search-input"
           value={query}
-          placeholder={placeholder}
-          aria-label={inputLabel}
+          placeholder="Институция, компания или договор"
+          aria-label="Търсене"
           autoComplete="off"
           role="combobox"
           aria-expanded={showList}
@@ -190,7 +185,7 @@ export function SmartSearch({
           onKeyDown={onKeyDown}
         />
         <button type="submit" className="smart-search-submit">
-          {submitLabel}
+          Намери
         </button>
       </form>
 
@@ -232,7 +227,9 @@ export function SmartSearch({
                       <span className="smart-search-option-kind">{KIND_LABEL[hit.kind]}</span>
                       <span className="smart-search-option-body">
                         <span className="smart-search-option-title">
-                          {hit.kind === 'official' ? personName(hit.title) : hit.title}
+                          {hit.kind === 'official' || hit.kind === 'person'
+                            ? personName(hit.title)
+                            : hit.title}
                         </span>
                         {meta && <span className="smart-search-option-meta">{meta}</span>}
                       </span>

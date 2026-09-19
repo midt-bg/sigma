@@ -17,6 +17,7 @@ import {
   contractSlug,
   getCompanyPeople,
   getCompanyTies,
+  getRegistryCompany,
   getSpendingTrend,
   getDb,
 } from '@sigma/db';
@@ -40,17 +41,21 @@ import { seoMeta } from '../lib/meta';
 import { CompanyDeclarants } from '../components/CompanyDeclarants';
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
-  const name = data?.company.displayName ?? 'Компания';
+  const registry = data && 'registry' in data ? data.registry : null;
+  const company = data && 'company' in data ? data.company : null;
+  const name = registry?.name ?? company?.displayName ?? 'Компания';
   const range = coverageRange(data?.coverage.coverageEndYear);
   const metaTags = seoMeta({
     matches,
     path: `/companies/${params.eik}`,
     title: `${name} — СИГМА`,
-    description: `Профил на ${name} в обществените поръчки ${range}.`,
+    description: registry
+      ? `${name} по Търговския регистър: управление и собственост.`
+      : `Профил на ${name} в обществените поръчки ${range}.`,
   });
   if (
-    data?.company &&
-    isNaturalPersonProfileName(data.company.displayName, data.company.legalForm)
+    (company && isNaturalPersonProfileName(company.displayName, company.legalForm)) ||
+    (registry && isNaturalPersonProfileName(registry.name, registry.legalForm))
   ) {
     metaTags.push({ name: 'robots', content: 'noindex' });
   }
@@ -76,7 +81,19 @@ export async function loader({ params, context }: Route.LoaderArgs) {
       getCompanyTies(db, id, { includeFunders: true }),
       getCompanyPeople(db, id),
     ]);
-    if (!company) throw new Response('Not Found', { status: 404 });
+    if (!company) {
+      // No procurement record: the register's partida alone, when the site has read it.
+      const registry = await getRegistryCompany(db, id);
+      if (!registry) throw new Response('Not Found', { status: 404 });
+      return data(
+        { registry, coverage, ties, people, tieLayout: layoutTies(ties) },
+        {
+          headers: isNaturalPersonProfileName(registry.name, registry.legalForm)
+            ? { 'X-Robots-Tag': 'noindex' }
+            : {},
+        },
+      );
+    }
     const [declarants, jointContracts] = await Promise.all([
       company.eik && ties.center?.conflictsHref
         ? getCompanyDeclarants(db, company.eik)
@@ -103,7 +120,82 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   });
 }
 
+function RegistryCompany({
+  loaderData,
+}: {
+  loaderData: Extract<Route.ComponentProps['loaderData'], { registry: unknown }>;
+}) {
+  const { registry: r, people, ties, tieLayout } = loaderData;
+  const range = coverageRange(loaderData.coverage.coverageEndYear);
+  return (
+    <>
+      <Breadcrumbs
+        items={[
+          { label: 'Начало', to: '/' },
+          { label: 'Компании', to: '/companies' },
+          { label: r.name },
+        ]}
+      />
+      <main id="main">
+        <PageHeader
+          kicker={
+            <>
+              Дружество · Търговски регистър
+              {r.inLiquidation && (
+                <>
+                  {' '}
+                  · <Chip>в ликвидация</Chip>
+                </>
+              )}
+            </>
+          }
+          title={r.name}
+          lede={`Няма договори по обществени поръчки в ЦАИС ЕОП за периода ${range} г. Показваме дружеството така, както е вписано в Търговския регистър.`}
+        >
+          <RegistryCta eik={r.eik} />
+        </PageHeader>
+        <FactsList
+          label="Данни от регистъра"
+          rows={[
+            { term: 'ЕИК', value: r.eik },
+            r.seat && { term: 'Седалище', value: r.seat },
+            r.inLiquidation && { term: 'Състояние', value: 'вписан ликвидатор' },
+          ]}
+        />
+        {people.asOf && (
+          <Section
+            id="people"
+            title="Управление и собственост"
+            hint="Управители, представители, съдружници и членове на органите, както са вписани в Търговския регистър, с датата на всяко вписване."
+          >
+            <CompanyRolesTables roles={people.roles} />
+            <RegistrySource asOf={people.asOf} eik={r.eik} />
+          </Section>
+        )}
+        {tieLayout && ties.nodes.length > 1 && (
+          <Section
+            id="network"
+            title="Връзки с дружества и лица"
+            hint="Лицата, вписани в дружеството, и другите дружества, в които те имат роля по Търговския регистър."
+          >
+            <TieGraph layout={tieLayout} />
+            <div className="sr-only">
+              <DataTable
+                columns={tieColumns}
+                rows={tieRows(ties)}
+                getKey={(e) => `${e.from}-${e.to}-${e.kind}`}
+                caption="Връзки с дружества и лица"
+              />
+            </div>
+          </Section>
+        )}
+      </main>
+    </>
+  );
+}
+
 export default function Company({ loaderData }: Route.ComponentProps) {
+  if ('registry' in loaderData) return <RegistryCompany loaderData={loaderData} />;
   const c = loaderData.company;
   const { trend, ties, people, tieLayout, declarants, jointContracts } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);

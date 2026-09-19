@@ -15,7 +15,7 @@ import { Choropleth } from '../components/Choropleth';
 import { TrendChart } from '../components/TrendChart';
 import { SingleOfferPortion } from '../components/SingleOfferPortion';
 import { Section, ShareBar } from '../components/ui';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { ANALYTICS_LENSES } from '../lib/analytics-lenses';
 import { seoMeta } from '../lib/meta';
 
@@ -29,9 +29,7 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(1800) };
-}
+export const headers = cached(1800);
 
 export async function loader({ context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);

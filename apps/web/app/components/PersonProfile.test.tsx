@@ -123,6 +123,9 @@ function profile(over: Partial<LoadedPersonProfile> = {}): LoadedPersonProfile {
     activity,
     totals: { companies: 1, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
     tieLayout: layoutTies(person.network),
+    aliases: [],
+    relatives: [],
+    namedBy: [],
     ...over,
   };
 }
@@ -140,7 +143,6 @@ const link: ConflictLink = {
   ownInstitution: false,
   firstDeclaredYear: '2020',
   lastDeclaredYear: '2023',
-  matchMethod: 'exact_name_key',
   contractCount: 3,
   contractValueEur: 90_000,
   contemporaneousContractCount: 2,
@@ -185,6 +187,10 @@ describe('PersonProfile', () => {
       ['Анна Петрова', null],
     ]);
     expect(nav()).toEqual(['#timeline', '#network', '#roles', '#contracts']);
+    // No declarations, so no office years to mark on the time axis.
+    expect(section('timeline')!.querySelector('.person-time-legend')!.textContent).not.toContain(
+      'длъжността',
+    );
 
     const graph = section('network')!;
     expect(graph.querySelector('svg a[href="/companies/111111111"]')).not.toBeNull();
@@ -214,6 +220,40 @@ describe('PersonProfile', () => {
     );
   });
 
+  it('lists declared relatives in a table: person, registered role, company and declaration years', () => {
+    render(
+      profile({
+        relatives: [
+          {
+            name: 'МАРИЯ ПЕТРОВА',
+            indent: 'm'.repeat(64),
+            company: { name: 'ГАМА ООД', eik: '333333333' },
+            href: `/persons/${'m'.repeat(64)}`,
+            roles: [
+              { role: 'manager', ended: true },
+              { role: 'partner', ended: false },
+            ],
+            years: ['2020', '2021'],
+          },
+        ],
+      }),
+    );
+    const table = section('relatives')!;
+    expect([...table.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual([
+      'Лице',
+      'Роля по регистъра',
+      'Дружество',
+      'Декларации',
+    ]);
+    expect([...table.querySelectorAll('tbody td')].map((td) => td.textContent)).toEqual([
+      'Мария Петрова',
+      'управител (прекратена), съдружник',
+      'ГАМА ООД',
+      '2020, 2021',
+    ]);
+    expect(table.querySelector('a[href="/companies/333333333"]')).not.toBeNull();
+  });
+
   it('presents an office-holder with no register match by the declarations alone, and says so', () => {
     const c = render(
       profile({
@@ -221,6 +261,9 @@ describe('PersonProfile', () => {
         name: link.official,
         links: [link],
         tieLayout: null,
+        aliases: [],
+        relatives: [],
+        namedBy: [],
         totals: {
           companies: 1,
           contracts: 3,

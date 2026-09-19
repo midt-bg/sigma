@@ -48,7 +48,9 @@ export function CompanyDeclarants({ links }: { links: ConflictLink[] }) {
                   ? 'собствен и свързан дял'
                   : person.stakeKind === 'family'
                     ? 'дял на свързано лице'
-                    : 'деклариран собствен дял'}
+                    : person.companies?.every((c) => c.manages && !c.self)
+                      ? 'декларирано управление'
+                      : 'деклариран собствен дял'}
               </Chip>
             ),
           },

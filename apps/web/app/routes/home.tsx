@@ -10,7 +10,7 @@ import { RankedBars } from '../components/RankedBars';
 import { SingleOfferPortion } from '../components/SingleOfferPortion';
 import { OwnershipChip } from '../components/ui';
 import { ANALYTICS_LENSES } from '../lib/analytics-lenses';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { coverageEndYear, coveragePartialNote, coverageRange } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
 
@@ -22,9 +22,7 @@ export function meta({ matches }: Route.MetaArgs) {
   return seoMeta({ matches, path: '/', title: metaTitle, description: metaDescription });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 
 export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;

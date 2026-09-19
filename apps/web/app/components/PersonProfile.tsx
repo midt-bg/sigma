@@ -15,9 +15,12 @@ import { PersonActivity } from './PersonActivity';
 import { declaredStakeNoun } from '../lib/conflicts';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 import { personName } from '../lib/person-name';
+import { ROLE_LABEL } from '../lib/registry-roles';
 
 export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) {
+  // Declared stakes make the person a related-persons case; any declaration makes them an official.
   const official = p.links.length > 0;
+  const filed = official || p.declarations.length > 0;
   const companies = timelineCompanies(p);
   const name = personName(p.name);
   return (
@@ -25,7 +28,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
       <Breadcrumbs
         items={[
           { label: 'Начало', to: '/' },
-          ...(official ? [{ label: 'Свързани лица', to: '/conflicts' }] : []),
+          ...(filed ? [{ label: 'Свързани лица', to: '/conflicts' }] : []),
           { label: name },
         ]}
       />
@@ -35,20 +38,26 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           kicker={
             official
               ? 'Длъжностно лице · декларирани интереси'
-              : p.person
-                ? 'Лице · Търговски регистър'
-                : 'Длъжностно лице'
+              : filed
+                ? 'Длъжностно лице · декларации'
+                : p.person
+                  ? 'Лице · Търговски регистър'
+                  : 'Длъжностно лице'
           }
           lede={
-            official
+            filed
               ? 'Декларирани интереси и обществени поръчки на свързаните дружества. Декларациите и регистърните роли са отделни източници — деклариран интерес не означава установено нарушение.'
               : 'Роли в дружества и обществените поръчки, спечелени от тях, по данни от Търговския регистър и ЦАИС ЕОП.'
           }
-        />
+        >
+          {p.aliases.length > 0 && (
+            <p className="muted small">Среща се и като {p.aliases.map(personName).join(', ')}</p>
+          )}
+        </PageHeader>
         <nav className="profile-nav" aria-label="В профила">
           {official && <a href="#declared-overview">Декларирани интереси</a>}
           <a href="#timeline">Времева линия</a>
-          {official && <a href="#declarations">Всички декларации</a>}
+          {filed && <a href="#declarations">Всички декларации</a>}
           {p.person && (
             <>
               <a href="#network">Граф</a>
@@ -75,14 +84,14 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
               ]}
             />
             <p className="small muted">
-              Сумите са към дружествата, а не личен доход. Деклариран дял на свързано лице се
-              показва без името на близкия.{' '}
+              Сумите са към дружествата, а не личен доход. Близък с деклариран дял се назовава само
+              когато Търговският регистър го вписва в декларираното дружество.{' '}
               <Link to="/conflicts/methodology">Методология и поправки →</Link>
             </p>
           </Section>
         )}
         <PersonTimeline profile={p} companies={companies} />
-        {official && (
+        {filed && (
           <Section
             id="declarations"
             title="Всички декларации"
@@ -126,14 +135,72 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
             </Section>
           </>
         )}
-        {official && !p.person && (
+        {p.relatives.length > 0 && (
+          <Section
+            id="relatives"
+            title="Свързани лица по декларация"
+            hint="Близки, за които лицето е декларирало дял, и които Търговският регистър вписва в същото дружество. Видът на връзката не се твърди."
+          >
+            <DataTable
+              rows={p.relatives}
+              caption="Свързани лица по декларация"
+              getKey={(r) => `${r.indent}-${r.company.eik}`}
+              columns={[
+                {
+                  key: 'person',
+                  header: 'Лице',
+                  cell: (r) =>
+                    r.href ? <Link to={r.href}>{personName(r.name)}</Link> : personName(r.name),
+                },
+                {
+                  key: 'role',
+                  header: 'Роля по регистъра',
+                  cell: (r) =>
+                    r.roles
+                      .map((x) => `${ROLE_LABEL[x.role]}${x.ended ? ' (прекратена)' : ''}`)
+                      .join(', ') || '—',
+                },
+                {
+                  key: 'company',
+                  header: 'Дружество',
+                  cell: (r) => <Link to={`/companies/${r.company.eik}`}>{r.company.name}</Link>,
+                },
+                {
+                  key: 'years',
+                  header: 'Декларации',
+                  align: 'num',
+                  cell: (r) => r.years.join(', ') || '—',
+                },
+              ]}
+            />
+          </Section>
+        )}
+        {p.namedBy.length > 0 && (
+          <Section
+            id="named-by"
+            title="Посочено като свързано лице"
+            hint="Длъжностни лица, чиито декларации посочват това лице като близък с дял в дружество, в което регистърът го вписва."
+          >
+            <ul className="entity-list">
+              {p.namedBy.map((n) => (
+                <li key={`${n.href}-${n.company.eik}`}>
+                  <Link to={n.href}>{personName(n.official)}</Link>
+                  <div className="small muted">
+                    <Link to={`/companies/${n.company.eik}`}>{n.company.name}</Link>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+        {filed && !p.person && (
           <p className="small muted profile-registry-note">
             Няма потвърдено съпоставяне с регистърен профил на това лице. Декларираните връзки са
             показани със собствените си източници.{' '}
             <Link to="/conflicts/methodology">Методология →</Link>
           </p>
         )}
-        <PersonActivity activity={p.activity} hasDeclarations={official} />
+        <PersonActivity activity={p.activity} hasDeclarations={filed} />
       </main>
     </>
   );

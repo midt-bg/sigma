@@ -167,41 +167,6 @@
   margin-left: var(--s-4);
 }
 
-/* Rail wrapper used on narrow viewports — becomes a single disclosure */
-.filters-toggle {
-  display: none;
-  margin: 0 0 var(--s-4);
-  border-top: 1px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
-}
-.filters-toggle > summary {
-  list-style: none;
-  cursor: pointer;
-  padding: var(--s-3) 0;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink-mid);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.filters-toggle > summary::-webkit-details-marker {
-  display: none;
-}
-.filters-toggle > summary::after {
-  content: '+';
-  color: var(--ink-soft);
-  font-size: 16px;
-}
-.filters-toggle[open] > summary::after {
-  content: '\2013';
-}
-.filters-toggle .filters-body {
-  padding: 0 0 var(--s-4);
-}
-
 /* Filter-rail disclosure — CSS-only, no JS, identical SSR/client markup.
    Desktop: the rail is the sticky left column and always visible; the toggle is hidden.
    ≤960px (when .split stacks to one column): the rail collapses behind a tappable „Филтри"

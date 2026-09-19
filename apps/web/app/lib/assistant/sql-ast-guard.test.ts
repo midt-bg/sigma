@@ -29,6 +29,15 @@ describe('guardSelect', () => {
     expect(guardSelect('SELECT 1; DROP TABLE contracts').ok).toBe(false);
   });
 
+  it('rejects multiple read statements and a negative OFFSET explicitly', () => {
+    const stacked = guardSelect('SELECT 1; SELECT 2');
+    expect(stacked).toEqual({ ok: false, reason: 'only a single statement is allowed' });
+
+    const offset = guardSelect('SELECT name FROM authorities LIMIT 5 OFFSET -1');
+    expect(offset.ok).toBe(false);
+    if (!offset.ok) expect(offset.reason).toMatch(/negative LIMIT\/OFFSET/i);
+  });
+
   it('fails closed on anything it cannot parse', () => {
     const r = guardSelect('SELECT FROM WHERE )(');
     expect(r.ok).toBe(false);

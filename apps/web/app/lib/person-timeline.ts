@@ -12,6 +12,8 @@ export interface TimelineCompany {
   contracts: TimelineContracts[];
   declarations: PersonDeclaration[];
   asOf: string | null;
+  /** A public enterprise: a role there is a held position, shown with the offices (ADR-0047). */
+  publicEnterprise: boolean;
 }
 export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
   const companies = new Map<string, TimelineCompany>();
@@ -27,6 +29,7 @@ export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
         contracts: [],
         declarations: [],
         asOf: null,
+        publicEnterprise: false,
       });
     return companies.get(eik)!;
   };
@@ -40,12 +43,14 @@ export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
     c.observations = p.timeline.observations.filter((o) => o.eik === c.eik);
     c.declarations = p.declarations.filter((d) => d.companyEiks.includes(c.eik));
     c.asOf = p.timeline.reads.find((r) => r.eik === c.eik)?.asOf ?? null;
+    c.publicEnterprise = c.roles.some((r) => !!r.company.ownershipKind) && !c.links.length;
     c.roles = [
       ...new Map(c.roles.map((r) => [`${r.role}|${r.addedOn}|${r.removedOn}`, r])).values(),
     ];
   }
   return [...companies.values()].sort(
     (a, b) =>
+      Number(b.publicEnterprise) - Number(a.publicEnterprise) ||
       Number(!!b.links.length) - Number(!!a.links.length) ||
       b.contracts.reduce((s, c) => s + c.eligible, 0) -
         a.contracts.reduce((s, c) => s + c.eligible, 0) ||

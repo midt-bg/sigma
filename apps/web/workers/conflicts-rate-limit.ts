@@ -4,17 +4,14 @@ interface ConflictsRateLimitEnv {
   CONFLICTS_RATE_LIMITER?: RateLimit;
 }
 
-// Every /conflicts route NAMES public officials (leaderboard, /conflicts/official/:slug,
-// /conflicts/company/:eik). Unlike the other pages, this is a personal-names surface, and with `ssr: true`
+// /conflicts (the list) and /persons/:slug (a person's page: declarations, roles across companies, ADR-0039)
+// NAME public officials. Unlike the other pages, this is a personal-names surface, and with `ssr: true`
 // each loader also serves at `/<path>.data` — so an unauthenticated caller can enumerate
-// `/conflicts/official/:slug.data` across the whole leaderboard at full speed = an unmetered bulk export
-// of a names database. Throttle the whole subtree. normalizedPathname strips a trailing `.data` (and
+// `/persons/:slug.data` across the whole list at full speed = an unmetered bulk export of a names
+// database. Throttle both subtrees with one budget. normalizedPathname strips a trailing `.data` (and
 // duplicate/trailing slashes), so the twin is covered by the SAME limit as the canonical path — it can't
-// be used to bypass. The leaderboard itself is edge-cached, so cache HITs never reach this (app.ts runs the
+// be used to bypass. The list itself is edge-cached, so cache HITs never reach this (app.ts runs the
 // cache check first); only uncached distinct URLs — exactly the scrape pattern — consume the budget.
-//
-// /persons/:slug is the same kind of surface — a named person's roles across companies (ADR-0039) — and
-// shares the budget.
 function isConflictsRequest(request: Request): boolean {
   if (request.method !== 'GET' && request.method !== 'HEAD') return false;
   const p = normalizedPathname(request);
@@ -29,7 +26,7 @@ export async function rateLimitConflictsRoute(
   if (!isConflictsRequest(request)) return null;
 
   // Fail CLOSED in prod: this is the ONLY anti-enumeration control on a personal-names surface, so a missing
-  // or erroring binding must 503 (loudly logged) rather than silently serve `/conflicts/official/*.data` at
+  // or erroring binding must 503 (loudly logged) rather than silently serve `/persons/*.data` at
   // full speed — an unmetered bulk export of a names DB is a worse outcome than an intermittent 503. The
   // binding is provisioned, so this only fires on a genuine fault. Non-prod (dev/preview, binding routinely
   // absent) still degrades to a no-op so local work isn't blocked. Cached leaderboard/methodology hits never

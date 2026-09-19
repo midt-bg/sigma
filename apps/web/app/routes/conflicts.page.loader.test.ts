@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 // The /conflicts loader reads ?page from the URL, so a value that is not a positive whole number must land on
 // the first page rather than an empty slice (or a NaN offset). @sigma/db is mocked: 150 people, two pages.
 const q = vi.hoisted(() => ({
+  getRegistryRolePersonRows: vi.fn(async () => []),
   getDb: vi.fn((env: { DB: unknown }) => env.DB),
   getRelatedPersonRows: vi.fn(async () =>
     Array.from({ length: 150 }, (_, i) => ({

@@ -17,7 +17,6 @@ const link = (officialSlug: string, institution: string, year: string): Conflict
   ownInstitution: false,
   firstDeclaredYear: year,
   lastDeclaredYear: year,
-  matchMethod: 'eik',
   contractCount: 11,
   contractValueEur: 500,
   contemporaneousContractCount: 1,
@@ -72,7 +71,7 @@ it('groups a shared registry identity, preserving offices, roles, years and the 
     expect(offices.textContent).toContain(value);
   }
   expect(container.querySelector('[data-label="Длъжностно лице"] a')?.getAttribute('href')).toBe(
-    '/conflicts/official/source-a',
+    '/persons/source-a',
   );
   expect(container.querySelectorAll('.chip')).toHaveLength(1);
   expect(JSON.stringify(links)).toBe(original);
@@ -128,8 +127,8 @@ it('labels each office-holder by whose stake they declared', () => {
     ]),
   );
   expect(stakes).toEqual({
-    '/conflicts/official/own': 'деклариран собствен дял',
-    '/conflicts/official/relative': 'дял на свързано лице',
-    '/conflicts/official/both': 'собствен и свързан дял',
+    '/persons/own': 'деклариран собствен дял',
+    '/persons/relative': 'дял на свързано лице',
+    '/persons/both': 'собствен и свързан дял',
   });
 });

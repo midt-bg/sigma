@@ -23,18 +23,6 @@
   color: var(--ink);
 }
 
-.conflict-headline-mag {
-  margin: var(--s-5) 0 var(--s-6);
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--s-3);
-}
-
-.conflict-headline-mag .share-bar {
-  width: min(240px, 60vw);
-  height: 8px;
-}
-
 .chip-strong {
   background: var(--accent);
   color: var(--paper);

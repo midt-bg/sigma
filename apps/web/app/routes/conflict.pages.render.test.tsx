@@ -1,10 +1,9 @@
 import { emptyActivity } from '../lib/person-profile.test-support';
 // @vitest-environment jsdom
-// Deep render tests for the per-entity conflict pages (official, company) and the static methodology page.
-// Each is mounted as a real route through createRoutesStub so ConflictDetail/Link resolve, and the
-// assertions check the ADR-0032 surface: an office-holder page heads each block by the winning company and
-// never repeats the office-holder inside a block, a company page mirrors, and the methodology page states
-// the three libel rails in plain language. Since #287 the rich detail (per-company/per-official breakdown
+// Deep render tests for the person page and the static methodology page. Each is mounted as a real route
+// through createRoutesStub so Link resolves, and the assertions check the ADR-0032 surface: a person page
+// heads each block by the winning company and never repeats the person inside a block, and the methodology
+// page states the three libel rails in plain language. Since #287 the rich detail (per-company/per-official breakdown
 // with ЕИК + profile link, timeline, „Дял при възложителите", contract split) is rendered EAGERLY here —
 // no expand click — because the /conflicts list is now a lean one-row-per-person table.
 import { act, type ComponentType } from 'react';
@@ -12,8 +11,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRoutesStub } from 'react-router';
 import type { ConflictContract, ConflictLink, PersonDeclaration } from '@sigma/api-contract';
-import ConflictOfficial, { meta as officialMeta } from './conflict.official';
-import ConflictCompany, { meta as companyMeta } from './conflict.company';
+import Person, { meta as personMeta } from './person';
 import ConflictMethodology from './conflict.methodology';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,14 +22,13 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     officialSlug: 'aXZhbg',
     official: 'Иван Петров',
     institution: 'Община Тест',
-    company: 'ТРЕЙС ГРУП ХОЛД АД',
+    company: 'ТЕСТ ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
     contemporaneous: true,
     ownInstitution: true,
     firstDeclaredYear: '2019',
     lastDeclaredYear: '2023',
-    matchMethod: 'exact_name_key',
     contractCount: 2,
     contractValueEur: 88_000_000,
     contemporaneousContractCount: 1,
@@ -81,12 +78,14 @@ afterEach(() => {
 });
 
 async function mount(Component: ComponentType<{ loaderData: never }>, loaderData: unknown) {
-  if (Component === (ConflictOfficial as unknown)) {
+  if (Component === (Person as unknown)) {
     const d = loaderData as {
       official: string;
       links: ConflictLink[];
       contracts?: Record<string, ConflictContract[]>;
       declarations?: PersonDeclaration[];
+      relatives?: unknown[];
+      namedBy?: unknown[];
     };
     loaderData = {
       ...d,
@@ -112,6 +111,9 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
       },
       declarations: d.declarations ?? [],
       tieLayout: null,
+      aliases: [],
+      relatives: d.relatives ?? [],
+      namedBy: d.namedBy ?? [],
       activity: emptyActivity,
       totals: {
         companies: new Set(d.links.map((l) => l.eik)).size,
@@ -134,8 +136,8 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
       loader: () => ({ linkKey: 'k', contracts: [] }),
     },
     { path: '/conflicts', Component: () => null },
-    { path: '/conflicts/official/:slug', Component: () => null },
-    { path: '/conflicts/company/:eik', Component: () => null },
+    { path: '/persons/:id', Component: () => null },
+    { path: '/companies/:eik', Component: () => null },
     { path: '/', Component: () => null },
   ]);
   await act(async () => {
@@ -156,7 +158,7 @@ function detailBlock(): HTMLElement {
   return el as HTMLElement;
 }
 
-describe('/conflicts/official/:id — render', () => {
+describe('/persons/:id — render', () => {
   it('puts distinct declared institutions, positions and observed years above the source documents', async () => {
     const declaration = (
       institution: string,
@@ -174,7 +176,7 @@ describe('/conflicts/official/:id — render', () => {
       url: `https://example.test/${year}`,
       companyEiks: ['111'],
     });
-    await mount(ConflictOfficial as never, {
+    await mount(Person as never, {
       official: 'Иван Петров',
       links: [link()],
       declarations: [
@@ -195,6 +197,79 @@ describe('/conflicts/official/:id — render', () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
+  it('explains ownership the register holds that a declaration does not name, without asserting a breach', async () => {
+    await mount(Person as never, {
+      official: 'Иван Петров',
+      links: [link()],
+      declarations: [
+        {
+          id: '2021',
+          year: '2021',
+          institution: 'Община Русе',
+          position: 'Кмет',
+          template: 'assets',
+          type: 'Annualy',
+          declaredOn: null,
+          submittedOn: null,
+          url: 'https://example.test/2021',
+          companyEiks: [],
+          registryOmissions: [
+            {
+              eik: '222',
+              company: 'ГАМА ЕООД',
+              role: 'sole_owner',
+              entryNumber: 'e2',
+              addedOn: '2021-03-01',
+            },
+          ],
+        },
+      ],
+    });
+    const note = container.querySelector('.declaration-discrepancy')!;
+    expect(note.textContent).toContain('Регистър срещу декларация за 2021 г.');
+    expect(note.textContent).toContain('едноличен собственик на капитала');
+    expect(note.textContent).toContain('ГАМА ЕООД');
+    expect(note.textContent).toContain('Възможни причини');
+    expect(note.textContent).not.toContain('нарушение');
+    expect(note.querySelector('a[href="/companies/222"]')).not.toBeNull();
+  });
+
+  it('names a relative the register confirms, linking only one with a page, and the reverse mention', async () => {
+    await mount(Person as never, {
+      official: 'Иван Петров',
+      links: [link()],
+      relatives: [
+        {
+          name: 'МАРИЯ ПЕТРОВА',
+          indent: 'a'.repeat(64),
+          company: { name: 'АЛФА', eik: '111' },
+          href: `/persons/${'a'.repeat(64)}`,
+          roles: [{ role: 'partner', ended: false }],
+          years: ['2021'],
+        },
+        {
+          name: 'ЗОЯ ИВАНОВА',
+          indent: 'b'.repeat(64),
+          company: { name: 'БЕТА', eik: '222' },
+          href: null,
+          roles: [],
+          years: [],
+        },
+      ],
+      namedBy: [
+        { official: 'ГЕОРГИ ИВАНОВ', href: '/persons/Zw', company: { name: 'АЛФА', eik: '111' } },
+      ],
+    });
+    const relatives = container.querySelector('#relatives')!.closest('section')!;
+    expect(relatives.textContent).toContain('Мария Петрова');
+    expect(relatives.querySelector(`a[href="/persons/${'a'.repeat(64)}"]`)).not.toBeNull();
+    expect(relatives.textContent).toContain('Зоя Иванова');
+    expect(relatives.querySelectorAll('a[href^="/persons/"]')).toHaveLength(1);
+    expect(relatives.textContent).not.toMatch(/съпруг|дете|родител/);
+    const namedBy = container.querySelector('#named-by')!.closest('section')!;
+    expect(namedBy.querySelector('a[href="/persons/Zw"]')!.textContent).toBe('Георги Иванов');
+  });
+
   it('heads each block by the winning company (ЕИК + profile link), never repeats the official inside', async () => {
     const l = link({
       linkKey: 'k1',
@@ -203,7 +278,7 @@ describe('/conflicts/official/:id — render', () => {
       eik: '333',
       ownInstitution: false,
     });
-    await mount(ConflictOfficial as never, {
+    await mount(Person as never, {
       official: 'Кмет Тестов',
       links: [l],
       contracts: { '333': [contract({ authority: 'Община Тест' })] }, // keyed by ЕИК (#312 HIGH 1)
@@ -222,7 +297,7 @@ describe('/conflicts/official/:id — render', () => {
 
   it('keeps the timeline visible and sends company contracts to the one common list', async () => {
     const l = link({ linkKey: 'k1', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' });
-    await mount(ConflictOfficial as never, {
+    await mount(Person as never, {
       official: 'Кмет Тестов',
       links: [l],
       contracts: {
@@ -252,7 +327,7 @@ describe('/conflicts/official/:id — render', () => {
   it('a family-only page never asserts the official owns the stake (§2.6)', async () => {
     // The block labels are family-aware; the page lede + section hint must not read „собствен дял" above a
     // block that correctly says „свързано лице".
-    await mount(ConflictOfficial as never, {
+    await mount(Person as never, {
       official: 'Кмет Тестов',
       links: [
         link({ linkKey: 'k1', relation: 'related', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' }),
@@ -270,7 +345,7 @@ describe('/conflicts/official/:id — render', () => {
   it('an own-stake page still says so — the wording is family-AWARE, not family-blind', async () => {
     // POSITIVE CONTROL. Removing the claim everywhere would satisfy the assertion above while making the
     // page vaguer than the data warrants: a self stake IS the official's own and should read that way.
-    await mount(ConflictOfficial as never, {
+    await mount(Person as never, {
       official: 'Кмет Тестов',
       links: [link({ linkKey: 'k1', relation: 'owns', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' })],
       contracts: {},
@@ -279,7 +354,7 @@ describe('/conflicts/official/:id — render', () => {
   });
 
   it('preserves the ADR-0032 callout wording — деклариран дял, собствен или на свързано лице', async () => {
-    await mount(ConflictOfficial as never, {
+    await mount(Person as never, {
       official: 'Кмет Тестов',
       links: [link({ linkKey: 'k1', relation: 'owns', eik: '333' })],
       contracts: {},
@@ -287,11 +362,11 @@ describe('/conflicts/official/:id — render', () => {
     const t = text();
     expect(t).toContain('Декларирани интереси');
     expect(t).toContain('декларирало собствен дял');
-    expect(t).toContain('без името на близкия');
+    expect(t).toContain('се назовава само');
   });
 
   it('meta() names the person in the title and marks the page noindex', () => {
-    const tags = officialMeta({
+    const tags = personMeta({
       data: { name: 'ИВАН ПЕТРОВ', links: [], contracts: {} },
       matches: [],
       params: { id: 'aXZhbg' },
@@ -303,187 +378,17 @@ describe('/conflicts/official/:id — render', () => {
   it('meta() falls back to a generic noun when the loader data is absent (error boundary render)', () => {
     // On a thrown 404 the route still renders its meta with `data` undefined; the title must degrade to
     // the generic noun rather than interpolating "undefined" into a public page title.
-    const tags = officialMeta({ data: undefined, matches: [], params: { id: 'aXZhbg' } } as never);
-    expect(JSON.stringify(tags)).toContain('Длъжностно лице');
+    const tags = personMeta({ data: undefined, matches: [], params: { id: 'aXZhbg' } } as never);
+    expect(JSON.stringify(tags)).toContain('Лице');
     expect(JSON.stringify(tags)).not.toContain('undefined');
   });
 
   it('falls back to a generic kicker when the person has no institution on the first link', async () => {
-    await mount(ConflictOfficial as never, {
+    await mount(Person as never, {
       official: 'Иван Петров',
       links: [], // no links → links[0] is undefined → the kicker takes its fallback
     });
     expect(text()).toContain('Длъжностно лице');
-  });
-});
-
-describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
-  // The registry-fact rung moved from the retired list card to ConflictDetail (#287). These render guards are
-  // ported 1:1 from the deleted card tests: the evidence label is a defamation-critical mapping — its failure
-  // mode is a false, NAMED claim that the register records this person as owner — so a unit test of
-  // registryEvidenceLabel is not enough; what the COMPONENT renders must be pinned (niki #312 HIGH 1).
-  const official = 'Кмет Тестов';
-
-  it('renders the registry fact the link rests on, so the block explains itself', async () => {
-    await mount(ConflictCompany as never, {
-      company: 'Тестова компания',
-      eik: '111',
-      official,
-      links: [link({ linkKey: 'k1', evidenceKind: 'document', registryRole: 'owner' })],
-      contracts: {},
-    });
-    const t = text();
-    expect(t).toContain('Регистър');
-    expect(t).toContain('лицето е вписано като съдружник/собственик');
-    expect(t).toContain('вписване 2011-05-02'); // WHICH entry
-    expect(t).toContain('справка 2026-08-05'); // and HOW FRESH it is
-    // The entry NUMBER is what makes the claim findable in the register — a date alone does not identify a record.
-    expect(t).toContain('20110502101007');
-  });
-
-  it('omits the entry number rather than printing an empty „· №" when there is none', async () => {
-    // POSITIVE CONTROL for the row's shape: a confirmed link (seat/ЕИК) has no act entry to cite, so the label
-    // must be absent entirely — not „· №" with nothing after it, which reads as missing data.
-    await mount(ConflictCompany as never, {
-      company: 'Тестова компания',
-      eik: '111',
-      official,
-      links: [
-        link({
-          linkKey: 'k1',
-          evidenceKind: 'confirmed',
-          registryRole: null,
-          registryEntryNumber: null,
-        }),
-      ],
-      contracts: {},
-    });
-    const t = text();
-    expect(t).toContain('Регистър');
-    expect(t).not.toContain('· №');
-  });
-
-  it('a seat/ЕИК confirmation never implies somebody was found in the act', async () => {
-    await mount(ConflictCompany as never, {
-      company: 'Тестова компания',
-      eik: '111',
-      official,
-      links: [link({ linkKey: 'k1', evidenceKind: 'confirmed', registryRole: null })],
-      contracts: {},
-    });
-    const t = text();
-    expect(t).toContain('дружеството е потвърдено по декларирани данни');
-    expect(t).not.toContain('вписано като');
-  });
-
-  it('a FAMILY block never carries a registry-role claim — the relative is not in the act we read', async () => {
-    // A relative's stake is registered to the RELATIVE, so `findPerson` never finds the official and the rung
-    // can only be confirmed/registryRole:null. „вписано като съдружник/собственик" here would assert that the
-    // named official is recorded as an owner of this company — a false, named, libel-shaped claim on the one
-    // block whose whole design keeps the stakeholder anonymous (ADR-0030/0032).
-    await mount(ConflictCompany as never, {
-      company: 'Тестова компания',
-      eik: '111',
-      official,
-      links: [
-        link({
-          linkKey: 'k1',
-          relation: 'related',
-          evidenceKind: 'confirmed',
-          registryRole: null,
-          registryEntryNumber: null,
-        }),
-      ],
-      contracts: {},
-    });
-    const block = detailBlock();
-    expect(block.textContent).toContain('деклариран дял на свързано лице');
-    expect(block.textContent).toContain('дружеството е потвърдено по декларирани данни');
-    expect(block.textContent).not.toContain('вписано като');
-  });
-
-  it('links out to the register so a reader can check the same act we read', async () => {
-    await mount(ConflictCompany as never, {
-      company: 'Тестова компания',
-      eik: '111',
-      official,
-      links: [link({ linkKey: 'k1', eik: '201122335' })],
-      contracts: {},
-    });
-    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
-    expect(hrefs.some((h) => h.includes('201122335'))).toBe(true);
-  });
-});
-
-describe('/conflicts/company/:eik — render', () => {
-  it('heads each block by the official (institution sub-label + profile link), never repeats the company inside', async () => {
-    await mount(ConflictCompany as never, {
-      company: 'ТРЕЙС ГРУП ХОЛД АД',
-      eik: '111',
-      links: [
-        link({ linkKey: 'k1' }),
-        link({
-          linkKey: 'k2',
-          officialSlug: 's2',
-          official: 'Втори Официал',
-          institution: 'Община Друга',
-        }),
-      ],
-      // both officials share ЕИК 111 → ONE contracts entry keyed by ЕИК, shared by both blocks (#312 HIGH 1)
-      contracts: { '111': [contract()] },
-    });
-    expect(text()).toContain('ТРЕЙС ГРУП ХОЛД АД');
-    expect(text()).toContain('111'); // ЕИК in the header
-    expect(text()).toContain('Иван Петров'); // an official heads a block
-    expect(text()).toContain('Втори Официал');
-    const block = detailBlock();
-    // block heads by the official, linking to their conflicts page, with the institution sub-label
-    expect(block.querySelector('a[href="/conflicts/official/aXZhbg"]')).not.toBeNull();
-    expect(block.textContent).toContain('Община Тест'); // institution sub-label
-    // the company is the page's subject (PageHeader) and is NOT repeated inside a block
-    expect(block.textContent).not.toContain('ТРЕЙС ГРУП ХОЛД АД');
-  });
-
-  it('renders the rich detail EAGERLY — timeline, per-authority shares, contract split — no expand click', async () => {
-    await mount(ConflictCompany as never, {
-      company: 'ТРЕЙС ГРУП ХОЛД АД',
-      eik: '111',
-      links: [link({ linkKey: 'k1' })],
-      contracts: {
-        // keyed by ЕИК; temporal derived per link (window 2019–2023): 2021 → in-window, 2016 → before.
-        '111': [
-          contract({ authority: 'Община Пловдив', signedAt: '2021-05-01' }),
-          contract({
-            contractSlug: 'e:out',
-            contractNumber: 'Д-2',
-            signedAt: '2016-01-01',
-          }),
-        ],
-      },
-    });
-    const t = text();
-    expect(t).toContain('Времева ос');
-    expect(t).toContain('Дял при възложителите');
-    expect(t).toContain('Договори, сключени в декларирания период');
-    expect(t).toContain('Извън периода');
-    expect(container.querySelector('.cc-toggle')).toBeNull();
-    expect(t).not.toContain('Виж договорите');
-  });
-
-  it('meta() names the company and marks the page noindex', () => {
-    const tags = companyMeta({
-      data: { company: 'ТРЕЙС ГРУП ХОЛД АД', eik: '111', links: [], contracts: {} },
-      matches: [],
-      params: { eik: '111' },
-    } as never);
-    expect(JSON.stringify(tags)).toContain('ТРЕЙС ГРУП ХОЛД АД');
-    expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
-  });
-
-  it('meta() falls back to a generic noun when the loader data is absent (error boundary render)', () => {
-    const tags = companyMeta({ data: undefined, matches: [], params: { eik: '111' } } as never);
-    expect(JSON.stringify(tags)).toContain('Дружество');
-    expect(JSON.stringify(tags)).not.toContain('undefined');
   });
 });
 
@@ -502,16 +407,17 @@ describe('/conflicts/methodology — render', () => {
     // rung 1 — the joint-stock bar and its reason (the „11 акции" trap)
     expect(t).toContain('Акционерна форма');
     expect(t).toContain('не е публична');
-    // rung 2 — all three names, one registered person, and the two refusals
-    expect(t).toContain('пълно съвпадение и на трите имена');
+    // rung 2 — all three names, one registered person, and the variants a name may take
+    expect(t).toContain('и трите имена');
     expect(t).toContain('едно и също вписано лице');
-    // ADR-0035 — the company gate, the part a reader most needs to judge the claim
-    expect(t).toContain('Съвпадението по име само по себе си не стига');
-    // R10 — the seat's temporal guard, both halves
-    expect(t).toContain('вписано преди декларирания период');
-    expect(t).toContain('когато този период е известен');
+    expect(t).toContain('вариантът пасва на точно едно вписано лице');
+    // ADR-0046 — the company is its ЕИК, the register decides, the seat proves nothing
+    expect(t).toContain('Дружеството е неговият');
+    expect(t).toContain('Седалището не се използва като доказателство');
+    // a relative's stake is confirmed by the relative the register shows, never named from the declaration
+    expect(t).toContain('лицето, което декларацията посочва за притежател');
     // the honest limit: no ЕГН, so a homonym is possible
-    expect(t).toContain('не съдържа ЕГН');
+    expect(t).toContain('не публикува ЕГН');
     expect(t).toContain('съименник');
     // what the register proves and what it does not — the distinction the whole surface rests on
     expect(t).toContain('самоличността на дружеството');

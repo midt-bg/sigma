@@ -25,7 +25,6 @@ const link = (over: Partial<ConflictLink>): ConflictLink => ({
   ownInstitution: false,
   firstDeclaredYear: '2019',
   lastDeclaredYear: '2023',
-  matchMethod: 'exact_name_key',
   contractCount: 3,
   contractValueEur: 1_000,
   contemporaneousContractCount: 1,
