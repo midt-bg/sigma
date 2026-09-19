@@ -1,6 +1,9 @@
 name = "sigma-etl"
 main = "src/index.ts"
-compatibility_date = "2025-05-01"
+# The same date the dev config runs: the declarations coordinator reaches the corpus through
+# `exports` from `cloudflare:workers`, which does not exist on an older date — the container then
+# dies with "DeclarationCorpus is not a function", as it did on staging (dev never saw it).
+compatibility_date = "2026-09-14"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 

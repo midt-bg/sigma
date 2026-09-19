@@ -19,6 +19,21 @@ it('deploys the very cron the weekly branch compares against', () => {
   expect(DECLARATIONS_CRON.split(' ').at(-1), 'Sunday is 7 for the Cloudflare API').not.toBe('0');
 });
 
+// dev and the deployed Workers must run the same compatibility date: the declarations container reaches
+// the corpus through `exports` from `cloudflare:workers`, which simply is not there on an older date. A
+// dev config that runs ahead proves a feature the deployed Worker cannot use — staging died on exactly
+// that, with the corpus entrypoint reported as "not a function".
+it('runs dev and the deployed Worker on one compatibility date', () => {
+  const dir = dirname(fileURLToPath(import.meta.url));
+  const toml = readFileSync(resolve(dir, '../wrangler.toml'), 'utf8');
+  const dev = readFileSync(resolve(dir, '../wrangler.dev.jsonc'), 'utf8');
+  const deployed = /^compatibility_date = "([\d-]+)"$/m.exec(toml)?.[1];
+  const local = /"compatibility_date":\s*"([\d-]+)"/.exec(dev)?.[1];
+  expect(deployed, 'no compatibility_date in wrangler.toml').toBeDefined();
+  expect(local, 'no compatibility_date in wrangler.dev.jsonc').toBeDefined();
+  expect(deployed).toBe(local);
+});
+
 it('starts one declarations run and waits for the container outcome', async () => {
   const startRun = vi.fn(async () => ({ runId: 'run-1', state: 'running' }));
   const getRun = vi
