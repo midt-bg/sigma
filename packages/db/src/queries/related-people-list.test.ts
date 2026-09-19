@@ -103,6 +103,10 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       contemporaneousEur: 5350,
     });
     expect(await getRelatedPersonRows(d1, 'unrelated')).toEqual([]);
+    // The authority that DID pay still finds them, and the filter reads its payees once rather than
+    // asking per link: as a correlated EXISTS this cost D1 „exceeded its CPU time limit and was reset"
+    // for any authority above roughly two thousand contracts, which is most of the interesting ones.
+    expect((await getRelatedPersonRows(d1, 'a')).length).toBe(rows.length);
     expect(await getRelatedPersonHeadline(d1, [])).toEqual({
       officialCount: 0,
       linkCount: 0,

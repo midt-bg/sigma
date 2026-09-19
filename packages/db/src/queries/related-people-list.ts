@@ -5,13 +5,21 @@ import { personSlug } from './identity';
 
 // Canonical identity precedes grouping. Source person ids remain distinct unless the
 // declaration-to-registry bridge proves their public Indent; names are never a join key.
-const CTE = `WITH links AS MATERIALIZED (
+// The authority's payees, read ONCE. As a correlated EXISTS inside `links` this ran per candidate link
+// and D1 answered „exceeded its CPU time limit and was reset" for any authority of real size — the filter
+// the institution profile links to was dead above roughly two thousand contracts.
+const PAID_BY_AUTHORITY = `paid AS MATERIALIZED (
+  SELECT DISTINCT b.eik_normalized eik FROM contracts c
+  JOIN tenders t ON t.id=c.tender_id JOIN bidders b ON b.id=c.bidder_id
+  WHERE ?1 IS NOT NULL AND t.authority_id=?1
+)`;
+
+const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   SELECT il.*, COALESCE(pl.registry_indent,il.person_id) identity, p.name
   FROM interest_links il JOIN persons p ON p.id=il.person_id
   LEFT JOIN person_registry_links pl ON pl.person_id=il.person_id
   WHERE ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
-    AND (?1 IS NULL OR EXISTS (SELECT 1 FROM contracts c JOIN tenders t ON t.id=c.tender_id
-      JOIN bidders b ON b.id=c.bidder_id WHERE b.eik_normalized=il.eik AND t.authority_id=?1))
+    AND (?1 IS NULL OR il.eik IN (SELECT eik FROM paid))
 ), office_years AS MATERIALIZED (
   SELECT DISTINCT COALESCE(pl.registry_indent,d.person_id) identity,d.declared_year year
   FROM declarations d LEFT JOIN person_registry_links pl ON pl.person_id=d.person_id
@@ -114,7 +122,7 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
 export async function getRegistryRolePersonRows(db: D1Database, authorityId?: string) {
   const result = await db
     .prepare(
-      `WITH people AS MATERIALIZED (
+      `WITH ${PAID_BY_AUTHORITY}, people AS MATERIALIZED (
     SELECT pl.person_id, pl.registry_indent identity, p.name
     FROM person_registry_links pl JOIN persons p ON p.id=pl.person_id
     WHERE NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=pl.person_id AND il.status='published'
@@ -125,8 +133,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
       AND r.role IN ('sole_owner','partner','trader','manager')
     JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
     JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
-    WHERE ?1 IS NULL OR EXISTS (SELECT 1 FROM contracts c JOIN tenders t ON t.id=c.tender_id
-      JOIN bidders bb ON bb.id=c.bidder_id WHERE bb.eik_normalized=r.eik AND t.authority_id=?1)
+    WHERE ?1 IS NULL OR r.eik IN (SELECT eik FROM paid)
     GROUP BY pe.person_id, r.eik
   ), office_years AS MATERIALIZED (
     SELECT DISTINCT d.person_id, d.declared_year year FROM declarations d
