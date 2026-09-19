@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { guardSelect } from './sql-ast-guard';
+import { guardSelect, ALLOWED_TABLES } from './sql-ast-guard';
 import { assertReadOnlySelect } from './sql-guard';
 import { CANONICAL_QUERIES } from './describe-schema';
 
@@ -337,4 +337,30 @@ describe('guardSelect — joins and CTEs below the top level', () => {
     const r = guardSelect('SELECT n FROM (WITH r AS (SELECT n FROM r) SELECT n FROM r) sub');
     expect(r).toEqual({ ok: false, reason: 'recursive CTE "r" is not allowed' });
   });
+});
+
+// The dictionary IS the allow-list, so a table listed there is a table the model can read. Every table
+// naming a person is absent on purpose — the assistant answers about institutions, companies and
+// contracts, never about named individuals. `search_index` quietly broke that: its rows carry kinds
+// 'official' and 'person', i.e. declarants by name with their post and their linked money.
+it('lets the model reach no table that names a person', () => {
+  for (const table of [
+    'search_index',
+    'persons',
+    'declarations',
+    'declared_interests',
+    'interest_links',
+    'interest_link_observations',
+    'person_registry_links',
+    'person_entities',
+    'person_sources',
+    'registry_persons',
+    'registry_roles',
+    'person_relatives',
+  ]) {
+    expect(ALLOWED_TABLES.has(table), table).toBe(false);
+    const verdict = guardSelect(`SELECT * FROM ${table} LIMIT 1`);
+    expect(verdict.ok, table).toBe(false);
+    expect(verdict.ok === false && verdict.reason, table).toMatch(/table not allowed/);
+  }
 });
