@@ -66,7 +66,7 @@ test('closelyHeldForm: КДА (командитно дружество с акц
   // as an owner. #279 rung 1 names it explicitly alongside АД and ЕАД.
   assert.equal(closelyHeldForm('ФИНАНС КДА'), false);
   assert.equal(closelyHeldForm('"АЛФА ИНВЕСТ" КДА'), false);
-  assert.equal(closelyHeldForm('АЛФА КДА, гр. София'), false); // seat suffix must not rescue it
+  assert.equal(closelyHeldForm('АЛФА КДА, гр. Примероград'), false); // seat suffix must not rescue it
   // …and the mirror: „КДА" inside a word or as a leading token is not the form.
   assert.equal(closelyHeldForm('КДА-ТРЕЙД ЕООД'), true);
   assert.equal(closelyHeldForm('КДА ГРУП ООД'), true);
@@ -81,8 +81,8 @@ test('nameDistinctiveness: КДА counts as a legal form, not a content word', (
 test('closelyHeldForm: a trailing седалище after the form does not flip an АД to closely-held (libel)', () => {
   // The declarant appended the seat to the name cell. Without stripping it, the end-anchored form test
   // misses the АД and returns closely-held=true → a listed-АД parcel presented as a material conflict.
-  assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД, гр. София'), false); // comma + гр. marker
-  assert.equal(closelyHeldForm('Тексим Банк АД, София'), false); // comma + bare city (no marker)
+  assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД, гр. Примероград'), false); // comma + гр. marker
+  assert.equal(closelyHeldForm('Тексим Банк АД, Примероград'), false); // comma + bare city (no marker)
   assert.equal(closelyHeldForm('Транспроект ЕАД гр.Пловдив'), false); // marker, no comma
   assert.equal(closelyHeldForm('НЕС АДСИЦ, обл. Варна'), false);
   // ...while a genuinely closely-held ООД keeps its material verdict even with a seat appended.
@@ -102,7 +102,11 @@ test('the token set and the JOINT_STOCK regex name the SAME four forms', () => {
     assert.equal(JOINT_STOCK.test(`ФИРМА ${form}`), true, `regex misses ${form}`);
     assert.equal(closelyHeldForm(`ФИРМА ${form}`), false, `token set misses ${form}`);
     // …and the mirror: every form the regex accepts must be one the token set bars, seat or no seat.
-    assert.equal(closelyHeldForm(`ФИРМА ${form} София`), false, `token set misses ${form} + seat`);
+    assert.equal(
+      closelyHeldForm(`ФИРМА ${form} Примероград`),
+      false,
+      `token set misses ${form} + seat`,
+    );
   }
   // Every FORM_TOKEN that is NOT one of the four must read as closely-held.
   for (const form of ['ЕООД', 'ООД', 'ЕТ', 'ДЗЗД', 'КД', 'СД']) {
@@ -112,14 +116,14 @@ test('the token set and the JOINT_STOCK regex name the SAME four forms', () => {
 
 test('closelyHeldForm: a seat with NO comma and NO „гр." marker still cannot flip an АД (libel)', () => {
   // The gap the marker/comma rules leave open. `SEAT_MARKER` requires a literal dot and the comma-peel
-  // requires a comma, so „ТЕСТ ГРУП ХОЛД АД София" — the plainest way a declarant writes it — survives
+  // requires a comma, so „ТЕСТ ГРУП ХОЛД АД Примероград" — the plainest way a declarant writes it — survives
   // both, no longer ENDS in the form, and the end-anchored JOINT_STOCK test misses it. A listed АД then
   // reads as closely-held: the „11 акции на Trace → €88M" trap, from the one input shape nothing strips.
-  assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД София'), false);
+  assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД Примероград'), false);
   assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД СОФИЯ'), false);
   assert.equal(closelyHeldForm('Транспроект ЕАД Пловдив'), false);
   assert.equal(closelyHeldForm('НЕС АДСИЦ Варна'), false);
-  assert.equal(closelyHeldForm('АЛФА КДА София'), false);
+  assert.equal(closelyHeldForm('АЛФА КДА Примероград'), false);
   // POSITIVE CONTROLS — the bar must stay a bound, not become a blanket. A predicate that always returned
   // false would pass every assertion above; these are what distinguish the fix from that (ADR-0027).
   assert.equal(closelyHeldForm('Вамос ООД Русе'), true); // dot-less seat on a closely-held form
@@ -135,11 +139,11 @@ test('nameDistinctiveness: a dot-less trailing city is not counted as a content 
   // Same blind spot, and here it fails toward PUBLISHING: an uncounted seat token inflates the content-word
   // count to 3 ⇒ 'distinctive'. Since #279 rung 2 gates an uncorroborated „Документ" publish on exactly this
   // predicate (ADR-0035), a seat read as a content word is a false company-identity claim, not just noise.
-  assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ООД София'), 'generic');
+  assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ООД Примероград'), 'generic');
   assert.equal(nameDistinctiveness('НИКО КОМЕРС ЕООД Пловдив'), 'generic');
   // POSITIVE CONTROLS: a genuinely ≥3-content-word фирма stays distinctive, and a leading-form ЕТ name
   // keeps its content words — nothing after „ЕТ" is a seat, so the strip must not reach them.
-  assert.equal(nameDistinctiveness('ХИДРО ТЕСТ МОНТАЖ ЕООД София'), 'distinctive');
+  assert.equal(nameDistinctiveness('ХИДРО ТЕСТ МОНТАЖ ЕООД Примероград'), 'distinctive');
   assert.equal(nameDistinctiveness('ЕТ АЛЕКС ПЕТРОВ ДИМИТРОВ'), 'distinctive');
 });
 
@@ -149,7 +153,7 @@ test('nameDistinctiveness: a trailing city is not counted as a content word (no 
   assert.equal(nameDistinctiveness('НИКО КОМЕРС ООД гр.Пловдив'), 'generic'); // marker, no comma
   assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ООД, обл. Варна'), 'generic');
   // A genuinely distinctive (≥3 content word) name stays distinctive with or without a seat.
-  assert.equal(nameDistinctiveness('ХИДРО ТЕСТ МОНТАЖ ЕООД, гр. София'), 'distinctive');
+  assert.equal(nameDistinctiveness('ХИДРО ТЕСТ МОНТАЖ ЕООД, гр. Примероград'), 'distinctive');
 });
 
 test('localityToken: regional bodies yield a town; ministries yield null', () => {
@@ -160,17 +164,17 @@ test('localityToken: regional bodies yield a town; ministries yield null', () =>
 });
 
 test('authOwn: the authority’s own town counts even when the declarant wrote only the town', () => {
-  // „Община Благоевград" as the authority, „Благоевград" as the declared institution: the declarant's
+  // „Община Примероград" as the authority, „Примероград" as the declared institution: the declarant's
   // side names no place on its own, so the verdict has to come from the authority's spelling.
-  const inst = ['БЛАГОЕВГРАД'];
-  const words = new Set(['БЛАГОЕВГРАД']);
-  assert.equal(authOwn('ОБЩИНА БЛАГОЕВГРАД', inst, [], [], words), 'locality');
+  const inst = ['ПРИМЕРОГРАД'];
+  const words = new Set(['ПРИМЕРОГРАД']);
+  assert.equal(authOwn('ОБЩИНА ПРИМЕРОГРАД', inst, [], [], words), 'locality');
   // An 11-letter town is below the substring heuristic's floor, so without the town it stays foreign.
-  assert.equal(authOwn('ОБЩИНА БЛАГОЕВГРАД', inst, [], [], new Set()), 'none');
+  assert.equal(authOwn('ОБЩИНА ПРИМЕРОГРАД', inst, [], [], new Set()), 'none');
   // A different town never matches.
-  assert.equal(authOwn('ОБЩИНА СМОЛЯН', inst, [], [], words), 'none');
+  assert.equal(authOwn('ОБЩИНА ТЕСТОВО', inst, [], [], words), 'none');
   // Exact and the substring heuristic keep precedence over the place.
-  assert.equal(authOwn('ОБЩИНА БЛАГОЕВГРАД', ['ОБЩИНА БЛАГОЕВГРАД'], [], [], words), 'exact');
+  assert.equal(authOwn('ОБЩИНА ПРИМЕРОГРАД', ['ОБЩИНА ПРИМЕРОГРАД'], [], [], words), 'exact');
   assert.equal(
     authOwn('НАРОДНО СЪБРАНИЕ НА РЕПУБЛИКА БЪЛГАРИЯ', [], ['НАРОДНО СЪБРАНИЕ'], [], new Set()),
     'name_contains',

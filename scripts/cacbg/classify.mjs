@@ -24,7 +24,7 @@ const FORM_TOKENS = new Set([
   'СДРУЖЕНИЕ',
 ]);
 
-// A седалище/seat declarants sometimes append to a company cell („X АД, гр. София" / „X ООД гр.Русе").
+// A седалище/seat declarants sometimes append to a company cell („X АД, гр. Примероград" / „X ООД гр.Русе").
 // The фирма proper ends at the legal form (ЗТРРЮЛНЦ), so a trailing seat is NOT part of the name — but if
 // it slips through it defeats closelyHeldForm's end-anchored form test (an АД read as closely-held → the
 // „11 акции на Trace → €88M" libel trap) and inflates nameDistinctiveness (a seat token counted as a
@@ -43,7 +43,7 @@ const hasFormToken = (s) => s.split(/[^А-ЯЁ]+/).some((t) => FORM_TOKENS.has(t
 const SUFFIX_FORMS = new Set(['ЕООД', 'ООД', 'ЕАД', 'АД', 'АДСИЦ', 'КДА', 'ДЗЗД']);
 
 // Cut everything after the LAST фирма-terminating form token. This is the case the comma-peel and the
-// marker strip both miss: „ТЕСТ ГРУП ХОЛД АД София" has neither a comma nor a „гр." dot, so it survived
+// marker strip both miss: „ТЕСТ ГРУП ХОЛД АД Примероград" has neither a comma nor a „гр." dot, so it survived
 // both, stopped ending in its form, and defeated every end-anchored form test downstream. Token-exact
 // (never a substring), so „НАДЕЖДА ГЛОБАЛ ЕООД" and „АД-ХОК ЕООД" are untouched.
 function stripAfterSuffixForm(s) {
@@ -56,7 +56,7 @@ function stripAfterSuffixForm(s) {
 function stripSeatSuffix(upper) {
   let s = String(upper).trim();
   // Peel trailing comma-clauses right-to-left while the clause bears no legal form (i.e. it's a seat, not
-  // the фирма tail). Comma-peel runs BEFORE the marker strip so „X АД, гр. София" loses the whole „, …"
+  // the фирма tail). Comma-peel runs BEFORE the marker strip so „X АД, гр. Примероград" loses the whole „, …"
   // clause (no dangling comma left to break the terminal form anchor).
   for (
     let m = s.match(/^(.*),\s*([^,]+)$/u);
@@ -166,8 +166,8 @@ export function temporalStatus(declYears, contractYear) {
  * „Област - Русе" / „Община Русе" → „РУСЕ"; ministries and national bodies → null (no locality).
  */
 export function localityToken(institution) {
-  // Case-insensitive on purpose: the register writes „Община Благоевград", „ОБЩИНА БЛАГОЕВГРАД" and
-  // „община благоевград" for one body, and a Title-case-only match read the last two as no place at
+  // Case-insensitive on purpose: the register writes „Община Примероград", „ОБЩИНА ПРИМЕРОГРАД" and
+  // „община примероград" for one body, and a Title-case-only match read the last two as no place at
   // all. The separator after the keyword is required, so „Районна прокуратура" is not „Район" + „на".
   const m = String(institution ?? '').match(
     /(?:област|община|общински\s+съвет|общ\.?\s*съвет|обс|район)(?=[\s.,;:–—-])[\s.,;:–—-]*([А-Яа-яЁё]+)/iu,
@@ -195,7 +195,7 @@ export function authOwn(authorityName, instNorms, instNormsLong, locTokens, inst
   if (locTokens.length && parts.some((p) => locTokens.some((t) => p.includes(t))))
     return 'locality';
   // The place read from the AUTHORITY's side. The declarant's own field often carries the bare town
-  // („Благоевград", not „Община Благоевград"), which names no place on its own; the authority always
+  // („Примероград", not „Община Примероград"), which names no place on its own; the authority always
   // spells the body out, so its town is the reliable one to look for among the declared institutions.
   const authLocality = localityToken(authorityName);
   if (authLocality && instWords.has(authLocality)) return 'locality';

@@ -341,7 +341,7 @@ export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
   };
 }
 
-/** One spelling-insensitive key per institution, so „Община Ямбол" and „ОБЩИНА ЯМБОЛ" filter together.
+/** One spelling-insensitive key per institution, so „Община Тестовци" and „ОБЩИНА ТЕСТОВЦИ" filter together.
  * The pipeline's own key, not a second implementation: a poorer one here left „47-мо Народно събрание",
  * „51-во Народно събрание" and „Народно събрание" as three separate rows in the filter, and showed one
  * municipality twice on a person's timeline. The displayed label stays the source's own spelling. */
