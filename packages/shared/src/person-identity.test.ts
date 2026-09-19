@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   collectivePersonName,
+  editDistance,
   personalRegistryIndent,
+  oneSlipApart,
   personNameKey,
   personNamesAlike,
+  withoutPersonTitle,
 } from './person-identity';
 
 describe('personNameKey', () => {
@@ -73,5 +76,39 @@ describe('personNamesAlike', () => {
     expect(personNamesAlike('Мария Петрова Иванова', 'Марина Петрова Георгиева')).toBe(false);
     expect(personNamesAlike('Иван Иванов', 'Иван Иванов Петров')).toBe(false);
     expect(personNamesAlike('Иван Петров Иванов', 'Петър Иванов Иванов')).toBe(false);
+  });
+});
+
+describe('withoutPersonTitle', () => {
+  it('drops the titles the register writes in front of a name', () => {
+    expect(withoutPersonTitle('д-р Иван Петров Иванов')).toBe('Иван Петров Иванов');
+    expect(withoutPersonTitle('ПРОФ. Д-Р ИВАН ПЕТРОВ ИВАНОВ')).toBe('ИВАН ПЕТРОВ ИВАНОВ');
+    expect(withoutPersonTitle('инж. арх. Иван Петров')).toBe('Иван Петров');
+  });
+
+  it('leaves a name that only begins like a title', () => {
+    // Дра is a name component, not „д-р" — the boundary is what keeps it one.
+    expect(withoutPersonTitle('Драгомир Петров')).toBe('Драгомир Петров');
+    expect(withoutPersonTitle('Иван Петров Иванов')).toBe('Иван Петров Иванов');
+    expect(withoutPersonTitle(null)).toBe('');
+  });
+});
+
+describe('oneSlipApart', () => {
+  it('accepts one letter changed, added or dropped', () => {
+    expect(oneSlipApart('ГЕОРГИЕВ', 'ГЕОРГЕЕВ')).toBe(true);
+    expect(oneSlipApart('ГЕОРГИЕВ', 'ГЕОРГИЕВА')).toBe(true);
+    expect(oneSlipApart('ГЕОРГИЕВА', 'ГЕОРГИЕВ')).toBe(true);
+  });
+
+  it('accepts two adjacent letters swapped, which Levenshtein charges as two edits', () => {
+    expect(oneSlipApart('ГЕОРГИЕВ', 'ГЕРОГИЕВ')).toBe(true);
+    expect(editDistance('ГЕОРГИЕВ', 'ГЕРОГИЕВ')).toBe(2);
+  });
+
+  it('refuses two slips, a non-adjacent swap and a short component', () => {
+    expect(oneSlipApart('ГЕОРГИЕВ', 'ГЕОРГЕЕВА')).toBe(false);
+    expect(oneSlipApart('ГЕОРГИЕВ', 'ГИОРГЕЕВ')).toBe(false);
+    expect(oneSlipApart('ИВАН', 'ИВАЙ')).toBe(false);
   });
 });
