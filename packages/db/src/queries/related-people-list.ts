@@ -24,7 +24,8 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   SELECT DISTINCT COALESCE(pl.registry_indent,d.person_id) identity,d.declared_year year
   FROM declarations d LEFT JOIN person_registry_links pl ON pl.person_id=d.person_id
   WHERE ${declaredOfficeYear()}
-), office_bounds AS MATERIALIZED (${officeBounds('1=1')}), company_contracts AS MATERIALIZED (
+), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM links)')}
+), company_contracts AS MATERIALIZED (
   SELECT c.id, b.eik_normalized eik,c.amount_eur,c.signed_at
   FROM bidders b JOIN contracts c ON c.bidder_id=b.id JOIN tenders t ON t.id=c.tender_id
   JOIN authorities a ON a.id=t.authority_id
