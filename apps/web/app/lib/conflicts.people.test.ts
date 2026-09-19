@@ -105,7 +105,7 @@ describe('institutionKey', () => {
     // the assembly under its number, and a municipality under its council's name or its bare town.
     for (const spellings of [
       ['Народно събрание', '47-мо Народно събрание', '51-во Народно събрание', 'Народно събраниe'],
-      ['Община Благоевград', 'ОБЩИНА БЛАГОЕВГРАД', 'Общински съвет Благоевград', 'Благоевград'],
+      ['Община Примероград', 'ОБЩИНА ПРИМЕРОГРАД', 'Общински съвет Примероград', 'Примероград'],
     ])
       expect(new Set(spellings.map(institutionKey)).size).toBe(1);
     // Folds that must NOT happen: an oblast is not its municipality, and another body in the same town

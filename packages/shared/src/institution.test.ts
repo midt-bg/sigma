@@ -39,8 +39,11 @@ test('canonicalInstitution — empty / nullish is empty (never a spurious canoni
 test('declarationInstitution — the declaration names the institution, the listing only fills in', () => {
   // The declarant wrote the council; the register listed them under the municipality. The document is
   // what the person signed, and it is also the more precise of the two.
-  const regular = { institution: 'Община Ямбол', category: 'Кметове и общински съветници' };
-  EQ(declarationInstitution({ ...regular, work: 'Общински съвет Ямбол' }), 'Общински съвет Ямбол');
+  const regular = { institution: 'Община Тестовци', category: 'Кметове и общински съветници' };
+  EQ(
+    declarationInstitution({ ...regular, work: 'Общински съвет Тестовци' }),
+    'Общински съвет Тестовци',
+  );
 
   // The case that forced the rule: a listing filed the head of a state company under a parliamentary
   // category, while the document it points at names the company and the post. Trusting the listing
@@ -55,14 +58,14 @@ test('declarationInstitution — the declaration names the institution, the list
   );
 
   // The listing still fills in where the document says nothing.
-  EQ(declarationInstitution({ ...regular, work: '' }), 'Община Ямбол');
-  EQ(declarationInstitution({ ...regular, work: 'Ежегодни декларации' }), 'Община Ямбол');
+  EQ(declarationInstitution({ ...regular, work: '' }), 'Община Тестовци');
+  EQ(declarationInstitution({ ...regular, work: 'Ежегодни декларации' }), 'Община Тестовци');
 
   const typeFolder = {
     institution: 'Встъпителни и финални декларации',
     category: 'Встъпителни и финални декларации',
   };
-  EQ(declarationInstitution({ ...typeFolder, work: ' Община Ямбол ' }), 'Община Ямбол');
+  EQ(declarationInstitution({ ...typeFolder, work: ' Община Тестовци ' }), 'Община Тестовци');
   // Unknown is not a declaration category posing as an institution.
   EQ(declarationInstitution({ ...typeFolder, work: '' }), '');
   EQ(declarationInstitution({ institution: '', work: 'Народно събрание' }), 'Народно събрание');
@@ -74,29 +77,29 @@ test('identityInstitution — one body under its different spellings is one key'
   EQ(identityInstitution('47-мо Народно събрание'), 'НАРОДНО СЪБРАНИЕ');
   EQ(identityInstitution('Народно събрание на РБ'), 'НАРОДНО СЪБРАНИЕ');
   for (const s of [
-    'Община Карнобат',
-    'ОбС Карнобат',
-    'Общински съвет - Карнобат',
-    'КАРНОБАТ',
-    'гр. Карнобат',
+    'Община Тестовци',
+    'ОбС Тестовци',
+    'Общински съвет - Тестовци',
+    'ТЕСТОВЦИ',
+    'гр. Тестовци',
   ])
-    EQ(identityInstitution(s), 'КАРНОБАТ', s);
-  EQ(identityInstitution('СОБАЛ ПРИМЕР ЕООД, гр. София'), 'СОБАЛ ПРИМЕР ЕООД');
-  EQ(identityInstitution('Областна администрация - Смолян'), 'ОБЛАСТ СМОЛЯН');
-  EQ(identityInstitution('Област - Смолян'), 'ОБЛАСТ СМОЛЯН');
+    EQ(identityInstitution(s), 'ТЕСТОВЦИ', s);
+  EQ(identityInstitution('СОБАЛ ПРИМЕР ЕООД, гр. Примероград'), 'СОБАЛ ПРИМЕР ЕООД');
+  EQ(identityInstitution('Областна администрация - Тестово'), 'ОБЛАСТ ТЕСТОВО');
+  EQ(identityInstitution('Област - Тестово'), 'ОБЛАСТ ТЕСТОВО');
   EQ(
-    identityInstitution('Областна администрация - област Търговище'),
-    identityInstitution('Област - Търговище'),
+    identityInstitution('Областна администрация - област Примерово'),
+    identityInstitution('Област - Примерово'),
   );
   EQ(identityInstitution('МВР'), 'МИНИСТЕРСТВО НА ВЪТРЕШНИТЕ РАБОТИ'); // abbreviations still fold
 });
 
 test('identityInstitution — never joins two different bodies', () => {
   EQ(identityInstitution('Областна дирекция на МВР - Русе'), 'ОБЛАСТНА ДИРЕКЦИЯ НА МВР РУСЕ');
-  EQ(identityInstitution('Общинска болница Карнобат'), 'ОБЩИНСКА БОЛНИЦА КАРНОБАТ');
-  EQ(identityInstitution('Район Южен - Пловдив'), 'РАЙОН ЮЖЕН ПЛОВДИВ');
+  EQ(identityInstitution('Общинска болница Тестовци'), 'ОБЩИНСКА БОЛНИЦА ТЕСТОВЦИ');
+  EQ(identityInstitution('Район Тестов - Примероград'), 'РАЙОН ТЕСТОВ ПРИМЕРОГРАД');
   EQ(identityInstitution('Община'), 'ОБЩИНА'); // a bare generic word is not folded to nothing
-  expect(identityInstitution('Област Смолян')).not.toBe(identityInstitution('Смолян')); // oblast ≠ town
+  expect(identityInstitution('Област Тестово')).not.toBe(identityInstitution('Тестово')); // oblast ≠ town
   EQ(identityInstitution(''), '');
 });
 
@@ -114,8 +117,8 @@ test('punctuation cannot split one institution, but substantive organisation nam
     identityInstitution('Диагностично Консултативен Център 1 Девня ЕООД'),
   );
   EQ(
-    identityInstitution('СУ „Тестово училище“ - София'),
-    identityInstitution('СУ Тестово училище София'),
+    identityInstitution('СУ „Тестово училище“ - Примероград'),
+    identityInstitution('СУ Тестово училище Примероград'),
   );
   expect(identityInstitution('Министерство на икономиката и индустрията')).not.toBe(
     identityInstitution('Министерство на икономиката, инвестициите и индустрията'),
@@ -127,7 +130,7 @@ test('nested council and settlement prefixes normalize once without erasing terr
     ['Общински съвет гр.Монтана', 'МОНТАНА'],
     ['Общински съвет гр. Сливен', 'СЛИВЕН'],
     ['Общински съвет Община Павликени', 'ПАВЛИКЕНИ'],
-    ['Областна администрация Смолян', 'ОБЛАСТ СМОЛЯН'],
+    ['Областна администрация Тестово', 'ОБЛАСТ ТЕСТОВО'],
   ]) {
     EQ(identityInstitution(input), expected);
     EQ(identityInstitution(identityInstitution(input)), expected);
