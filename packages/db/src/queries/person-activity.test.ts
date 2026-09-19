@@ -515,3 +515,35 @@ it('marks only what falls inside both the tie to THIS company and the office', a
   expect(await ids('role')).toEqual(['a', 'c']);
   expect(await ids('matched')).toEqual(['a', 'b']); // office years alone, the old question
 });
+
+// A filing date is always LATER than what it reports: the law gives a month to file after taking
+// office. Opening the office on the entry filing therefore cut the first weeks of a real office — a
+// contract signed the day after an appointment, declared three weeks later, fell outside. The office
+// opens with its first year; only the END is narrowed to a day, where a late bound cuts nothing.
+it('opens the office with its year and closes it on the day of the exit filing', async () => {
+  const d1 = fixture();
+  const ids = async (basis: string) =>
+    (
+      await getPersonActivity(d1, 'person', ['official'], new URLSearchParams(`basis=${basis}`))
+    ).contracts
+      .map((r) => r.id)
+      .sort();
+  const office = (rows: string) =>
+    db.exec(`DELETE FROM declarations; DELETE FROM declaration_metadata;
+      DELETE FROM interest_links; DELETE FROM interest_link_evidence;
+      UPDATE registry_roles SET added_on='2020-01-01', removed_on=NULL;
+      ${rows}`);
+
+  // Contract 'a' is signed 2020-06-01, inside the role. The entry declaration for that office was filed
+  // in November — five months later — and the contract is still inside the office it reports.
+  office(`INSERT INTO declarations VALUES('e20','official','Община','Съветник','2020');
+    INSERT INTO declaration_metadata VALUES('e20','Entry','2020-11-30','2020-12-01');`);
+  expect(await ids('tied')).toEqual(['a']);
+
+  // The exit closes the office on its own filing day, so the June contract now falls outside it.
+  office(`INSERT INTO declarations VALUES('e20','official','Община','Съветник','2020'),
+      ('v20','official','Община','Съветник','2020');
+    INSERT INTO declaration_metadata VALUES('e20','Entry','2020-01-20','2020-01-21'),
+      ('v20','Vacate','2020-04-01','2020-04-02');`);
+  expect(await ids('tied')).toEqual([]);
+});
