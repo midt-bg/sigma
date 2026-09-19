@@ -5,7 +5,7 @@ interface __BaseEnv_DevEnv {
   DB: D1Database;
   REGISTRY_API_BASE_URL: 'https://api-sigma-cr.registryagency.bg';
   REGISTRY_PORTAL_URL: 'https://portal.registryagency.bg/CR/api/Applications/Entries';
-  SIGMA_D1_ID: '713b98fa-6ab5-45f3-81c4-119f4c0907d6';
+  SIGMA_D1_ID: '00000000-0000-0000-0000-000000000000';
   SIGMA_D1_NAME: 'sigma-dev';
   SIGMA_SHIP_ENV: 'dev';
   DECLARATIONS_BUCKET: 'sigma-declarations-dev';
