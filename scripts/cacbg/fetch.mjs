@@ -337,7 +337,6 @@ export async function run({
       console.log(`  deadline reached — stopping before ${folder} (not attempted)`);
       break;
     }
-    const cachedFiles = await filesFor(folder);
     const listRes = await httpGet(`${BASE}/${folder}/list.xml`);
     if (listRes.status !== 200) {
       await recordSourceResult(folder, 'list.xml', { status: listRes.status });
@@ -372,7 +371,7 @@ export async function run({
     // makes the corpus incomplete, so no stamp; a genuinely empty brand-new set (never yet observed)
     // would go red for an operator to look at, which is the right failure direction for a certifier.
     if (rows.length === 0) {
-      const onDisk = [...cachedFiles.keys()].some((f) => f !== 'list.xml');
+      const onDisk = [...(await filesFor(folder)).keys()].some((f) => f !== 'list.xml');
       console.log(
         `  ${folder}: list.xml parsed to 0 rows${onDisk ? ' (declarations exist on disk!)' : ''} — SKIP`,
       );
@@ -408,6 +407,42 @@ export async function run({
       }
     }
     await store.put(listKey, listRes.body); // original bytes, immediately durable in R2
+    // A finished set already leaves a receipt, and this is it: `.index.json` is written ONLY where every
+    // announced declaration was obtained or recorded as a source gap. So a receipt for THIS list means
+    // re-walking the rows can only reproduce it — after listing the set in the store and looking up
+    // several thousand keys one at a time. Reading the receipt instead is what turns a resumed attempt
+    // from "count everything again" into "skip whole sets", which is the difference between resuming and
+    // starting over: the coordinator only forgives a failed attempt that pushes past the durable high
+    // water mark, and an attempt that spends its whole life re-counting never gets there.
+    // Two guards, because a receipt is trusted without opening a single file. The list hash: one added
+    // declaration changes the digest and the set is crawled whole. And the arithmetic: a receipt written
+    // under `--limit` covers fewer files than the set announces, and must not pass for a complete one.
+    const receipt = await store.get(`${folder}/.index.json`);
+    if (receipt) {
+      const index = (() => {
+        try {
+          return JSON.parse(receipt.toString('utf8'));
+        } catch {
+          return null; // a torn or legacy receipt is simply not a receipt; the full crawl rewrites it
+        }
+      })();
+      const covered = (index?.files?.length ?? 0) + (index?.missing?.length ?? 0);
+      if (index?.listHash === digest(listRes.body) && covered === rows.length) {
+        stats.folders[folder] = {
+          announced: rows.length,
+          fetched: 0,
+          cached: index.files.length,
+          missing: index.missing.length,
+          errors: 0,
+        };
+        inventory.push({ folder, sha256: digest(receipt) });
+        completed += index.files.length;
+        progress('fetch', completed);
+        console.log(`  ${folder}: ${rows.length} declarations, already obtained — skipping`);
+        continue;
+      }
+    }
+    const cachedFiles = await filesFor(folder);
     const obtainedFiles = new Map();
     const sourceGaps = new Set();
     // `announced` is what the SET declares, so it is read BEFORE --limit truncates the work. Taking it
