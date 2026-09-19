@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { declarantNameKey } from './source-identity.mjs';
 import { institutionMatchKey } from './institutions.mjs';
 
-export const CONTINUITY_RULE = 'declaration-continuity-2';
+export const CONTINUITY_RULE = 'declaration-continuity-3';
 export const COMPANY_AUTHOR_BASIS = 'company_author';
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const key = (...values) => JSON.stringify(values);
@@ -24,10 +24,22 @@ export function declarationContinuity(filings, resolveCompany) {
     const parsedYear = Number(f.year);
     const year =
       Number.isInteger(parsedYear) && parsedYear >= 1990 && parsedYear <= 2100 ? parsedYear : null;
-    const work = text(f.work).replace(
-        /^ОБЩИНСКА АДМИНИСТРАЦИЯ\s+(?:(?:НА\s+)?ОБЩИНА\s+)?(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u,
-        'ОБЩИНА ',
-      ),
+    // The EMPLOYER grain, not the exact organisation: a declarant writes „Община Две Могили" one year
+    // and the listing's bare „Две Могили" the next, and read with the exact-match key those are two
+    // employers — so one person's filings stayed in separate records over a spelling. The same holds
+    // for an administration named after its own body. The COUNCIL is deliberately NOT folded into the
+    // municipality (see the test): it is a different body, and this fold must not join two of them.
+    const employer = (value) =>
+      text(value)
+        .replace(
+          /^ОБЩИНСКА АДМИНИСТРАЦИЯ\s+(?:(?:НА\s+)?ОБЩИНА\s+)?(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u,
+          'ОБЩИНА ',
+        )
+        .replace(/^ОБЛАСТНА АДМИНИСТРАЦИЯ\s+(?:(?:НА\s+)?ОБЛАСТ\s+)?(?=\S)/u, 'ОБЛАСТ ')
+        .replace(/^ОБЩИНА\s+(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u, '')
+        .replace(/^(?:ГР|С)\.\s*/u, '')
+        .trim();
+    const work = employer(f.work),
       role = text(f.declaredPosition);
     const doc = {
       id: `cacbg:${f.folder}:${f.xmlFile}`,

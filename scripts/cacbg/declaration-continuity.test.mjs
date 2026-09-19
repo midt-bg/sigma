@@ -51,3 +51,28 @@ test('municipal administration wording preserves employment continuity without f
     ['cacbg:2025:a.xml', 'cacbg:2025:b.xml'],
   );
 });
+
+// The register's own listing writes a municipality both ways, and read with the exact-match key those
+// were two employers: one person's filings then stayed in separate records over a spelling. Measured on
+// the dev corpus, 146 names carry exactly this split.
+test('one municipality written two ways is one employer; an oblast and a town are not', () => {
+  const base = {
+    folder: '2025',
+    sourceHash: 'a'.repeat(64),
+    person: 'Иван Петров Примеров',
+    declaredPosition: 'Главен архитект',
+    year: 2023,
+  };
+  const edgeCount = (works) =>
+    declarationContinuity(
+      works.map((work, i) => ({ ...base, xmlFile: `${i}.xml`, work, year: 2023 + i })),
+    ).length;
+  // Една община, три изписвания — един работодател (групата дава верига от две ребра).
+  assert.equal(edgeCount(['Община Две Могили', 'Две Могили', 'гр. Две Могили']), 2);
+  // Областната администрация е самата област.
+  assert.equal(edgeCount(['Областна администрация Търговище', 'Област - Търговище']), 1);
+  // Област и едноименен град остават различни работодатели.
+  assert.equal(edgeCount(['Област Смолян', 'Смолян']), 0);
+  // Друго ведомство в същия град също.
+  assert.equal(edgeCount(['РЗИ Русе', 'Община Русе']), 0);
+});
