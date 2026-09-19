@@ -288,8 +288,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
         }
         if (attribution === 'registry_alias')
           stats.registryAliases = (stats.registryAliases ?? 0) + 1;
-        if (attribution === 'name_variant')
-          stats.nameVariants = (stats.nameVariants ?? 0) + 1;
+        if (attribution === 'name_variant') stats.nameVariants = (stats.nameVariants ?? 0) + 1;
         const fingerprint = documentFingerprint(xml);
         {
           const member = seenHash.get(fingerprint) ?? {

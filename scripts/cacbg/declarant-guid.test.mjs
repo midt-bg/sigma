@@ -91,18 +91,14 @@ test('one typed slip under a shared GUID is still one declarant', () => {
 
   // Two letters apart is no longer a slip: the chains stay separate, so no edge is proposed at all.
   assert.equal(
-    declarantGuidEvidence([
-      doc('1', 'Иван Петров Георгиев'),
-      doc('2', 'Иван Петкав Георгиев'),
-    ]).length,
+    declarantGuidEvidence([doc('1', 'Иван Петров Георгиев'), doc('2', 'Иван Петкав Георгиев')])
+      .length,
     0,
   );
   // And a GUID the register reused for somebody else links nothing.
   assert.equal(
-    declarantGuidEvidence([
-      doc('1', 'Иван Петров Георгиев'),
-      doc('2', 'Мария Стоянова Димитрова'),
-    ]).length,
+    declarantGuidEvidence([doc('1', 'Иван Петров Георгиев'), doc('2', 'Мария Стоянова Димитрова')])
+      .length,
     0,
   );
 });

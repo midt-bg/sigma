@@ -47,7 +47,9 @@ export function declarationContinuity(filings, resolveCompany) {
     const works = [
       ...new Set(
         String(f.work ?? '')
-          .split(/;|\s+И\s+(?=ОБЩИНСКИ СЪВЕТ\b|ОБЩИНА\b|ОБЛАСТ\b|ОБЛАСТНА АДМИНИСТРАЦИЯ\b|ОБЩИНСКА АДМИНИСТРАЦИЯ\b)/iu)
+          .split(
+            /;|\s+И\s+(?=ОБЩИНСКИ СЪВЕТ\b|ОБЩИНА\b|ОБЛАСТ\b|ОБЛАСТНА АДМИНИСТРАЦИЯ\b|ОБЩИНСКА АДМИНИСТРАЦИЯ\b)/iu,
+          )
           .map(employer)
           .filter(Boolean),
       ),
