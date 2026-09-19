@@ -70,9 +70,18 @@ const LATIN_LOOKALIKE: Record<string, string> = {
 };
 
 /**
- * The institution one declaration belongs to (ADR-0040). The register's listing names it — except in the
- * folders of inaugural/final and of annual declarations, where the listing node is the declaration TYPE
- * (its name is the category's) and the only institution on record is the declarant's own <Work> field.
+ * The institution one declaration belongs to (ADR-0040).
+ *
+ * The DECLARATION decides. Its `<Work>` field is what the person signed; the register's listing is only
+ * how the register arranged the documents, and the two can disagree. They did: the 2022 listing filed the
+ * executive director of Национална електрическа компания among the members of the European Parliament,
+ * between two actual MEPs, and the document that same row points at says „НАЦИОНАЛНА ЕЛЕКТРИЧЕСКА
+ * КОМПАНИЯ ЕАД / ИЗПЪЛНИТЕЛЕН ДИРЕКТОР". Preferring the listing published „Европейски парламент · Член"
+ * about a named man who is not an MEP.
+ *
+ * The listing is the fallback, not the authority — in the folders of inaugural/final and of annual
+ * declarations its node is the declaration TYPE (its name is the category's) and carries no institution
+ * at all, and some documents leave `<Work>` empty.
  * @param {{institution?: string|null, category?: string|null, work?: string|null}} rec
  */
 export function declarationInstitution(rec: {
@@ -87,9 +96,10 @@ export function declarationInstitution(rec: {
     /^(?:встъпителни и финални декларации|ежегодни декларации|държавни предприятия|общински предприятия|училища|процедури по ЗОП|ДКЦ, МЦ, ЦТХ|детски градини, ясли, детка кухня|социални домове и центрове|политически кабинет|финсово управление на средства от ЕС|членовете на управителните и контролните органи на дъщерни дружества)$/iu.test(
       s,
     );
-  if (listed && !isCategory(listed) && listed.toLowerCase() !== category.toLowerCase())
-    return listed;
-  return own && !isCategory(own) ? own : '';
+  if (own && !isCategory(own)) return own;
+  return listed && !isCategory(listed) && listed.toLowerCase() !== category.toLowerCase()
+    ? listed
+    : '';
 }
 
 /**
