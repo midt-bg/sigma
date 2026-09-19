@@ -70,3 +70,39 @@ test('a GUID per document and different GUIDs never link', () => {
     [],
   );
 });
+
+// The GUID is the register's own id for a declarant; the name only guards against the register reusing
+// one. Demanding identical names split a real declarant in two over a single typed letter — same GUID,
+// same council, same years — and left his registry roles on only one of the halves.
+test('one typed slip under a shared GUID is still one declarant', () => {
+  const guid = 'B35A651B-D353-424E-875C-573B058D3016';
+  const doc = (n, person) => ({
+    xmlFile: `${guid}${n}.xml`,
+    folder: '2023y2',
+    person,
+    sourceHash: `h${n}`,
+  });
+  const edges = declarantGuidEvidence([
+    doc('177547', 'Любомир Михайлов Минчев'),
+    doc('177551', 'Любомир Михаклов Минчев'),
+  ]);
+  assert.equal(edges.length, 1);
+  assert.equal(edges[0].rule_version, DECLARANT_GUID_RULE);
+
+  // Two letters apart is no longer a slip: the chains stay separate, so no edge is proposed at all.
+  assert.equal(
+    declarantGuidEvidence([
+      doc('1', 'Иван Петров Георгиев'),
+      doc('2', 'Иван Петкав Георгиев'),
+    ]).length,
+    0,
+  );
+  // And a GUID the register reused for somebody else links nothing.
+  assert.equal(
+    declarantGuidEvidence([
+      doc('1', 'Иван Петров Георгиев'),
+      doc('2', 'Мария Стоянова Димитрова'),
+    ]).length,
+    0,
+  );
+});
