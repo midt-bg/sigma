@@ -283,7 +283,7 @@ describe('PersonActivity — the contract list', () => {
       );
     expect(officeYears()).toEqual([true, true]);
     expect(container.querySelector('.profile-period-note')!.textContent).toContain(
-      'Времето на връзката',
+      'Съвпадението иска едновременно',
     );
 
     render(role, { hasDeclarations: false });

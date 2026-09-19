@@ -1,4 +1,9 @@
-import { declarationWindow, declaredOfficeYear } from './declaration-source';
+import {
+  declarationWindow,
+  declaredOfficeYear,
+  officeBounds,
+  withinOffice,
+} from './declaration-source';
 import { publicRole } from './registry';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -82,10 +87,16 @@ export function personActivityScope(indent: string | null, ids: string[]) {
   ), office_years AS (
     SELECT DISTINCT d.declared_year year FROM declarations d
     WHERE d.person_id IN (${placeholders}) AND ${declaredOfficeYear()}
-  ), activity AS (
+  ), office_bounds AS (${officeBounds(`d.person_id IN (${placeholders})`)}
+  ), activity_base AS (
     SELECT c.id, COALESCE(c.contract_subject, t.title) AS subject, b.name AS company, b.eik_normalized AS eik, a.id AS authority_id, a.name AS authority,
       c.signed_at, c.amount_eur,
       EXISTS (SELECT 1 FROM office_years oy WHERE oy.year=strftime('%Y',c.signed_at)) AS during_office_year,
+      -- The office narrowed to days at its two ends (declaration-source.ts). Both conditions: the year
+      -- must carry a filing and the day must be inside the span.
+      (EXISTS (SELECT 1 FROM office_years oy WHERE oy.year=strftime('%Y',c.signed_at))
+        AND EXISTS (SELECT 1 FROM office_bounds ob
+          WHERE ${withinOffice('ob', 'c.signed_at')})) AS during_office,
       EXISTS (SELECT 1 FROM registry_roles r WHERE r.subject_id=?1 AND r.subject_kind='person'
         AND r.eik=b.eik_normalized AND ${publicRole('r')} AND c.signed_at IS NOT NULL
         AND (r.uncertain_after IS NULL OR date(c.signed_at)<date(r.uncertain_after))
@@ -103,6 +114,11 @@ export function personActivityScope(indent: string | null, ids: string[]) {
     JOIN company_totals cp ON cp.bidder_id='eik:' || b.eik_normalized AND cp.contracts>0
     JOIN tenders t ON t.id=c.tender_id
     JOIN authorities a ON a.id=t.authority_id JOIN scoped s ON s.eik=b.eik_normalized
+  ), activity AS (
+    -- The claim this surface makes needs BOTH: a tie to THIS company and a public office, at the moment
+    -- the contract was signed. Either alone is a weaker, different claim — the office years said nothing
+    -- about the company, the role said nothing about holding office.
+    SELECT *, ((during_role OR during_declaration) AND during_office) AS during_overlap FROM activity_base
   )`;
   return { cte, params };
 }
@@ -153,9 +169,9 @@ export async function getPersonActivity(
     all: '1=1',
     matched: 'during_office_year=1',
     context: 'during_office_year=0',
-    // The timeline's split: was the person tied to THIS company when the contract was signed?
-    tied: '(during_role=1 OR during_declaration=1)',
-    untied: '(during_role=0 AND during_declaration=0)',
+    // The timeline's split: was the person tied to THIS company AND in office when it was signed?
+    tied: 'during_overlap=1',
+    untied: 'during_overlap=0',
   };
   const params = [...scope.params, filters.company, filters.authority, filters.year];
   // Bind all selected values once, including when a facet excludes its own selection.

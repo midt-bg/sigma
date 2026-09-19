@@ -1,5 +1,5 @@
 import { companyNamesAlike } from '@sigma/shared';
-import { declaredOfficeYear } from './declaration-source';
+import { declaredOfficeYear, officeBounds, withinOffice } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
 
@@ -24,16 +24,19 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   SELECT DISTINCT COALESCE(pl.registry_indent,d.person_id) identity,d.declared_year year
   FROM declarations d LEFT JOIN person_registry_links pl ON pl.person_id=d.person_id
   WHERE ${declaredOfficeYear()}
-), company_contracts AS MATERIALIZED (
+), office_bounds AS MATERIALIZED (${officeBounds('1=1')}), company_contracts AS MATERIALIZED (
   SELECT c.id, b.eik_normalized eik,c.amount_eur,c.signed_at
   FROM bidders b JOIN contracts c ON c.bidder_id=b.id JOIN tenders t ON t.id=c.tender_id
   JOIN authorities a ON a.id=t.authority_id
   WHERE b.eik_normalized IN (SELECT eik FROM links)
 ), person_contracts AS (
+  -- BOTH, at the moment of signing: the declared interest covers the date AND the person was in office.
   SELECT l.identity,c.id,c.eik,c.amount_eur,
-    MAX(oy.identity IS NOT NULL) in_window
+    MAX(oy.identity IS NOT NULL AND ${withinOffice('ob', 'c.signed_at')}
+      AND strftime('%Y',c.signed_at) BETWEEN l.first_declared_year AND l.last_declared_year) in_window
   FROM links l JOIN company_contracts c ON c.eik=l.eik
   LEFT JOIN office_years oy ON oy.identity=l.identity AND oy.year=strftime('%Y',c.signed_at)
+  LEFT JOIN office_bounds ob ON ob.person_id=l.person_id
   GROUP BY l.identity,c.id
 ), totals AS (
   SELECT identity,COUNT(*) contract_count,COUNT(DISTINCT eik) company_count,SUM(amount_eur) total_eur,
@@ -145,19 +148,23 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
     WHERE ?1 IS NULL OR r.eik IN (SELECT eik FROM paid)
     GROUP BY pe.person_id, r.eik
+  ), office_years AS MATERIALIZED (
+    SELECT DISTINCT d.person_id, d.declared_year year FROM declarations d
+    WHERE d.person_id IN (SELECT person_id FROM roles) AND ${declaredOfficeYear()}
+  ), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM roles)')}
   ), company_contracts AS MATERIALIZED (
     SELECT c.id, b.eik_normalized eik, c.amount_eur, c.signed_at
     FROM bidders b JOIN contracts c ON c.bidder_id=b.id
     WHERE b.eik_normalized IN (SELECT eik FROM roles)
   ), person_contracts AS (
-    -- „Стойност в периода" asks about THIS company: was the role registered when the contract was
-    -- signed? The years the person held SOME office answer a different question and answer it wrongly —
+    -- „Стойност в периода" needs BOTH at the moment of signing: the role registered at THIS company AND
+    -- a public office. Either condition alone answers a different question and answers it wrongly —
     -- a man who ran the state electricity company until March 2025 and joined a private trader's board
     -- that October had the trader's 2022-2024 contracts counted, 419 of 472 млн. € against a tie worth
     -- 64 contracts. Same predicate as during_role (person-activity.ts), so the list and the profile
     -- cannot disagree: an open role counts only up to the last successful read of the partida.
     SELECT ro.person_id, c.id, c.eik, c.amount_eur,
-      MAX(EXISTS (SELECT 1 FROM registry_roles rr
+      MAX(oy.person_id IS NOT NULL AND ${withinOffice('ob', 'c.signed_at')} AND EXISTS (SELECT 1 FROM registry_roles rr
         WHERE rr.subject_id=ro.identity AND rr.subject_kind='person' AND rr.eik=ro.eik
           AND rr.role IN ('sole_owner','partner','trader','manager',
                           'board_of_directors','management_board','governing_body')
@@ -167,6 +174,8 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
             SELECT 1 FROM registry_deeds rd WHERE rd.eik=rr.eik AND rd.outcome='ok'
               AND date(c.signed_at)<=date(rd.fetched_at)))))) in_window
     FROM roles ro JOIN company_contracts c ON c.eik=ro.eik
+    LEFT JOIN office_years oy ON oy.person_id=ro.person_id AND oy.year=strftime('%Y',c.signed_at)
+    LEFT JOIN office_bounds ob ON ob.person_id=ro.person_id
     GROUP BY ro.person_id, c.id
   ), totals AS (
     SELECT person_id, COUNT(*) contract_count, COUNT(DISTINCT eik) company_count, SUM(amount_eur) total_eur,

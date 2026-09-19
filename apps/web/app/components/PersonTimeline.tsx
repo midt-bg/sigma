@@ -137,11 +137,11 @@ export function PersonTimeline({
         {hasDeclarations ? (
           <>
             <span>
-              <i className="time-symbol eligible" /> сключени по време на връзката{' '}
-              <Explanation text="Договори, подписани, докато регистърът вписва ролята на лицето в същото дружество или декларацията му обхваща периода. Не твърди участие в конкретната поръчка." />
+              <i className="time-symbol eligible" /> по време на връзката и на длъжността{' '}
+              <Explanation text="Договори, подписани, докато едновременно: регистърът вписва ролята на лицето в същото дружество (или декларацията му обхваща периода) И лицето заема публична длъжност. Началото и краят на длъжността се вземат от датите на встъпителната и финалната декларация, когато ги има. Не твърди участие в конкретната поръчка." />
             </span>
             <span>
-              <i className="time-symbol context" /> извън времето на връзката
+              <i className="time-symbol context" /> извън съвпадението
             </span>
           </>
         ) : (
@@ -408,7 +408,7 @@ export function PersonTimeline({
                                 <Link
                                   to={contractHref(c.eik, r.year, 'tied')}
                                   className="time-contract eligible"
-                                  aria-label={`${r.year}: ${r.tied} договора, сключени докато лицето е свързано с ${c.name}`}
+                                  aria-label={`${r.year}: ${r.tied} договора, подписани докато лицето е и на длъжност, и свързано с ${c.name}`}
                                 >
                                   {count(r.tied)}
                                 </Link>
@@ -417,7 +417,7 @@ export function PersonTimeline({
                                 <Link
                                   to={contractHref(c.eik, r.year, 'untied')}
                                   className="time-contract context"
-                                  aria-label={`${r.year}: ${r.contracts - r.tied} договора извън времето на връзката с ${c.name}`}
+                                  aria-label={`${r.year}: ${r.contracts - r.tied} договора извън съвпадението на длъжността и връзката с ${c.name}`}
                                 >
                                   {count(r.contracts - r.tied)}
                                 </Link>

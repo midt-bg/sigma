@@ -14,7 +14,8 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       CREATE TABLE interest_link_evidence(link_key,evidence_kind);
       CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
       CREATE TABLE person_registry_links(person_id,registry_indent);
-      CREATE TABLE declarations(person_id,institution,position,declared_year);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+      CREATE TABLE IF NOT EXISTS declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
       CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
       CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
       CREATE TABLE tenders(id PRIMARY KEY,authority_id);CREATE TABLE authorities(id PRIMARY KEY);
@@ -30,7 +31,8 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       p.run(`person:${i}`, `Лице ${i}`);
       l.run(`l${i}`, `person:${i}`, '2020', '2020');
       e.run(`l${i}`);
-      db.prepare('INSERT INTO declarations VALUES(?,?,?,?)').run(
+      db.prepare('INSERT INTO declarations VALUES(?,?,?,?,?)').run(
+        `d${i}`,
         `person:${i}`,
         'Институция',
         'Съветник',
@@ -39,7 +41,7 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
     }
     db.exec(`INSERT INTO person_registry_links VALUES('person:0','canonical'),('person:1204','canonical');
       UPDATE interest_links SET first_declared_year='2022',last_declared_year='2022' WHERE person_id='person:1204';
-      INSERT INTO declarations VALUES('person:0','Институция А','Роля','2020'),('person:1204','Институция Б','Друга роля','2022');
+      INSERT INTO declarations VALUES('x0','person:0','Институция А','Роля','2020'),('x1204','person:1204','Институция Б','Друга роля','2022');
       INSERT INTO bidders VALUES
         ('own-small-b','2','Собствена малка'),('own-big-b','3','Собствена голяма'),
         ('rest-big-b','4','Останала голяма'),('rest-small-b','5','Останала малка'),
@@ -58,7 +60,7 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       INSERT INTO interest_link_evidence VALUES
         ('own-small','document'),('own-big','document'),('rest-big','document'),
         ('rest-small','document'),('window-small','document'),('window-big','document');
-      INSERT INTO declarations VALUES('person:window-small','Институция','Съветник','2020'),('person:window-big','Институция','Съветник','2020');
+      INSERT INTO declarations VALUES('ws','person:window-small','Институция','Съветник','2020'),('wb','person:window-big','Институция','Съветник','2020');
       INSERT INTO contracts VALUES
         ('own-small-c','own-small-b','t','2010-01-01',1),
         ('own-big-c','own-big-b','t','2010-01-01',2),
@@ -113,16 +115,18 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       totalEur: 0,
       contemporaneousEur: 0,
     });
-    // An evidenced alias can supply an office year without declaring this company at all.
+    // An evidenced alias can supply an office year without declaring this company at all — but an office
+    // year is only half of it now: the contract must ALSO fall inside a declared stake. The 2021 contract
+    // does not, so the alias's 2021 office year no longer drags it in by itself.
     db.exec(`INSERT INTO persons VALUES('alias','Лице');
       INSERT INTO person_registry_links VALUES('alias','canonical');
-      INSERT INTO declarations VALUES('alias','Институция','Съветник','2021'),('alias','Институция','Съветник','2021');
+      INSERT INTO declarations VALUES('a1','alias','Институция','Съветник','2021'),('a2','alias','Институция','Съветник','2021');
       INSERT INTO contracts VALUES('unknown-amount','b','t','2022-03-01',NULL),('zero-amount','b','t','2022-04-01',0),('unknown-date','b','t',NULL,50);`);
     const withAlias = (await getRelatedPersonRows(d1)).find(
       (r) => r.personIdentity === 'canonical',
     )!;
     expect(withAlias).toMatchObject({
-      contemporaneousValueEur: 600,
+      contemporaneousValueEur: 300, // 2020 (100) + 2022 (200); the 2021 contract is inside no stake
       contractCount: 6,
       contractValueEur: 650,
     });
@@ -136,7 +140,7 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
   }
 });
 
-it('lists people the register records as owners of a winner without a declared stake, by their office years', async () => {
+it('lists people the register records as owners of a winner without a declared stake, counting only what falls inside both the role and the office', async () => {
   const db = new DatabaseSync(':memory:');
   const H = 'h'.repeat(64);
   try {
@@ -149,7 +153,7 @@ it('lists people the register records as owners of a winner without a declared s
       INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01'),('222222222','ok','2026-09-01'),
         ('333333333','ok','2026-09-01');
       CREATE TABLE declarations(id,person_id,institution,position,declared_year);
-      CREATE TABLE declaration_metadata(declaration_id,declaration_type);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
       CREATE TABLE declared_interests(declaration_id,entity_raw);
       CREATE TABLE declaration_companies(declaration_id,eik);
       CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name,ownership_kind);
@@ -169,7 +173,7 @@ it('lists people the register records as owners of a winner without a declared s
         ('d22','p','Община','','2022'),('d18','p','Община','','2018'),('e20','p','Община','Кмет','2020');
       -- 2020 is blank, 2021 names the company in its own spelling, 2022 is tied to the ЕИК, 2018 precedes
       -- the ownership, and e20 is not an annual declaration.
-      INSERT INTO declaration_metadata VALUES('d20','Annualy'),('d21','Annualy'),('d22','Annualy'),('d18','Annualy'),('e20','Entry');
+      INSERT INTO declaration_metadata(declaration_id,declaration_type) VALUES('d20','Annualy'),('d21','Annualy'),('d22','Annualy'),('d18','Annualy'),('e20','Entry');
       INSERT INTO declared_interests VALUES('d21','„Изпълнител“ ЕООД');
       INSERT INTO declaration_companies VALUES('d22','111111111');
       INSERT INTO bidders VALUES('b1','111111111','Изпълнител',NULL),('b2','222222222','Държавно','state'),
@@ -188,9 +192,10 @@ it('lists people the register records as owners of a winner without a declared s
       companyCount: 2, // a private company's manager counts; a state enterprise's does not
       contractCount: 3,
       contractValueEur: 157,
-      // c1 (2020, inside the partner role) + c4 (2019, inside the open role at 333333333). c2 (2022) is
-      // outside the role although 2022 is an office year — the old, company-agnostic rule counted it.
-      contemporaneousValueEur: 107,
+      // Only c1 (2020): inside the partner role AND an office year. c2 (2022) is an office year but the
+      // role had ended; c4 (2019) is inside an open role but 2019 is no office year. Each of the two
+      // halves alone would have counted one of them.
+      contemporaneousValueEur: 100,
       hasContemporaneous: true,
       companies: [
         {
@@ -228,7 +233,8 @@ it('names the only company of a single-company declarant, and tells own, family 
       CREATE TABLE interest_link_evidence(link_key,evidence_kind);
       CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
       CREATE TABLE person_registry_links(person_id,registry_indent);
-      CREATE TABLE declarations(person_id,institution,position,declared_year);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+      CREATE TABLE IF NOT EXISTS declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
       CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
       CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
       CREATE TABLE tenders(id PRIMARY KEY,authority_id);CREATE TABLE authorities(id PRIMARY KEY);
@@ -301,7 +307,7 @@ it('counts the governing body of a private winner, not the seats that only overs
       INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01'),('222222222','ok','2026-09-01'),
         ('333333333','ok','2026-09-01');
       CREATE TABLE declarations(id,person_id,institution,position,declared_year);
-      CREATE TABLE declaration_metadata(declaration_id,declaration_type);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
       CREATE TABLE declared_interests(declaration_id,entity_raw);
       CREATE TABLE declaration_companies(declaration_id,eik);
       CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name,ownership_kind);
@@ -311,7 +317,7 @@ it('counts the governing body of a private winner, not the seats that only overs
       INSERT INTO persons VALUES('p','Лице Роля');
       INSERT INTO person_registry_links VALUES('p','${indent}');
       INSERT INTO declarations VALUES('d20','p','Община','Кмет','2020');
-      INSERT INTO declaration_metadata VALUES('d20','Annualy');
+      INSERT INTO declaration_metadata(declaration_id,declaration_type) VALUES('d20','Annualy');
       INSERT INTO bidders VALUES('b3','333333333','Частно',NULL);
       INSERT INTO company_totals VALUES('b3',1);
       INSERT INTO tenders VALUES('t','a');
