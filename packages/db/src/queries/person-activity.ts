@@ -113,7 +113,16 @@ export async function getPersonActivity(
   indent: string | null,
   personIds: string[],
   search: URLSearchParams,
-  basis: 'role' | 'declaration' | 'self' | 'family' | 'all' | 'matched' | 'context' = 'all',
+  basis:
+    | 'role'
+    | 'declaration'
+    | 'self'
+    | 'family'
+    | 'all'
+    | 'matched'
+    | 'context'
+    | 'tied'
+    | 'untied' = 'all',
 ): Promise<PersonActivity> {
   const ids = [...new Set(personIds)];
   const requestedBasis = search.get('basis');
@@ -123,6 +132,8 @@ export async function getPersonActivity(
       'all',
       'matched',
       'context',
+      'tied',
+      'untied',
       ...(ids.length ? ['declaration', 'self', 'family'] : []),
     ].includes(requestedBasis ?? '')
   )
@@ -142,6 +153,9 @@ export async function getPersonActivity(
     all: '1=1',
     matched: 'during_office_year=1',
     context: 'during_office_year=0',
+    // The timeline's split: was the person tied to THIS company when the contract was signed?
+    tied: '(during_role=1 OR during_declaration=1)',
+    untied: '(during_role=0 AND during_declaration=0)',
   };
   const params = [...scope.params, filters.company, filters.authority, filters.year];
   // Bind all selected values once, including when a facet excludes its own selection.

@@ -182,7 +182,19 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 8, '111111111': 4, '222222222': 4 },
     authority: { '': 8, 'auth:1': 6, 'auth:2': 2 },
     year: { '': 8, '2020': 2, '2021': 1, '2022': 2, '2023': 1 }, // "all" includes unknown dates
-    basis: { all: 8, matched: 3, context: 5, role: 3, declaration: 4, self: 2, family: 2 },
+    // `tied`/`untied` ask about THIS company, `matched`/`context` only about the person's office years,
+    // so the two splits of the same eight contracts land differently.
+    basis: {
+      all: 8,
+      matched: 3,
+      context: 5,
+      tied: 6,
+      untied: 2,
+      role: 3,
+      declaration: 4,
+      self: 2,
+      family: 2,
+    },
   });
   const filtered = await getPersonActivity(
     d1,
@@ -195,7 +207,17 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 1, '111111111': 1, '222222222': 0 },
     authority: { '': 1, 'auth:1': 1, 'auth:2': 0 },
     year: { '': 4, '2020': 1, '2021': 1, '2022': 1, '2023': 0 },
-    basis: { all: 1, matched: 0, context: 1, role: 1, declaration: 0, self: 0, family: 0 },
+    basis: {
+      all: 1,
+      matched: 0,
+      context: 1,
+      tied: 1,
+      untied: 0,
+      role: 1,
+      declaration: 0,
+      self: 0,
+      family: 0,
+    },
   });
   const family = await getPersonActivity(
     d1,
@@ -208,7 +230,17 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 1, '111111111': 0, '222222222': 1 },
     authority: { '': 1, 'auth:1': 0, 'auth:2': 1 },
     year: { '': 1, '2020': 0, '2021': 0, '2022': 1, '2023': 0 },
-    basis: { all: 1, matched: 0, context: 1, role: 0, declaration: 1, self: 0, family: 1 },
+    basis: {
+      all: 1,
+      matched: 0,
+      context: 1,
+      tied: 1,
+      untied: 0,
+      role: 0,
+      declaration: 1,
+      self: 0,
+      family: 1,
+    },
   });
   const none = await getPersonActivity(
     d1,
@@ -458,4 +490,27 @@ it('gives a declarant the register does not identify no registry reads and no ro
   expect(declared.reads).toEqual([]);
   expect(declared.contracts.reduce((n, r) => n + r.contracts, 0)).toBe(4);
   expect(declared.contracts.every((r) => r.role === 0)).toBe(true);
+});
+
+// „В годините с данни за длъжността" counted a contract whenever the person filed for SOME office that
+// year — company-agnostic. A man who ran the state electricity company until March 2025 and joined a
+// private trader's board that October had the trader's whole 2022–2024 history marked, 585 contracts
+// against a tie covering 64. The timeline's split asks the company-specific question instead.
+it('separates a tie to THIS company from merely holding some office that year', async () => {
+  const d1 = fixture();
+  // The person is in office through 2020 and 2021 (declarations above), but the register puts the role
+  // at this company only in 2020 and again from 2022; the declared interest covers 2020–2021.
+  db.exec('DELETE FROM interest_links; DELETE FROM interest_link_evidence;');
+  const ids = async (basis: string) =>
+    (
+      await getPersonActivity(d1, 'person', ['official'], new URLSearchParams(`basis=${basis}`))
+    ).contracts
+      .map((r) => r.id)
+      .sort();
+
+  // 'a' (2020) and 'c' (2022) fall inside a registered role; 'b' (2021-01-01) is in the gap and 'd' has
+  // no date at all. Office years alone would have claimed 'b' as well.
+  expect(await ids('tied')).toEqual(['a', 'c']);
+  expect(await ids('untied')).toEqual(['b', 'd']);
+  expect(await ids('matched')).toEqual(['a', 'b']); // the old, company-agnostic question
 });

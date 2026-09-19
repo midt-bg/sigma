@@ -99,6 +99,7 @@ it('shows one company for multiple source identities, sequential sections and hi
           contracts: 2,
           role: 0,
           declared: 0,
+          tied: 0,
           eligible: 0,
           valueEur: 100,
         },
@@ -427,6 +428,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
         contracts: 1,
         role: 1,
         declared: 0,
+        tied: 1,
         eligible: 1,
         valueEur: 100,
       },
@@ -437,6 +439,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
         contracts: 2,
         role: 0,
         declared: 0,
+        tied: 0,
         eligible: 0,
         valueEur: null,
       },
@@ -491,7 +494,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     expect(el.textContent).toContain('Договори без дата: 2');
     const eligible = el.querySelector<HTMLAnchorElement>('.time-contract.eligible')!;
     expect(eligible.textContent).toBe('1');
-    expect(eligible.getAttribute('href')).toContain('basis=matched');
+    expect(eligible.getAttribute('href')).toContain('basis=tied');
     expect(eligible.getAttribute('href')).toContain('view=profile');
     expect(el.querySelector('.time-contract.context')).toBeNull();
 

@@ -69,8 +69,8 @@ it('reveals filters from the timeline, but applies manual changes and resets wit
             filterCounts: {
               ...emptyActivity.filterCounts,
               company: {
-                '': q.get('basis') === 'matched' ? 1 : 3,
-                '123456789': q.get('basis') === 'matched' ? 1 : 3,
+                '': q.get('basis') === 'tied' ? 1 : 3,
+                '123456789': q.get('basis') === 'tied' ? 1 : 3,
               },
             },
             filters: {
@@ -104,10 +104,10 @@ it('reveals filters from the timeline, but applies manual changes and resets wit
     form.classList.remove('profile-target');
     select('basis').focus();
     await act(async () => {
-      select('basis').value = 'matched';
+      select('basis').value = 'tied';
       select('basis').dispatchEvent(new Event('change', { bubbles: true }));
     });
-    expect(router.state.location.search).toContain('basis=matched');
+    expect(router.state.location.search).toContain('basis=tied');
     expect(router.state.location.search).toContain('company=123456789');
     expect(router.state.location.search).toContain('year=2024');
     expect(router.state.location.hash).toBe('');

@@ -29,6 +29,7 @@ const contracts = (eik: string, company: string, year: string | null, eligible: 
     contracts: eligible + 1,
     role: 0,
     declared: eligible,
+    tied: eligible,
     eligible,
     valueEur: 1_000,
   }) satisfies TimelineContracts;

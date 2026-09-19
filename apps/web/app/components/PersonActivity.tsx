@@ -213,11 +213,11 @@ export function PersonActivity({
                 <option value="all">Всички договори{optionCount('basis', 'all')}</option>
                 {hasDeclarations && (
                   <>
-                    <option value="matched">
-                      В годините с данни за длъжността{optionCount('basis', 'matched')}
+                    <option value="tied">
+                      По време на връзката с дружеството{optionCount('basis', 'tied')}
                     </option>
-                    <option value="context">
-                      Извън тези години{optionCount('basis', 'context')}
+                    <option value="untied">
+                      Извън времето на връзката{optionCount('basis', 'untied')}
                     </option>
                   </>
                 )}
@@ -290,7 +290,7 @@ export function PersonActivity({
         <p className="small muted profile-period-note">
           Стойностите са на договорите на дружествата, а не лични доходи или извършени плащания.{' '}
           {hasDeclarations &&
-            'Годините с данни за длъжността са годините на наличните декларации с институция и длъжност, без запълване на липсващи години. Те не установяват точните дати на мандата. '}
+            'Времето на връзката е периодът, в който регистърът вписва ролята на лицето в същото дружество или декларацията му обхваща годината; то е за всяко дружество поотделно и не установява точните дати на мандата. '}
           Личната роля следва датите на вписване и заличаване. При отворена роля съпоставката е до
           последната успешна справка в регистъра.{' '}
           {hasDeclarations &&
