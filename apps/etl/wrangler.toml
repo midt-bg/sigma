@@ -81,8 +81,9 @@ binding = "DECLARATIONS_CORPUS"
 bucket_name = "sigma-declarations"
 
 # Six-hourly: procurement and the register. Sundays 03:00 UTC: the declarations (DECLARATIONS_CRON).
+# Sunday is `7`, not `0`: the Cloudflare API rejects `0 3 * * 0` as an invalid cron string.
 [triggers]
-crons = ["0 */6 * * *", "0 3 * * 0"]
+crons = ["0 */6 * * *", "0 3 * * 7"]
 
 [observability]
 enabled = true

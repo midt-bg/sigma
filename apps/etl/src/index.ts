@@ -677,8 +677,9 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
 }
 
 /** The cron that starts the declarations run: Sundays 03:00 UTC — a bad run then leaves the working
- * week to fix it, and the register is quiet at the weekend. */
-export const DECLARATIONS_CRON = '0 3 * * 0';
+ * week to fix it, and the register is quiet at the weekend. Sunday is `7`: the Cloudflare API refuses
+ * `0 3 * * 0` outright, and `scheduled` compares this string to the one the platform sends. */
+export const DECLARATIONS_CRON = '0 3 * * 7';
 
 /** An operator-started declarations run that waits for the container's outcome, so `wrangler workflows
  * trigger` reports the real result instead of a fire-and-forget. The cron starts the same run. */

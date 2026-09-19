@@ -1,6 +1,23 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, it, vi } from 'vitest';
 import worker, { DeclarationsWorkflow, DECLARATIONS_CRON, RebuildWorkflow } from './index';
 import type { Env } from './index';
+
+// `scheduled` tells the weekly tick from the six-hourly one by comparing the platform's cron string to
+// DECLARATIONS_CRON, so the deployed schedule and the constant must be the same string — and Sunday must
+// be spelled `7`, because the Cloudflare API rejects `0 3 * * 0` and the deploy dies at the trigger step.
+it('deploys the very cron the weekly branch compares against', () => {
+  const toml = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../wrangler.toml'),
+    'utf8',
+  );
+  const crons = /^crons = \[(.*)\]$/m.exec(toml)?.[1];
+  expect(crons, 'no crons in wrangler.toml').toBeDefined();
+  expect(crons).toContain(`"${DECLARATIONS_CRON}"`);
+  expect(DECLARATIONS_CRON.split(' ').at(-1), 'Sunday is 7 for the Cloudflare API').not.toBe('0');
+});
 
 it('starts one declarations run and waits for the container outcome', async () => {
   const startRun = vi.fn(async () => ({ runId: 'run-1', state: 'running' }));
