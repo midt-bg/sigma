@@ -137,10 +137,11 @@ export function PersonTimeline({
         {hasDeclarations ? (
           <>
             <span>
-              <i className="time-symbol eligible" /> в години с данни за длъжността
+              <i className="time-symbol eligible" /> по време на връзката и на длъжността{' '}
+              <Explanation text="Договори, подписани, докато едновременно: регистърът вписва ролята на лицето в същото дружество (или декларацията му обхваща периода) И лицето заема публична длъжност. Началото и краят на длъжността се вземат от датите на встъпителната и финалната декларация, когато ги има. Не твърди участие в конкретната поръчка." />
             </span>
             <span>
-              <i className="time-symbol context" /> извън годините с данни за длъжността
+              <i className="time-symbol context" /> извън съвпадението
             </span>
           </>
         ) : (
@@ -403,22 +404,22 @@ export function PersonTimeline({
                               className="time-contract-bin"
                               style={yearStyle(+r.year!)}
                             >
-                              {r.eligible > 0 && (
+                              {r.tied > 0 && (
                                 <Link
-                                  to={contractHref(c.eik, r.year, 'matched')}
+                                  to={contractHref(c.eik, r.year, 'tied')}
                                   className="time-contract eligible"
-                                  aria-label={`${r.year}: ${r.eligible} договора в години с данни за длъжността`}
+                                  aria-label={`${r.year}: ${r.tied} договора, подписани докато лицето е и на длъжност, и свързано с ${c.name}`}
                                 >
-                                  {count(r.eligible)}
+                                  {count(r.tied)}
                                 </Link>
                               )}
-                              {r.contracts > r.eligible && (
+                              {r.contracts > r.tied && (
                                 <Link
-                                  to={contractHref(c.eik, r.year, 'context')}
+                                  to={contractHref(c.eik, r.year, 'untied')}
                                   className="time-contract context"
-                                  aria-label={`${r.year}: ${r.contracts - r.eligible} договора извън годините с данни за длъжността`}
+                                  aria-label={`${r.year}: ${r.contracts - r.tied} договора извън съвпадението на длъжността и връзката с ${c.name}`}
                                 >
-                                  {count(r.contracts - r.eligible)}
+                                  {count(r.contracts - r.tied)}
                                 </Link>
                               )}
                               {ownBuyers.length > 0 && (

@@ -34,10 +34,10 @@ function fixture() {
     CREATE TABLE tenders(id,title,authority_id);
     CREATE TABLE authorities(id,name);
     CREATE TABLE authority_totals(authority_id);
-    CREATE TABLE declarations(person_id,institution,position,declared_year);
-    CREATE TABLE declaration_metadata(declaration_id,declaration_type);
+    CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+    CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
     INSERT INTO authority_totals VALUES('auth:1');
-    INSERT INTO declarations VALUES('official','Община','Съветник','2020'),('official','Община','Съветник','2021');
+    INSERT INTO declarations VALUES('dec20','official','Община','Съветник','2020'),('dec21','official','Община','Съветник','2021');
     CREATE TABLE contracts(id,contract_subject,bidder_id,tender_id,signed_at,amount_eur);
     INSERT INTO authorities VALUES('auth:1','Община');
     INSERT INTO bidders(id,name,eik_normalized) VALUES('eik:111111111','Компания','111111111');
@@ -182,7 +182,19 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 8, '111111111': 4, '222222222': 4 },
     authority: { '': 8, 'auth:1': 6, 'auth:2': 2 },
     year: { '': 8, '2020': 2, '2021': 1, '2022': 2, '2023': 1 }, // "all" includes unknown dates
-    basis: { all: 8, matched: 3, context: 5, role: 3, declaration: 4, self: 2, family: 2 },
+    // `tied`/`untied` ask for BOTH the tie to this company and the office; `matched`/`context` only for
+    // the office years, `role` only for the tie. Three different splits of the same eight contracts.
+    basis: {
+      all: 8,
+      matched: 3,
+      context: 5,
+      tied: 3,
+      untied: 5,
+      role: 3,
+      declaration: 4,
+      self: 2,
+      family: 2,
+    },
   });
   const filtered = await getPersonActivity(
     d1,
@@ -195,7 +207,17 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 1, '111111111': 1, '222222222': 0 },
     authority: { '': 1, 'auth:1': 1, 'auth:2': 0 },
     year: { '': 4, '2020': 1, '2021': 1, '2022': 1, '2023': 0 },
-    basis: { all: 1, matched: 0, context: 1, role: 1, declaration: 0, self: 0, family: 0 },
+    basis: {
+      all: 1,
+      matched: 0,
+      context: 1,
+      tied: 0,
+      untied: 1,
+      role: 1,
+      declaration: 0,
+      self: 0,
+      family: 0,
+    },
   });
   const family = await getPersonActivity(
     d1,
@@ -208,7 +230,17 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 1, '111111111': 0, '222222222': 1 },
     authority: { '': 1, 'auth:1': 0, 'auth:2': 1 },
     year: { '': 1, '2020': 0, '2021': 0, '2022': 1, '2023': 0 },
-    basis: { all: 1, matched: 0, context: 1, role: 0, declaration: 1, self: 0, family: 1 },
+    basis: {
+      all: 1,
+      matched: 0,
+      context: 1,
+      tied: 0,
+      untied: 1,
+      role: 0,
+      declaration: 1,
+      self: 0,
+      family: 1,
+    },
   });
   const none = await getPersonActivity(
     d1,
@@ -392,10 +424,10 @@ it('highlights observed office years even after a company role ends, without fil
   const d1 = fixture();
   db.exec(`DELETE FROM declarations;
     INSERT INTO declarations VALUES
-      ('official','Община','Съветник','2020'),
-      ('alias','Друга институция','Директор','2022'),
-      ('alias','Друга институция','Директор','2022'),
-      ('official','Община','','2021');
+      ('h20','official','Община','Съветник','2020'),
+      ('h22a','alias','Друга институция','Директор','2022'),
+      ('h22b','alias','Друга институция','Директор','2022'),
+      ('h21','official','Община','','2021');
     UPDATE interest_links SET first_declared_year='2018',last_declared_year='2018';
     UPDATE registry_roles SET removed_on='2019-01-01' WHERE removed_on IS NULL;
   `);
@@ -458,4 +490,60 @@ it('gives a declarant the register does not identify no registry reads and no ro
   expect(declared.reads).toEqual([]);
   expect(declared.contracts.reduce((n, r) => n + r.contracts, 0)).toBe(4);
   expect(declared.contracts.every((r) => r.role === 0)).toBe(true);
+});
+
+// The surface claims an office holder with power over public money is tied to a contractor. That needs
+// BOTH at the moment of signing, and each half alone was published as if it were the whole: office years
+// said nothing about the company, the role said nothing about holding office.
+it('marks only what falls inside both the tie to THIS company and the office', async () => {
+  const d1 = fixture();
+  // The person is in office through 2020 and 2021 (declarations above), but the register puts the role
+  // at this company only in 2020 and again from 2022; the declared interest covers 2020–2021.
+  db.exec('DELETE FROM interest_links; DELETE FROM interest_link_evidence;');
+  const ids = async (basis: string) =>
+    (
+      await getPersonActivity(d1, 'person', ['official'], new URLSearchParams(`basis=${basis}`))
+    ).contracts
+      .map((r) => r.id)
+      .sort();
+
+  // 'a' (2020) is inside a role AND an office year. 'c' (2022) is inside the second role but 2022 is no
+  // office year; 'b' (2021-01-01) is an office year but falls in the gap between the roles; 'd' has no
+  // date at all. Each half alone would have published one of them as a match.
+  expect(await ids('tied')).toEqual(['a']);
+  expect(await ids('untied')).toEqual(['b', 'c', 'd']);
+  expect(await ids('role')).toEqual(['a', 'c']);
+  expect(await ids('matched')).toEqual(['a', 'b']); // office years alone, the old question
+});
+
+// A filing date is always LATER than what it reports: the law gives a month to file after taking
+// office. Opening the office on the entry filing therefore cut the first weeks of a real office — a
+// contract signed the day after an appointment, declared three weeks later, fell outside. The office
+// opens with its first year; only the END is narrowed to a day, where a late bound cuts nothing.
+it('opens the office with its year and closes it on the day of the exit filing', async () => {
+  const d1 = fixture();
+  const ids = async (basis: string) =>
+    (
+      await getPersonActivity(d1, 'person', ['official'], new URLSearchParams(`basis=${basis}`))
+    ).contracts
+      .map((r) => r.id)
+      .sort();
+  const office = (rows: string) =>
+    db.exec(`DELETE FROM declarations; DELETE FROM declaration_metadata;
+      DELETE FROM interest_links; DELETE FROM interest_link_evidence;
+      UPDATE registry_roles SET added_on='2020-01-01', removed_on=NULL;
+      ${rows}`);
+
+  // Contract 'a' is signed 2020-06-01, inside the role. The entry declaration for that office was filed
+  // in November — five months later — and the contract is still inside the office it reports.
+  office(`INSERT INTO declarations VALUES('e20','official','Община','Съветник','2020');
+    INSERT INTO declaration_metadata VALUES('e20','Entry','2020-11-30','2020-12-01');`);
+  expect(await ids('tied')).toEqual(['a']);
+
+  // The exit closes the office on its own filing day, so the June contract now falls outside it.
+  office(`INSERT INTO declarations VALUES('e20','official','Община','Съветник','2020'),
+      ('v20','official','Община','Съветник','2020');
+    INSERT INTO declaration_metadata VALUES('e20','Entry','2020-01-20','2020-01-21'),
+      ('v20','Vacate','2020-04-01','2020-04-02');`);
+  expect(await ids('tied')).toEqual([]);
 });

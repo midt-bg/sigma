@@ -278,12 +278,12 @@ describe('PersonActivity — the contract list', () => {
     ]);
 
     const officeYears = () =>
-      ['matched', 'context'].map(
+      ['tied', 'untied'].map(
         (v) => !!container.querySelector(`select[name="basis"] option[value="${v}"]`),
       );
     expect(officeYears()).toEqual([true, true]);
     expect(container.querySelector('.profile-period-note')!.textContent).toContain(
-      'Годините с данни за длъжността',
+      'Съвпадението иска едновременно',
     );
 
     render(role, { hasDeclarations: false });

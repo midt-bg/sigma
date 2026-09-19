@@ -19,6 +19,12 @@ export interface TimelineContracts {
   contracts: number;
   role: number;
   declared: number;
+  /** Signed while BOTH held: a tie to THIS company (a registered role or a declared interest) and a
+   *  public office. What the timeline marks, because it is what the surface claims. */
+  tied: number;
+  /** Signed in a year this person filed for SOME office. Company-agnostic, so it says nothing about a
+   *  tie to this company: it marked a contractor's whole history red when the person joined its board
+   *  in the last year. Kept for the contract table's own „в декларирания период" facet. */
   eligible: number;
   valueEur: number | null;
 }
@@ -35,6 +41,7 @@ export async function getPersonTimeline(
       .prepare(
         `${cte} SELECT eik,company,strftime('%Y',signed_at) year,COUNT(*) contracts,
       SUM(during_role) role,SUM(during_declaration) declared,
+      SUM(during_overlap) tied,
       SUM(during_office_year) eligible,SUM(amount_eur) valueEur
       FROM activity GROUP BY eik,year ORDER BY company,year`,
       )
