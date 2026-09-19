@@ -384,3 +384,29 @@ it('retries a yield at any stage, and keeps a data refusal final', async () => {
   await f.job().alarm();
   expect(f.run()).toMatchObject({ state: 'failed', reason: 'audit findings' });
 });
+
+// „There is no container instance that can be provided" is the platform declining, not this run going
+// wrong. Spending the failure budget on it ended a run after about fourteen minutes, and the weekly one
+// then waits until the next Sunday for data nobody fetched.
+it('waits out a platform capacity refusal instead of spending the failure budget', async () => {
+  const f = fixture();
+  f.container.start.mockImplementation(() => {
+    throw new Error(
+      'There is no container instance that can be provided to this Durable Object, try again later',
+    );
+  });
+  await f.job().startRun('workflow-capacity');
+  for (let i = 0; i < 4; i++) await f.resume();
+  expect(f.run().state).toBe('running');
+  expect(f.run().failures ?? 0).toBe(0); // the failure budget is untouched
+  expect(f.run().capacityWaits).toBe(4);
+  // The wait grows, and far past the two minutes a normal failure would take.
+  expect(f.run().retryAt - Date.now()).toBeGreaterThan(20 * 60_000);
+
+  // Once the platform gives an instance, the waiting is over.
+  f.container.start.mockImplementation(() => {
+    f.container.running = true;
+  });
+  await f.resume();
+  expect(f.run().capacityWaits).toBe(0);
+});

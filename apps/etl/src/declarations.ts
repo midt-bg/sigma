@@ -40,6 +40,8 @@ interface DeclarationRun {
   total?: number;
   progressVersion: number;
   attemptProgressVersion: number;
+  /** Consecutive times the platform had no container to give; separate from `failures` on purpose. */
+  capacityWaits?: number;
   attemptStage?: string;
   attemptCompleted?: number;
   lastProgressAt: number;
@@ -82,6 +84,14 @@ const MINUTE = 60_000;
 // Restart a stalled attempt; three attempts without advancing the durable high-water mark stop.
 const STALL_MS = 20 * MINUTE;
 const MAX_FAILURES = 3;
+/** Cloudflare has no container to give right now. That is the platform declining, not this run going
+ *  wrong, and it must not spend the failure budget: three of them in a row ended the run after about
+ *  fourteen minutes, and the weekly one then waits until the next Sunday for data nobody fetched. It
+ *  gets its own, far more patient budget instead — the run still ends rather than waiting forever. */
+const NO_CAPACITY = /no container instance that can be provided/i;
+const MAX_CAPACITY_WAITS = 12;
+const CAPACITY_BACKOFF_MS = 5 * MINUTE;
+const MAX_CAPACITY_BACKOFF_MS = 40 * MINUTE;
 
 /** One coordinator and one container; R2 checkpoints survive every container attempt. */
 export class DeclarationContainer extends DurableObject<DeclarationEnv> {
@@ -184,6 +194,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
     }
   }
   private async retry(run: DeclarationRun, reason: string, yielded = false) {
+    if (NO_CAPACITY.test(reason)) return this.waitForCapacity(run, reason);
     const failures = run.progressVersion > run.attemptProgressVersion ? 0 : run.failures + 1;
     if (failures >= MAX_FAILURES) {
       await this.finish(run, 'failed', `${reason}; ${failures} attempts without progress`);
@@ -191,7 +202,21 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
     }
     await this.ctx.container!.destroy();
     const retryAt = Date.now() + (yielded && !failures ? 1000 : MINUTE * 2 ** failures);
-    await this.ctx.storage.put('run', { ...run, failures, reason, retryAt });
+    await this.ctx.storage.put('run', { ...run, failures, reason, retryAt, capacityWaits: 0 });
+    await this.ctx.storage.setAlarm(retryAt);
+  }
+
+  /** The platform declined to give a container. Wait it out on a separate budget, leaving the failure
+   *  count — and the progress it is measured against — untouched. */
+  private async waitForCapacity(run: DeclarationRun, reason: string) {
+    const waits = (run.capacityWaits ?? 0) + 1;
+    if (waits >= MAX_CAPACITY_WAITS) {
+      await this.finish(run, 'failed', `${reason}; no container for ${waits} attempts`);
+      return;
+    }
+    const retryAt =
+      Date.now() + Math.min(CAPACITY_BACKOFF_MS * 2 ** (waits - 1), MAX_CAPACITY_BACKOFF_MS);
+    await this.ctx.storage.put('run', { ...run, reason, retryAt, capacityWaits: waits });
     await this.ctx.storage.setAlarm(retryAt);
   }
   override async alarm(): Promise<void> {
@@ -231,6 +256,11 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
           },
         });
         await container.setInactivityTimeout(10 * MINUTE);
+        // The platform gave us an instance, so the waiting is over whatever happens next.
+        if (run.capacityWaits) {
+          run.capacityWaits = 0;
+          await this.ctx.storage.put('run', run);
+        }
       } catch (error) {
         await this.retry(run, error instanceof Error ? error.message : 'Container start failed');
       }
