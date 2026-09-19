@@ -29,12 +29,12 @@
     "smoke:slug": "node scripts/smoke-encoded-slug.mjs"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260521.1",
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@vitest/coverage-v8": "^4.1.11",
     "@types/node": "catalog:",
-    "fast-xml-parser": "5.10.1",
+    "fast-xml-parser": "5.11.1",
     "prettier": "^3.8.3",
-    "turbo": "^2.9.14",
+    "turbo": "^2.10.13",
     "typescript": "catalog:",
     "vitest": "^4.1.11",
     "wrangler": "catalog:"
