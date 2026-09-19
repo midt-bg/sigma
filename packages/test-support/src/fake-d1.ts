@@ -36,6 +36,10 @@ export interface FakeD1Route {
   // silently lose its parameter type. A D1 row is an object or nothing, so this is also the truth.
   first?: object | null | ((call: FakeD1Call) => object | null);
   run?: (call: FakeD1Call) => void;
+  /** Rows for `.raw()`, each an array of values. With `{ columnNames: true }` the double prepends the
+   *  names from `rawColumns`, exactly as D1 does. */
+  raw?: unknown[][] | ((call: FakeD1Call) => unknown[][]);
+  rawColumns?: string[];
   /**
    * The `meta` D1 returns beside the rows. Defaults to `{}`; set it where the test is about what
    * meta carries — `rows_read` and `total_attempts` drive the assistant's rows-read budget.
@@ -124,8 +128,10 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
    * `undefined` when none answers. Matching on the route rather than its response keeps
    * `first: null` — a route that means "no such row" — distinguishable from no route at all.
    */
-  const answering = (method: 'all' | 'first' | 'run', call: FakeD1Call): FakeD1Route | undefined =>
-    routes.find((r) => r[method] !== undefined && matches(r, call.sql));
+  const answering = (
+    method: 'all' | 'first' | 'run' | 'raw',
+    call: FakeD1Call,
+  ): FakeD1Route | undefined => routes.find((r) => r[method] !== undefined && matches(r, call.sql));
 
   const statement = (call: FakeD1Call) => {
     const self = {
@@ -163,6 +169,15 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         }
         hit.run(call);
         return { results: [], success: true, meta: resolve(hit.meta ?? {}, call) };
+      },
+      async raw(options?: { columnNames?: boolean }) {
+        const hit = answering('raw', call);
+        if (hit?.raw === undefined) {
+          if (!lenient) throw unmatched('raw', call.sql, routes);
+          return [];
+        }
+        const rows = resolve(hit.raw, call);
+        return options?.columnNames ? [hit.rawColumns ?? [], ...rows] : rows;
       },
     };
     bound.set(self, call);
