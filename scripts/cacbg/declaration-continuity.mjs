@@ -24,8 +24,8 @@ export function declarationContinuity(filings, resolveCompany) {
     const parsedYear = Number(f.year);
     const year =
       Number.isInteger(parsedYear) && parsedYear >= 1990 && parsedYear <= 2100 ? parsedYear : null;
-    // The EMPLOYER grain, not the exact organisation: a declarant writes „Община Две Могили" one year
-    // and the listing's bare „Две Могили" the next, and read with the exact-match key those are two
+    // The EMPLOYER grain, not the exact organisation: a declarant writes „Община Пример" one year
+    // and the listing's bare „Пример" the next, and read with the exact-match key those are two
     // employers — so one person's filings stayed in separate records over a spelling. The same holds
     // for an administration named after its own body. The COUNCIL is deliberately NOT folded into the
     // municipality (see the test): it is a different body, and this fold must not join two of them.
@@ -39,7 +39,7 @@ export function declarationContinuity(filings, resolveCompany) {
         .replace(/^ОБЩИНА\s+(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u, '')
         .replace(/^(?:ГР|С)\.\s*/u, '')
         .trim();
-    // One field can name SEVERAL employers: a shared chief architect writes „ОБЩИНА ДВЕ МОГИЛИ; ОБЩИНА
+    // One field can name SEVERAL employers: a shared chief architect writes „ОБЩИНА ПЪРВОМАЙ; ОБЩИНА
     // БОРОВО И ОБЩИНА ТУТРАКАН", and read as one string that matches no filing naming just one of them —
     // his own next declaration included. Split only where the list is unmistakable: a semicolon, or „И"
     // followed by a repeated body word. A plain comma is NOT a separator; institution names contain them

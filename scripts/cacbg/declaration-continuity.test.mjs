@@ -68,7 +68,7 @@ test('one municipality written two ways is one employer; an oblast and a town ar
       works.map((work, i) => ({ ...base, xmlFile: `${i}.xml`, work, year: 2023 + i })),
     ).length;
   // Една община, три изписвания — един работодател (групата дава верига от две ребра).
-  assert.equal(edgeCount(['Община Две Могили', 'Две Могили', 'гр. Две Могили']), 2);
+  assert.equal(edgeCount(['Община Пример', 'Пример', 'гр. Пример']), 2);
   // Областната администрация е самата област.
   assert.equal(edgeCount(['Областна администрация Търговище', 'Област - Търговище']), 1);
   // Област и едноименен град остават различни работодатели.
@@ -85,14 +85,17 @@ test('a field naming several employers joins a filing that names one of them', (
     folder: '2018',
     xmlFile,
     sourceHash: xmlFile,
-    person: 'ПЛАМЕН ТОТЕВ МАРИНОВ',
+    person: 'ДРАГАН ТОДОРОВ ТЕСТОВ',
     year: '2018',
     work,
     declaredPosition: 'ГЛАВЕН АРХИТЕКТ',
     companyEvidence: [],
   });
   const edges = declarationContinuity(
-    [f('a.xml', 'ОБЩИНА ДВЕ МОГИЛИ; ОБЩИНА БОРОВО И ОБЩИНА ТУТРАКАН'), f('b.xml', 'ОБЩИНА ДВЕ МОГИЛИ')],
+    [
+      f('a.xml', 'ОБЩИНА ПЪРВОМАЙ; ОБЩИНА ВТОРОМАЙ И ОБЩИНА ТРЕТОМАЙ'),
+      f('b.xml', 'ОБЩИНА ПЪРВОМАЙ'),
+    ],
     () => ({}),
   );
   assert.equal(edges.length, 1);

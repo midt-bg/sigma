@@ -83,8 +83,8 @@ test('one typed slip under a shared GUID is still one declarant', () => {
     sourceHash: `h${n}`,
   });
   const edges = declarantGuidEvidence([
-    doc('177547', 'Любомир Михайлов Минчев'),
-    doc('177551', 'Любомир Михаклов Минчев'),
+    doc('100001', 'Стоян Великов Примеров'),
+    doc('100002', 'Стоян Велинов Примеров'),
   ]);
   assert.equal(edges.length, 1);
   assert.equal(edges[0].rule_version, DECLARANT_GUID_RULE);

@@ -19,7 +19,7 @@ const stem = (name) => name.split(' ').slice(0, 2).join(' ');
  * reused the GUID for somebody else; the name is the guard against exactly that reuse.
  *
  * The guard tolerates one typed slip. Demanding the two names be identical split a single declarant in
- * two over one letter — „ЛЮБОМИР МИХАЙЛОВ МИНЧЕВ" and „ЛЮБОМИР МИХАКЛОВ МИНЧЕВ", the same GUID, the same
+ * two over one letter — „СТОЯН ВЕЛИКОВ ПРИМЕРОВ" and „СТОЯН ВЕЛИНОВ ПРИМЕРОВ", the same GUID, the same
  * council, the same two years, arrived as two profiles, and only one of them carried his registry roles.
  * Anything beyond one slip still splits: unrelated names under one GUID link only documents whose names
  * are identical. */
