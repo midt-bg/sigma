@@ -113,14 +113,25 @@ describe('leaderboard loader — narrowed to one institution (?authority=)', () 
     expect(q.getRelatedPersonRows).not.toHaveBeenCalled();
   });
 
-  it('ignores a malformed value and serves the whole list', async () => {
+  // A few bodies carry a source id that is not an ЕИК at all — several ЕИК in one field, a URL, a person's
+  // name. Their profile pages are live and their „Свързани лица" button carries exactly that id, so a shape
+  // check would either 404 a real institution or, worse, drop the filter and publish the WHOLE list of links
+  // under that institution's name.
+  it('filters on a slug that is no ЕИК but names a real institution', async () => {
+    q.getAuthorityName.mockResolvedValue('Главна дирекция „Изпълнение на наказанията"');
     q.getRelatedPersonRows.mockResolvedValue([]);
-    const res = (await leaderboardLoader({ request: req('?authority=abc'), context } as never)) as {
-      data: { authority: unknown };
-    };
-    expect(q.getAuthorityName).not.toHaveBeenCalled();
-    expect(q.getRelatedPersonRows).toHaveBeenCalledWith(DB, undefined);
-    expect(res.data.authority).toBeNull();
+    const res = (await leaderboardLoader({
+      request: req('?authority=BG129010029'),
+      context,
+    } as never)) as { data: { authority: unknown } };
+    expect(q.getRelatedPersonRows).toHaveBeenCalledWith(DB, 'auth:BG129010029');
+    expect(res.data.authority).toMatchObject({ slug: 'BG129010029' });
+  });
+
+  it('refuses a value that names no institution instead of serving the whole list', async () => {
+    q.getAuthorityName.mockResolvedValue(null);
+    await expectStatus(leaderboardLoader({ request: req('?authority=abc'), context } as never), 404);
+    expect(q.getRelatedPersonRows).not.toHaveBeenCalled();
   });
 });
 

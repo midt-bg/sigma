@@ -55,17 +55,19 @@ export function headers({ loaderHeaders }: Route.HeadersArgs) {
 // Group and filter on the server. Only one page of canonical people reaches the browser.
 const PER_PAGE = 100;
 
-// `?authority=<ЕИК>` narrows the list to the officials whose declared-stake winners that body paid — the
-// institution profile links here. A malformed value is ignored rather than failing the page; an ЕИК that
-// names no institution is a 404, like every other slug on the site.
-const AUTHORITY_SLUG = /^\d{9}(\d{4})?$/;
+// `?authority=<слug>` narrows the list to the officials whose declared-stake winners that body paid — the
+// institution profile links here. A slug that names no institution is a 404, like every other slug on the
+// site. It is NOT matched against an ЕИК shape first: the source data leaves a few bodies with an id that
+// is not one (several ЕИК in a single field, a URL, a person's name), their profile pages are live, and
+// their „Свързани лица" button carries exactly that id. Dropping a filter we cannot parse would publish the
+// WHOLE list of links under one institution's name — the filter either applies or the page refuses.
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);
   const slug = new URL(request.url).searchParams.get('authority');
   let authority: { slug: string; name: string } | null = null;
   let authorityId: string | undefined;
-  if (slug && AUTHORITY_SLUG.test(slug)) {
+  if (slug) {
     const id = authorityIdFromSlug(slug);
     const name = await withDbRetry(() => getAuthorityName(db, id));
     if (name == null) throw new Response('Not Found', { status: 404 });
