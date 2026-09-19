@@ -101,7 +101,6 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
             eligible: c.temporal === 'contemporaneous' ? 1 : 0,
             role: 0,
             declared: c.temporal === 'contemporaneous' ? 1 : 0,
-            tied: c.temporal === 'contemporaneous' ? 1 : 0,
             valueEur: c.amountEur,
           })),
         ),
@@ -318,7 +317,7 @@ describe('/persons/:id — render', () => {
     expect(t).toContain('Участия и договори');
     expect(t).toContain('Договори по свързаните дружества');
     expect([...container.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toContain(
-      '/x?company=333&basis=tied&year=2021#contract-filters',
+      '/x?company=333&basis=matched&year=2021#contract-filters',
     );
     expect(container.querySelector('.person-time-company a[href*="/contracts/"]')).toBeNull();
     expect(t).not.toContain('Дял при възложителите');
