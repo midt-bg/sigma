@@ -292,19 +292,22 @@ export function registryIdentityResolver(registry) {
       (a, b) => a.registryIndent.localeCompare(b.registryIndent) || a.eik.localeCompare(b.eik),
     );
     const unique = new Set(evidence.map((p) => p.registryIndent));
+    // A registry-proven alias outranks a typing slip: when the register establishes the person, the
+    // answer is `registry_alias` with its evidence, not the weaker `name_variant` the names alone give.
     const acceptedAlias =
       aliasesProven &&
       unique.size === 1 &&
-      ['declarant_mismatch', 'ambiguous_listing'].includes(attribution);
+      ['declarant_mismatch', 'ambiguous_listing', 'name_variant'].includes(attribution);
+    const accepted = attribution === 'matched' || attribution === 'name_variant' || acceptedAlias;
     return {
       attribution: acceptedAlias ? 'registry_alias' : attribution,
-      companies: attribution === 'matched' || acceptedAlias ? companies : [],
+      companies: accepted ? companies : [],
       reason: evidence.length
         ? unique.size === 1
           ? 'verified_registry'
           : 'ambiguous_registry_identity'
         : reason,
-      evidence: attribution === 'matched' || acceptedAlias ? evidence : [],
+      evidence: accepted ? evidence : [],
     };
   };
 }

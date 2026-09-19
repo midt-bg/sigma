@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { declarantNameKey } from './source-identity.mjs';
 import { institutionMatchKey } from './institutions.mjs';
 
-export const CONTINUITY_RULE = 'declaration-continuity-2';
+export const CONTINUITY_RULE = 'declaration-continuity-4';
 export const COMPANY_AUTHOR_BASIS = 'company_author';
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const key = (...values) => JSON.stringify(values);
@@ -24,11 +24,37 @@ export function declarationContinuity(filings, resolveCompany) {
     const parsedYear = Number(f.year);
     const year =
       Number.isInteger(parsedYear) && parsedYear >= 1990 && parsedYear <= 2100 ? parsedYear : null;
-    const work = text(f.work).replace(
-        /^ОБЩИНСКА АДМИНИСТРАЦИЯ\s+(?:(?:НА\s+)?ОБЩИНА\s+)?(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u,
-        'ОБЩИНА ',
+    // The EMPLOYER grain, not the exact organisation: a declarant writes „Община Пример" one year
+    // and the listing's bare „Пример" the next, and read with the exact-match key those are two
+    // employers — so one person's filings stayed in separate records over a spelling. The same holds
+    // for an administration named after its own body. The COUNCIL is deliberately NOT folded into the
+    // municipality (see the test): it is a different body, and this fold must not join two of them.
+    const employer = (value) =>
+      text(value)
+        .replace(
+          /^ОБЩИНСКА АДМИНИСТРАЦИЯ\s+(?:(?:НА\s+)?ОБЩИНА\s+)?(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u,
+          'ОБЩИНА ',
+        )
+        .replace(/^ОБЛАСТНА АДМИНИСТРАЦИЯ\s+(?:(?:НА\s+)?ОБЛАСТ\s+)?(?=\S)/u, 'ОБЛАСТ ')
+        .replace(/^ОБЩИНА\s+(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u, '')
+        .replace(/^(?:ГР|С)\.\s*/u, '')
+        .trim();
+    // One field can name SEVERAL employers: a shared chief architect writes „ОБЩИНА ПЪРВОМАЙ; ОБЩИНА
+    // БОРОВО И ОБЩИНА ТУТРАКАН", and read as one string that matches no filing naming just one of them —
+    // his own next declaration included. Split only where the list is unmistakable: a semicolon, or „И"
+    // followed by a repeated body word. A plain comma is NOT a separator; institution names contain them
+    // („Министерство …, дирекция …") and splitting there would invent employers.
+    const works = [
+      ...new Set(
+        String(f.work ?? '')
+          .split(
+            /;|\s+И\s+(?=ОБЩИНСКИ СЪВЕТ\b|ОБЩИНА\b|ОБЛАСТ\b|ОБЛАСТНА АДМИНИСТРАЦИЯ\b|ОБЩИНСКА АДМИНИСТРАЦИЯ\b)/iu,
+          )
+          .map(employer)
+          .filter(Boolean),
       ),
-      role = text(f.declaredPosition);
+    ];
+    const role = text(f.declaredPosition);
     const doc = {
       id: `cacbg:${f.folder}:${f.xmlFile}`,
       hash: f.sourceHash,
@@ -50,8 +76,9 @@ export function declarationContinuity(filings, resolveCompany) {
       /\d/.test(act) &&
       /\d/.test(date)
     )
-      add('appointment_act', [name, work, role, year, f.declarationType, act, date], doc);
-    if (year) add('employment_years', [name, work, role], doc);
+      for (const work of works)
+        add('appointment_act', [name, work, role, year, f.declarationType, act, date], doc);
+    if (year) for (const work of works) add('employment_years', [name, work, role], doc);
     for (const p of [...(f.companyEvidence ?? [])].sort((a, b) => key(a).localeCompare(key(b)))) {
       if (
         !['self', 'related'].includes(p.holderRelation) ||

@@ -12,6 +12,7 @@
 // Run: node --import ./scripts/cacbg/register-ts.mjs --test scripts/cacbg/audit.test.mjs
 import { test, after } from 'node:test';
 import { RULES_VERSION } from '../tr/evidence.mjs';
+import { CONTINUITY_RULE } from './declaration-continuity.mjs';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
@@ -596,7 +597,7 @@ test('identity evidence must be automatic and match active source versions', () 
       ALTER TABLE declarations ADD COLUMN folder_year; ALTER TABLE declarations ADD COLUMN xml_file;
       ${schema}
       INSERT INTO person_sources(id,namespace,source_key,source_hash,name) VALUES('a','cacbg','a','v1','Лице'),('b','cacbg','b','v2','Лице');
-      INSERT INTO person_identity_evidence VALUES('edge','a','b','${variant === 'stale' ? 'old' : 'v1'}','v2','same','${variant === 'revoked' ? 'revoked' : 'accepted'}','${variant === 'reviewed' || variant === 'revoked' ? 'reviewed' : 'automatic'}','${variant === 'unproven_continuity' ? 'declaration-continuity-2' : 'source-groups-1'}','{}','2026-01-01');`,
+      INSERT INTO person_identity_evidence VALUES('edge','a','b','${variant === 'stale' ? 'old' : 'v1'}','v2','same','${variant === 'revoked' ? 'revoked' : 'accepted'}','${variant === 'reviewed' || variant === 'revoked' ? 'reviewed' : 'automatic'}','${variant === 'unproven_continuity' ? CONTINUITY_RULE : 'source-groups-1'}','{}','2026-01-01');`,
     });
     assert.equal(threw, ['reviewed', 'stale', 'unproven_continuity'].includes(variant), out);
     if (threw)

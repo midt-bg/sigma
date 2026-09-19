@@ -277,7 +277,9 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
         const identity = identify?.(d, listedNames.get(file) ?? []);
         const attribution =
           identity?.attribution ?? declarationAttribution(d.declarant, listedNames.get(file) ?? []);
-        if (!['matched', 'registry_alias'].includes(attribution)) {
+        // `name_variant` is an accepted attribution (the register's own spelling slip), counted below
+        // so its rate stays visible; everything else is quarantined for review.
+        if (!['matched', 'registry_alias', 'name_variant'].includes(attribution)) {
           stats[attribution] = (stats[attribution] ?? 0) + 1;
           quarantineOut.write(
             JSON.stringify({ folder, xmlFile: file, reason: attribution }) + '\n',
@@ -286,6 +288,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
         }
         if (attribution === 'registry_alias')
           stats.registryAliases = (stats.registryAliases ?? 0) + 1;
+        if (attribution === 'name_variant') stats.nameVariants = (stats.nameVariants ?? 0) + 1;
         const fingerprint = documentFingerprint(xml);
         {
           const member = seenHash.get(fingerprint) ?? {
