@@ -31,8 +31,11 @@ const GROUPS: {
     path: '/conflicts',
   },
   // Everyone else with a page: declarants without a published stake and people the Trade Register records.
-  // No listing page, so no „виж всички".
-  { kind: 'person', label: 'Лица', amountLabel: '', limit: 6, path: '' },
+  // No listing page, so no „виж всички". The label names what separates this group from the one above —
+  // the EVIDENCE, not the office. Plain „Лица" read as a different sort of person and denied the office of
+  // declarants whose own subtitle said „главен секретар · Агенция по заетостта"; the row labels keep
+  // calling each of them a длъжностно лице (kindLabel, apps/web/app/components/SmartSearch.tsx).
+  { kind: 'person', label: 'Лица без публикувана връзка', amountLabel: '', limit: 6, path: '' },
   {
     kind: 'authority',
     label: 'Институции',

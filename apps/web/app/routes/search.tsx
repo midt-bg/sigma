@@ -6,7 +6,7 @@ import type { SearchHit } from '@sigma/api-contract';
 import type { Route } from './+types/search';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { KIND_LABEL } from '../components/SmartSearch';
+import { kindLabel } from '../lib/search-labels';
 import { Callout, Chip, OwnershipChip } from '../components/ui';
 import { cached } from '../lib/cache';
 import { personName } from '../lib/person-name';
@@ -192,7 +192,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
               </div>
               {g.hits.map((h) => (
                 <Link to={h.href} className="result" key={h.slug + h.title}>
-                  <span className="kind">{KIND_LABEL[h.kind]}</span>
+                  <span className="kind">{kindLabel(h)}</span>
                   <span>
                     <p className="name">{renderName(h, highlightRe)}</p>
                     <p className="meta">

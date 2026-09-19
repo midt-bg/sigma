@@ -5,16 +5,7 @@ import type { SearchHit } from '@sigma/api-contract';
 import type { loader as suggestLoader } from '../routes/search.suggest';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { personName } from '../lib/person-name';
-
-export const KIND_LABEL: Record<SearchHit['kind'], string> = {
-  // The hit IS the office-holder — a длъжностно лице. „свързано лице" (related person) means the RELATIVE,
-  // never the official themselves; mislabeling the official that way is a category error (todorkolev #226 — C14).
-  official: 'длъжностно лице',
-  person: 'лице',
-  authority: 'институция',
-  company: 'компания',
-  contract: 'договор',
-};
+import { kindLabel } from '../lib/search-labels';
 
 // Below this length we don't query — single letters match almost everything and just add noise.
 const MIN_QUERY = 2;
@@ -224,7 +215,7 @@ export function SmartSearch({
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => selectIndex(i)}
                     >
-                      <span className="smart-search-option-kind">{KIND_LABEL[hit.kind]}</span>
+                      <span className="smart-search-option-kind">{kindLabel(hit)}</span>
                       <span className="smart-search-option-body">
                         <span className="smart-search-option-title">
                           {hit.kind === 'official' || hit.kind === 'person'

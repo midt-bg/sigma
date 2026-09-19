@@ -248,7 +248,11 @@ describe('search', () => {
     const kinds = results.groups.filter((g) => g.total > 0).map((g) => g.kind);
     expect(kinds.slice(0, 2)).toEqual(['official', 'person']);
     const people = results.groups.find((g) => g.kind === 'person')!;
-    expect(people).toMatchObject({ label: 'Лица', total: 9, moreHref: null });
+    expect(people).toMatchObject({
+      label: 'Лица без публикувана връзка',
+      total: 9,
+      moreHref: null,
+    });
     expect(people.hits.map((h) => [h.href, h.ident, h.subtitle])).toEqual([
       [`/persons/${'a'.repeat(64)}`, null, 'АЛФА ООД'],
       [`/persons/${personSlug('person:МАРИЯ ПЕТРОВА|ОБЩИНА')}`, null, 'Кмет · Община'],
