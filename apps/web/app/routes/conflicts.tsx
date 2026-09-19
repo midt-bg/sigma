@@ -286,6 +286,9 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       options: facets.institutions,
     },
   ];
+  // The registry-only bucket is exactly the people who did NOT name the company in their declaration, so
+  // the standing title („декларирали дял") states the opposite of what the filtered list shows.
+  const registryOnly = filters.stake === 'registry';
   const clearHref = authority ? `/conflicts?authority=${authority.slug}` : '/conflicts';
   const columns = personColumns(leaderboardRankOffset(page, PER_PAGE));
   const nav: PageNav = {
@@ -302,11 +305,22 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker="Свързани лица"
           title={
-            <>
-              Длъжностни лица, декларирали <em>дял</em> в компании изпълнители
-            </>
+            registryOnly ? (
+              <>
+                Длъжностни лица, вписани в <em>Търговския регистър</em> като собственици на
+                изпълнител
+              </>
+            ) : (
+              <>
+                Длъжностни лица, декларирали <em>дял</em> в компании изпълнители
+              </>
+            )
           }
-          lede="Длъжностни лица, декларирали дял — свой или на свързано лице — в дружество, спечелило обществена поръчка. Показваме и доказани исторически връзки, с декларираните години и проверими източници."
+          lede={
+            registryOnly
+              ? 'Длъжностни лица, които Търговският регистър вписва като собственик или управител на дружество, спечелило обществена поръчка, без това дружество да е посочено в декларацията им. Самоличността е доказана чрез друго дружество, което лицето само е декларирало.'
+              : 'Длъжностни лица, декларирали дял — свой или на свързано лице — в дружество, спечелило обществена поръчка. Показваме и доказани исторически връзки, с декларираните години и проверими източници.'
+          }
         />
 
         <Callout titleAs="h2" title="Как се извежда връзката — и какво не твърди">

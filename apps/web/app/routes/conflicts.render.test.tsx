@@ -468,3 +468,16 @@ it('names the register that actually publishes the declarations', async () => {
   expect(text()).toContain('Публичния регистър на Сметната палата');
   expect(text()).not.toContain('КПКОНПИ');
 });
+
+// The registry-only bucket holds exactly the people who did NOT name the company in their declaration,
+// so the standing title („декларирали дял") stated the opposite of what the filtered list shows.
+it('titles the registry-only list by what it actually holds', async () => {
+  await renderConflicts([link()]);
+  expect(container.querySelector('h1')?.textContent).toContain('декларирали');
+
+  await renderConflicts([link()], null, '/conflicts?stake=registry');
+  const heading = container.querySelector('h1')?.textContent ?? '';
+  expect(heading).toContain('Търговския регистър');
+  expect(heading).not.toContain('декларирали');
+  expect(text()).toContain('без това дружество да е посочено в декларацията им');
+});
