@@ -36,9 +36,28 @@ test('canonicalInstitution — empty / nullish is empty (never a spurious canoni
   EQ(canonicalInstitution(undefined), '');
 });
 
-test('declarationInstitution — the listing names the institution unless it only names the declaration type', () => {
+test('declarationInstitution — the declaration names the institution, the listing only fills in', () => {
+  // The declarant wrote the council; the register listed them under the municipality. The document is
+  // what the person signed, and it is also the more precise of the two.
   const regular = { institution: 'Община Ямбол', category: 'Кметове и общински съветници' };
-  EQ(declarationInstitution({ ...regular, work: 'Общински съвет Ямбол' }), 'Община Ямбол');
+  EQ(declarationInstitution({ ...regular, work: 'Общински съвет Ямбол' }), 'Общински съвет Ямбол');
+
+  // The case that forced the rule: the 2022 listing filed НЕК's executive director among the members of
+  // the European Parliament, between two actual MEPs. Trusting the listing published „Европейски
+  // парламент · Член" about a named man who is not an MEP.
+  EQ(
+    declarationInstitution({
+      institution: 'Европейски парламент',
+      category: 'Европейски парламент',
+      work: 'Национална електрическа компания ЕАД',
+    }),
+    'Национална електрическа компания ЕАД',
+  );
+
+  // The listing still fills in where the document says nothing.
+  EQ(declarationInstitution({ ...regular, work: '' }), 'Община Ямбол');
+  EQ(declarationInstitution({ ...regular, work: 'Ежегодни декларации' }), 'Община Ямбол');
+
   const typeFolder = {
     institution: 'Встъпителни и финални декларации',
     category: 'Встъпителни и финални декларации',
