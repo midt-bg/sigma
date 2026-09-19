@@ -391,8 +391,12 @@ const rowInstitutions = (r: ConflictPersonRow): DeclaredInstitution[] =>
 
 const matchText = (s: string) => s.replace(/\s+/g, ' ').trim().toLocaleLowerCase('bg');
 
-/** The rows the filters keep. A person with both an own and a relative's stake ('mixed') answers both
- *  stake filters; every chosen signal must hold; the search matches the name, position or institution. */
+/** The rows the filters keep. A person with both an own and a relative's stake ('mixed') answers both the
+ *  'self' and the 'family' filter — but NOT 'registry': 'mixed' is only ever produced by two DECLARED
+ *  stakes, while a registry row is by construction someone with no published declared interest at all.
+ *  Letting 'mixed' through made the list longer than the facet count promised (19 shown against 16 counted)
+ *  and put declared stakes under „роля по Търговския регистър". Every chosen signal must hold; the search
+ *  matches the name, position or institution. */
 export function filterConflictRows(
   rows: ConflictPersonRow[],
   f: ConflictListFilters,
@@ -401,7 +405,9 @@ export function filterConflictRows(
   const institutions = new Set(f.institutions);
   return rows.filter(
     (r) =>
-      (f.stake == null || r.stakeKind === 'mixed' || r.stakeKind === f.stake) &&
+      (f.stake == null ||
+        r.stakeKind === f.stake ||
+        (r.stakeKind === 'mixed' && f.stake !== 'registry')) &&
       (!f.signals.includes('own') || r.ownInstitution) &&
       (!f.signals.includes('window') || r.hasContemporaneous) &&
       (institutions.size === 0 ||

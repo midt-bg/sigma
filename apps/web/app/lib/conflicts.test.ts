@@ -542,17 +542,22 @@ describe('/conflicts list filters', () => {
     });
   });
 
-  it('lets a person with both kinds of stake answer both stake filters', () => {
+  // 'mixed' means TWO DECLARED stakes — an own one and a relative's — so it answers both declared filters.
+  // It must not answer „роля по Търговския регистър": that list is by construction people with no published
+  // declared interest at all. Letting it through made the list longer than its own facet count promised.
+  it('lets a person with both kinds of stake answer both DECLARED stake filters, never the registry one', () => {
     const rows = [
       row({ officialSlug: 's' }),
       row({ officialSlug: 'f', stakeKind: 'family' }),
       row({ officialSlug: 'm', stakeKind: 'mixed' }),
+      row({ officialSlug: 'r', stakeKind: 'registry' }),
     ];
     const slugs = (qs: string) =>
       filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
     expect(slugs('stake=self')).toEqual(['s', 'm']);
     expect(slugs('stake=family')).toEqual(['f', 'm']);
-    expect(slugs('')).toEqual(['s', 'f', 'm']);
+    expect(slugs('stake=registry')).toEqual(['r']);
+    expect(slugs('')).toEqual(['s', 'f', 'm', 'r']);
   });
 
   it('requires every chosen signal', () => {
