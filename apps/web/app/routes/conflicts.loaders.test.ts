@@ -130,7 +130,10 @@ describe('leaderboard loader — narrowed to one institution (?authority=)', () 
 
   it('refuses a value that names no institution instead of serving the whole list', async () => {
     q.getAuthorityName.mockResolvedValue(null);
-    await expectStatus(leaderboardLoader({ request: req('?authority=abc'), context } as never), 404);
+    await expectStatus(
+      leaderboardLoader({ request: req('?authority=abc'), context } as never),
+      404,
+    );
     expect(q.getRelatedPersonRows).not.toHaveBeenCalled();
   });
 });
