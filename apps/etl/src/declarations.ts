@@ -42,6 +42,8 @@ interface DeclarationRun {
   attemptProgressVersion: number;
   /** Consecutive times the platform had no container to give; separate from `failures` on purpose. */
   capacityWaits?: number;
+  /** The container answered `/status` at least once during THIS attempt, i.e. an instance really ran. */
+  attemptAlive?: true;
   attemptStage?: string;
   attemptCompleted?: number;
   lastProgressAt: number;
@@ -90,6 +92,9 @@ const MAX_FAILURES = 3;
  *  gets its own, far more patient budget instead — the run still ends rather than waiting forever. */
 const NO_CAPACITY = /no container instance that can be provided/i;
 const MAX_CAPACITY_WAITS = 12;
+/** Until a container has run ONCE in this run, a silent attempt could equally be a broken image, so the
+ *  patience is short: a bad build must fail in minutes, not sit out four hours of waiting. */
+const MAX_COLD_CAPACITY_WAITS = 3;
 const CAPACITY_BACKOFF_MS = 5 * MINUTE;
 const MAX_CAPACITY_BACKOFF_MS = 40 * MINUTE;
 
@@ -208,9 +213,9 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
 
   /** The platform declined to give a container. Wait it out on a separate budget, leaving the failure
    *  count — and the progress it is measured against — untouched. */
-  private async waitForCapacity(run: DeclarationRun, reason: string) {
+  private async waitForCapacity(run: DeclarationRun, reason: string, max = MAX_CAPACITY_WAITS) {
     const waits = (run.capacityWaits ?? 0) + 1;
-    if (waits >= MAX_CAPACITY_WAITS) {
+    if (waits >= max) {
       await this.finish(run, 'failed', `${reason}; no container for ${waits} attempts`);
       return;
     }
@@ -237,6 +242,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       run.attempt++;
       run.attemptStartedAt = Date.now();
       run.attemptProgressVersion = run.progressVersion;
+      delete run.attemptAlive;
       delete run.attemptStage;
       delete run.attemptCompleted;
       delete run.retryAt;
@@ -256,18 +262,27 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
           },
         });
         await container.setInactivityTimeout(10 * MINUTE);
-        // The platform gave us an instance, so the waiting is over whatever happens next.
-        if (run.capacityWaits) {
-          run.capacityWaits = 0;
-          await this.ctx.storage.put('run', run);
-        }
       } catch (error) {
         await this.retry(run, error instanceof Error ? error.message : 'Container start failed');
       }
       return;
     }
     if (!container.running) {
-      await this.retry(run, 'Container interrupted');
+      // The shortage reaches us HERE, not as an exception from start(): the platform accepts the start
+      // and then no instance appears. „Interrupted" is therefore two events wearing one name, and a
+      // silent attempt cannot be told from a container that crashed before its first breath.
+      //
+      // What CAN be told apart is whether this attempt ever spoke. One that answered /status had a real
+      // instance and really broke — ours to count. One that never made a sound gets the patient budget,
+      // but only once this run has already had a working container: before that, a silent attempt is as
+      // likely a broken build, and a bad build must fail in minutes rather than sit out four hours.
+      if (run.attemptAlive) await this.retry(run, 'Container interrupted');
+      else
+        await this.waitForCapacity(
+          run,
+          'Container gave no sign of life',
+          run.progressVersion > 0 ? MAX_CAPACITY_WAITS : MAX_COLD_CAPACITY_WAITS,
+        );
       return;
     }
     let status: ContainerStatus | undefined;
@@ -282,6 +297,9 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       readError = error instanceof Error ? error.message : 'Container status unavailable';
     }
     if (status) {
+      // An answer is the only proof an instance really ran, so this is where the waiting for one ends.
+      run.attemptAlive = true;
+      run.capacityWaits = 0;
       if (status.runId !== run.runId || status.attempt !== run.attempt) {
         await this.finish(run, 'failed', 'Container run or attempt mismatch');
         return;

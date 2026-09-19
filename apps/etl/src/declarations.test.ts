@@ -105,9 +105,11 @@ it('bounds automatic retries when containers repeatedly stop without advancing',
     await f.job().alarm();
     if (attempt < 3) await f.resume();
   }
+  // A container that never answers cannot be told from one the platform never provided, so the bound is
+  // the short cold-start one — the run still ends after three silent attempts.
   expect(f.run()).toMatchObject({
     state: 'failed',
-    reason: expect.stringContaining('3 attempts without progress'),
+    reason: expect.stringContaining('Container gave no sign of life'),
   });
   expect(f.container.start).toHaveBeenCalledTimes(3);
 });
@@ -403,10 +405,58 @@ it('waits out a platform capacity refusal instead of spending the failure budget
   // The wait grows, and far past the two minutes a normal failure would take.
   expect(f.run().retryAt - Date.now()).toBeGreaterThan(20 * 60_000);
 
-  // Once the platform gives an instance, the waiting is over.
+  // An answer from the container is the only proof an instance really ran, so that is where the
+  // waiting ends — not at a `start()` the platform merely accepted.
   f.container.start.mockImplementation(() => {
     f.container.running = true;
   });
   await f.resume();
+  expect(f.run().capacityWaits).toBe(4); // started, but still silent
+  f.answer({ stage: 'fetch', completed: 5 });
+  await f.job().alarm();
   expect(f.run().capacityWaits).toBe(0);
+});
+
+// The shortage reaches the coordinator as „Container interrupted", not as an exception from start():
+// the platform accepts the start and then no instance appears. One name, two different events — and
+// counting both as failures ended a run that had already fetched two hundred thousand documents.
+it('tells a container that broke from one that never appeared', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-silent');
+  // The instance never comes up: `start()` is accepted, nothing answers /status.
+  f.container.start.mockImplementation(() => {});
+  await f.job().alarm(); // attempt 1 is started; nothing ever appears
+  await f.job().alarm(); // silence noticed → first wait
+  await f.resume(); // attempt 2 is started
+  await f.job().alarm(); // second wait
+  expect(f.run().state).toBe('running');
+  expect(f.run().failures ?? 0).toBe(0);
+  expect(f.run().capacityWaits).toBe(2);
+
+  // A container that ANSWERED and then died is this run breaking, and spends the failure budget.
+  const g = fixture();
+  await g.job().startRun('workflow-broke');
+  await g.job().alarm(); // the container starts and is running
+  g.answer({ stage: 'fetch', completed: 10 });
+  await g.job().alarm(); // it answers /status — proof an instance really ran
+  g.container.running = false;
+  await g.job().alarm();
+  // It spoke, so its death is this run's to answer for: the ordinary retry, not the capacity wait.
+  expect(g.run().reason).toBe('Container interrupted');
+  expect(g.run().capacityWaits ?? 0).toBe(0);
+  expect(g.run().retryAt - Date.now()).toBeLessThan(5 * 60_000);
+});
+
+// A run that has never seen a live container could equally be a broken image, so the patience is short.
+it('gives up quickly when no container has ever run in this run', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-cold');
+  f.container.start.mockImplementation(() => {});
+  await f.job().alarm();
+  for (let i = 0; i < 3; i++) {
+    await f.job().alarm();
+    if (f.run().state === 'running') await f.resume();
+  }
+  expect(f.run().state).toBe('failed');
+  expect(f.run().reason).toMatch(/Container gave no sign of life/);
 });
