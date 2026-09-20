@@ -26,14 +26,17 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-/** Crawl FOLDER with the given declaration list, recording every URL the crawl actually asked for. */
-async function crawl(files, extraArgv = []) {
+/** Crawl FOLDER with the given declaration list, recording every URL the crawl actually asked for.
+ *  `gaps` answer 404 — listed but unpublished at source, which the crawl records rather than fetches. */
+async function crawl(files, extraArgv = [], gaps = []) {
   const asked = [];
   const code = await run({
     httpGet: async (url) => {
       asked.push(url);
       if (url.endsWith('/list.xml'))
         return { status: 200, headers: {}, body: Buffer.from(listXml(files), 'utf8') };
+      if (gaps.some((g) => url.endsWith(`/${g}`)))
+        return { status: 404, headers: {}, body: Buffer.from('') };
       return { status: 200, headers: {}, body: Buffer.from('<x/>', 'utf8') };
     },
     rawDir: dir,
@@ -77,6 +80,25 @@ test('a receipt from a truncated crawl does not pass for a complete one', async 
   const full = await crawl(['a1.xml', 'a2.xml']);
   assert.equal(full.code, 0);
   assert.ok(full.asked.includes(`${BASE}/${FOLDER}/a2.xml`), 'the unattempted one must be fetched');
+});
+
+// The register announces one document under every person and post it belongs to, so a set can list
+// 7 114 rows for 6 043 files. The receipt is sealed on distinct files; the completeness gate reconciles
+// rows. A resumed crawl has to honour both at once — or it walks the set for nothing, or it skips it and
+// then refuses the corpus as short.
+test('a set that lists one document under several people is skipped whole, and still adds up', async () => {
+  const rows = ['a1.xml', 'a2.xml', 'a1.xml', 'a2.xml', 'a3.xml'];
+  const first = await crawl(rows, [], ['a2.xml']);
+  assert.equal(first.code, 0); // announced 5 = obtained 3 + gaps 2, counted per row
+  assert.deepEqual(JSON.parse(receipt()).missing, ['a2.xml']);
+
+  const second = await crawl(rows, [], ['a2.xml']);
+  assert.deepEqual(
+    second.asked,
+    [`${BASE}/${FOLDER}/list.xml`],
+    'the receipt covers every distinct file',
+  );
+  assert.equal(second.code, 0, 'the skipped set must reconcile per row, like a walked one');
 });
 
 test('a torn receipt is simply not a receipt', async () => {

@@ -427,16 +427,25 @@ export async function run({
         }
       })();
       const covered = (index?.files?.length ?? 0) + (index?.missing?.length ?? 0);
-      if (index?.listHash === digest(listRes.body) && covered === rows.length) {
+      // Measured against the DISTINCT files, exactly as the receipt was sealed: the register lists one
+      // document under every person and post it belongs to, so a set announces 7 114 rows for 6 043
+      // files. The stats, on the other hand, are per ROW, because that is how the walk below counts them
+      // and how the completeness gate reconciles announced against obtained — a duplicate row is a row.
+      if (
+        index?.listHash === digest(listRes.body) &&
+        covered === new Set(rows.map((r) => r.xmlFile)).size
+      ) {
+        const gaps = new Set(index.missing);
+        const missing = rows.filter((r) => gaps.has(r.xmlFile)).length;
         stats.folders[folder] = {
           announced: rows.length,
           fetched: 0,
-          cached: index.files.length,
-          missing: index.missing.length,
+          cached: rows.length - missing,
+          missing,
           errors: 0,
         };
         inventory.push({ folder, sha256: digest(receipt) });
-        completed += index.files.length;
+        completed += rows.length - missing;
         progress('fetch', completed);
         console.log(`  ${folder}: ${rows.length} declarations, already obtained — skipping`);
         continue;
