@@ -20,6 +20,14 @@ function fixture() {
       container.running = false;
     }),
     setInactivityTimeout: vi.fn(),
+    // Resolves when the instance exits; the coordinator attaches to it right after start().
+    exit: null as null | ((why?: unknown) => void),
+    monitor: vi.fn(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          container.exit = (why?: unknown) => (why === undefined ? resolve() : reject(why));
+        }),
+    ),
     interceptOutboundHttp: vi.fn(),
     getTcpPort: () => ({ fetch: async () => Response.json(status) }),
   };
@@ -492,4 +500,23 @@ it('counts an attempt that replays below the high-water mark as progress, not as
   // The attempt did move; the platform took the container away mid-replay. That is not this run failing.
   expect(f.run().failures ?? 0, 'replay is progress').toBe(0);
   expect(f.run().state).toBe('running');
+});
+
+
+// „Never appeared" and „appeared and left in forty seconds" both end with `running` false and silence,
+// and the second one is usually a broken image — on dev a CMD of `true` made every instance leave within
+// a minute, and hours of patient waiting read it as a shortage. `monitor()` tells them apart.
+it('names a container that started and left without a word, instead of waiting for a machine', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-exit');
+  await f.job().alarm(); // attempt 1 starts and the monitor is attached
+  vi.advanceTimersByTime(40_000);
+  f.container.running = false;
+  f.container.exit?.(new Error('exited with code 0')); // forty seconds in, it leaves on its own
+  await Promise.resolve(); // let the recorded exit land in storage
+  await f.job().alarm();
+
+  expect(f.run().reason).toMatch(/exited with code 0 40s after it started, without a word/);
+  expect(f.run().failures, 'a container that leaves on its own is this run failing').toBe(1);
+  expect(f.run().capacityWaits ?? 0, 'and it is not a shortage').toBe(0);
 });

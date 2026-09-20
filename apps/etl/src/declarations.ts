@@ -21,6 +21,14 @@ export interface RebuildTarget {
   id: string;
   resume?: boolean;
 }
+/** What `monitor()` saw, under its own storage key: the alarm owns `run` and must not race a promise. */
+interface ContainerExit {
+  runId: string;
+  attempt: number;
+  at: number;
+  why: string;
+}
+
 interface DeclarationRun {
   runId: string;
   requestId?: string;
@@ -281,6 +289,22 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
           },
         });
         await container.setInactivityTimeout(10 * MINUTE);
+        // A container that starts and dies seconds later looks exactly like one that never appeared:
+        // both leave `running` false and silence. `monitor()` resolves when the instance exits, so the
+        // exit is recorded under its own key — never by rewriting `run`, which the alarm owns — and the
+        // next alarm can name what happened instead of waiting out a shortage that is not happening.
+        // A broken image did exactly this on dev for hours: its CMD was `true`, so every instance left
+        // within a minute and the whole thing read as „no machine".
+        const { runId, attempt } = run;
+        const noted = (why: string) =>
+          this.ctx.storage.put('exit', { runId, attempt, at: Date.now(), why });
+        void container
+          .monitor()
+          .then(
+            () => noted('exited'),
+            (error: unknown) => noted(error instanceof Error ? error.message : 'exited with error'),
+          )
+          .catch(() => {});
       } catch (error) {
         await this.retry(run, error instanceof Error ? error.message : 'Container start failed');
       }
@@ -295,7 +319,19 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       // instance and really broke — ours to count. One that never made a sound gets the patient budget,
       // but only once this run has already had a working container: before that, a silent attempt is as
       // likely a broken build, and a bad build must fail in minutes rather than sit out four hours.
+      //
+      // And a third case the two above used to swallow: the instance DID arrive and left on its own.
+      // `monitor()` recorded that, so it is named and counted as a failure of this run — a container
+      // that exits before saying a word is a broken image far more often than a busy region, and it
+      // must surface in minutes with what happened, not after hours of patience.
+      const exit = await this.ctx.storage.get<ContainerExit>('exit');
+      const ours = exit?.runId === run.runId && exit?.attempt === run.attempt;
       if (run.attemptAlive) await this.retry(run, 'Container interrupted');
+      else if (ours && exit)
+        await this.retry(
+          run,
+          `Container ${exit.why} ${Math.round((exit.at - run.attemptStartedAt) / 1000)}s after it started, without a word`,
+        );
       else
         await this.waitForCapacity(
           run,
