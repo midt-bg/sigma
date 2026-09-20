@@ -343,9 +343,14 @@ describe('guardSelect — joins and CTEs below the top level', () => {
 // naming a person is absent on purpose — the assistant answers about institutions, companies and
 // contracts, never about named individuals. `search_index` quietly broke that: its rows carry kinds
 // 'official' and 'person', i.e. declarants by name with their post and their linked money.
-it('lets the model reach no table that names a person', () => {
+// The line is what the site publishes, not whether a row names a person: `search_index` holds the very
+// profiles the site serves, so the assistant reaching them is the same search by another door. The
+// tables below are the ones behind that door — the declared-interest surface and the internal names the
+// site never shows (ADR-0032) — and no route to them is allowed.
+it('reaches the published search index, and no table behind what the site publishes', () => {
+  expect(ALLOWED_TABLES.has('search_index')).toBe(true);
+  expect(guardSelect('SELECT title FROM search_index LIMIT 1').ok).toBe(true);
   for (const table of [
-    'search_index',
     'persons',
     'declarations',
     'declared_interests',
