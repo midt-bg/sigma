@@ -164,12 +164,14 @@ const CENTRE_PEOPLE_SQL = `
   FROM registry_roles r LEFT JOIN registry_persons p ON p.indent = r.subject_id
   WHERE r.eik = ?1 AND ${joinablePerson('r')} AND ${publicRole('r')}`;
 
-// The other companies in the corpus those people hold a role in.
+// The other PRIVATE companies in the corpus those people hold a role in. A seat at a public enterprise is a
+// held position, not a company of the person (ADR-0047 §2): drawing it here would hang the enterprise's
+// contracts on whoever sits on its board.
 const viaPeopleSql = (n: number) => `
   SELECT r.subject_id AS indent, r.role, r.removed_on, b.id AS bidder_id, b.name, b.kind, ct.won_eur,
          ${surfacedConflicts('b.id')} AS conflicts
   FROM registry_roles r
-  JOIN bidders b ON b.id = 'eik:' || r.eik
+  JOIN bidders b ON b.id = 'eik:' || r.eik AND b.ownership_kind IS NULL
   LEFT JOIN company_totals ct ON ct.bidder_id = b.id
   WHERE r.subject_id IN (${Array.from({ length: n }, (_, i) => `?${i + 2}`).join(', ')})
     AND r.subject_kind = 'person' AND r.eik <> ?1 AND ${publicRole('r')}`;

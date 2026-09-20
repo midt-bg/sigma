@@ -153,6 +153,30 @@ describe('PersonRolesTables', () => {
     expect(c.textContent).toContain('Извлечено на 09.09.2026');
     expect(cells(c.querySelector('table')!, 'Дял')).toEqual(['50%']);
   });
+
+  // A seat at a public enterprise sits in the same table as a stake in a private company; the reader must be
+  // able to tell them apart there (ADR-0047), so the enterprise is named by its ownership.
+  it('names a public enterprise as such next to the company', () => {
+    const r: PersonRole = {
+      company: {
+        name: 'ФОНД ТЕСТ ЕАД',
+        eik: '977777777',
+        href: '/companies/977777777',
+        ownershipKind: 'state',
+      },
+      role: 'board_of_directors',
+      share: null,
+      sharePct: null,
+      addedOn: '2022-02-02',
+      removedOn: '2022-08-30',
+      entryNumber: 'f1',
+      fetchedAt: '2026-09-10T03:00:00Z',
+    };
+    const c = render(<PersonRolesTables roles={[r]} />);
+    const row = c.querySelector('tbody tr')!;
+    expect(row.querySelector('a[href="/companies/977777777"]')!.textContent).toBe('ФОНД ТЕСТ ЕАД');
+    expect(row.textContent).toContain('държавно');
+  });
 });
 
 describe('RegistrySource', () => {

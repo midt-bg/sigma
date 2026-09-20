@@ -668,9 +668,11 @@ SELECT
 FROM contractor_identity
 GROUP BY bidder_key;
 
--- 4b) Curated public-owned winner classification. Exact EIK matches cover the allowlist; a small
--- branch list handles valid 13-digit branch EIKs used by AПИ/ОПУ, ЕСО/МЕР, БНР and Информационно
--- обслужване. Private look-alikes stay absent from the seed table and therefore remain NULL.
+-- 4b) Curated public-owned winner classification. Exact EIK matches cover the allowlist. A valid 13-digit
+-- EIK is a branch: the first nine digits are the enterprise it belongs to, so a branch of a listed
+-- enterprise (a forestry unit of a state forestry company, a regional station of the national radio, a
+-- regional branch of the irrigation company) carries the enterprise's ownership. Private look-alikes stay
+-- absent from the seed table and therefore remain NULL.
 CREATE TABLE IF NOT EXISTS state_owned_eik (
   eik TEXT PRIMARY KEY,
   ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal', 'mixed')),
@@ -684,10 +686,7 @@ SET ownership_kind = (
   WHERE bidders.eik_valid = 1
     AND (
       bidders.eik_normalized = s.eik
-      OR (s.eik = '000695089' AND bidders.eik_normalized GLOB '0006950890*')
-      OR (s.eik = '175201304' AND bidders.eik_normalized GLOB '1752013040*')
-      OR (s.eik = '000672343' AND bidders.eik_normalized GLOB '0006723430*')
-      OR (s.eik = '831641791' AND bidders.eik_normalized GLOB '8316417910124*')
+      OR (length(bidders.eik_normalized) = 13 AND substr(bidders.eik_normalized, 1, 9) = s.eik)
     )
   LIMIT 1
 );
@@ -700,9 +699,14 @@ CREATE TABLE IF NOT EXISTS public_owned_eik (
 );
 
 UPDATE bidders
-SET ownership_kind = (SELECT p.ownership_kind FROM public_owned_eik p WHERE p.eik = bidders.eik_normalized)
+SET ownership_kind = (
+  SELECT p.ownership_kind FROM public_owned_eik p
+  WHERE p.eik = CASE WHEN length(bidders.eik_normalized) = 13 THEN substr(bidders.eik_normalized, 1, 9)
+                     ELSE bidders.eik_normalized END
+)
 WHERE ownership_kind IS NULL AND eik_valid = 1
-  AND eik_normalized IN (SELECT eik FROM public_owned_eik);
+  AND (eik_normalized IN (SELECT eik FROM public_owned_eik)
+       OR (length(eik_normalized) = 13 AND substr(eik_normalized, 1, 9) IN (SELECT eik FROM public_owned_eik)));
 
 -- 5) Contracts — awarded lines (1:1 with staging rows), linked to tender + winning bidder,
 --    with the data-quality verdict (see 0007_data_quality.sql):
