@@ -392,29 +392,64 @@ const filings = readJsonl(path.join(STAGING, 'filings.jsonl'));
 // FOR the office the same declarant named within a year. Public ownership is read from the same columns
 // the site reads; a body the corpus does not know is left as the declaration says.
 const privateCompanyKeys = new Set();
-for (const b of bidders)
-  if (!b.ownership_kind && b.valid) privateCompanyKeys.add(companyNameKey(b.name));
-if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_deeds'").get()) {
-  const publicEik = new Set(
-    ['state_owned_eik', 'public_owned_eik']
-      .filter((t) => db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(t))
-      .flatMap((t) =>
-        db
-          .prepare(`SELECT eik FROM ${t}`)
-          .all()
-          .map((r) => r.eik),
-      ),
+{
+  const has = (t) => !!db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(t);
+  const eiks = (sql) =>
+    new Set(
+      db
+        .prepare(sql)
+        .all()
+        .map((r) => String(r.eik)),
+    );
+  const publicEik = new Set([
+    ...(has('state_owned_eik') ? eiks('SELECT eik FROM state_owned_eik') : []),
+    ...(has('public_owned_eik') ? eiks('SELECT eik FROM public_owned_eik') : []),
+  ]);
+  // A ministry or a municipality wins contracts too; a winner is not a company just for being one.
+  const authorityEik = eiks(
+    "SELECT substr(id, 6) AS eik FROM authorities WHERE id GLOB 'auth:[0-9]*'",
   );
-  for (const d of db
-    .prepare(
-      "SELECT eik, name, legal_form FROM registry_deeds WHERE outcome='ok' AND name IS NOT NULL",
-    )
-    .all())
-    if (!publicEik.has(d.eik))
-      privateCompanyKeys.add(companyNameKey(registryCompanyName(d.name, d.legal_form)));
+  const stem = (eik) => (eik.length === 13 ? eik.slice(0, 9) : eik); // a branch is its enterprise
+  const isPublicBody = (eik) =>
+    !eik ||
+    publicEik.has(eik) ||
+    publicEik.has(stem(eik)) ||
+    authorityEik.has(eik) ||
+    authorityEik.has(stem(eik));
+  for (const b of bidders)
+    if (b.valid && !b.ownership_kind && b.eik && !isPublicBody(String(b.eik)))
+      privateCompanyKeys.add(companyNameKey(b.name));
+  // The partidas, only with the ownership lists in hand: without them every partida would read as
+  // private and the correction would pull board members of state enterprises off their seats (seen once
+  // on dev: 291 filings, the energy holding among them). The register's name history counts too — a
+  // declarant names the company as it was called when he signed, and companies get renamed.
+  if (has('registry_deeds') && publicEik.size > 0) {
+    for (const d of db
+      .prepare(
+        "SELECT eik, name, legal_form FROM registry_deeds WHERE outcome='ok' AND name IS NOT NULL",
+      )
+      .all())
+      if (!isPublicBody(String(d.eik)))
+        privateCompanyKeys.add(companyNameKey(registryCompanyName(d.name, d.legal_form)));
+    if (has('registry_company_history'))
+      for (const h of db.prepare('SELECT eik, names_json FROM registry_company_history').all()) {
+        if (isPublicBody(String(h.eik))) continue;
+        let names = [];
+        try {
+          names = JSON.parse(h.names_json) ?? [];
+        } catch {
+          continue;
+        }
+        for (const n of names)
+          if (n?.name)
+            privateCompanyKeys.add(
+              companyNameKey(n.legalForm ? `${n.name} ${n.legalForm}` : n.name),
+            );
+      }
+  }
+  for (const a of db.prepare('SELECT name FROM authorities').all())
+    privateCompanyKeys.delete(companyNameKey(a.name));
 }
-for (const a of db.prepare('SELECT name FROM authorities').all())
-  privateCompanyKeys.delete(companyNameKey(a.name));
 const rawInstitution = declarationInstitution;
 const offices = resolveOffices(filings, {
   institutionOf: rawInstitution,

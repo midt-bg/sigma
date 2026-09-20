@@ -217,6 +217,9 @@ if (doing('snapshot') && remote) {
       'registry_identity_observations',
       'registry_identity_snapshots',
       'registry_company_history',
+      // The public-ownership lists: the loader tells a day job from a held position by them (ADR-0040 §5).
+      'state_owned_eik',
+      'public_owned_eik',
       ...TABLES,
     ]),
   ];
