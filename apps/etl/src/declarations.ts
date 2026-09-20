@@ -91,6 +91,14 @@ const rebuildStages = [
   'verify',
 ];
 const MINUTE = 60_000;
+/** How long the alarm waits to hear whether its workflow still exists. */
+const OWNER_LOOKUP_MS = 2_000;
+/** Bounds a promise that has no signal of its own; the loser is simply abandoned. */
+const withTimeout = <T>(work: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([
+    work,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('lookup timed out')), ms)),
+  ]);
 // Restart a stalled attempt; three attempts without advancing the durable high-water mark stop.
 const STALL_MS = 20 * MINUTE;
 const MAX_FAILURES = 3;
@@ -204,7 +212,14 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
     const workflow = run.target ? this.env.REBUILD_RUN : this.env.DECLARATIONS_RUN;
     if (!run.requestId || !workflow) return false;
     try {
-      const { status } = await (await workflow.get(run.requestId)).status();
+      // Bounded, because this runs at the head of EVERY alarm and an unanswered lookup used to hold the
+      // whole minute's work behind it — measured at ten seconds a time, once a minute, for a question
+      // whose failure already means „say nothing". Losing the answer costs one more minute of a run
+      // nobody waits for; waiting for it costs every alarm.
+      const { status } = await withTimeout(
+        workflow.get(run.requestId).then((instance) => instance.status()),
+        OWNER_LOOKUP_MS,
+      );
       return ['terminated', 'errored', 'complete'].includes(status);
     } catch {
       return false;

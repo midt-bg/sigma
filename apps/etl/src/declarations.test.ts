@@ -62,13 +62,15 @@ function fixture() {
   };
   const owner = (status?: string) => {
     env.DECLARATIONS_RUN = (
-      status
-        ? { get: async () => ({ status: async () => ({ status }) }) }
-        : {
-            get: async () => {
-              throw new Error('lookup failed');
-            },
-          }
+      status === 'hang'
+        ? { get: () => new Promise(() => {}) } // a lookup that never answers
+        : status
+          ? { get: async () => ({ status: async () => ({ status }) }) }
+          : {
+              get: async () => {
+                throw new Error('lookup failed');
+              },
+            }
     ) as never;
   };
   return { job, container, run, answer, resume, owner };
@@ -518,4 +520,21 @@ it('names a container that started and left without a word, instead of waiting f
   expect(f.run().reason).toMatch(/exited with code 0 40s after it started, without a word/);
   expect(f.run().failures, 'a container that leaves on its own is this run failing').toBe(1);
   expect(f.run().capacityWaits ?? 0, 'and it is not a shortage').toBe(0);
+});
+
+// The owner lookup runs at the head of EVERY alarm, and unanswered it used to hold the whole minute's
+// work behind it — for a question whose failure already means „say nothing".
+it('gives up on an owner lookup that never answers, instead of holding the alarm', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-mute-owner');
+  f.owner('hang');
+  const alarm = f.job().alarm();
+  let settled = false;
+  void alarm.then(() => (settled = true));
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(settled, 'still waiting on the lookup').toBe(false);
+  await vi.advanceTimersByTimeAsync(2_000);
+  await alarm;
+  expect(f.run().attempt, 'the attempt started anyway').toBe(1);
+  expect(f.run().state).toBe('running');
 });
