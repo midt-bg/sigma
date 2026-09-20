@@ -502,7 +502,6 @@ it('counts an attempt that replays below the high-water mark as progress, not as
   expect(f.run().state).toBe('running');
 });
 
-
 // „Never appeared" and „appeared and left in forty seconds" both end with `running` false and silence,
 // and the second one is usually a broken image — on dev a CMD of `true` made every instance leave within
 // a minute, and hours of patient waiting read it as a shortage. `monitor()` tells them apart.
