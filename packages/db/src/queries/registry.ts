@@ -330,7 +330,11 @@ export async function getRegistryPerson(
       }))
       .sort(byStanding((x) => x.company.name));
 
-    // The graph: the person at the centre, each company around it with the roles held there.
+    // The graph: the person at the centre, each company around it with the roles held there — the private
+    // ones. A seat on the board of a public enterprise is a held position (ADR-0047 §2): the enterprise's
+    // contracts are not the person's, not even through the registry role, so it is neither drawn nor counted.
+    // The roles table above keeps the seat, marked by its ownership, and the timeline shows it as a position.
+    const privateRows = rows.results.filter((r) => !r.ownership_kind);
     const centre = personNode(indent, person.name, 0);
     const at = new Map<
       string,
@@ -342,7 +346,7 @@ export async function getRegistryPerson(
         current: boolean;
       }
     >();
-    for (const r of rows.results) {
+    for (const r of privateRows) {
       if (!r.bidder_id || !r.bidder_name || !r.bidder_kind) continue;
       const c = at.get(r.bidder_id) ?? {
         name: r.bidder_name,
@@ -368,7 +372,7 @@ export async function getRegistryPerson(
     ];
     const edges = drawn.map(([id, c]) => roleEdge(centre.id, id, c.roles, c.current, false));
 
-    const won = new Map(rows.results.map((r) => [r.eik, r.won_eur ?? 0] as const));
+    const won = new Map(privateRows.map((r) => [r.eik, r.won_eur ?? 0] as const));
     const lastRead = rows.results.reduce((m, r) => (r.fetched_at > m ? r.fetched_at : m), '');
     return {
       slug: registryPersonSlug(indent),

@@ -109,7 +109,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
               <Section
                 id="network"
                 title="Връзки с дружества"
-                hint="Вписани роли по Търговския регистър."
+                hint="Вписани роли по Търговския регистър в частни дружества. Мястото в орган на публично предприятие е заемана длъжност и стои при длъжностите."
               >
                 <TieGraph layout={p.tieLayout} />
                 <div className="sr-only">

@@ -4,7 +4,7 @@ import { count, date, pct } from '@sigma/shared';
 import { DataTable, type Column } from './DataTable';
 import { ROLE_LABEL } from '../lib/registry-roles';
 import { roleRowId } from '../lib/profile-navigation';
-import { Chip, registryUrl } from './ui';
+import { Chip, OwnershipChip, registryUrl } from './ui';
 import { personName } from '../lib/person-name';
 
 // The Trade Register's roles as tables (ADR-0039): a company's management and ownership, and a person's roles
@@ -83,12 +83,23 @@ const holderColumn: Column<CompanyRole> = {
   cell: (r) => <Holder holder={r.holder} />,
 };
 
+// A public enterprise is named as such: a seat there is a held position, not a company of the person
+// (ADR-0047), and the reader must be able to tell the two apart in the same table.
 const companyColumn: Column<PersonRole> = {
   key: 'company',
   header: 'Дружество',
   isTitle: true,
-  cell: (r) =>
-    r.company.href ? <Link to={r.company.href}>{r.company.name}</Link> : r.company.name,
+  cell: (r) => (
+    <>
+      {r.company.href ? <Link to={r.company.href}>{r.company.name}</Link> : r.company.name}
+      {r.company.ownershipKind && (
+        <>
+          {' '}
+          <OwnershipChip kind={r.company.ownershipKind} />
+        </>
+      )}
+    </>
+  ),
 };
 const partidaColumn: Column<PersonRole> = {
   key: 'partida',

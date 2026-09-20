@@ -280,6 +280,39 @@ describe('getRegistryPerson', () => {
     });
   });
 
+  // ADR-0047 §2: a seat on the board of a public enterprise is a held position. The register's fact stays in
+  // the roles table, named by its ownership — but the enterprise is not one of the person's companies, so
+  // it is neither drawn around them nor counted, and its contracts are not hung on whoever sits on its board.
+  it('keeps a seat at a public enterprise in the roles, marked, but out of the graph and the totals', async () => {
+    const db = served();
+    open!.exec(`
+      INSERT INTO bidders (id,name,bulstat,eik_normalized,eik_valid,kind,ownership_kind) VALUES
+        ('eik:977777777','ФОНД ТЕСТ ЕАД','977777777','977777777',1,'company','state');
+      INSERT INTO company_totals (bidder_id,name,kind,won_eur,contracts,authorities) VALUES
+        ('eik:977777777','ФОНД ТЕСТ ЕАД','company',25000000,40,12);
+      INSERT INTO registry_deeds (eik,name,legal_form,outcome,fetched_at) VALUES
+        ('977777777','ФОНД ТЕСТ ЕАД','EAD','ok','2026-09-10T03:00:00Z');
+      INSERT INTO registry_roles (eik,sub_uic,field_ident,role,subject_kind,subject_id,subject_name,entry_number,added_on,removed_on)
+        VALUES ('977777777','0000','00120','board_of_directors','person','${ANNA}','АННА ПЕТРОВА','f1','2022-02-02','2022-08-30');
+    `);
+    const p = (await getRegistryPerson(db, ANNA))!;
+    const seat = p.roles.find((r) => r.company.eik === '977777777')!;
+    expect(seat).toMatchObject({
+      company: { name: 'ФОНД ТЕСТ ЕАД', ownershipKind: 'state' },
+      role: 'board_of_directors',
+      removedOn: '2022-08-30',
+    });
+    expect(
+      p.roles.filter((r) => r.company.eik !== '977777777').every((r) => !r.company.ownershipKind),
+    ).toBe(true);
+    expect(p.network.nodes.map((n) => n.id)).not.toContain('eik:977777777');
+    expect(p.network.edges.map((e) => e.to)).not.toContain('eik:977777777');
+    expect(p).toMatchObject({ companies: 2, wonEur: 6000 });
+    // Nor does the seat reach the enterprise from a company the person also holds a role in.
+    const net = await getCompanyTies(db, 'eik:111111111');
+    expect(net.nodes.map((n) => n.id)).not.toContain('eik:977777777');
+  });
+
   it('marks the roles that ended', async () => {
     const p = (await getRegistryPerson(served(), BORIS))!;
     expect(p.roles.every((r) => r.removedOn)).toBe(true);
