@@ -12,5 +12,10 @@ COPY containers/declarations/server.mjs ./containers/declarations/server.mjs
 COPY .gitignore ./
 RUN corepack enable && pnpm install --frozen-lockfile --ignore-scripts --filter @sigma/ingest... --filter @sigma/etl --filter sigma && git init -q
 ENV PATH="/app/node_modules/.bin:$PATH"
+# Node caps its heap at ~2 GB regardless of the machine. The audit reads the whole extraction into memory
+# and, at 181 thousand filings, sits exactly on that cliff: the same input passed on one attempt and died
+# with „JavaScript heap out of memory" on the next three (dev, 20.09.2026). The instance has 8 GiB; let
+# the job use it. Inherited by every child the supervisor spawns.
+ENV NODE_OPTIONS="--max-old-space-size=6144"
 EXPOSE 8080
 CMD ["node", "containers/declarations/server.mjs"]
