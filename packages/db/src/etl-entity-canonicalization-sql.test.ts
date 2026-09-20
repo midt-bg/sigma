@@ -192,6 +192,52 @@ describe('ETL entity canonicalization through real SQL scripts', () => {
     }
   });
 
+  // A valid 13-digit ЕИК is a branch of the enterprise in its first nine digits — a forestry unit of a state
+  // forestry company, a regional branch of the irrigation company. It carries the enterprise's ownership,
+  // whether the enterprise is on the Agency's list or derived from the register; an unlisted private company
+  // stays unmarked. Both ETL paths, the same rule.
+  it('marks a branch of a public enterprise by the ownership of the enterprise in both ETL paths', () => {
+    for (const [label, scriptPath] of etlPaths) {
+      withEtlDb(label, (dbPath) => {
+        sqlite(
+          dbPath,
+          `CREATE TABLE IF NOT EXISTS state_owned_eik (
+             eik TEXT PRIMARY KEY,
+             ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal', 'mixed')),
+             canonical_name TEXT NOT NULL);
+           CREATE TABLE IF NOT EXISTS public_owned_eik (
+             eik TEXT PRIMARY KEY,
+             ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal')));
+           INSERT INTO state_owned_eik VALUES ('600000006', 'state', '"ТЕСТ ДЪРЖАВНО" ЕАД');
+           INSERT INTO public_owned_eik VALUES ('700000007', 'municipal');
+           INSERT INTO raw_contracts
+             (source, fetched_at, contractor_eik, contractor_name)
+           VALUES
+             ('eop:contracts:hq', '2026-06-01T00:00:00Z', '600000006', 'ТЕСТ ДЪРЖАВНО ЕАД'),
+             ('eop:contracts:branch', '2026-06-01T00:00:00Z', '6000000060016', 'ТЕСТ ДЪРЖАВНО ЕАД - клон Тест'),
+             ('eop:contracts:municipal-branch', '2026-06-01T00:00:00Z', '7000000070018', 'ТЕСТ ОБЩИНСКО ЕООД - клон Тест'),
+             ('eop:contracts:private', '2026-06-01T00:00:00Z', '400000004', 'ЧАСТНО ООД');`,
+        );
+
+        readScript(dbPath, scriptPath);
+
+        expect(
+          sqliteJson<{ id: string; ownership_kind: string | null }>(
+            dbPath,
+            `SELECT id, ownership_kind FROM bidders
+             WHERE id IN ('eik:600000006', 'eik:6000000060016', 'eik:7000000070018', 'eik:400000004')
+             ORDER BY id`,
+          ),
+        ).toEqual([
+          { id: 'eik:400000004', ownership_kind: null },
+          { id: 'eik:600000006', ownership_kind: 'state' },
+          { id: 'eik:6000000060016', ownership_kind: 'state' },
+          { id: 'eik:7000000070018', ownership_kind: 'municipal' },
+        ]);
+      });
+    }
+  });
+
   it('uses the modal type for the winning authority name and buckets from raw types', () => {
     const authorityEik = '500000001';
 

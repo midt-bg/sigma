@@ -735,8 +735,8 @@ ON CONFLICT(id) DO UPDATE SET
   is_consortium = max(bidders.is_consortium, excluded.is_consortium),
   kind = CASE WHEN max(bidders.is_consortium, excluded.is_consortium) = 1 THEN 'consortium' ELSE bidders.kind END;
 
--- Curated public-owned winner classification. Exact EIK matches cover the allowlist; a small branch
--- list handles valid 13-digit branch EIKs used by AПИ/ОПУ, ЕСО/МЕР, БНР and Информационно обслужване.
+-- Curated public-owned winner classification. Exact EIK matches cover the allowlist; a valid 13-digit
+-- EIK is a branch and carries the ownership of the enterprise in its first nine digits.
 CREATE TABLE IF NOT EXISTS state_owned_eik (
   eik TEXT PRIMARY KEY,
   ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal', 'mixed')),
@@ -750,10 +750,8 @@ SET ownership_kind = (
   WHERE bidders.eik_valid = 1
     AND (
       bidders.eik_normalized = s.eik
-      OR (s.eik = '000695089' AND bidders.eik_normalized GLOB '0006950890*')
-      OR (s.eik = '175201304' AND bidders.eik_normalized GLOB '1752013040*')
-      OR (s.eik = '000672343' AND bidders.eik_normalized GLOB '0006723430*')
-      OR (s.eik = '831641791' AND bidders.eik_normalized GLOB '8316417910124*')
+      -- A valid 13-digit EIK is a branch of the enterprise in its first nine digits.
+      OR (length(bidders.eik_normalized) = 13 AND substr(bidders.eik_normalized, 1, 9) = s.eik)
     )
   LIMIT 1
 );
@@ -766,9 +764,14 @@ CREATE TABLE IF NOT EXISTS public_owned_eik (
 );
 
 UPDATE bidders
-SET ownership_kind = (SELECT p.ownership_kind FROM public_owned_eik p WHERE p.eik = bidders.eik_normalized)
+SET ownership_kind = (
+  SELECT p.ownership_kind FROM public_owned_eik p
+  WHERE p.eik = CASE WHEN length(bidders.eik_normalized) = 13 THEN substr(bidders.eik_normalized, 1, 9)
+                     ELSE bidders.eik_normalized END
+)
 WHERE ownership_kind IS NULL AND eik_valid = 1
-  AND eik_normalized IN (SELECT eik FROM public_owned_eik);
+  AND (eik_normalized IN (SELECT eik FROM public_owned_eik)
+       OR (length(eik_normalized) = 13 AND substr(eik_normalized, 1, 9) IN (SELECT eik FROM public_owned_eik)));
 
 INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
 SELECT b.id
