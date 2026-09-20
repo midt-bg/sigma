@@ -1,6 +1,8 @@
 import { documentFingerprint } from './source-identity.mjs';
 import { buildPersonRelatives } from './relatives.mjs';
 import { rebuildPersonEntities, declarationSourceId } from './person-entities.mjs';
+import { declarantGuid } from './declarant-guid.mjs';
+import { resolveOffices } from './declaration-office.mjs';
 import { buildPersonRegistryLinks } from './person-registry-links.mjs';
 import { IDENTITY_RULES_VERSION } from './registry-identity.mjs';
 import { recordBuild } from './build-proof.mjs';
@@ -84,7 +86,7 @@ const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // can be published without evidence it never gathered, but it is not the state a subsequent real run
 // should inherit. The one thing it must never touch either way is the monotonicity snapshot — see below.
 const EMIT_CANDIDATES_ONLY = process.argv.includes('--emit-candidates');
-const { companyNameKey, isMatchableKey } =
+const { companyNameKey, isMatchableKey, registryCompanyName } =
   await import('../../packages/shared/src/company-name-key.ts');
 
 const yr = (s) => {
@@ -381,10 +383,49 @@ const personId = (name, institution) =>
 const sourcePersonOf = (rec) =>
   `person:${companyNameKey(rec.person)}|${companyNameKey(
     identityInstitution(
-      declarationInstitution(rec) || `НЕУСТАНОВЕНА ИНСТИТУЦИЯ ${rec.folder}:${rec.xmlFile}`,
+      officeInstitution(rec) || `НЕУСТАНОВЕНА ИНСТИТУЦИЯ ${rec.folder}:${rec.xmlFile}`,
     ),
   )}`;
 const filings = readJsonl(path.join(STAGING, 'filings.jsonl'));
+// The day-job correction (declaration-office.mjs): a filing whose „Месторабота" is a company the corpus
+// knows to be private — a winner without public ownership, or a partida with no public owner — is filed
+// FOR the office the same declarant named within a year. Public ownership is read from the same columns
+// the site reads; a body the corpus does not know is left as the declaration says.
+const privateCompanyKeys = new Set();
+for (const b of bidders)
+  if (!b.ownership_kind && b.valid) privateCompanyKeys.add(companyNameKey(b.name));
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_deeds'").get()) {
+  const publicEik = new Set(
+    ['state_owned_eik', 'public_owned_eik']
+      .filter((t) => db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(t))
+      .flatMap((t) =>
+        db
+          .prepare(`SELECT eik FROM ${t}`)
+          .all()
+          .map((r) => r.eik),
+      ),
+  );
+  for (const d of db
+    .prepare(
+      "SELECT eik, name, legal_form FROM registry_deeds WHERE outcome='ok' AND name IS NOT NULL",
+    )
+    .all())
+    if (!publicEik.has(d.eik))
+      privateCompanyKeys.add(companyNameKey(registryCompanyName(d.name, d.legal_form)));
+}
+for (const a of db.prepare('SELECT name FROM authorities').all())
+  privateCompanyKeys.delete(companyNameKey(a.name));
+const rawInstitution = declarationInstitution;
+const offices = resolveOffices(filings, {
+  institutionOf: rawInstitution,
+  sourceId: declarationSourceId,
+  guidOf: declarantGuid,
+  isPrivateCompany: (name) => privateCompanyKeys.has(companyNameKey(name)),
+});
+function officeInstitution(rec) {
+  return offices.get(declarationSourceId(rec)) ?? rawInstitution(rec);
+}
+console.log(`Day-job filings re-homed to the declarant's office: ${offices.size}`);
 const identity = rebuildPersonEntities(
   db,
   db,
@@ -526,7 +567,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     h.year ?? null,
     h.template,
     h.category ?? '',
-    declarationInstitution(h),
+    officeInstitution(h),
     h.position ?? '',
     `https://register.cacbg.bg/${h.sourceFolder ?? h.folder}/${h.xmlFile}`,
   );
@@ -560,7 +601,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   // distinguish two same-named officials, so forming a link would risk attributing one person's stake to a
   // homonym (false attribution — libel). Withhold from link formation; the declaration + declared interest
   // are already recorded above for census. Counted so the dropped volume is visible in the Phase-0 report.
-  if (!isMatchableKey(companyNameKey(identityInstitution(declarationInstitution(h))))) {
+  if (!isMatchableKey(companyNameKey(identityInstitution(officeInstitution(h))))) {
     namelessInstitution++;
     continue;
   }
@@ -639,7 +680,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
       rec.annualDocuments.set(inventoryKey, docs);
     }
   }
-  const declaredInstitution = declarationInstitution(h);
+  const declaredInstitution = officeInstitution(h);
   if (declaredInstitution) rec.institutions.add(declaredInstitution);
 }
 const inventoryConflicts = [];
@@ -691,7 +732,7 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
       r.year ?? null,
       'interests',
       '',
-      declarationInstitution(r),
+      officeInstitution(r),
       '',
       `https://register.cacbg.bg/${r.sourceFolder ?? r.folder}/${r.xmlFile}`,
     );
@@ -728,7 +769,7 @@ for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
     f.year ?? null,
     f.template ?? 'unknown',
     f.category ?? '',
-    declarationInstitution(f),
+    officeInstitution(f),
     f.position ?? '',
     `https://register.cacbg.bg/${f.sourceFolder ?? f.folder}/${f.xmlFile}`,
   );
