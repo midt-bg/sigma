@@ -417,9 +417,16 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         const reason = status.reason || `${status.stage} ${status.state}`;
         // A yield is our own code stopping on purpose, with its work accepted — retry it wherever it
         // happens. Network stages are retried too; a data or audit refusal is final.
+        //
+        // `reindex` belongs with them and was missing: it is a run of `wrangler d1 execute` per chunk of
+        // twenty-five people, so a transient D1 error is the ordinary weather there — and it sits AFTER
+        // publish, where giving up throws away six hours of work whose result is already served. It
+        // happened on stage on 20.09.2026: chunk 017 failed and a completed, published run was recorded
+        // as failed with a stale search index. Each chunk is its own delete+insert, so repeating one is
+        // safe.
         if (
           status.state === 'yielded' ||
-          ['fetch', 'import', 'registry'].includes(status.stage) ||
+          ['fetch', 'import', 'registry', 'reindex'].includes(status.stage) ||
           status.signal
         )
           await this.retry(run, reason, status.state === 'yielded');

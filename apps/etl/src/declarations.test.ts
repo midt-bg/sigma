@@ -538,3 +538,30 @@ it('gives up on an owner lookup that never answers, instead of holding the alarm
   expect(f.run().attempt, 'the attempt started anyway').toBe(1);
   expect(f.run().state).toBe('running');
 });
+
+// Reindexing is a run of `wrangler d1 execute` per chunk of twenty-five people, so a transient D1 error
+// is the ordinary weather there — and it sits AFTER publish, where giving up throws away hours of work
+// whose result is already being served. On stage chunk 017 failed and a published run was recorded as
+// failed with a half-built search index.
+it('retries a failed reindex chunk instead of throwing away a published run', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-reindex');
+  await f.job().alarm();
+  f.answer({
+    state: 'failed',
+    stage: 'reindex',
+    completed: 0,
+    reason: 'Error: Command failed: wrangler d1 execute … reindex-officials-017.sql',
+  });
+  await f.job().alarm();
+  expect(f.run().state, 'a chunk is repeatable: delete+insert of its own rows').toBe('running');
+  expect(f.run().retryAt).toBeGreaterThan(Date.now());
+
+  // An audit refusal at the same point is still final: that one is about the data, not the weather.
+  const g = fixture();
+  await g.job().startRun('workflow-audit');
+  await g.job().alarm();
+  g.answer({ state: 'failed', stage: 'audit', completed: 0, reason: 'audit findings' });
+  await g.job().alarm();
+  expect(g.run().state).toBe('failed');
+});
