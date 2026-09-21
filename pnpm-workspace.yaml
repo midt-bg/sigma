@@ -65,7 +65,7 @@ catalog:
   # OPTIONAL peer; the repo's 4.x is not a supported peer but only wrangler's exported declarations import
   # it — CLI use and `wrangler types --check` are unaffected. workers-types 5 is a major, deferred past the
   # release; revisit with it.
-  'wrangler': '^4.128.0'
+  'wrangler': '^4.134.0'
   # matches the one Node runtime (build/node-24); 22 (web) and 25 (root) both drop out of the lockfile
   '@types/node': '^24.0.0'
   # root already; apps/web sat on 5.9 only because two scaffold commits picked different versions
