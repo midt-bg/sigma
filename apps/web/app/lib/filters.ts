@@ -175,6 +175,62 @@ export function buildSectorGroup(
   };
 }
 
+/** /quality „Разбивка" ranking controls read from the URL (?rdir/?rfrom/?rto). */
+export interface QualityRankingControls {
+  rankDir: 'asc' | 'desc' | null; // null = the sort key's default order
+  rankFrom: number | null; // avg-index range bounds on the 0–100 display scale (from ≤ to)
+  rankTo: number | null;
+}
+
+/**
+ * Parse + validate the „Разбивка" ranking controls: ?rdir is an allow-listed asc|desc; ?rfrom/?rto
+ * are digits-only ints ≤ 100 (no signs, decimals or SQL-ish shapes reach a query or a cache key —
+ * CWE-349); an inverted pair is swapped so the range is always from ≤ to. The db layer re-validates.
+ */
+export function qualityRankingControls(sp: URLSearchParams): QualityRankingControls {
+  const rdir = sp.get('rdir');
+  const rangeInt = (raw: string | null): number | null =>
+    raw != null && /^\d{1,3}$/.test(raw) && Number(raw) <= 100 ? Number(raw) : null;
+  let rankFrom = rangeInt(sp.get('rfrom'));
+  let rankTo = rangeInt(sp.get('rto'));
+  if (rankFrom != null && rankTo != null && rankFrom > rankTo)
+    [rankFrom, rankTo] = [rankTo, rankFrom];
+  return { rankDir: rdir === 'asc' || rdir === 'desc' ? rdir : null, rankFrom, rankTo };
+}
+
+const QUALITY_BANDS: ReadonlySet<string> = new Set([
+  'weak',
+  'mid',
+  'good',
+  ...Array.from({ length: 20 }, (_, i) => String(i)),
+]);
+// Ranking keys / contract ids are opaque strings (ЕИК, CPV division, NUTS code, year, contract id):
+// bound as SQL params downstream, but still shape-checked here so a hostile value never reaches a
+// query or cache key — printable, no separators/quotes/path chars, bounded length.
+const QUALITY_KEY = /^[\p{L}\p{N}][\p{L}\p{N} ._:/-]{0,79}$/u;
+
+export interface QualityScopeControls {
+  sel: string | null;
+  contractId: string | null;
+  band: string | null;
+}
+
+/**
+ * Parse + validate the /quality scope params: ?band is checked against the fixed option set
+ * (weak|mid|good|0–19 histogram bins); ?sel and ?contract must match an opaque-key shape or are
+ * dropped to null (never passed through). The db layer re-validates at its own boundary.
+ */
+export function qualityScopeControls(sp: URLSearchParams): QualityScopeControls {
+  const key = (raw: string | null): string | null =>
+    raw != null && QUALITY_KEY.test(raw) && !raw.includes('..') ? raw : null;
+  const band = sp.get('band');
+  return {
+    sel: key(sp.get('sel')),
+    contractId: key(sp.get('contract')),
+    band: band != null && QUALITY_BANDS.has(band) ? band : null,
+  };
+}
+
 // Canonical serialization order so the same logical state always yields the same URL string —
 // good for history/bookmarks/caching. Filter facets first, then search/sort, then the paging cursor
 // markers. Link param order (cosmetic). Every entry must be in CANONICAL_QUERY_PARAMS (asserted in
@@ -184,12 +240,17 @@ export const PARAM_ORDER = [
   'type',
   'kind',
   'sector',
-  'g', // trends granularity (month/year)
+  'cpv', // /trends: 5-digit CPV group filter
+  'cpvSort', // /trends: CPV list ordering
+  'angle', // /trends: time | cpv | cross lens
+  'step', // /trends: series granularity (m|q|y)
   'year',
   'procedure',
   'funding',
   'eu',
   'bids', // /contracts single-bid filter
+  'band', // /quality: histogram score-band filter
+  'grain', // /quality: rollup grain
   'value',
   'stake', // /conflicts
   'signal', // /conflicts
@@ -197,9 +258,15 @@ export const PARAM_ORDER = [
   'authority',
   'bidder',
   'center', // /network focus entity
+  'contract', // /quality: scorecard subject
+  'sel', // /quality: selected ranking row
   'top',
   'count',
   'sort',
+  'csort', // /quality: contract list ordering
+  'rdir',
+  'rfrom',
+  'rto',
   'cursor',
   'page',
   'p', // sitemap-contracts page

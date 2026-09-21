@@ -34,6 +34,8 @@ const migrations = [
   'packages/db/migrations/0014_person_profile.sql',
   'packages/db/migrations/0015_person_observations.sql',
   'packages/db/migrations/0018_person_entities.sql',
+  // 0024: refresh-slice.sql writes the health-index columns added there.
+  'packages/db/migrations/0024_contract_health.sql',
 ].map((p) => resolve(root, p));
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const refreshSlice = resolve(root, 'scripts/refresh-slice.sql');

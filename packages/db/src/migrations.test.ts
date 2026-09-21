@@ -1,12 +1,50 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const migrationsDir = resolve(root, 'packages/db/migrations');
+// The FULL chain in apply order — exactly what `wrangler d1 migrations apply` runs on a fresh D1
+// and what scripts/import.mjs applies to a fresh work DB. Every migration must apply cleanly after
+// the ones before it (e.g. 0003's ADD COLUMNs must not duplicate columns already in 0000).
+// The exact expected chain, kept in sync by hand: a soft `length >= N` check would still pass if a
+// migration file were accidentally deleted (as long as N remained), silently dropping schema from
+// `wrangler d1 migrations apply` on a fresh D1. Asserting the exact file set makes a lost migration
+// fail loudly instead of passing quietly.
+const EXPECTED_MIGRATION_FILES = [
+  '0000_init.sql',
+  '0001_flow_pairs_bidder_index.sql',
+  '0002_current_value_currency.sql',
+  '0003_related_persons_foundation.sql',
+  '0004_cpv_division_stats.sql',
+  '0005_list_sort_indexes.sql',
+  '0006_amendment_restated.sql',
+  '0007_amendment_value_suspect.sql',
+  '0008_amendment_provenance.sql',
+  '0009_interest_link_evidence.sql',
+  '0010_publishing_gate_constraints.sql',
+  '0011_company_links.sql',
+  '0012_person_redirects.sql',
+  '0013_registry.sql',
+  '0014_person_profile.sql',
+  '0015_person_observations.sql',
+  '0016_registry_entry_sync.sql',
+  '0017_registry_identity_observations.sql',
+  '0018_person_entities.sql',
+  '0019_registry_scoped_birthdates.sql',
+  '0020_registry_company_history.sql',
+  '0021_registry_entry_baseline.sql',
+  '0022_person_relatives.sql',
+  '0024_contract_health.sql',
+];
+const migrationFiles = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort();
+const migrations = migrationFiles.map((f) => resolve(migrationsDir, f));
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
@@ -20,6 +58,7 @@ const personMigrationPaths = [
   'packages/db/migrations/0018_person_entities.sql',
 ].map((p) => resolve(root, p));
 const migration10 = resolve(root, 'packages/db/migrations/0010_publishing_gate_constraints.sql');
+const migration24 = resolve(root, 'packages/db/migrations/0024_contract_health.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
 
@@ -38,9 +77,8 @@ describe('served migrations', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, migration0);
-      readScript(dbPath, migration1);
-      readScript(dbPath, migration2);
+      expect(migrationFiles).toEqual(EXPECTED_MIGRATION_FILES);
+      for (const migration of migrations) readScript(dbPath, migration);
 
       expect(
         sqlite(
@@ -95,6 +133,41 @@ describe('served migrations', () => {
         ).trim(),
       ).toBe('1');
 
+      // 0024 adds the health-index foundation columns (contract quality spec §7.1) — additive
+      // ALTERs only, deliberately NOT folded into 0000 (SQLite has no ADD COLUMN IF NOT EXISTS,
+      // so duplicating them there would break the fresh-DB chain apply this test exercises).
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('contracts') WHERE name IN ('exemption_legal_basis','outside_zop','dps_contract');",
+        ).trim(),
+      ).toBe('3');
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('flow_pairs') WHERE name IN ('first_date','last_date');",
+        ).trim(),
+      ).toBe('2');
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('tenders') WHERE name IN ('corrections_count','estimated_value_eur');",
+        ).trim(),
+      ).toBe('2');
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name IN ('reason','circumstances');",
+        ).trim(),
+      ).toBe('2');
+      // The health rollup tables ship in the base schema (rebuilt idempotently by the ETL derive).
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('authority_health_rollup','contract_features','year_quality_totals');",
+        ).trim(),
+      ).toBe('3');
+
       // The served schema must never carry raw_* staging tables.
       expect(
         sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'raw_%';").trim(),
@@ -142,6 +215,7 @@ describe('served migrations', () => {
       readScript(dbPath, migration3);
       readScript(dbPath, migration9);
       for (const path of personMigrationPaths) readScript(dbPath, path);
+      readScript(dbPath, migration24);
       readScript(dbPath, backfill);
       readScript(dbPath, precompute);
 

@@ -12,21 +12,21 @@
 // them — resolver, then derive — so the value anchor, dedup, group rule, guards, and provenance are
 // exercised as shipped.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const initSchema = resolve(root, 'packages/db/migrations/0000_init.sql');
-// #305: promote-amendments.sql writes value_restated/value_treatment/value_suspect into served amendments.
-const restatedMigration = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
-const valueSuspectMigration = resolve(
-  root,
-  'packages/db/migrations/0007_amendment_value_suspect.sql',
-);
-const provenanceMigration = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
+// Full migration chain in `wrangler d1 migrations apply` order — promote-amendments.sql writes
+// columns (e.g. 0012's reason/circumstances) added anywhere along the chain, so the served schema
+// must be built the same way production builds it, not from a hand-picked subset.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrations = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const resolveAmendments = resolve(root, 'scripts/resolve-amendment-contracts.sql');
 const deriveAmendments = resolve(root, 'scripts/derive-amendments.sql');
@@ -77,10 +77,7 @@ let db: string;
 beforeEach(() => {
   dir = mkdtempSync(resolve(tmpdir(), 'amendments-resolve-'));
   db = resolve(dir, 'work.sqlite');
-  readScript(db, initSchema);
-  readScript(db, restatedMigration);
-  readScript(db, valueSuspectMigration);
-  readScript(db, provenanceMigration);
+  for (const migration of migrations) readScript(db, migration);
   readScript(db, workStagingSchema);
 });
 

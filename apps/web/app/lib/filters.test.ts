@@ -10,6 +10,8 @@ import {
   MAX_MULTI_VALUES,
   pageNav,
   PARAM_ORDER,
+  qualityRankingControls,
+  qualityScopeControls,
   searchHref,
   singleSelectFilters,
   sortHref,
@@ -348,6 +350,53 @@ describe('pageNav', () => {
   });
 });
 
+describe('qualityRankingControls', () => {
+  it('parses the /quality „Разбивка" controls the loader consumes', () => {
+    expect(qualityRankingControls(sp('rdir=desc&rfrom=10&rto=60'))).toEqual({
+      rankDir: 'desc',
+      rankFrom: 10,
+      rankTo: 60,
+    });
+    expect(qualityRankingControls(sp(''))).toEqual({
+      rankDir: null,
+      rankFrom: null,
+      rankTo: null,
+    });
+  });
+
+  it('accepts only asc|desc for ?rdir — anything else falls back to the default order', () => {
+    expect(qualityRankingControls(sp('rdir=asc')).rankDir).toBe('asc');
+    expect(qualityRankingControls(sp('rdir=down')).rankDir).toBeNull();
+    expect(qualityRankingControls(sp('rdir=DESC')).rankDir).toBeNull();
+    expect(qualityRankingControls(sp("rdir=asc'--")).rankDir).toBeNull();
+  });
+
+  it('validates ?rfrom/?rto as ints in [0, 100] and drops malformed bounds (CWE-349)', () => {
+    expect(qualityRankingControls(sp('rfrom=0&rto=100'))).toMatchObject({
+      rankFrom: 0,
+      rankTo: 100,
+    });
+    expect(qualityRankingControls(sp('rfrom=35')).rankFrom).toBe(35); // one-sided range is fine
+    expect(qualityRankingControls(sp('rto=35')).rankTo).toBe(35);
+    expect(qualityRankingControls(sp('rfrom=101')).rankFrom).toBeNull();
+    expect(qualityRankingControls(sp('rfrom=-1')).rankFrom).toBeNull();
+    expect(qualityRankingControls(sp('rfrom=1.5')).rankFrom).toBeNull();
+    expect(qualityRankingControls(sp('rfrom=abc')).rankFrom).toBeNull();
+    expect(qualityRankingControls(sp('rfrom=5 OR 1=1')).rankFrom).toBeNull();
+    expect(qualityRankingControls(sp('rfrom=1000')).rankFrom).toBeNull();
+  });
+
+  it('swaps an inverted ?rfrom/?rto pair so the range is always from ≤ to', () => {
+    const f = qualityRankingControls(sp('rfrom=60&rto=10'));
+    expect(f.rankFrom).toBe(10);
+    expect(f.rankTo).toBe(60);
+    // from = to pins a single display value — kept, not dropped
+    const pin = qualityRankingControls(sp('rfrom=69&rto=69'));
+    expect(pin.rankFrom).toBe(69);
+    expect(pin.rankTo).toBe(69);
+  });
+});
+
 describe('withParams', () => {
   it('drops unknown params — including repeated ones — so none can ride a link into the edge cache (#197)', () => {
     expect(withParams(sp('sort=value-desc&x=poison'), {})).toBe('?sort=value-desc');
@@ -481,5 +530,22 @@ describe('withParams — known params outside the canonical order', () => {
     expect(withParams(sp('company=111111111&sort=total&basis=matched'), { page: 2 })).toBe(
       '?sort=total&page=2&company=111111111&basis=matched',
     );
+  });
+});
+
+describe('qualityScopeControls', () => {
+  it('accepts opaque keys and fixed-set bands', () => {
+    expect(qualityScopeControls(sp('sel=eik:123&contract=c-9&band=good'))).toEqual({
+      sel: 'eik:123',
+      contractId: 'c-9',
+      band: 'good',
+    });
+  });
+  it('drops hostile / out-of-set values to null', () => {
+    expect(
+      qualityScopeControls(
+        sp(`sel=${encodeURIComponent("x' OR 1=1 --")}&contract=..%2F..&band=20`),
+      ),
+    ).toEqual({ sel: null, contractId: null, band: null });
   });
 });

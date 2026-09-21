@@ -283,6 +283,47 @@ jobs:
           ensure_column registry_entry_state baseline_run_id "baseline_run_id TEXT"
           ensure_column registry_entry_state baseline_completed_at "baseline_completed_at TEXT"
 
+      # 0024_contract_health.sql adds nine nullable columns that the served D1 genuinely needs:
+      # ship-domain.mjs copies every source column into contracts/tenders/amendments/flow_pairs, and
+      # precompute.sql / derive-contract-features.sql (both run on the served D1) read or write
+      # tenders.estimated_value_eur, contracts.{exemption_legal_basis,outside_zop,dps_contract}.
+      # The migration ledger is empty on this D1 (see above), so apply it column-by-column,
+      # probing pragma_table_info first — SQLite has no ADD COLUMN IF NOT EXISTS.
+      - name: Ensure contract-health columns exist
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          d1() {
+            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+              --config wrangler.deploy.jsonc --remote --yes "$@"
+          }
+          for spec in \
+            "contracts exemption_legal_basis TEXT" \
+            "contracts outside_zop INTEGER" \
+            "contracts dps_contract INTEGER" \
+            "amendments reason TEXT" \
+            "amendments circumstances TEXT" \
+            "tenders corrections_count INTEGER" \
+            "tenders estimated_value_eur REAL" \
+            "flow_pairs first_date TEXT" \
+            "flow_pairs last_date TEXT"
+          do
+            set -- $spec
+            table="$1"; column="$2"; type="$3"
+            probe="$(d1 --json --command "SELECT COUNT(*) AS n FROM pragma_table_info('${table}') WHERE name = '${column}'")"
+            n="$(printf '%s' "$probe" | node -e '
+              const p = JSON.parse(require("fs").readFileSync(0, "utf8"));
+              const r = (Array.isArray(p) ? p[0] : p)?.results?.[0];
+              if (!r || !Number.isInteger(r.n)) process.exit(2);
+              process.stdout.write(String(r.n));
+            ')" || { echo "::error::Could not determine whether ${table}.${column} exists."; exit 1; }
+            if [ "$n" = "0" ]; then
+              d1 --command "ALTER TABLE ${table} ADD COLUMN ${column} ${type}"
+            else
+              echo "${table}.${column} already exists."
+            fi
+          done
+
       # The base schema was created out-of-band with `d1 execute --file`, so wrangler's migration
       # ledger is empty and `d1 migrations apply` would collide on 0000. Probe the actual table
       # instead. SQLite has no `ADD COLUMN IF NOT EXISTS`; a completion-marker table is created only

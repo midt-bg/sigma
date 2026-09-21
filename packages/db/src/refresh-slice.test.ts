@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,26 +8,13 @@ import { describe, expect, it } from 'vitest';
 import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
-const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
-// refresh-slice.sql / precompute.sql officials block reads interest_links (0003) — build it in every chain.
-const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
-// …and 0006, joined by the officials block for the Trade Register evidence gate (#279, ADR-0033).
-const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
-// The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
-// person_sources (0018).
-const personMigrationPaths = [
-  'packages/db/migrations/0014_person_profile.sql',
-  'packages/db/migrations/0015_person_observations.sql',
-  'packages/db/migrations/0018_person_entities.sql',
-].map((p) => resolve(root, p));
-// #305 Tier-2: served amendments gained value_restated/value_treatment (refresh-slice promotes them).
-const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
-// #305 residual: served amendments gained value_suspect (refresh-slice promotes it).
-const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
-// #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
-const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
+// Full migration chain (see scripts/import.mjs): refresh-slice.sql / normalize-raw.sql write the
+// health-index columns added by 0024, so schema-from-0000-only would miss them.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrationPaths = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
 const deriveAmendmentsPath = resolve(root, 'scripts/derive-amendments.sql');
@@ -196,15 +183,7 @@ function seedOcdsOnlySharedNumber(dbPath: string): void {
 }
 
 function initWorkDb(dbPath: string): void {
-  readScript(dbPath, schemaPath);
-  readScript(dbPath, migration1Path);
-  readScript(dbPath, migration2Path);
-  readScript(dbPath, migration3Path);
-  readScript(dbPath, migration9Path);
-  for (const path of personMigrationPaths) readScript(dbPath, path);
-  readScript(dbPath, migration6Path);
-  readScript(dbPath, migration7Path);
-  readScript(dbPath, migration8Path);
+  for (const migration of migrationPaths) readScript(dbPath, migration);
   readScript(dbPath, workStagingSchemaPath);
 }
 
@@ -592,15 +571,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
-      readScript(dbPath, migration1Path);
-      readScript(dbPath, migration2Path);
-      readScript(dbPath, migration3Path);
-      readScript(dbPath, migration9Path);
-      for (const path of personMigrationPaths) readScript(dbPath, path);
-      readScript(dbPath, migration6Path);
-      readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
+      for (const migration of migrationPaths) readScript(dbPath, migration);
       readScript(dbPath, workStagingSchemaPath);
       seedEopBaseDay(dbPath);
 
@@ -675,21 +646,57 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  it('recovers a served flow_pairs table created under the OLD (pre-0024) schema', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-flowpairs-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      for (const migration of migrationPaths) readScript(dbPath, migration);
+      readScript(dbPath, workStagingSchemaPath);
+      // Simulate a served D1 whose flow_pairs predates migration 0024 — no first_date/last_date,
+      // and none of the three indexes the current migration chain gives a fresh DB.
+      sqlite(
+        dbPath,
+        `DROP TABLE flow_pairs;
+         CREATE TABLE flow_pairs (
+           authority_id TEXT NOT NULL REFERENCES authorities(id),
+           bidder_id TEXT NOT NULL REFERENCES bidders(id),
+           authority_name TEXT NOT NULL, bidder_name TEXT NOT NULL, bidder_kind TEXT NOT NULL,
+           won_eur REAL NOT NULL, contracts INTEGER NOT NULL,
+           PRIMARY KEY (authority_id, bidder_id)
+         );`,
+      );
+      seedEopBaseDay(dbPath);
+
+      readScript(dbPath, refreshSlicePath);
+
+      const row = sqliteJson<{ first_date: string | null; last_date: string | null }>(
+        dbPath,
+        'SELECT first_date, last_date FROM flow_pairs LIMIT 1',
+      )[0];
+      expect(row?.first_date).toBe('2026-06-02');
+      expect(row?.last_date).toBe('2026-06-02');
+      for (const index of [
+        'idx_flow_pairs_won',
+        'idx_flow_pairs_authority',
+        'idx_flow_pairs_bidder',
+      ]) {
+        expect(
+          sqliteJson<{ n: number }>(
+            dbPath,
+            `SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = '${index}' AND tbl_name = 'flow_pairs'`,
+          )[0]?.n,
+        ).toBe(1);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('bridges an OCDS-only annex to its УНП on the slice path (issue #286)', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-ocds-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
-      readScript(dbPath, migration1Path);
-      readScript(dbPath, migration2Path);
-      readScript(dbPath, migration3Path);
-      // 0006 too: refresh-slice.sql's свързани-лица block reads interest_link_evidence (#279), so the
-      // script cannot parse against a DB that stops at 0003 — every site here applies both.
-      readScript(dbPath, migration9Path);
-      for (const path of personMigrationPaths) readScript(dbPath, path);
-      readScript(dbPath, migration6Path);
-      readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
+      for (const migration of migrationPaths) readScript(dbPath, migration);
       readScript(dbPath, workStagingSchemaPath);
 
       // An EOP procedure (tender + base contract) with УНП UNP-SLICE / tender.id TENDER-SLICE. An
@@ -869,15 +876,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
-      readScript(dbPath, migration1Path);
-      readScript(dbPath, migration2Path);
-      readScript(dbPath, migration3Path);
-      readScript(dbPath, migration9Path);
-      for (const path of personMigrationPaths) readScript(dbPath, path);
-      readScript(dbPath, migration6Path);
-      readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
+      for (const migration of migrationPaths) readScript(dbPath, migration);
       readScript(dbPath, workStagingSchemaPath);
       seedEopOnlySharedNumber(dbPath);
       readScript(dbPath, refreshSlicePath);
@@ -925,15 +924,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
-      readScript(dbPath, migration1Path);
-      readScript(dbPath, migration2Path);
-      readScript(dbPath, migration3Path);
-      readScript(dbPath, migration9Path);
-      for (const path of personMigrationPaths) readScript(dbPath, path);
-      readScript(dbPath, migration6Path);
-      readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
+      for (const migration of migrationPaths) readScript(dbPath, migration);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -981,15 +972,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
-      readScript(dbPath, migration1Path);
-      readScript(dbPath, migration2Path);
-      readScript(dbPath, migration3Path);
-      readScript(dbPath, migration9Path);
-      for (const path of personMigrationPaths) readScript(dbPath, path);
-      readScript(dbPath, migration6Path);
-      readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
+      for (const migration of migrationPaths) readScript(dbPath, migration);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -1123,15 +1106,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
-      readScript(dbPath, migration1Path);
-      readScript(dbPath, migration2Path);
-      readScript(dbPath, migration3Path);
-      readScript(dbPath, migration9Path);
-      for (const path of personMigrationPaths) readScript(dbPath, path);
-      readScript(dbPath, migration6Path);
-      readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
+      for (const migration of migrationPaths) readScript(dbPath, migration);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,

@@ -34,6 +34,7 @@ apps/*/wrangler.deploy.jsonc
 
 # Claude Code per-user settings — local overrides (e.g. bypassPermissions) stay on the machine
 .claude/settings.local.json
+CLAUDE.local.md
 
 # TypeScript
 *.tsbuildinfo

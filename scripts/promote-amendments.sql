@@ -9,7 +9,7 @@ DELETE FROM amendments;
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, contract_number_raw, link_method, unp,
   value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source,
+  published_at, document_number, description, reason, circumstances, source,
   value_restated, value_treatment, value_suspect
 )
 WITH keyed AS (
@@ -55,6 +55,8 @@ SELECT
   published_at,
   document_number,
   description,
+  reason,
+  circumstances,
   source,
   CASE WHEN value_after_restated IS NOT NULL THEN 1 ELSE 0 END,
   value_treatment,
