@@ -3,6 +3,7 @@ import {
   BG_REGIONS,
   CLASSIFIED_PROCEDURE_TYPES,
   CPV_CATEGORIES,
+  CPV_DIVISION_SET,
   CPV_SECTORS,
   ENTITY_TYPES,
   EU_SCOREBOARD,
@@ -10,6 +11,8 @@ import {
   PROCEDURE_GROUPS,
   PROCEDURE_UNKNOWN_KEY,
   categoryForDivision,
+  cpvBucket,
+  cpvDivision,
   procedureGroup,
   rateLowerIsBetter,
   regionByName,
@@ -44,6 +47,82 @@ describe('CPV_CATEGORIES', () => {
     expect(categoryForDivision('15800000')?.key).toBe('food-agri');
     expect(categoryForDivision(null)).toBeNull();
     expect(categoryForDivision('99000000')).toBeNull();
+  });
+});
+
+describe('cpvBucket', () => {
+  it('classifies the construction-works division as works', () => {
+    expect(cpvBucket('45')).toBe('works');
+    expect(cpvBucket('45233120-6')).toBe('works'); // full code → division 45
+  });
+
+  it('classifies the service divisions as services', () => {
+    for (const code of ['50', '71', '72', '85', '90', '98']) {
+      expect(cpvBucket(code)).toBe('services');
+    }
+  });
+
+  it('classifies the remaining catalogued divisions as goods', () => {
+    for (const code of ['15', '30', '33', '34', '43', '44', '48']) {
+      expect(cpvBucket(code)).toBe('goods'); // 44 (building materials) is a supply, not works
+    }
+    expect(cpvBucket('44210000')).toBe('goods'); // full code → division 44
+  });
+
+  it('falls back to other for missing or out-of-taxonomy codes', () => {
+    expect(cpvBucket(null)).toBe('other');
+    expect(cpvBucket('')).toBe('other');
+    expect(cpvBucket('99')).toBe('other');
+  });
+
+  it('sends a catalogued division that no bucket claims to other instead of coercing it into goods', () => {
+    // A future division added to the catalogue but omitted from all three bucket sets must not be
+    // absorbed into a real bucket. Simulate that by adding one to the live catalogue for this case.
+    const catalogue = CPV_DIVISION_SET as Set<string>;
+    catalogue.add('97');
+    try {
+      expect(cpvBucket('97')).toBe('other');
+    } finally {
+      catalogue.delete('97');
+    }
+    expect(cpvBucket('97')).toBe('other'); // and, uncatalogued again, it still falls back
+  });
+
+  it('assigns every catalogued division to exactly one real bucket (a partition)', () => {
+    for (const sector of CPV_SECTORS) {
+      expect(['works', 'goods', 'services']).toContain(cpvBucket(sector.code));
+    }
+  });
+
+  it('never leaves a catalogued division on the default „other" bucket', () => {
+    // Guard: all three buckets are explicit sets (goods is NOT a fallback), so a future division
+    // added to CPV_SECTORS but forgotten in every CPV_BUCKET_* set falls to „other" and trips this
+    // test loudly — together with the partition test above this asserts works ∪ goods ∪ services
+    // covers CPV_SECTORS exactly, with no silent misclassification of a new service as goods.
+    for (const sector of CPV_SECTORS) {
+      expect(cpvBucket(sector.code)).not.toBe('other');
+    }
+  });
+});
+
+describe('cpvDivision', () => {
+  it('normalises a full code, a 2-digit division and a check-digit suffix to the division', () => {
+    expect(cpvDivision('45233120-6')).toBe('45');
+    expect(cpvDivision('45')).toBe('45');
+    expect(cpvDivision('15800000')).toBe('15');
+  });
+
+  it('strips non-digits before taking the prefix so dirty codes still resolve', () => {
+    expect(cpvDivision('4-5233110')).toBe('45'); // stray separator inside the prefix
+    expect(cpvDivision(' 45')).toBe('45'); // leading whitespace
+    expect(cpvDivision('45.23')).toBe('45');
+  });
+
+  it('returns an empty string for a missing or digit-less code', () => {
+    expect(cpvDivision(null)).toBe('');
+    expect(cpvDivision(undefined)).toBe('');
+    expect(cpvDivision('')).toBe('');
+    expect(cpvDivision('—')).toBe('');
   });
 });
 

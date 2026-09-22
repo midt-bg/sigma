@@ -2,6 +2,15 @@
 // the shared source of truth in app/lib/query-params.ts (also used by withParams for links).
 import { CANONICAL_QUERY_PARAMS } from '../app/lib/query-params';
 
+// Allow-list entries keyed AHEAD of their reader: params owned by another OPEN stacked/parallel PR
+// whose route lands separately. The reverse drift guard ("no stale allow-list entries") skips
+// exactly these, so a key nothing will ever read cannot hide here indefinitely — every entry must
+// name its owning PR and is removed (from this set) the moment that PR's reader merges. Keep this
+// set minimal.
+export const RESERVED_CACHE_PARAMS = new Set<string>([
+  'g', // #144 (feat/network-force-layout): /network reads ?g=1 for the graph-only re-centre fetch
+]);
+
 export function cacheKey(request: Request, deployTag: string): Request {
   const url = new URL(request.url);
   const params = new URLSearchParams();

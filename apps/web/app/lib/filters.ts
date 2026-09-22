@@ -31,6 +31,26 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
     .slice(0, MAX_MULTI_VALUES);
 }
 
+// The /trends обзор multi-select is bounded to the visible top-10 CPV list; anything past the cap
+// is dropped so hostile ?cpv spam cannot fan the loader out into unbounded per-group SQL work.
+export const MAX_CPV_GROUP_SELECTION = 10;
+
+/**
+ * The обзор lenses' CPV multi-select (`?cpv=45233&cpv=33600` or `?cpv=45233,33600` on /trends):
+ * validated 5-digit group codes only, deduped, order-preserving, capped at MAX_CPV_GROUP_SELECTION.
+ * Malformed or excess codes are dropped before they reach a filter or mint an edge-cache key
+ * variant (CWE-349).
+ */
+export function cpvGroupSelection(sp: URLSearchParams): string[] {
+  const all = sp
+    .getAll('cpv')
+    .flatMap((v) => v.split(','))
+    .map((v) => v.trim());
+  return Array.from(new Set(all))
+    .filter((v) => /^\d{5}$/.test(v))
+    .slice(0, MAX_CPV_GROUP_SELECTION);
+}
+
 /**
  * The contracts list filter set read from the URL — the SINGLE source of truth shared by the HTML
  * list loader (/contracts) and the CSV export loader (/contracts.csv). They previously parsed the URL

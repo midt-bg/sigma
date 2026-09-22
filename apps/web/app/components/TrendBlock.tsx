@@ -1,4 +1,4 @@
-import type { TrendPoint, TrendYear } from '@sigma/api-contract';
+import type { TrendGranularity, TrendPoint, TrendYear } from '@sigma/api-contract';
 import { DataTable } from './DataTable';
 import { TrendChart } from './TrendChart';
 import { trendYearColumns } from '../lib/entity-tables';
@@ -16,7 +16,7 @@ export function TrendBlock({
 }: {
   points: TrendPoint[];
   years: TrendYear[];
-  granularity: 'month' | 'year';
+  granularity: TrendGranularity;
   caption: string;
   /** Chart and table side by side (full-width sections) instead of stacked (half-width ones). */
   split?: boolean;
