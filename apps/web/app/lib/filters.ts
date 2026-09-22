@@ -31,6 +31,33 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
     .slice(0, MAX_MULTI_VALUES);
 }
 
+// The /trends обзор multi-select is bounded to the visible top-10 CPV list; anything past the cap
+// is dropped so hostile ?cpv spam cannot fan the loader out into unbounded per-group SQL work.
+export const MAX_CPV_GROUP_SELECTION = 10;
+
+/**
+ * The обзор lenses' CPV multi-select (`?cpv=45233&cpv=33600` or `?cpv=45233,33600` on /trends):
+ * validated 5-digit group codes only, deduped, order-preserving, capped at MAX_CPV_GROUP_SELECTION.
+ * Malformed or excess codes are dropped before they reach a filter or mint an edge-cache key
+ * variant (CWE-349). One pass over the raw values (repeated params and CSV parts alike): each is
+ * validated and deduped BEFORE it counts toward the cap, and the scan stops at the first
+ * MAX_CPV_GROUP_SELECTION distinct valid codes — so hostile invalid/duplicate values in front can
+ * never starve valid codes behind them, and a long CSV is bounded the same as that many repeated
+ * params. Worst case O(n) in the query-string length (already bounded by the URL limit).
+ */
+export function cpvGroupSelection(sp: URLSearchParams): string[] {
+  const picked = new Set<string>();
+  for (const raw of sp.getAll('cpv')) {
+    for (const part of raw.split(',')) {
+      const v = part.trim();
+      if (!/^\d{5}$/.test(v)) continue;
+      picked.add(v);
+      if (picked.size >= MAX_CPV_GROUP_SELECTION) return [...picked];
+    }
+  }
+  return [...picked];
+}
+
 /**
  * The contracts list filter set read from the URL — the SINGLE source of truth shared by the HTML
  * list loader (/contracts) and the CSV export loader (/contracts.csv). They previously parsed the URL
@@ -184,7 +211,8 @@ export const PARAM_ORDER = [
   'type',
   'kind',
   'sector',
-  'g', // trends granularity (month/year)
+  'angle', // /trends: time | cpv | cross lens
+  'step', // /trends: series granularity (m|q|y)
   'year',
   'procedure',
   'funding',
@@ -197,9 +225,12 @@ export const PARAM_ORDER = [
   'authority',
   'bidder',
   'center', // /network focus entity
+  'by', // /overruns sort dimension
   'top',
   'count',
   'sort',
+  'cpvSort', // /trends CPV list ordering
+  'cur', // /trends include current partial period
   'cursor',
   'page',
   'p', // sitemap-contracts page
