@@ -2,13 +2,20 @@
 // one list means an unknown param (`?x=poison`) can neither poison the key nor ride a cached link
 // (#56 / #197). The cache-key.test.ts drift guard keeps it a complete superset of what the app reads.
 export const CANONICAL_QUERY_PARAMS = new Set([
+  'angle', // /trends: time | cpv | cross lens
   'authority',
   'basis', // evidence basis in the unified person contract list
   'bidder',
   'bids', // single-bid filter — changes the result set + totals
+  'by', // /overruns — sort dimension (absolute | percent)
   'center',
   'company', // person profile company filter
   'count',
+  'cpv', // /trends: repeatable CPV group multi-select faceting the обзор chart + list, validated
+  // 5-digit by cpvGroupSelection (filters.ts). /contracts does not read this param yet — no reader
+  // to validate there until that filter lands.
+  'cpvSort', // /trends: CPV list ordering
+  'cur', // /trends: include the current (partial) period — changes the chart, totals and year cards
   'cursor',
   'eu',
   'funding',
@@ -22,10 +29,24 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'sector',
   'signal', // /conflicts — own institution / in the declared window
   'sort',
+  'step', // /trends: series granularity (m|q|y; replaced the old `g` param)
   'stake', // /conflicts — own stake vs a relative's
   'top', // top-20 vs top-50 on /flows, /competition
   'type',
   'value',
   'view', // /persons — the profile instead of the list of matching people
   'year',
+]);
+
+// Read but deliberately not response-affecting: excluded from the cache key, still kept in links. None
+// today; declared so a future one isn't silently absent.
+export const INTENTIONALLY_UNKEYED = new Set<string>([]);
+
+// Allow-list entries keyed AHEAD of their reader: params owned by another OPEN stacked/parallel PR
+// whose route lands separately. The reverse drift guard ("no stale allow-list entries") skips
+// exactly these, so a key nothing will ever read cannot hide here indefinitely — every entry must
+// name its owning PR and is removed (from this set) the moment that PR's reader merges. Keep this
+// set minimal.
+export const RESERVED_CACHE_PARAMS = new Set<string>([
+  'g', // #144 (feat/network-force-layout, still open): /network reads ?g=1 for the graph-only re-centre fetch
 ]);

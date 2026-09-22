@@ -79,6 +79,51 @@ GROUP BY p.aid
 ORDER BY hhi DESC, a.name;
 `;
 
+// Recurring-pairs fixture: two ties, proving the ORDER BY authority_id, bidder_id tie-breakers
+// (added to topRecurringPairs' filtered-branch query) resolve against the SELECT list's own
+// aliases (t.authority_id AS authority_id, c.bidder_id AS bidder_id) rather than failing or
+// falling back to insertion order. Group 1 ties on contracts=3/won_eur=3000 across two
+// authorities (PY, PZ) — PY must sort first. Group 2 ties on contracts=2/won_eur=2000 within one
+// authority (PW) across two bidders (PE, PF) — PE must sort first.
+const PAIRS_FIXTURE = `
+INSERT INTO authorities (id, name, bulstat, type_group) VALUES
+  ('auth:PY', 'Институция PY', '300000001', 'община'),
+  ('auth:PZ', 'Институция PZ', '300000002', 'община'),
+  ('auth:PW', 'Институция PW', '300000003', 'община');
+INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
+  ('eik:PB', 'Фирма PB', '400000001', '400000001', 1, 'company'),
+  ('eik:PC', 'Фирма PC', '400000002', '400000002', 1, 'company'),
+  ('eik:PE', 'Фирма PE', '400000003', '400000003', 1, 'company'),
+  ('eik:PF', 'Фирма PF', '400000004', '400000004', 1, 'company');
+INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
+  ('t:PY', 'UNP-PY', 'Поръчка PY', 'auth:PY', '45', 'открита процедура', 'awarded'),
+  ('t:PZ', 'UNP-PZ', 'Поръчка PZ', 'auth:PZ', '45', 'открита процедура', 'awarded'),
+  ('t:PW', 'UNP-PW', 'Поръчка PW', 'auth:PW', '45', 'открита процедура', 'awarded');
+INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur) VALUES
+  ('c:PZ1', 't:PZ', 'eik:PB', 1000, 'EUR', '2024-01-01', 1, 'ok', 1000),
+  ('c:PZ2', 't:PZ', 'eik:PB', 1000, 'EUR', '2024-01-02', 1, 'ok', 1000),
+  ('c:PZ3', 't:PZ', 'eik:PB', 1000, 'EUR', '2024-01-03', 1, 'ok', 1000),
+  ('c:PY1', 't:PY', 'eik:PC', 1000, 'EUR', '2024-01-01', 1, 'ok', 1000),
+  ('c:PY2', 't:PY', 'eik:PC', 1000, 'EUR', '2024-01-02', 1, 'ok', 1000),
+  ('c:PY3', 't:PY', 'eik:PC', 1000, 'EUR', '2024-01-03', 1, 'ok', 1000),
+  ('c:PW1', 't:PW', 'eik:PF', 1000, 'EUR', '2024-01-01', 1, 'ok', 1000),
+  ('c:PW2', 't:PW', 'eik:PF', 1000, 'EUR', '2024-01-02', 1, 'ok', 1000),
+  ('c:PW3', 't:PW', 'eik:PE', 1000, 'EUR', '2024-01-01', 1, 'ok', 1000),
+  ('c:PW4', 't:PW', 'eik:PE', 1000, 'EUR', '2024-01-02', 1, 'ok', 1000);
+`;
+
+// Mirrors topRecurringPairs' filtered-branch query (queries/competition.ts): same JOINs, GROUP BY,
+// and ORDER BY tie-breakers, minus the display-only name columns.
+const PAIRS_SQL = `
+SELECT t.authority_id AS authority_id, c.bidder_id AS bidder_id,
+       COUNT(*) AS contracts, SUM(c.amount_eur) AS won_eur
+FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
+JOIN bidders b ON b.id = c.bidder_id
+WHERE c.amount_eur IS NOT NULL
+GROUP BY t.authority_id, c.bidder_id
+ORDER BY contracts DESC, won_eur DESC, authority_id, bidder_id;
+`;
+
 // Direct-award fixture (authority В, isolated from А/Б so the assertions above are untouched): 4
 // open-procedure + 6 direct-award contracts = 10 classified → direct share 0.6; plus 2 „неизвестна"
 // (synthetic) contracts that must be EXCLUDED from the denominator, so the share stays 0.6.
@@ -126,11 +171,15 @@ GROUP BY t.authority_id;
 
 describe('competition SQL (real SQLite)', () => {
   function withDb<T>(fn: (dbPath: string) => T): T {
+    return withFixture(FIXTURE, fn);
+  }
+
+  function withFixture<T>(fixture: string, fn: (dbPath: string) => T): T {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-competition-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, migration0);
-      sqlite(dbPath, FIXTURE);
+      sqlite(dbPath, fixture);
       return fn(dbPath);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -148,6 +197,19 @@ describe('competition SQL (real SQLite)', () => {
     withDb((dbPath) => {
       // Б has a single supplier (excluded); А splits 6:4 → 0.36 + 0.16 = 0.52 over 2 suppliers.
       expect(sqlite(dbPath, HHI_SQL)).toBe('Институция А|0.52|2');
+    });
+  });
+
+  it('resolves the authority_id/bidder_id ORDER BY aliases and breaks ties deterministically', () => {
+    withFixture(PAIRS_FIXTURE, (dbPath) => {
+      expect(sqlite(dbPath, PAIRS_SQL)).toBe(
+        [
+          'auth:PY|eik:PC|3|3000.0',
+          'auth:PZ|eik:PB|3|3000.0',
+          'auth:PW|eik:PE|2|2000.0',
+          'auth:PW|eik:PF|2|2000.0',
+        ].join('\n'),
+      );
     });
   });
 
