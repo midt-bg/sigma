@@ -2,6 +2,7 @@
 // one list means an unknown param (`?x=poison`) can neither poison the key nor ride a cached link
 // (#56 / #197). The cache-key.test.ts drift guard keeps it a complete superset of what the app reads.
 export const CANONICAL_QUERY_PARAMS = new Set([
+  'angle', // /trends: time | cpv | cross lens
   'authority',
   'basis', // evidence basis in the unified person contract list
   'bidder',
@@ -9,10 +10,13 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'center',
   'company', // person profile company filter
   'count',
+  'cpv', // /trends: repeatable CPV group multi-select facet (CWE-349)
+  'cpvSort', // /trends: CPV list ordering
+  'cur', // /trends: include the current (partial) period — changes the chart, totals and year cards
   'cursor',
   'eu',
   'funding',
-  'g',
+  'g', // /trends: retired granularity param (#197 back-compat); still response-affecting when `step` is absent
   'institution', // /conflicts — the official's institution
   'kind',
   'p',
@@ -22,6 +26,7 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'sector',
   'signal', // /conflicts — own institution / in the declared window
   'sort',
+  'step', // /trends: series granularity (m|q|y; replaced the old `g` param)
   'stake', // /conflicts — own stake vs a relative's
   'top', // top-20 vs top-50 on /flows, /competition
   'type',
@@ -29,3 +34,7 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'view', // /persons — the profile instead of the list of matching people
   'year',
 ]);
+
+// Read but deliberately not response-affecting: excluded from the cache key, still kept in links. None
+// today; declared so a future one isn't silently absent.
+export const INTENTIONALLY_UNKEYED = new Set<string>([]);
