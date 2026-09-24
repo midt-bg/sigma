@@ -60,7 +60,7 @@ export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
 export const positiveObservation = (o: Pick<InterestObservation, 'timing'>) =>
   ['annual', 'current'].includes(o.timing);
 
-// ---- Experiment `?timeline=c`: the timeline as intervals -----------------------------------------------
+// ---- The timeline as intervals -------------------------------------------------------------------------
 
 /**
  * One run of consecutive office years at one institution, as its declarations show it.
@@ -158,7 +158,7 @@ export function timelineYears(p: LoadedPersonProfile, companies: TimelineCompany
       ...c.observations.map((o) => o.reportedYear),
       ...c.roles.flatMap((r) => [r.addedOn?.slice(0, 4), (r.removedOn ?? c.asOf)?.slice(0, 4)]),
     ]),
-    // Experiment: a procurement announced before the first year still starts on the axis.
+    // A procurement announced before the first year still starts on the axis.
     ...(p.timelineIntervals?.procurements ?? []).map((r) => r.announcedAt?.slice(0, 4)),
   ]
     .filter((y): y is string => !!y && /^\d{4}$/.test(y) && +y >= 1900 && +y <= 2200)

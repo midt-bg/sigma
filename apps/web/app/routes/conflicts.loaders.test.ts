@@ -12,6 +12,7 @@ const q = vi.hoisted(() => ({
   getRegistryRolePersonRows: vi.fn(),
   getRelatedPersonHeadline: vi.fn(),
   getPersonTimeline: vi.fn(),
+  getTimelineIntervals: vi.fn(async () => ({ bands: {}, declared: [], procurements: [] })),
   getOfficialConflicts: vi.fn(),
   getRegistryIdentity: vi.fn(),
   getRegistryPerson: vi.fn(),

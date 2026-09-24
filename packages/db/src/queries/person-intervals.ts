@@ -1,4 +1,4 @@
-// The timeline drawn as intervals, not only as year bins (experiment: `?timeline=c`).
+// The timeline drawn as intervals, not only as year bins.
 //
 // Two things the year bins cannot show. The band: the days on which a signed contract counts as
 // „в съвпадение" — tied to THIS company and in office at once. And each procurement as a span, from the day

@@ -519,7 +519,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
   }
 });
 
-// Experiment `?timeline=c`: the timeline as intervals. The band sits under every row of its company, the
+// The timeline as intervals. The band sits under every row of its company, the
 // office is drawn from its declarations, and the procurements open one company at a time.
 it('draws the overlap band, the office and, on request, each procurement from announcement to signing', () => {
   const eik = '123456789';

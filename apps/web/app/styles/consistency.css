@@ -679,7 +679,7 @@ td .chip {
   text-decoration: underline;
 }
 
-/* Experiment `?timeline=c`: the timeline as intervals. */
+/* The timeline as intervals: the overlap band, the offices and each procurement as a span. */
 .person-time {
   --office: #b71916;
   --office-faded: rgba(183, 25, 22, 0.16);

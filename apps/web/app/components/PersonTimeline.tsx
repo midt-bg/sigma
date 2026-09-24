@@ -46,7 +46,7 @@ export function PersonTimeline({
   const years = timelineYears(p, companies);
   const scroll = useRef<HTMLDivElement>(null);
   const [scrollable, setScrollable] = useState(false);
-  // Experiment `?timeline=c`: which companies show their procurements one by one.
+  // Which companies show their procurements one by one.
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const intervals = p.timelineIntervals ?? null;
   const hasDeclarations = p.declarations.length > 0;
@@ -74,7 +74,12 @@ export function PersonTimeline({
   // The overlap band sits under every row of its company, so the rows together read as one column.
   const band = (spans: [string, string][] | undefined) =>
     (spans ?? []).map(([from, to]) => (
-      <span key={`band-${from}`} className="time-band" style={between(from, to)} aria-hidden="true" />
+      <span
+        key={`band-${from}`}
+        className="time-band"
+        style={between(from, to)}
+        aria-hidden="true"
+      />
     ));
   const row = (
     key: string,
@@ -141,7 +146,7 @@ export function PersonTimeline({
     if (authority) q.set('authority', authority);
     return `${location.pathname}?${q}#contract-filters`;
   };
-  // Experiment: an office drawn as its years, solid where the declarations anchor it, faded where not.
+  // An office drawn as its years, solid where the declarations anchor it, faded where not.
   const officeBars = (docs: PersonDeclaration[]) =>
     officeSpans(docs).map((o) => {
       const s = x(o.from),

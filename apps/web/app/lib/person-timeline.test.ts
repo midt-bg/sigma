@@ -192,7 +192,7 @@ describe('timelineYears', () => {
   });
 });
 
-// Experiment `?timeline=c`: the timeline as intervals.
+// The timeline as intervals.
 describe('officeSpans', () => {
   const doc = (year: string, type: string, declaredOn: string | null = null) =>
     ({

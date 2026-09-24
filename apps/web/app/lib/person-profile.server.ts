@@ -48,13 +48,11 @@ export async function loadPersonProfile(
   const activity = await getPersonActivity(db, indent ?? null, officialIds, search, 'all');
   // The company facet includes the full eligible set, even when filters match no contracts.
   const companyEiks = new Set(activity.companies.map((c) => c.eik));
-  const timeline = await getPersonTimeline(db, indent ?? null, officialIds);
-  // Experiment: the timeline as intervals — the overlap band and each procurement as a span. Read only
-  // when asked for, so the page everyone else sees costs nothing more.
-  const timelineIntervals =
-    search.get('timeline') === 'c'
-      ? await getTimelineIntervals(db, indent ?? null, officialIds)
-      : null;
+  // The timeline as year bins, and as intervals: the overlap band and each procurement as a span.
+  const [timeline, timelineIntervals] = await Promise.all([
+    getPersonTimeline(db, indent ?? null, officialIds),
+    getTimelineIntervals(db, indent ?? null, officialIds),
+  ]);
   const declaredActivity = officialIds.length
     ? await getPersonActivity(db, indent ?? null, officialIds, new URLSearchParams(), 'declaration')
     : null;
