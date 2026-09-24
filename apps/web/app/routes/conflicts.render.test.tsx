@@ -250,10 +250,13 @@ describe('/conflicts route — render', () => {
     await renderConflicts([link()], null, '/conflicts?role=all&stake=registry', [seat]);
     const group = container.querySelector('details[aria-label="Роля в дружеството"]')!;
     const labels = [...group.querySelectorAll('label')].map((l) => l.textContent!.trim());
-    expect(labels).toEqual(['собственост или управление1', '…и място в съвет2']);
+    expect(labels).toEqual([
+      'собственост или управление1',
+      'всички роли, включително членство в съвет2',
+    ]);
     expect(group.querySelector<HTMLInputElement>('input[value="all"]')!.checked).toBe(true);
-    expect(text()).toContain('място в съвет по Търговския регистър');
-    expect(text()).toContain('или с място в съвет на директорите');
+    expect(text()).toContain('членство в съвет по Търговския регистър');
+    expect(text()).toContain('или като член на съвет на директорите');
   });
 
   it('says which institution the list is narrowed to, and how to widen it', async () => {
