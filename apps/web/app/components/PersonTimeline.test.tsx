@@ -519,9 +519,9 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
   }
 });
 
-// The timeline as intervals. The band sits under every row of its company, the
-// office is drawn from its declarations, and the procurements open one company at a time.
-it('draws the overlap band, the office and, on request, each procurement from announcement to signing', () => {
+// The timeline as intervals. The band sits under every row of its company, the office is drawn from its
+// declarations, and each procurement is a span from its announcement to its signing.
+it('draws the overlap band, the office and each procurement from announcement to signing', () => {
   const eik = '123456789';
   const declaration = (id: string, year: string, type: string, declaredOn: string | null) => ({
     id,
@@ -634,21 +634,17 @@ it('draws the overlap band, the office and, on request, each procurement from an
   try {
     act(() => root.render(<Stub />));
     const company = el.querySelector('.person-time-company')!;
-    // The band under every row of the company: the role and the contracts.
-    expect(company.querySelectorAll('.time-band')).toHaveLength(2);
+    // The band under every row of the company — the role, the contracts and the procurements' one lane —
+    // so the column stays unbroken.
+    expect(company.querySelectorAll('.time-band')).toHaveLength(3);
+    expect(el.querySelectorAll('.time-lane .time-band')).toHaveLength(1);
     expect(el.querySelector('.person-time')!.getAttribute('data-band-mismatch')).toBe('0');
     // The office: 2021 anchored by the entry filing, the end not known.
     const office = el.querySelector('.time-institution .time-office')!;
     expect(office.getAttribute('aria-label')).toContain('встъпителна декларация 20.04.2021');
     expect(office.getAttribute('aria-label')).toContain('краят не е известен');
-    // Closed until asked for.
-    expect(el.querySelectorAll('.time-procurement')).toHaveLength(0);
-    const toggle = el.querySelector<HTMLButtonElement>('.time-toggle')!;
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle.textContent).toBe('Покажи поръчките (3)');
-    act(() => toggle.click());
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(el.querySelector(`#${toggle.getAttribute('aria-controls')}`)).not.toBeNull();
+    // Always drawn: there is nothing to open.
+    expect(el.querySelector('.time-toggle, .person-time button')).toBeNull();
     const marks = [...el.querySelectorAll<HTMLAnchorElement>('.time-procurement')];
     expect(marks.map((m) => m.className.split(' ')[1])).toEqual(['tied', 'announced', 'context']);
     expect(marks[0]!.getAttribute('href')).toMatch(/^\/contracts\//);
@@ -656,10 +652,6 @@ it('draws the overlap band, the office and, on request, each procurement from an
       'обявена по време на съвпадението, подписана извън него',
     );
     expect(marks[2]!.getAttribute('aria-label')).toContain('без дата на обявяване');
-    // The lanes carry the band too, so the column stays unbroken.
-    expect(el.querySelectorAll('.time-lane .time-band').length).toBeGreaterThan(0);
-    act(() => toggle.click());
-    expect(el.querySelectorAll('.time-procurement')).toHaveLength(0);
   } finally {
     act(() => root.unmount());
     el.remove();

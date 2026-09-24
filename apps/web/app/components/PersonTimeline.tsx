@@ -46,8 +46,6 @@ export function PersonTimeline({
   const years = timelineYears(p, companies);
   const scroll = useRef<HTMLDivElement>(null);
   const [scrollable, setScrollable] = useState(false);
-  // Which companies show their procurements one by one.
-  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const intervals = p.timelineIntervals ?? null;
   const hasDeclarations = p.declarations.length > 0;
   useEffect(() => {
@@ -376,7 +374,6 @@ export function PersonTimeline({
             const undated = c.contracts.filter((r) => !r.year).reduce((n, r) => n + r.contracts, 0);
             const under = intervals?.bands[c.eik];
             const procurements = intervals?.procurements.filter((pr) => pr.eik === c.eik) ?? [];
-            const open = opened.has(c.eik);
 
             return (
               <Fragment key={c.eik}>
@@ -539,31 +536,7 @@ export function PersonTimeline({
                   {c.contracts.some((r) => r.year) &&
                     row(
                       `${c.eik}-contracts`,
-                      procurements.length ? (
-                        <>
-                          Сключени договори{' '}
-                          <button
-                            type="button"
-                            className="time-toggle"
-                            aria-expanded={open}
-                            aria-controls={`procurements-${c.eik}`}
-                            onClick={() =>
-                              setOpened((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(c.eik)) next.delete(c.eik);
-                                else next.add(c.eik);
-                                return next;
-                              })
-                            }
-                          >
-                            {open
-                              ? 'Скрий поръчките'
-                              : `Покажи поръчките (${count(procurements.length)})`}
-                          </button>
-                        </>
-                      ) : (
-                        'Сключени договори'
-                      ),
+                      'Сключени договори',
                       c.contracts
                         .filter((r) => r.year)
                         .map((r) => {
@@ -635,8 +608,8 @@ export function PersonTimeline({
                       'time-contracts',
                       under,
                     )}
-                  {open && (
-                    <div id={`procurements-${c.eik}`} className="time-lanes">
+                  {procurements.length > 0 && (
+                    <div className="time-lanes">
                       {packLanes(procurements).map((lane, i) =>
                         row(
                           `${c.eik}-lane-${i}`,
