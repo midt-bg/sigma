@@ -722,11 +722,16 @@ td .chip {
   cursor: pointer;
 }
 .time-toggle::after {
-  content: '▾';
-  font-size: 11px;
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
 }
 .time-toggle[aria-expanded='true']::after {
-  content: '▴';
+  transform: translateY(2px) rotate(-135deg);
 }
 .time-toggle:hover {
   background: #b71916;
