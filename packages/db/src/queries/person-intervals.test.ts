@@ -103,6 +103,7 @@ it('carries the announcement, and drops one that postdates the signing', async (
   expect(other.announcedAt! < other.signedAt).toBe(true);
   // The offers received ride along for the tooltip, and stay unknown where the source is silent.
   expect(other.bids).toBe(3);
+  expect(other.authorityId).toBe('auth:1'); // the buyer, for telling the person's own institution apart
   expect(first.bids).toBeNull();
 });
 

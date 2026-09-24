@@ -565,7 +565,7 @@ it('draws the overlap band, the office and each procurement from announcement to
     timeline: {
       reads: [{ eik, asOf: '2025-03-10T08:00:00Z' }],
       buyers: [],
-      institutionProfiles: [],
+      institutionProfiles: [{ institution: 'Община Тест', authorityId: 'auth:1' }],
       observations: [],
       contracts: [
         {
@@ -590,6 +590,7 @@ it('draws the overlap band, the office and each procurement from announcement to
           eik,
           subject: 'Ремонт',
           authority: 'Община Тест',
+          authorityId: 'auth:1',
           announcedAt: '2022-03-01',
           signedAt: '2022-05-01',
           valueEur: 100,
@@ -600,7 +601,8 @@ it('draws the overlap band, the office and each procurement from announcement to
           id: 'c2',
           eik,
           subject: 'Доставка',
-          authority: 'Община Тест',
+          authority: 'Друга община',
+          authorityId: 'auth:2',
           announcedAt: '2022-10-01',
           signedAt: '2023-02-01',
           valueEur: 100,
@@ -611,7 +613,8 @@ it('draws the overlap band, the office and each procurement from announcement to
           id: 'c3',
           eik,
           subject: null,
-          authority: 'Община Тест',
+          authority: 'Друга община',
+          authorityId: 'auth:2',
           announcedAt: null,
           signedAt: '2024-01-15',
           valueEur: null,
@@ -664,6 +667,16 @@ it('draws the overlap band, the office and each procurement from announcement to
     expect(tip.getAttribute('aria-hidden')).toBe('true');
     expect(tip.querySelector('.time-tip-title')!.textContent).toBe('Ремонт');
     expect(tip.textContent).toContain('Община Тест');
+    // Its buyer is the person's own institution: the building mark on the axis, and a line here.
+    expect(marks[0]!.classList.contains('own')).toBe(true);
+    expect(marks[0]!.querySelector('svg')).not.toBeNull();
+    expect(marks[0]!.getAttribute('aria-label')).toContain(
+      'възложител от институциите в декларациите',
+    );
+    expect(marks[1]!.classList.contains('own')).toBe(false);
+    expect(tip.querySelector('.time-tip-own')!.textContent).toContain(
+      'Възложител от институциите в декларациите',
+    );
     expect(tip.textContent).toContain('Обявена 01.03.2022 → подписан 01.05.2022 · 61 дни');
     expect(tip.textContent).toContain('Една оферта');
     expect(tip.querySelector('.time-tip-overlap')!.textContent).toBe(

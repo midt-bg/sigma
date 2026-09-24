@@ -21,6 +21,7 @@ export interface TimelineProcurement {
   eik: string;
   subject: string | null;
   authority: string;
+  authorityId: string;
   /** The day the procurement was announced; null when unknown or later than the signing. */
   announcedAt: string | null;
   signedAt: string;
@@ -135,7 +136,7 @@ export async function getTimelineIntervals(
   const [procurements, officeYears, bounds, roles, declared] = await Promise.all([
     db
       .prepare(
-        `${cte} SELECT a.id, a.eik, a.subject, a.authority,
+        `${cte} SELECT a.id, a.eik, a.subject, a.authority, a.authority_id AS authorityId,
           CASE WHEN date(t.published_at) <= date(a.signed_at) THEN date(t.published_at) END AS announcedAt,
           date(a.signed_at) AS signedAt, a.amount_eur AS valueEur, c.bids_received AS bids,
           a.during_overlap AS tied

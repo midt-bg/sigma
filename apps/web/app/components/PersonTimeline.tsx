@@ -182,15 +182,22 @@ export function PersonTimeline({
         />
       );
     });
+  const institutionProfiles = p.timeline.institutionProfiles ?? [];
+  const ownIds = new Set(institutionProfiles.map((i) => i.authorityId).filter(Boolean));
   // One tooltip for the whole axis, placed against the viewport so the scrolling canvas cannot clip it.
   // It repeats, for the eye, what the mark's own label already says to a screen reader.
-  const showTip = (el: HTMLElement, pr: TimelineProcurement, kind: ProcurementKind) => {
+  const showTip = (
+    el: HTMLElement,
+    pr: TimelineProcurement,
+    kind: ProcurementKind,
+    own: boolean,
+  ) => {
     const box = el.getBoundingClientRect();
     const left = Math.max(12, Math.min(box.right - 150, window.innerWidth - 312));
     setTip(
-      box.bottom + 200 < window.innerHeight
-        ? { pr, kind, left, top: box.bottom + 8 }
-        : { pr, kind, left, bottom: window.innerHeight - box.top + 8 },
+      box.bottom + 220 < window.innerHeight
+        ? { pr, kind, own, left, top: box.bottom + 8 }
+        : { pr, kind, own, left, bottom: window.innerHeight - box.top + 8 },
     );
   };
   const hideTip = () => setTip(null);
@@ -200,9 +207,13 @@ export function PersonTimeline({
       : insideSpans(under, pr.announcedAt)
         ? 'announced'
         : 'context';
+    // The buyer is one of the institutions in the person's own declarations: the same test, and the same
+    // building mark, as the year bins and the legend use.
+    const own = ownIds.has(pr.authorityId);
     const label = [
       pr.subject || 'Договор',
       pr.authority,
+      own ? 'възложител от институциите в декларациите' : null,
       pr.announcedAt ? `обявена ${date(pr.announcedAt)}` : 'без дата на обявяване',
       `подписан ${date(pr.signedAt)}`,
       pr.valueEur != null ? money(pr.valueEur) : null,
@@ -218,14 +229,16 @@ export function PersonTimeline({
       <Link
         key={pr.id}
         to={`/contracts/${contractSlug(pr.id)}`}
-        className={`time-procurement ${kind} ${pr.announcedAt ? '' : 'time-undated-start'}`}
+        className={`time-procurement ${kind} ${own ? 'own' : ''} ${pr.announcedAt ? '' : 'time-undated-start'}`}
         style={between(pr.announcedAt ?? pr.signedAt, pr.signedAt)}
         aria-label={label}
-        onMouseEnter={(event) => showTip(event.currentTarget, pr, kind)}
-        onFocus={(event) => showTip(event.currentTarget, pr, kind)}
+        onMouseEnter={(event) => showTip(event.currentTarget, pr, kind, own)}
+        onFocus={(event) => showTip(event.currentTarget, pr, kind, own)}
         onMouseLeave={hideTip}
         onBlur={hideTip}
-      />
+      >
+        {own && <InstitutionSymbol />}
+      </Link>
     );
   };
   const bandMismatch = intervals
@@ -233,8 +246,6 @@ export function PersonTimeline({
         (pr) => pr.tied !== insideSpans(intervals.bands[pr.eik], pr.signedAt),
       ).length
     : undefined;
-  const institutionProfiles = p.timeline.institutionProfiles ?? [];
-  const ownIds = new Set(institutionProfiles.map((i) => i.authorityId).filter(Boolean));
   return (
     <Section
       id="timeline"
@@ -670,12 +681,17 @@ type ProcurementKind = 'tied' | 'announced' | 'context';
 interface ProcurementTip {
   pr: TimelineProcurement;
   kind: ProcurementKind;
+  own: boolean;
   left: number;
   top?: number;
   bottom?: number;
 }
 
-function ProcurementTooltip({ tip: { pr, kind, left, top, bottom } }: { tip: ProcurementTip }) {
+function ProcurementTooltip({
+  tip: { pr, kind, own, left, top, bottom },
+}: {
+  tip: ProcurementTip;
+}) {
   const days = pr.announcedAt
     ? Math.round((Date.parse(pr.signedAt) - Date.parse(pr.announcedAt)) / 864e5)
     : null;
@@ -684,6 +700,11 @@ function ProcurementTooltip({ tip: { pr, kind, left, top, bottom } }: { tip: Pro
       <strong className="time-tip-title">{pr.subject || 'Договор'}</strong>
       <span className="time-tip-value">{money(pr.valueEur)}</span>
       <span>{pr.authority}</span>
+      {own && (
+        <span className="time-tip-own">
+          <InstitutionSymbol /> Възложител от институциите в декларациите
+        </span>
+      )}
       <span>
         {pr.announcedAt
           ? `Обявена ${date(pr.announcedAt)} → подписан ${date(pr.signedAt)} · ${count(days!)} ${days === 1 ? 'ден' : 'дни'}`

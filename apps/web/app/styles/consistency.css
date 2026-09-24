@@ -709,17 +709,17 @@ td .chip {
   background: repeating-linear-gradient(135deg, rgba(183, 25, 22, 0.28) 0 2px, transparent 2px 5px);
 }
 .person-time-row.time-lane {
-  min-height: 12px;
+  min-height: 14px;
 }
 .time-lane .person-time-label {
   padding-block: 0;
 }
 .time-lane .person-time-track {
-  min-height: 12px;
+  min-height: 14px;
 }
 .time-procurement {
   position: absolute;
-  top: 5px;
+  top: 6px;
   height: 2px;
   min-width: 1px;
   background: #9a948b;
@@ -799,4 +799,34 @@ td .chip {
 }
 .time-tip small {
   margin-top: 6px;
+}
+/* A procurement whose buyer is one of the person's own institutions: the building mark of the legend
+   takes the place of the signing dot. */
+.time-procurement.own {
+  height: 3px;
+}
+.time-procurement.own::after {
+  display: none;
+}
+.time-procurement.own svg {
+  position: absolute;
+  right: -8px;
+  top: -7px;
+  width: 16px;
+  height: 16px;
+  padding: 1px;
+  box-sizing: border-box;
+  color: var(--ink, #171511);
+  background: var(--paper, #faf8f2);
+  border-radius: 2px;
+}
+.time-procurement.own.tied svg {
+  color: #b71916;
+}
+.time-tip-own {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-weight: 600;
 }
