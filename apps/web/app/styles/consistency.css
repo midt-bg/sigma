@@ -709,14 +709,28 @@ td .chip {
   background: repeating-linear-gradient(135deg, rgba(183, 25, 22, 0.28) 0 2px, transparent 2px 5px);
 }
 .time-toggle {
-  display: inline-block;
-  margin-top: 4px;
-  padding: 2px 7px;
-  font-size: 11px;
-  background: transparent;
-  color: inherit;
-  border: 1px solid #b8b3aa;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--paper, #faf8f2);
+  color: #b71916;
+  border: 1.5px solid #b71916;
   cursor: pointer;
+}
+.time-toggle::after {
+  content: '▾';
+  font-size: 11px;
+}
+.time-toggle[aria-expanded='true']::after {
+  content: '▴';
+}
+.time-toggle:hover {
+  background: #b71916;
+  color: white;
 }
 .time-toggle:focus-visible {
   outline: 2px solid #b71916;
