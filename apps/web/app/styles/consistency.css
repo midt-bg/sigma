@@ -803,10 +803,28 @@ td .chip {
 .time-tip small {
   margin-top: 6px;
 }
-/* A procurement whose buyer is one of the person's own institutions: the building mark of the legend
-   takes the place of the signing dot. */
+/* A procurement whose buyer is one of the person's own institutions: a heavier line, ending just before
+   the building mark of the legend, which stands at the signing on whatever lies beneath — no box of its
+   own, so it sits on the band as cleanly as on the paper. */
 .time-procurement.own {
-  height: 3px;
+  top: 5px;
+  height: 4px;
+  background: none;
+}
+.time-procurement.own::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 7px;
+  top: 0;
+  bottom: 0;
+  background: #9a948b;
+}
+.time-procurement.own.tied::before {
+  background: #b71916;
+}
+.time-procurement.own.announced::before {
+  background: repeating-linear-gradient(to right, #b71916 0 3px, transparent 3px 5px);
 }
 .time-procurement.own::after {
   display: none;
@@ -814,14 +832,11 @@ td .chip {
 .time-procurement.own svg {
   position: absolute;
   right: -8px;
-  top: -7px;
+  top: -6px;
   width: 16px;
   height: 16px;
-  padding: 1px;
-  box-sizing: border-box;
   color: var(--ink, #171511);
-  background: var(--paper, #faf8f2);
-  border-radius: 2px;
+  stroke-width: 1.8;
 }
 .time-procurement.own.tied svg {
   color: #b71916;
