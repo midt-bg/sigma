@@ -7,7 +7,14 @@ import type { ConflictLink, PersonDeclaration, PersonRole } from '@sigma/api-con
 import type { InterestObservation, TimelineContracts } from '@sigma/db';
 import type { LoadedPersonProfile } from './person-profile.server';
 import { emptyActivity } from './person-profile.test-support';
-import { timelineCompanies, timelineYears } from './person-timeline';
+import {
+  insideSpans,
+  officeSpans,
+  packLanes,
+  timelineCompanies,
+  timelineYears,
+  yearSpans,
+} from './person-timeline';
 
 const role = (eik: string, name: string, over: Partial<PersonRole> = {}): PersonRole => ({
   company: { eik, name, href: null },
@@ -182,5 +189,79 @@ describe('timelineYears', () => {
       reads: [{ eik: '222', asOf: '2026-09-01T03:00:00Z' }],
     });
     expect(timelineYears(p, timelineCompanies(p))).toEqual([2019, 2020, 2021]);
+  });
+});
+
+// Experiment `?timeline=c`: the timeline as intervals.
+describe('officeSpans', () => {
+  const doc = (year: string, type: string, declaredOn: string | null = null) =>
+    ({
+      id: `${year}-${type}`,
+      year,
+      template: 'assets',
+      type,
+      declaredOn,
+      submittedOn: null,
+      institution: 'Община Тест',
+      position: 'Съветник',
+      url: '',
+      companyEiks: [],
+    }) satisfies PersonDeclaration;
+
+  it('splits at a year without a filing and anchors only the edges a declaration dates', () => {
+    expect(
+      officeSpans([
+        doc('2017', 'Entry', '2017-04-20'),
+        doc('2018', 'Annualy'),
+        doc('2020', 'Annualy'),
+        doc('2021', 'Vacate', '2021-08-12'),
+      ]),
+    ).toEqual([
+      { from: '2017-01-01', to: '2018-12-31', knownStart: '2017-04-20', knownEnd: null },
+      { from: '2020-01-01', to: '2021-08-12', knownStart: null, knownEnd: '2021-08-12' },
+    ]);
+  });
+
+  it('ignores a filing without a position or a year, as the red numbers do', () => {
+    expect(officeSpans([{ ...doc('2019', 'Annualy'), position: '' }, doc('', 'Annualy')])).toEqual(
+      [],
+    );
+  });
+
+  it('does not anchor an edge with a filing dated in another year', () => {
+    expect(officeSpans([doc('2019', 'Vacate', '2020-01-15')])).toEqual([
+      { from: '2019-01-01', to: '2019-12-31', knownStart: null, knownEnd: null },
+    ]);
+  });
+});
+
+describe('packLanes', () => {
+  const pr = (id: string, announcedAt: string | null, signedAt: string) => ({
+    id,
+    announcedAt,
+    signedAt,
+  });
+  it('puts a procurement in the first row it fits after the previous one ends', () => {
+    const lanes = packLanes([
+      pr('b', '2020-03-01', '2020-05-01'),
+      pr('a', '2020-01-01', '2020-02-01'),
+      pr('c', '2020-02-10', '2020-04-01'),
+      pr('d', null, '2020-06-15'),
+    ]);
+    expect(lanes.map((l) => l.map((p) => p.id))).toEqual([['a', 'b', 'd'], ['c']]);
+  });
+});
+
+describe('yearSpans and insideSpans', () => {
+  it('joins consecutive years and tests a day against inclusive spans', () => {
+    const spans = yearSpans(['2020', '2019', '2022', '2019']);
+    expect(spans).toEqual([
+      ['2019-01-01', '2020-12-31'],
+      ['2022-01-01', '2022-12-31'],
+    ]);
+    expect(insideSpans(spans, '2020-12-31')).toBe(true);
+    expect(insideSpans(spans, '2021-06-01')).toBe(false);
+    expect(insideSpans(spans, null)).toBe(false);
+    expect(insideSpans(undefined, '2020-01-01')).toBe(false);
   });
 });

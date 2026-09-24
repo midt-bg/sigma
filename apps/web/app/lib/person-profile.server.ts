@@ -5,6 +5,7 @@ import {
   getPersonSourceNames,
   getOfficialConflicts,
   getPersonTimeline,
+  getTimelineIntervals,
   getPersonDeclarations,
   getPersonActivity,
   getPersonScope,
@@ -48,6 +49,12 @@ export async function loadPersonProfile(
   // The company facet includes the full eligible set, even when filters match no contracts.
   const companyEiks = new Set(activity.companies.map((c) => c.eik));
   const timeline = await getPersonTimeline(db, indent ?? null, officialIds);
+  // Experiment: the timeline as intervals — the overlap band and each procurement as a span. Read only
+  // when asked for, so the page everyone else sees costs nothing more.
+  const timelineIntervals =
+    search.get('timeline') === 'c'
+      ? await getTimelineIntervals(db, indent ?? null, officialIds)
+      : null;
   const declaredActivity = officialIds.length
     ? await getPersonActivity(db, indent ?? null, officialIds, new URLSearchParams(), 'declaration')
     : null;
@@ -74,6 +81,7 @@ export async function loadPersonProfile(
       ...timeline,
       observations: timeline.observations.filter((o) => companyEiks.has(o.eik)),
     },
+    timelineIntervals,
     declarations: declarations.map(
       (d): PersonDeclaration => ({
         ...d,

@@ -678,3 +678,108 @@ td .chip {
 .declaration-discrepancy a {
   text-decoration: underline;
 }
+
+/* Experiment `?timeline=c`: the timeline as intervals. */
+.person-time {
+  --office: #6f675d;
+  --office-faded: rgba(111, 103, 93, 0.18);
+}
+.time-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(183, 25, 22, 0.09);
+  border-inline: 1px solid rgba(183, 25, 22, 0.35);
+  pointer-events: none;
+}
+.time-office {
+  position: absolute;
+  top: 16px;
+  height: 4px;
+  min-width: 2px;
+  background: var(--office);
+}
+.time-office.time-office-faded {
+  background: var(--office-faded);
+}
+.time-declared {
+  position: absolute;
+  top: 13px;
+  height: 9px;
+  background: repeating-linear-gradient(135deg, rgba(183, 25, 22, 0.28) 0 2px, transparent 2px 5px);
+}
+.time-toggle {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid #b8b3aa;
+  cursor: pointer;
+}
+.time-toggle:focus-visible {
+  outline: 2px solid #b71916;
+  outline-offset: 2px;
+}
+.person-time-row.time-lane {
+  min-height: 12px;
+}
+.time-lane .person-time-label {
+  padding-block: 0;
+}
+.time-lane .person-time-track {
+  min-height: 12px;
+}
+.time-procurement {
+  position: absolute;
+  top: 5px;
+  height: 2px;
+  min-width: 1px;
+  background: #9a948b;
+}
+.time-procurement::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid #9a948b;
+  background: var(--paper, #faf8f2);
+}
+.time-procurement.tied {
+  background: #b71916;
+}
+.time-procurement.tied::after {
+  border-color: #b71916;
+  background: #b71916;
+}
+.time-procurement.announced {
+  background: repeating-linear-gradient(to right, #b71916 0 3px, transparent 3px 5px);
+}
+.time-procurement:focus-visible {
+  outline: 2px solid #b71916;
+  outline-offset: 3px;
+}
+.time-symbol.band {
+  width: 18px;
+  background: rgba(183, 25, 22, 0.09);
+  border-inline: 1px solid rgba(183, 25, 22, 0.35);
+}
+.time-symbol.office {
+  width: 24px;
+  height: 4px;
+  background: linear-gradient(to right, rgba(111, 103, 93, 0.18), #6f675d 45%);
+}
+.time-symbol.procurement {
+  width: 24px;
+  height: 2px;
+  background: #9a948b;
+}
+.time-symbol.announced {
+  width: 24px;
+  height: 2px;
+  background: repeating-linear-gradient(to right, #b71916 0 3px, transparent 3px 5px);
+}

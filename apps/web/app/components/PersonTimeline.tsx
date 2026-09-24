@@ -2,8 +2,17 @@ import { Fragment, useRef, useEffect, useState, type CSSProperties, type ReactNo
 import { Link, useLocation } from 'react-router';
 import { count, date, money } from '@sigma/shared';
 import type { PersonDeclaration } from '@sigma/api-contract';
+import { contractSlug, type TimelineProcurement } from '@sigma/db';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
-import { timelineYears, positiveObservation, type TimelineCompany } from '../lib/person-timeline';
+import {
+  timelineYears,
+  positiveObservation,
+  officeSpans,
+  packLanes,
+  insideSpans,
+  yearSpans,
+  type TimelineCompany,
+} from '../lib/person-timeline';
 import { declarationRowId, roleRowId, revealProfileTarget } from '../lib/profile-navigation';
 import { declarationTypeLabel } from './Declarations';
 import { groupDeclaredInstitutions, institutionKey } from '../lib/conflicts';
@@ -37,6 +46,9 @@ export function PersonTimeline({
   const years = timelineYears(p, companies);
   const scroll = useRef<HTMLDivElement>(null);
   const [scrollable, setScrollable] = useState(false);
+  // Experiment `?timeline=c`: which companies show their procurements one by one.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const intervals = p.timelineIntervals ?? null;
   const hasDeclarations = p.declarations.length > 0;
   useEffect(() => {
     const el = scroll.current;
@@ -55,10 +67,28 @@ export function PersonTimeline({
     span = last - first;
   const x = (day: string) => Math.max(0, Math.min(100, ((Date.parse(day) - first) / span) * 100));
   const yearStyle = (year: number): CSSProperties => ({ left: `${x(`${year}-07-02`)}%` });
-  const row = (key: string, label: ReactNode, marks: ReactNode, extra = '') => (
+  const between = (from: string, to: string): CSSProperties => ({
+    left: `${x(from)}%`,
+    width: `${Math.max(0.15, x(to) - x(from))}%`,
+  });
+  // The overlap band sits under every row of its company, so the rows together read as one column.
+  const band = (spans: [string, string][] | undefined) =>
+    (spans ?? []).map(([from, to]) => (
+      <span key={`band-${from}`} className="time-band" style={between(from, to)} aria-hidden="true" />
+    ));
+  const row = (
+    key: string,
+    label: ReactNode,
+    marks: ReactNode,
+    extra = '',
+    under?: [string, string][],
+  ) => (
     <div className={`person-time-row ${extra}`} key={key}>
       <div className="person-time-label">{label}</div>
-      <div className="person-time-track">{marks}</div>
+      <div className="person-time-track">
+        {band(under)}
+        {marks}
+      </div>
     </div>
   );
   const declarationLink = (
@@ -111,6 +141,69 @@ export function PersonTimeline({
     if (authority) q.set('authority', authority);
     return `${location.pathname}?${q}#contract-filters`;
   };
+  // Experiment: an office drawn as its years, solid where the declarations anchor it, faded where not.
+  const officeBars = (docs: PersonDeclaration[]) =>
+    officeSpans(docs).map((o) => {
+      const s = x(o.from),
+        w = Math.max(0.15, x(o.to) - s);
+      const first = o.from.slice(0, 4),
+        last = o.to.slice(0, 4);
+      const a = ((x(o.knownStart ?? `${first}-12-31`) - s) / w) * 100;
+      const b = o.knownEnd ? 100 : ((x(`${last}-01-01`) - s) / w) * 100;
+      const label = `Длъжност ${first}${first === last ? '' : `–${last}`}: ${
+        o.knownStart ? `встъпителна декларация ${date(o.knownStart)}` : 'началото не е известно'
+      }; ${o.knownEnd ? `финална декларация ${date(o.knownEnd)}` : 'краят не е известен'}`;
+      return (
+        <span
+          key={o.from}
+          role="img"
+          className={`time-office ${a > b ? 'time-office-faded' : ''}`}
+          style={{
+            left: `${s}%`,
+            width: `${w}%`,
+            ...(a > b
+              ? {}
+              : {
+                  background: `linear-gradient(to right, var(--office-faded) 0%, var(--office) ${a}%, var(--office) ${b}%, var(--office-faded) 100%)`,
+                }),
+          }}
+          title={label}
+          aria-label={label}
+        />
+      );
+    });
+  const procurementMark = (pr: TimelineProcurement, under: [string, string][] | undefined) => {
+    const kind = pr.tied ? 'tied' : insideSpans(under, pr.announcedAt) ? 'announced' : 'context';
+    const label = [
+      pr.subject || 'Договор',
+      pr.authority,
+      pr.announcedAt ? `обявена ${date(pr.announcedAt)}` : 'без дата на обявяване',
+      `подписан ${date(pr.signedAt)}`,
+      pr.valueEur != null ? money(pr.valueEur) : null,
+      kind === 'tied'
+        ? 'подписан по време на съвпадението'
+        : kind === 'announced'
+          ? 'обявена по време на съвпадението, подписана извън него'
+          : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return (
+      <Link
+        key={pr.id}
+        to={`/contracts/${contractSlug(pr.id)}`}
+        className={`time-procurement ${kind} ${pr.announcedAt ? '' : 'time-undated-start'}`}
+        style={between(pr.announcedAt ?? pr.signedAt, pr.signedAt)}
+        title={label}
+        aria-label={label}
+      />
+    );
+  };
+  const bandMismatch = intervals
+    ? intervals.procurements.filter(
+        (pr) => pr.tied !== insideSpans(intervals.bands[pr.eik], pr.signedAt),
+      ).length
+    : undefined;
   const institutionProfiles = p.timeline.institutionProfiles ?? [];
   const ownIds = new Set(institutionProfiles.map((i) => i.authorityId).filter(Boolean));
   return (
@@ -148,6 +241,25 @@ export function PersonTimeline({
           <span>
             <i className="time-symbol context" /> договори
           </span>
+        )}
+        {intervals && (
+          <>
+            <span>
+              <i className="time-symbol band" /> съвпадение{' '}
+              <Explanation text="Дните, в които подписан договор се брои за съвпадение: лицето е свързано със същото дружество (вписана роля или деклариран дял) и заема публична длъжност. Същото правило като червените числа." />
+            </span>
+            <span>
+              <i className="time-symbol office" /> длъжност{' '}
+              <Explanation text="Годините с декларация за институцията. Твърд край — по датата на встъпителната или финалната декларация, която се подава до месец след събитието. Избледнял край — в рамките на годината той не е известен." />
+            </span>
+            <span>
+              <i className="time-symbol procurement" /> поръчка: обявяване → подписване
+            </span>
+            <span>
+              <i className="time-symbol announced" /> обявена по време на съвпадението, подписана
+              извън него
+            </span>
+          </>
         )}
         {(p.timeline.buyers ?? []).some((b) => ownIds.has(b.id)) && (
           <span>
@@ -194,7 +306,11 @@ export function PersonTimeline({
         aria-label="Обща времева линия, превъртай хоризонтално при нужда"
         tabIndex={0}
       >
-        <div className="person-time" style={{ '--timeline-years': years.length } as CSSProperties}>
+        <div
+          className="person-time"
+          style={{ '--timeline-years': years.length } as CSSProperties}
+          data-band-mismatch={bandMismatch}
+        >
           {!!years.length &&
             row(
               'axis',
@@ -230,7 +346,14 @@ export function PersonTimeline({
                 </strong>
                 <small>{institution.positions.join('; ')}</small>
               </>,
-              documents(docs),
+              intervals ? (
+                <>
+                  {officeBars(docs)}
+                  {documents(docs)}
+                </>
+              ) : (
+                documents(docs)
+              ),
               'time-institution',
             );
           })}
@@ -246,6 +369,9 @@ export function PersonTimeline({
             );
             const disputed = c.observations.filter((o) => o.disputed || o.timing === 'not_listed');
             const undated = c.contracts.filter((r) => !r.year).reduce((n, r) => n + r.contracts, 0);
+            const under = intervals?.bands[c.eik];
+            const procurements = intervals?.procurements.filter((pr) => pr.eik === c.eik) ?? [];
+            const open = opened.has(c.eik);
 
             return (
               <Fragment key={c.eik}>
@@ -325,19 +451,34 @@ export function PersonTimeline({
                         : scope === 'self'
                           ? 'Деклариран собствен дял'
                           : 'Дял на свързано лице';
+                    const declaredYears = (intervals?.declared ?? [])
+                      .filter((d) => d.eik === c.eik && d.scope === scope)
+                      .map((d) => d.year);
                     return docs.length
                       ? row(
                           `${c.eik}-${scope}`,
                           label,
-                          documents(
-                            docs,
-                            scope === 'family'
-                              ? 'time-family'
-                              : scope === 'management'
-                                ? 'time-management'
-                                : '',
-                            observations.filter((o) => o.disputed).map((o) => o.declarationId),
-                          ),
+                          <>
+                            {yearSpans(declaredYears).map(([from, to]) => (
+                              <span
+                                key={`declared-${from}`}
+                                className="time-declared"
+                                style={between(from, to)}
+                                aria-hidden="true"
+                              />
+                            ))}
+                            {documents(
+                              docs,
+                              scope === 'family'
+                                ? 'time-family'
+                                : scope === 'management'
+                                  ? 'time-management'
+                                  : '',
+                              observations.filter((o) => o.disputed).map((o) => o.declarationId),
+                            )}
+                          </>,
+                          '',
+                          under,
                         )
                       : null;
                   })}
@@ -386,12 +527,38 @@ export function PersonTimeline({
                             </span>
                           );
                         }),
+                      '',
+                      under,
                     ),
                   )}
                   {c.contracts.some((r) => r.year) &&
                     row(
                       `${c.eik}-contracts`,
-                      'Сключени договори',
+                      procurements.length ? (
+                        <>
+                          Сключени договори{' '}
+                          <button
+                            type="button"
+                            className="time-toggle"
+                            aria-expanded={open}
+                            aria-controls={`procurements-${c.eik}`}
+                            onClick={() =>
+                              setOpened((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(c.eik)) next.delete(c.eik);
+                                else next.add(c.eik);
+                                return next;
+                              })
+                            }
+                          >
+                            {open
+                              ? 'Скрий поръчките'
+                              : `Покажи поръчките (${count(procurements.length)})`}
+                          </button>
+                        </>
+                      ) : (
+                        'Сключени договори'
+                      ),
                       c.contracts
                         .filter((r) => r.year)
                         .map((r) => {
@@ -461,7 +628,21 @@ export function PersonTimeline({
                           );
                         }),
                       'time-contracts',
+                      under,
                     )}
+                  {open && (
+                    <div id={`procurements-${c.eik}`} className="time-lanes">
+                      {packLanes(procurements).map((lane, i) =>
+                        row(
+                          `${c.eik}-lane-${i}`,
+                          i === 0 ? <small>Поръчки: обявяване → подписване</small> : null,
+                          lane.map((pr) => procurementMark(pr, under)),
+                          'time-lane',
+                          under,
+                        ),
+                      )}
+                    </div>
+                  )}
                 </div>
               </Fragment>
             );
