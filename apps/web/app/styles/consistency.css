@@ -690,6 +690,9 @@ td .chip {
   bottom: 0;
   background: rgba(183, 25, 22, 0.09);
   border-inline: 1px solid rgba(183, 25, 22, 0.35);
+}
+/* Among the procurements the band stays silent: their own tooltips are what the pointer is after. */
+.time-lane .time-band {
   pointer-events: none;
 }
 .time-office {

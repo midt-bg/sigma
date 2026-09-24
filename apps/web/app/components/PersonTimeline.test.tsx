@@ -692,6 +692,33 @@ it('draws the overlap band, the office and each procurement from announcement to
     expect(el.querySelector('.time-tip')!.textContent).not.toContain('Оферти');
     act(() => marks[2]!.blur());
     expect(el.querySelector('.time-tip')).toBeNull();
+    // Every other element of the axis has its own tooltip, and none of them a second, native one.
+    const hover = (target: Element) => {
+      act(() => {
+        target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      });
+      const text = el.querySelector('.time-tip')?.textContent ?? '';
+      act(() => {
+        target.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      });
+      return text;
+    };
+    const square = el.querySelector('.time-institution .time-observation')!;
+    expect(square.hasAttribute('title')).toBe(false);
+    expect(hover(square)).toMatch(/Встъпителна.*За 2021 г\.Община Тест · Съветник/);
+    expect(hover(el.querySelector('.time-institution .time-office')!)).toContain(
+      'Краят не е известен — последната декларация е за 2022 г.',
+    );
+    const role = el.querySelector('.time-role')!;
+    expect(role.hasAttribute('title')).toBe(false);
+    expect(hover(role)).toMatch(/Вписана 01\.02\.2020.*В сила към 10\.03\.2025/);
+    expect(hover(el.querySelector('.time-contract.eligible')!)).toMatch(
+      /2022 · 1 договор в съвпадение.*Всички за годината: 3 договора/,
+    );
+    expect(hover(el.querySelector('.person-time-company .time-band')!)).toContain(
+      '01.01.2021 – 31.12.2022',
+    );
+    expect(el.querySelector('.time-tip')).toBeNull();
   } finally {
     act(() => root.unmount());
     el.remove();
