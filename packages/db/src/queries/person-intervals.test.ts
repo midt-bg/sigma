@@ -27,7 +27,7 @@ function fixture() {
     CREATE TABLE authorities(id,name);
     CREATE TABLE declarations(id,person_id,institution,position,declared_year);
     CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
-    CREATE TABLE contracts(id,contract_subject,bidder_id,tender_id,signed_at,amount_eur);
+    CREATE TABLE contracts(id,contract_subject,bidder_id,tender_id,signed_at,amount_eur,bids_received);
     INSERT INTO authorities VALUES('auth:1','Община Тест');
     INSERT INTO bidders(id,name,eik_normalized) VALUES
       ('eik:111111111','Роля ЕООД','111111111'),('eik:222222222','Дял ООД','222222222');
@@ -54,14 +54,21 @@ function fixture() {
     INSERT INTO declaration_metadata VALUES
       ('o17','entry','2017-04-20',NULL),('o24','vacate','2024-08-12',NULL);`);
   const tender = db!.prepare("INSERT INTO tenders VALUES(?, 'Предмет', 'auth:1', ?)");
-  const contract = db!.prepare('INSERT INTO contracts VALUES(?, ?, ?, ?, ?, 100)');
+  const contract = db!.prepare('INSERT INTO contracts VALUES(?, ?, ?, ?, ?, 100, ?)');
   let n = 0;
   for (let day = Date.UTC(2015, 0, 1); day <= Date.UTC(2026, 11, 31); day += 3 * 864e5) {
     const signed = new Date(day).toISOString().slice(0, 10);
     const announced = new Date(day - 70 * 864e5).toISOString().slice(0, 10);
     for (const eik of ['111111111', '222222222']) {
       tender.run(`t${n}`, announced);
-      contract.run(`c${n}`, `Договор ${n}`, `eik:${eik}`, `t${n}`, signed);
+      contract.run(
+        `c${n}`,
+        `Договор ${n}`,
+        `eik:${eik}`,
+        `t${n}`,
+        signed,
+        n % 4 === 0 ? null : (n % 3) + 1,
+      );
       n++;
     }
   }
@@ -94,6 +101,9 @@ it('carries the announcement, and drops one that postdates the signing', async (
   expect(first.announcedAt).toBeNull();
   const other = procurements.find((p) => p.id === 'c2')!;
   expect(other.announcedAt! < other.signedAt).toBe(true);
+  // The offers received ride along for the tooltip, and stay unknown where the source is silent.
+  expect(other.bids).toBe(3);
+  expect(first.bids).toBeNull();
 });
 
 it('reads the declared years per scope, without the disputed one', async () => {

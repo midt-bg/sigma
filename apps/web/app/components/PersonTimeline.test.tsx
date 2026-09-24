@@ -593,6 +593,7 @@ it('draws the overlap band, the office and each procurement from announcement to
           announcedAt: '2022-03-01',
           signedAt: '2022-05-01',
           valueEur: 100,
+          bids: 1,
           tied: true,
         },
         {
@@ -603,6 +604,7 @@ it('draws the overlap band, the office and each procurement from announcement to
           announcedAt: '2022-10-01',
           signedAt: '2023-02-01',
           valueEur: 100,
+          bids: 4,
           tied: false,
         },
         {
@@ -613,6 +615,7 @@ it('draws the overlap band, the office and each procurement from announcement to
           announcedAt: null,
           signedAt: '2024-01-15',
           valueEur: null,
+          bids: null,
           tied: false,
         },
       ],
@@ -652,6 +655,30 @@ it('draws the overlap band, the office and each procurement from announcement to
       'обявена по време на съвпадението, подписана извън него',
     );
     expect(marks[2]!.getAttribute('aria-label')).toContain('без дата на обявяване');
+    // Pointing at a procurement shows its tooltip; leaving hides it. The mark still leads to the contract.
+    expect(el.querySelector('.time-tip')).toBeNull();
+    act(() => {
+      marks[0]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
+    const tip = el.querySelector('.time-tip')!;
+    expect(tip.getAttribute('aria-hidden')).toBe('true');
+    expect(tip.querySelector('.time-tip-title')!.textContent).toBe('Ремонт');
+    expect(tip.textContent).toContain('Община Тест');
+    expect(tip.textContent).toContain('Обявена 01.03.2022 → подписан 01.05.2022 · 61 дни');
+    expect(tip.textContent).toContain('Една оферта');
+    expect(tip.querySelector('.time-tip-overlap')!.textContent).toBe(
+      'Подписан по време на съвпадението',
+    );
+    act(() => {
+      marks[0]!.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+    });
+    expect(el.querySelector('.time-tip')).toBeNull();
+    // The keyboard gets it too; an undated announcement and unknown offers say only what is known.
+    act(() => marks[2]!.focus());
+    expect(el.querySelector('.time-tip')!.textContent).toContain('Подписан 15.01.2024');
+    expect(el.querySelector('.time-tip')!.textContent).not.toContain('Оферти');
+    act(() => marks[2]!.blur());
+    expect(el.querySelector('.time-tip')).toBeNull();
   } finally {
     act(() => root.unmount());
     el.remove();

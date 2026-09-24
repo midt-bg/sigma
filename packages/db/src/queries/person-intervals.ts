@@ -25,6 +25,8 @@ export interface TimelineProcurement {
   announcedAt: string | null;
   signedAt: string;
   valueEur: number | null;
+  /** Offers received, as the source reports them; null when it does not. */
+  bids: number | null;
   /** The red-number test, as the activity CTE evaluates it. */
   tied: boolean;
 }
@@ -135,7 +137,8 @@ export async function getTimelineIntervals(
       .prepare(
         `${cte} SELECT a.id, a.eik, a.subject, a.authority,
           CASE WHEN date(t.published_at) <= date(a.signed_at) THEN date(t.published_at) END AS announcedAt,
-          date(a.signed_at) AS signedAt, a.amount_eur AS valueEur, a.during_overlap AS tied
+          date(a.signed_at) AS signedAt, a.amount_eur AS valueEur, c.bids_received AS bids,
+          a.during_overlap AS tied
         FROM activity a JOIN contracts c ON c.id = a.id JOIN tenders t ON t.id = c.tender_id
         WHERE date(a.signed_at) IS NOT NULL
         ORDER BY a.eik, COALESCE(date(t.published_at), date(a.signed_at)), date(a.signed_at), a.id`,

@@ -46,6 +46,7 @@ export function PersonTimeline({
   const years = timelineYears(p, companies);
   const scroll = useRef<HTMLDivElement>(null);
   const [scrollable, setScrollable] = useState(false);
+  const [tip, setTip] = useState<ProcurementTip | null>(null);
   const intervals = p.timelineIntervals ?? null;
   const hasDeclarations = p.declarations.length > 0;
   useEffect(() => {
@@ -59,6 +60,12 @@ export function PersonTimeline({
     observer.observe(el);
     return () => observer.disconnect();
   }, [p.name, years.length]);
+  useEffect(() => {
+    if (!tip) return;
+    const hide = () => setTip(null);
+    window.addEventListener('scroll', hide, { passive: true });
+    return () => window.removeEventListener('scroll', hide);
+  }, [tip]);
   if (!years.length && !companies.length) return null;
   const first = Date.UTC(years[0] ?? 1970, 0, 1),
     last = Date.UTC((years.at(-1) ?? 1970) + 1, 0, 1),
@@ -175,8 +182,24 @@ export function PersonTimeline({
         />
       );
     });
+  // One tooltip for the whole axis, placed against the viewport so the scrolling canvas cannot clip it.
+  // It repeats, for the eye, what the mark's own label already says to a screen reader.
+  const showTip = (el: HTMLElement, pr: TimelineProcurement, kind: ProcurementKind) => {
+    const box = el.getBoundingClientRect();
+    const left = Math.max(12, Math.min(box.right - 150, window.innerWidth - 312));
+    setTip(
+      box.bottom + 200 < window.innerHeight
+        ? { pr, kind, left, top: box.bottom + 8 }
+        : { pr, kind, left, bottom: window.innerHeight - box.top + 8 },
+    );
+  };
+  const hideTip = () => setTip(null);
   const procurementMark = (pr: TimelineProcurement, under: [string, string][] | undefined) => {
-    const kind = pr.tied ? 'tied' : insideSpans(under, pr.announcedAt) ? 'announced' : 'context';
+    const kind: ProcurementKind = pr.tied
+      ? 'tied'
+      : insideSpans(under, pr.announcedAt)
+        ? 'announced'
+        : 'context';
     const label = [
       pr.subject || 'Договор',
       pr.authority,
@@ -197,8 +220,11 @@ export function PersonTimeline({
         to={`/contracts/${contractSlug(pr.id)}`}
         className={`time-procurement ${kind} ${pr.announcedAt ? '' : 'time-undated-start'}`}
         style={between(pr.announcedAt ?? pr.signedAt, pr.signedAt)}
-        title={label}
         aria-label={label}
+        onMouseEnter={(event) => showTip(event.currentTarget, pr, kind)}
+        onFocus={(event) => showTip(event.currentTarget, pr, kind)}
+        onMouseLeave={hideTip}
+        onBlur={hideTip}
       />
     );
   };
@@ -308,6 +334,7 @@ export function PersonTimeline({
         role="region"
         aria-label="Обща времева линия, превъртай хоризонтално при нужда"
         tabIndex={0}
+        onScroll={hideTip}
       >
         <div
           className="person-time"
@@ -627,6 +654,7 @@ export function PersonTimeline({
           })}
         </div>
       </div>
+      {tip && <ProcurementTooltip tip={tip} />}
       <p className="small muted person-time-note">
         Числата са брой договори за годината. Червеното означава година с налична декларация за
         институция и длъжност на лицето, независимо от периода на участие в дружеството. Това не
@@ -635,5 +663,43 @@ export function PersonTimeline({
         извеждаме период.
       </p>
     </Section>
+  );
+}
+
+type ProcurementKind = 'tied' | 'announced' | 'context';
+interface ProcurementTip {
+  pr: TimelineProcurement;
+  kind: ProcurementKind;
+  left: number;
+  top?: number;
+  bottom?: number;
+}
+
+function ProcurementTooltip({ tip: { pr, kind, left, top, bottom } }: { tip: ProcurementTip }) {
+  const days = pr.announcedAt
+    ? Math.round((Date.parse(pr.signedAt) - Date.parse(pr.announcedAt)) / 864e5)
+    : null;
+  return (
+    <div className="help-popover time-tip" aria-hidden="true" style={{ left, top, bottom }}>
+      <strong className="time-tip-title">{pr.subject || 'Договор'}</strong>
+      <span className="time-tip-value">{money(pr.valueEur)}</span>
+      <span>{pr.authority}</span>
+      <span>
+        {pr.announcedAt
+          ? `Обявена ${date(pr.announcedAt)} → подписан ${date(pr.signedAt)} · ${count(days!)} ${days === 1 ? 'ден' : 'дни'}`
+          : `Подписан ${date(pr.signedAt)}`}
+      </span>
+      {pr.bids != null && (
+        <span>{pr.bids === 1 ? 'Една оферта' : `Оферти: ${count(pr.bids)}`}</span>
+      )}
+      {kind !== 'context' && (
+        <span className="time-tip-overlap">
+          {kind === 'tied'
+            ? 'Подписан по време на съвпадението'
+            : 'Обявена по време на съвпадението, подписана извън него'}
+        </span>
+      )}
+      <small className="muted">Кликни за целия договор</small>
+    </div>
   );
 }

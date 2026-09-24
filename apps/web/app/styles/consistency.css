@@ -769,3 +769,34 @@ td .chip {
   height: 2px;
   background: repeating-linear-gradient(to right, #b71916 0 3px, transparent 3px 5px);
 }
+.time-tip {
+  width: 300px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+.time-tip > * {
+  display: block;
+}
+.time-tip-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.time-tip-value {
+  font-family: var(--font-mono, monospace);
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+.time-tip-overlap {
+  margin-top: 4px;
+  color: #b71916;
+  font-weight: 600;
+}
+.time-tip small {
+  margin-top: 6px;
+}
