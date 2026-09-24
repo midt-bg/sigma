@@ -23,6 +23,7 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'signal', // /conflicts — own institution / in the declared window
   'sort',
   'stake', // /conflicts — own stake vs a relative's
+  'timeline', // /persons — the interval timeline (experiment `?timeline=c`)
   'top', // top-20 vs top-50 on /flows, /competition
   'type',
   'value',
