@@ -185,6 +185,75 @@ describe('leaderboard loader (/conflicts)', () => {
   });
 });
 
+// Ownership and sole management by default; the seats on collegial bodies only when the reader adds them.
+describe('leaderboard loader — the role scope', () => {
+  const registryRow = (
+    slug: string,
+    companies: { eik: string; registryRole: 'owner' | 'manager' | 'board' }[],
+    direct: { companyCount: number; contractValueEur: number } | null,
+  ) => ({
+    official: slug,
+    officialSlug: slug,
+    personIdentity: slug,
+    stakeKind: 'registry',
+    companyCount: companies.length,
+    companies: companies.map((c) => ({ ...c, company: c.eik, self: 0, family: 0, registry: 1 })),
+    contractCount: 3,
+    contractValueEur: 900,
+    contemporaneousValueEur: 900,
+    hasContemporaneous: true,
+    ownInstitution: false,
+    direct: direct && {
+      ...direct,
+      contractCount: 1,
+      contemporaneousValueEur: null,
+      hasContemporaneous: false,
+    },
+    declaredOffices: [],
+  });
+  beforeEach(() => {
+    q.getRelatedPersonRows.mockResolvedValue([
+      { official: 'Декларирал', officialSlug: 'd', personIdentity: 'd', declaredOffices: [] },
+    ]);
+    q.getRegistryRolePersonRows.mockResolvedValue([
+      registryRow('seat-only', [{ eik: '1', registryRole: 'board' }], null),
+      registryRow(
+        'both',
+        [
+          { eik: '2', registryRole: 'owner' },
+          { eik: '3', registryRole: 'board' },
+        ],
+        { companyCount: 1, contractValueEur: 40 },
+      ),
+    ]);
+  });
+
+  it('leaves a seat-only person out and keeps only the owned company of one with both', async () => {
+    const res = await leaderboardLoader({ request: req(), context } as never);
+    expect(res.data.pageRows.map((r) => r.officialSlug).sort()).toEqual(['both', 'd']);
+    const both = res.data.pageRows.find((r) => r.officialSlug === 'both')!;
+    expect(both).toMatchObject({
+      companyCount: 1,
+      contractValueEur: 40,
+      contractCount: 1,
+      hasContemporaneous: false,
+    });
+    expect(both.companies!.map((c) => c.eik)).toEqual(['2']);
+    expect(res.data.facets.role).toEqual({ direct: 2, all: 3 });
+    expect(res.data.facets.registry).toBe(1);
+  });
+
+  it('adds the seats when asked, with the whole figures', async () => {
+    const res = await leaderboardLoader({ request: req('?role=all'), context } as never);
+    expect(res.data.pageRows.map((r) => r.officialSlug).sort()).toEqual(['both', 'd', 'seat-only']);
+    expect(res.data.pageRows.find((r) => r.officialSlug === 'both')).toMatchObject({
+      companyCount: 2,
+      contractValueEur: 900,
+    });
+    expect(res.data.facets.registry).toBe(2);
+  });
+});
+
 describe('contracts resource loader (/conflicts/link/:scope/:slug/:eik/contracts)', () => {
   it.each([
     { params: { scope: 'self', slug: '', eik: '1' }, why: 'blank slug' },

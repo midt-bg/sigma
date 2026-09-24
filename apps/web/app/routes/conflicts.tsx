@@ -20,6 +20,7 @@ import { withDbRetry } from '../lib/retry';
 import { personName } from '../lib/person-name';
 import { seoMeta } from '../lib/meta';
 import {
+  applyRoleScope,
   conflictListFilters,
   filterConflictRows,
   groupDeclaredInstitutions,
@@ -90,17 +91,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       ...row,
       declaredInstitutions: groupDeclaredInstitutions(declaredOffices),
     }));
-  const persons = sortConflictRows(filterConflictRows(everyone, filters), filters.sort);
+  // Ownership and sole management by default; the seats on collegial bodies only when asked (`?role=all`).
+  const scoped = applyRoleScope(everyone, filters.role);
+  const persons = sortConflictRows(filterConflictRows(scoped, filters), filters.sort);
   const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
   const asked = Number(sp.get('page') || 1);
   const page = Math.min(pageCount, Number.isSafeInteger(asked) && asked > 0 ? asked : 1);
   const facets = {
-    self: everyone.filter((r) => r.stakeKind === 'self' || r.stakeKind === 'mixed').length,
-    family: everyone.filter((r) => r.stakeKind === 'family' || r.stakeKind === 'mixed').length,
-    registry: everyone.filter((r) => r.stakeKind === 'registry').length,
-    own: everyone.filter((r) => r.ownInstitution).length,
-    window: everyone.filter((r) => r.hasContemporaneous).length,
-    institutions: institutionOptions(everyone, filters.institutions),
+    self: scoped.filter((r) => r.stakeKind === 'self' || r.stakeKind === 'mixed').length,
+    family: scoped.filter((r) => r.stakeKind === 'family' || r.stakeKind === 'mixed').length,
+    registry: scoped.filter((r) => r.stakeKind === 'registry').length,
+    own: scoped.filter((r) => r.ownInstitution).length,
+    window: scoped.filter((r) => r.hasContemporaneous).length,
+    institutions: institutionOptions(scoped, filters.institutions),
+    role: { direct: applyRoleScope(everyone, 'direct').length, all: everyone.length },
   };
   return data(
     {
@@ -186,9 +190,11 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
               {c.registry && (
                 <div>
                   <Chip>
-                    {c.registryRole === 'manager'
-                      ? 'управление по Търговския регистър'
-                      : 'дял по Търговския регистър'}
+                    {c.registryRole === 'board'
+                      ? 'място в съвет по Търговския регистър'
+                      : c.registryRole === 'manager'
+                        ? 'управление по Търговския регистър'
+                        : 'дял по Търговския регистър'}
                   </Chip>
                   {c.missingYears?.length ? (
                     <div className="small muted">
@@ -282,6 +288,17 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       ],
     },
     {
+      // Two steps, the second containing the first: the list never hides what the reader asked to add.
+      key: 'role',
+      label: 'Роля в дружеството',
+      type: 'radio',
+      allLabel: 'собственост или управление',
+      // Absent from a payload rendered before the scope existed: the group then shows without counts.
+      allCount: facets.role?.direct,
+      selected: filters.role === 'all' ? ['all'] : [],
+      options: [{ value: 'all', label: '…и място в съвет', count: facets.role?.all }],
+    },
+    {
       key: 'signal',
       label: 'Признаци',
       type: 'checkbox',
@@ -338,7 +355,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
           }
           lede={
             registryOnly
-              ? 'Длъжностни лица, които Търговският регистър вписва като собственик или в органа на управление — управител, съвет на директорите, управителен съвет — на дружество, спечелило обществена поръчка, без това дружество да е посочено в декларацията им. Самоличността е доказана чрез друго дружество, което лицето само е декларирало.'
+              ? `Длъжностни лица, които Търговският регистър вписва като собственик или управител${filters.role === 'all' ? ' — или с място в съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка, без това дружество да е посочено в декларацията им. Самоличността е доказана чрез друго дружество, което лицето само е декларирало.`
               : 'Длъжностни лица, декларирали дял — свой или на свързано лице — в дружество, спечелило обществена поръчка. Показваме и доказани исторически връзки, с декларираните години и проверими източници.'
           }
         />

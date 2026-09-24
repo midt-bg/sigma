@@ -24,6 +24,7 @@ export interface FilterGroup {
   categories?: FilterCategory[];
   selected: string[];
   allLabel?: string; // radio groups: the „Всички" (clear) option label
+  allCount?: number; // radio groups: the count beside that option, when it is not simply everything
 }
 
 // Sticky filter rail. Filters live in the URL (shareable). A `<Form method="get">` auto-submits on
@@ -121,6 +122,9 @@ export function FilterRail({
                     onChange={() => {}}
                   />{' '}
                   {g.allLabel ?? 'Всички'}
+                  {g.allCount != null && (
+                    <span className="muted small">{fmtCount(g.allCount)}</span>
+                  )}
                 </label>
               )}
               {g.categories

@@ -131,7 +131,13 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
  *  wide powers), a управител на клон (runs a branch, not the company), a ликвидатор or a синдик.
  *
  *  A public enterprise is left out whatever the role: a seat there is a held position (ADR-0047 §2). The
- *  period figures follow the declared office years. */
+ *  period figures follow the declared office years.
+ *
+ *  Each row also carries its figures WITHOUT the seats on a collegial body (`direct`): the list shows
+ *  ownership and sole management by default and adds the seats only when asked. A seat is not ownership —
+ *  in an АД the register does not even record the shareholders — and the company's contracts beside a
+ *  board member's name read as money that reached him. `direct` is null for a person the register
+ *  records only on such a body. */
 export async function getRegistryRolePersonRows(db: D1Database, authorityId?: string) {
   const result = await db
     .prepare(
@@ -141,7 +147,8 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     WHERE NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=pl.person_id AND il.status='published'
         AND il.interest_class IN ('private_ownership','family_ownership'))
   ), roles AS MATERIALIZED (
-    SELECT pe.person_id, pe.identity, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner
+    SELECT pe.person_id, pe.identity, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner,
+      MAX(r.role IN ('sole_owner','partner','trader','manager')) direct
     FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
       AND r.role IN ('sole_owner','partner','trader','manager',
                      'board_of_directors','management_board','governing_body')
@@ -164,7 +171,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     -- that October had the trader's 2022-2024 contracts counted, 419 of 472 млн. € against a tie worth
     -- 64 contracts. Same predicate as during_role (person-activity.ts), so the list and the profile
     -- cannot disagree: an open role counts only up to the last successful read of the partida.
-    SELECT ro.person_id, c.id, c.eik, c.amount_eur,
+    SELECT ro.person_id, c.id, c.eik, c.amount_eur, MAX(ro.direct) direct,
       MAX(oy.person_id IS NOT NULL AND ${withinOffice('ob', 'c.signed_at')} AND EXISTS (SELECT 1 FROM registry_roles rr
         WHERE rr.subject_id=ro.identity AND rr.subject_kind='person' AND rr.eik=ro.eik
           AND rr.role IN ('sole_owner','partner','trader','manager',
@@ -180,14 +187,18 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     GROUP BY ro.person_id, c.id
   ), totals AS (
     SELECT person_id, COUNT(*) contract_count, COUNT(DISTINCT eik) company_count, SUM(amount_eur) total_eur,
-      SUM(CASE WHEN in_window THEN amount_eur END) window_eur, MAX(in_window) has_window
+      SUM(CASE WHEN in_window THEN amount_eur END) window_eur, MAX(in_window) has_window,
+      SUM(direct) d_contract_count, COUNT(DISTINCT CASE WHEN direct THEN eik END) d_company_count,
+      SUM(CASE WHEN direct THEN amount_eur END) d_total_eur,
+      SUM(CASE WHEN direct AND in_window THEN amount_eur END) d_window_eur,
+      MAX(direct AND in_window) d_has_window
     FROM person_contracts GROUP BY person_id
   )
   SELECT pe.person_id, pe.identity, pe.name, t.*,
     (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1,
       'registryRole',co.registry_role,'annual',json(co.annual))) FROM (
       SELECT ro.eik, COALESCE(b.name, ro.eik) company,
-        CASE WHEN ro.owner THEN 'owner' ELSE 'manager' END registry_role,
+        CASE WHEN ro.owner THEN 'owner' WHEN ro.direct THEN 'manager' ELSE 'board' END registry_role,
         -- The annual declarations for a year the register records the ownership that do not tie to this ЕИК,
         -- with what each names; the name comparison is made below.
         (SELECT json_group_array(json_object('year',d.declared_year,'named',json((SELECT json_group_array(di.entity_raw)
@@ -218,6 +229,11 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
       total_eur: number | null;
       window_eur: number | null;
       has_window: number;
+      d_contract_count: number;
+      d_company_count: number;
+      d_total_eur: number | null;
+      d_window_eur: number | null;
+      d_has_window: number;
       companies: string;
       offices: string;
     }>();
@@ -235,7 +251,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
         self: number;
         family: number;
         registry: number;
-        registryRole: 'owner' | 'manager';
+        registryRole: 'owner' | 'manager' | 'board';
         annual: { year: string; named: string[] }[];
       }[]
     ).map(({ annual, ...c }) => ({
@@ -256,6 +272,15 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     stakeKind: 'registry' as const,
     ownInstitution: false,
     hasContemporaneous: !!r.has_window,
+    direct: r.d_company_count
+      ? {
+          companyCount: r.d_company_count,
+          contractCount: r.d_contract_count,
+          contractValueEur: r.d_total_eur,
+          contemporaneousValueEur: r.d_window_eur,
+          hasContemporaneous: !!r.d_has_window,
+        }
+      : null,
     declaredOffices: JSON.parse(r.offices) as {
       institution: string | null;
       position: string | null;

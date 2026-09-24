@@ -110,8 +110,9 @@ export interface ConflictPersonRow {
     self: number;
     family: number;
     registry?: number;
-    /** Registry group: whether the register records an ownership or only a management of the company. */
-    registryRole?: 'owner' | 'manager';
+    /** Registry group: whether the register records an ownership, a management, or only a seat on a
+     *  collegial body (съвет на директорите, управителен съвет, орган на управление) of the company. */
+    registryRole?: 'owner' | 'manager' | 'board';
     /** A declared management of the company, with no declared stake in it. */
     manages?: number;
     /** Registry group: the years whose annual declaration does not name the registered company. */
@@ -138,6 +139,15 @@ export interface ConflictPersonRow {
   /** ≥1 contract is signed in an observed year with institution and position data for the person. */
   hasContemporaneous: boolean;
   declaredInstitutions?: DeclaredInstitution[];
+  /** Registry group: the row's figures without the seats on collegial bodies; null when the register
+   *  records the person only on such a body. Absent on declared rows, which it does not concern. */
+  direct?: {
+    companyCount: number;
+    contractCount: number;
+    contractValueEur: number | null;
+    contemporaneousValueEur: number | null;
+    hasContemporaneous: boolean;
+  } | null;
 }
 
 /** The NEXUS_ORDER key of a SINGLE link, as an orderable tuple (strongest first). Mirrors the DB's
@@ -316,9 +326,13 @@ export function officialRole(o: {
 export type ConflictStakeFilter = 'self' | 'family' | 'registry';
 export type ConflictSignal = 'own' | 'window';
 export type ConflictSort = 'period' | 'total' | 'contracts';
+/** Which registry roles the list covers: ownership and sole management, or also the seats on collegial
+ *  bodies. The default is the first; `?role=all` adds the second. */
+export type ConflictRoleScope = 'direct' | 'all';
 
 export interface ConflictListFilters {
   stake: ConflictStakeFilter | null;
+  role: ConflictRoleScope;
   signals: ConflictSignal[];
   /** Institution keys (see `institutionKey`). */
   institutions: string[];
@@ -332,6 +346,7 @@ export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
   const sort = sp.get('sort');
   return {
     stake: stake === 'self' || stake === 'family' || stake === 'registry' ? stake : null,
+    role: sp.get('role') === 'all' ? 'all' : 'direct',
     signals: getMulti(sp, 'signal').filter(
       (s): s is ConflictSignal => s === 'own' || s === 'window',
     ),
@@ -390,6 +405,31 @@ const rowInstitutions = (r: ConflictPersonRow): DeclaredInstitution[] =>
       : [];
 
 const matchText = (s: string) => s.replace(/\s+/g, ' ').trim().toLocaleLowerCase('bg');
+
+/**
+ * The rows in the chosen role scope. `all` is everything. `direct` keeps every declared row and, of the
+ * registry rows, the ownership and sole management: a person the register records only on a collegial
+ * body leaves the list, and one with both keeps only the companies they own or manage, with the figures
+ * of those companies alone. A seat is not ownership, and the company's contracts beside a board member's
+ * name read as money that reached them.
+ */
+export function applyRoleScope<T extends ConflictPersonRow>(
+  rows: T[],
+  scope: ConflictRoleScope,
+): T[] {
+  if (scope === 'all') return rows;
+  return rows.flatMap((r) => {
+    if (r.stakeKind !== 'registry' || r.direct === undefined) return [r];
+    if (!r.direct) return [];
+    return [
+      {
+        ...r,
+        ...r.direct,
+        companies: r.companies?.filter((c) => c.registryRole !== 'board'),
+      },
+    ];
+  });
+}
 
 /** The rows the filters keep. A person with both an own and a relative's stake ('mixed') answers both the
  *  'self' and the 'family' filter — but NOT 'registry': 'mixed' is only ever produced by two DECLARED
