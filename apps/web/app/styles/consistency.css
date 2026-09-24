@@ -681,8 +681,8 @@ td .chip {
 
 /* Experiment `?timeline=c`: the timeline as intervals. */
 .person-time {
-  --office: #6f675d;
-  --office-faded: rgba(111, 103, 93, 0.18);
+  --office: #b71916;
+  --office-faded: rgba(183, 25, 22, 0.16);
 }
 .time-band {
   position: absolute;
@@ -771,7 +771,7 @@ td .chip {
 .time-symbol.office {
   width: 24px;
   height: 4px;
-  background: linear-gradient(to right, rgba(111, 103, 93, 0.18), #6f675d 45%);
+  background: linear-gradient(to right, rgba(183, 25, 22, 0.16), #b71916 45%);
 }
 .time-symbol.procurement {
   width: 24px;
