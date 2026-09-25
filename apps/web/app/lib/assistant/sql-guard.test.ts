@@ -204,6 +204,13 @@ describe('assertReadOnlySelect', () => {
     const b = assertReadOnlySelect("SELECT id FROM contracts WHERE name = 'abc");
     expect(b.ok).toBe(true);
     if (b.ok) expect(guardSelect(b.sql).ok).toBe(false);
+    // An unterminated single-quoted span is not blanked like a literal: SQLite never runs it, and
+    // blanking it would hide everything after the opener from the keyword scan (review f/u on #223).
+    const c = assertReadOnlySelect(
+      "SELECT id FROM contracts WHERE subject = 'open AND 1=1 -- then DROP TABLE contracts",
+    );
+    expect(c.ok).toBe(false);
+    if (!c.ok) expect(c.reason).toMatch(/forbidden keyword/);
   });
 
   it('does not refuse a query whose STRING LITERAL merely mentions a keyword or a denied function', () => {
@@ -239,8 +246,9 @@ describe('assertReadOnlySelect', () => {
   it("refuses a single-quoted token in TABLE position — SQLite reads FROM 'x' as an identifier, not data", () => {
     // `nm ::= id | STRING` in SQLite's grammar: FROM 'sqlite_master' executes against the real catalog,
     // so blanking literals must not blind the catalog/pragma/TVF backstops to that spelling. Any quoted
-    // token right after FROM/JOIN (optionally schema-qualified) is refused outright at L1; the AST
-    // allowlist refuses it too, but must not be the only layer that does (review f/u).
+    // token in table position — after FROM/JOIN, inside a parenthesised table list, after a FROM-list
+    // comma, optionally schema-qualified — is refused outright at L1; the AST guard refuses it too, but
+    // must not be the only layer that does (review f/u).
     for (const sql of [
       "SELECT name FROM 'sqlite_master'",
       "SELECT name FROM main.'sqlite_master'",
@@ -248,10 +256,29 @@ describe('assertReadOnlySelect', () => {
       "SELECT c.id FROM contracts c JOIN 'sqlite_master' m ON c.id = m.rootpage",
       "WITH x AS (SELECT name FROM 'sqlite_master') SELECT name FROM x",
       "SELECT value FROM 'json_each'('[1,2]')",
+      "SELECT name FROM ('sqlite_master')",
+      "SELECT name FROM ((main.'sqlite_master'))",
+      "SELECT c.id FROM contracts c JOIN ('sqlite_master') m ON 1 = 1",
+      "SELECT name FROM contracts, 'sqlite_master'",
+      "SELECT name FROM contracts c JOIN bidders b ON b.id = c.id, 'sqlite_master'",
+      "SELECT n FROM (SELECT id AS n FROM contracts), 'sqlite_master'",
+      // `window` is a soft keyword: SQLite takes it as an implicit alias, so it must not end the list
+      "SELECT m.name FROM contracts window, 'sqlite_master' m",
     ]) {
       const r = assertReadOnlySelect(sql);
       expect(r.ok, sql).toBe(false);
       if (!r.ok) expect(r.reason).toMatch(/single-quoted table/);
+    }
+    // A comma or parenthesis outside a FROM list is expression syntax: the literal after it is data.
+    for (const sql of [
+      "SELECT id FROM contracts WHERE subject IN ('a', 'b')",
+      "SELECT k FROM (SELECT id, 'x' AS k FROM contracts)",
+      "SELECT id, 'x' FROM contracts ORDER BY id, 'x'",
+      "SELECT coalesce(subject, 'n/a') FROM contracts GROUP BY 1, 'x' LIMIT 1, 2",
+      "SELECT CASE WHEN id IS DISTINCT FROM 1 THEN 'a' END, 'b' FROM contracts",
+      "SELECT id, rank() OVER w FROM contracts WINDOW w AS (ORDER BY id, 'x'), v AS (ORDER BY id)",
+    ]) {
+      expect(assertReadOnlySelect(sql).ok, sql).toBe(true);
     }
     // A literal in EXPRESSION position — even one that itself reads "from 'x'" — is still just data.
     expect(assertReadOnlySelect("SELECT id FROM contracts WHERE subject = 'from ''x'''").ok).toBe(
