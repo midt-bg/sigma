@@ -57,8 +57,8 @@ const QUOTE_CLOSER: ReadonlyMap<string, string> = new Map([
   ['[', ']'],
 ]);
 
-/** Index just past the quoted span opening at `start` (an opener char); `sql.length` if unterminated. */
-function quotedSpanEnd(sql: string, start: number): number {
+/** Index just past the quoted span opening at `start` (an opener char), or -1 if it never closes. */
+function quotedSpanClose(sql: string, start: number): number {
   const close = QUOTE_CLOSER.get(sql[start]!)!;
   let i = start + 1;
   while (i < sql.length) {
@@ -71,7 +71,13 @@ function quotedSpanEnd(sql: string, start: number): number {
     }
     i++;
   }
-  return sql.length;
+  return -1;
+}
+
+/** Index just past the quoted span opening at `start` (an opener char); `sql.length` if unterminated. */
+function quotedSpanEnd(sql: string, start: number): number {
+  const end = quotedSpanClose(sql, start);
+  return end === -1 ? sql.length : end;
 }
 
 // Strip `/* block */` and `-- line` comments, but NOT when they fall inside a quoted span — a regex
@@ -166,16 +172,19 @@ const DENIED_FUNCTION_CALL = new RegExp(
 // misfeature no query here needs, and over-block is the safe direction.) The one place a single-quoted
 // token is NOT data is table position: SQLite's grammar has `nm ::= id | STRING`, so `FROM 'sqlite_master'`
 // reads the real catalog — blanking would blind the catalog/pragma backstops to that spelling, which is
-// why assertReadOnlySelect refuses any quoted token after FROM/JOIN outright (review f/u). Function
-// names are `id` only (`'printf'(x)` is a syntax error), so the function regex loses nothing. The
-// statement RETURNED to the caller is the real one.
+// why assertReadOnlySelect refuses any quoted token in table position outright (hasQuotedTableName,
+// review f/u). Function names are `id` only (`'printf'(x)` is a syntax error), so the function regex
+// loses nothing. An UNTERMINATED span is left visible: it is a tokenizer error SQLite never runs, not
+// data, and blanking it would hide everything after the opener — `'x AND 1=1 -- DROP TABLE t` — from
+// every check (review f/u on #223). The statement RETURNED to the caller is the real one.
 function blankStringLiterals(sql: string): string {
   let out = '';
   let i = 0;
   while (i < sql.length) {
     const ch = sql[i]!;
     if (QUOTE_CLOSER.has(ch)) {
-      const end = quotedSpanEnd(sql, i);
+      const end = quotedSpanClose(sql, i);
+      if (end === -1) return out + sql.slice(i);
       out += ch === "'" ? "''" : sql.slice(i, end);
       i = end;
       continue;
@@ -184,6 +193,97 @@ function blankStringLiterals(sql: string): string {
     i++;
   }
   return out;
+}
+
+// A FROM clause's table list closes at one of these words at the paren depth it opened in. A subquery
+// opener right after `FROM (` means the parenthesis holds a SELECT, not a parenthesised table list.
+// `window` is left out on purpose: it is a soft keyword SQLite also accepts as an implicit table alias
+// (`FROM contracts window, 'sqlite_master'`), and a WINDOW clause's own commas only separate window
+// names, so keeping the list open there costs nothing (review f/u on #223).
+const FROM_LIST_END = new Set([
+  'where',
+  'group',
+  'order',
+  'limit',
+  'having',
+  'union',
+  'intersect',
+  'except',
+]);
+const SUBQUERY_START = new Set(['select', 'with', 'values']);
+// SQLite treats every non-ASCII character as an identifier character.
+const WORD = /[\w$\u0080-\u{10FFFF}]+/uy;
+
+/**
+ * True when a single-quoted token sits where SQLite reads it as a TABLE name (`nm ::= id | STRING`):
+ * right after FROM/JOIN, after a comma of a FROM list, inside a parenthesised table list, or after a
+ * schema qualifier — `FROM 'sqlite_master'`, `FROM ('sqlite_master')`, `FROM contracts, 'sqlite_master'`,
+ * `FROM main.'sqlite_master'`. A comma or parenthesis anywhere else (`IN ('a', 'b')`, a select list,
+ * ORDER BY) is expression syntax and the literal after it is data. Runs on the blanked copy, where every
+ * literal reads `''`. A FROM-only regex missed the parenthesised and comma forms (review f/u on #223).
+ */
+function hasQuotedTableName(sql: string): boolean {
+  const listDepths = new Set<number>(); // paren depths holding an open FROM table list
+  let depth = 0;
+  let expectTable = false; // the next token is a table reference
+  let afterTable = false; // the previous token was a table name, so a `.` qualifies it
+  let prevWord = '';
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i]!;
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+    if (QUOTE_CLOSER.has(ch)) {
+      if (ch === "'" && expectTable) return true;
+      afterTable = expectTable; // `"main".'t'`
+      expectTable = false;
+      prevWord = '';
+      i = quotedSpanEnd(sql, i);
+      continue;
+    }
+    WORD.lastIndex = i;
+    const word = WORD.exec(sql);
+    if (word) {
+      const w = word[0].toLowerCase();
+      i += word[0].length;
+      // `a IS [NOT] DISTINCT FROM b` compares two expressions; that FROM opens no table list.
+      if ((w === 'from' && prevWord !== 'distinct') || w === 'join') {
+        if (w === 'from') listDepths.add(depth);
+        expectTable = true;
+        afterTable = false;
+      } else {
+        if (FROM_LIST_END.has(w) || (expectTable && SUBQUERY_START.has(w))) {
+          listDepths.delete(depth);
+        }
+        afterTable = expectTable;
+        expectTable = false;
+      }
+      prevWord = w;
+      continue;
+    }
+    i++;
+    prevWord = '';
+    if (ch === '(') {
+      depth++;
+      if (expectTable) listDepths.add(depth); // `FROM (a, 'b')`: still expecting a table
+      afterTable = false;
+    } else if (ch === ')') {
+      listDepths.delete(depth);
+      depth = Math.max(0, depth - 1);
+      expectTable = afterTable = false;
+    } else if (ch === ',') {
+      expectTable = listDepths.has(depth);
+      afterTable = false;
+    } else if (ch === '.') {
+      expectTable = afterTable;
+      afterTable = false;
+    } else {
+      expectTable = afterTable = false;
+    }
+  }
+  return false;
 }
 
 export type GuardResult = { ok: true; sql: string } | { ok: false; reason: string };
@@ -208,12 +308,12 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   }
 
   // A single-quoted token in TABLE position is an identifier to SQLite (`nm ::= id | STRING`): `FROM
-  // 'sqlite_master'`, `FROM main.'sqlite_master'`, `JOIN 'sqlite_master' m`, `FROM 'json_each'(…)` all
-  // execute against the real object. The blanking above turns every such token into `''`, so refuse
-  // any quoted token right after FROM/JOIN (optionally schema-qualified) here — the catalog, pragma_ and
-  // TVF checks below cannot see it any more, and the AST allowlist must not be the only layer that does
-  // (review f/u). No legitimate query quotes a table name this way.
-  if (/\b(?:from|join)\s+(?:[\w"`[\]]+\s*\.\s*)?'/i.test(lexical)) {
+  // 'sqlite_master'`, `FROM main.'sqlite_master'`, `JOIN 'sqlite_master' m`, `FROM 'json_each'(…)`,
+  // `FROM ('sqlite_master')`, `FROM contracts, 'sqlite_master'` all execute against the real object.
+  // The blanking above turns every such token into `''`, so refuse any quoted token in table position
+  // here — the catalog, pragma_ and TVF checks below cannot see it any more, and the AST guard must not
+  // be the only layer that does (review f/u). No legitimate query quotes a table name this way.
+  if (hasQuotedTableName(lexical)) {
     return { ok: false, reason: 'single-quoted table names are not allowed' };
   }
 
