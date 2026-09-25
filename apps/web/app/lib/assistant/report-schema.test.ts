@@ -628,6 +628,88 @@ describe('findProseNumbers', () => {
     expect(out.ok).toBe(false);
   });
 
+  it('flags a unit spelled with look-alike letters from another script (review f/u on #321)', () => {
+    // Every unit pattern is spelled in ONE script, so a single swapped letter broke the match while the
+    // page still reads the unit: Latin t/m/p/o/a/x/e inside a Cyrillic unit, Greek τ/ρ/ο, Cyrillic Е/ѕ/е
+    // inside a Latin one — and the italic twins a renderer shows for `*…*` (m≈т, u≈и).
+    for (const s of [
+      '3 tрлн лева', // Latin t
+      '5 mлн лева', // Latin m
+      '12 млpд. лева', // Latin p
+      'три tрлн лева', // word + unit branch
+      'дванадесет mлрд.',
+      '5 милиoна лева', // Latin o in the stem
+      'два милиaрда евро', // Latin a
+      '300 xиляди', // Latin x
+      '300 xил. лв',
+      '12 лeва', // currency with Latin e
+      '12 eвро',
+      '95 пpоцента', // Latin p
+      '12 нa сто', // Latin a
+      '12 TPЛН', // upper-case Latin T, P
+      '12 MЛH', // upper-case Latin M, H
+      '3 τρлн', // Greek tau, rho
+      '5 милиοна', // Greek omicron
+      '12 ЕUR', // Cyrillic Е in a Latin unit
+      'ЕUR 1234',
+      '12 uѕd', // Cyrillic dze
+      '1.2е10', // Cyrillic е in scientific notation
+      '3 mрлн', // italic т read as m
+      '5 мuлиона', // italic и read as u
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    // Through the report door: the look-alike amount cannot reach a text block.
+    const out = bindReport(emit([{ type: 'text', md: 'Изплатени са 3 tрлн лева.' }]), results);
+    expect(out.ok).toBe(false);
+    // Folding only adds scans: prose that merely mixes in Latin words or bare units stays clean.
+    for (const s of [
+      'Данни от OECD и EU за 2023 г.',
+      'CPV кодът и ЕИК на изпълнителя',
+      'Стойност (млн. EUR)',
+      'Стойност в млн. лв.',
+      'суми, изразени във млрд. евро',
+    ]) {
+      expect(findProseNumbers(s), s).toHaveLength(0);
+    }
+  });
+
+  it('sees through invisible characters and combining marks inside a unit (review f/u on #321)', () => {
+    // The reader sees "млн"/"трлн"/"eur" whatever invisible format character (soft hyphen, word joiner,
+    // LRM, ALM) or combining mark sits inside the word, but the contiguous patterns did not.
+    for (const s of [
+      '3 тр\u00adлн лева', // soft hyphen
+      '12 м\u2060лн лева', // word joiner
+      '12 м\u200eлн', // left-to-right mark
+      '12 м\u061cлн', // Arabic letter mark
+      'платени 12 мл\u0301н лева', // combining acute
+      '12 e\u0301ur', // combining acute on a Latin unit
+      '5 mл\u0301н', // a look-alike AND a mark in one word
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    // Ordinary Bulgarian — й, ѝ, a stress mark — stays clean.
+    for (const s of ['Който и да е изпълнител, ѝ се плаща навреме', 'Сумата е голя\u0301ма']) {
+      expect(findProseNumbers(s), s).toHaveLength(0);
+    }
+  });
+
+  it('refuses bidi control characters in every prose slot — an override reorders what the reader sees', () => {
+    // "\u202eнлм\u202c" is stored as "нлм" but DISPLAYS as "млн": no scan of the logical string can
+    // match that, and no prose here needs a bidi control, so the gate refuses them outright.
+    const md = 'Изплатени са 12 \u202eнлм\u202c лева.';
+    expect(findProseNumbers(md)).toHaveLength(0); // the number gate alone cannot see it…
+    for (const out of [
+      bindReport(emit([{ type: 'text', md }]), results),
+      bindReport(emit([{ type: 'callout', title: 'Бележка\u200f', md: 'текст' }]), results),
+      // the display path decodes numeric entities, so an entity-encoded override counts too
+      bindReport(emit([{ type: 'text', md: 'Сума 12 &#x202e;нлм&#x202c; лева' }]), results),
+    ]) {
+      expect(out.ok).toBe(false); // …so the prose gate refuses the control itself
+      if (!out.ok) expect(out.errors.join(' ')).toMatch(/bidi/);
+    }
+  });
+
   it("does NOT flag a bare млн./млрд. unit (the site's own column-header style carries no number)", () => {
     // Alone — after punctuation, a line start or a unit PREPOSITION — the abbreviation is a unit,
     // exactly like "хил.". A noun directly before it ("Стойност млн. €") is the accepted over-flag:
