@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   bindReport,
   findProseNumbers,
+  REBUILT_COLUMN_KEYS,
+  REBUILT_LINK_KEYS,
   sanitizeProse,
   type EmitReportInput,
+  type EmitTableColumn,
   type QueryResult,
 } from './report-schema';
 
@@ -177,6 +180,81 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
       const row0 = out.report.blocks[0].rows[0]!;
       expect(row0.cells).toEqual(['Министерство на финансите', 1234567]);
       expect(row0.links).toEqual(['auth:000695089', null]); // id for the linked col, null otherwise
+    }
+  });
+
+  it('rebuilds `link` from its known fields and folds a null align — no model-supplied key rides through', () => {
+    // validateEmitShape does not reject unknown keys, so the rebuild must be explicit one level DOWN
+    // too: an `href` smuggled inside `link` must not reach the frozen report (a renderer that reads
+    // it would take the model's URL over the canonical one).
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority',
+              header: 'Институция',
+              align: null as unknown as undefined,
+              format: 'text',
+              link: {
+                kind: 'authority',
+                idCol: 'authority_id',
+                href: 'javascript:alert(1)',
+              } as never,
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'table') {
+      const col = out.report.blocks[0].columns[0];
+      expect(col).toEqual({
+        key: 'authority',
+        header: 'Институция',
+        format: 'text',
+        link: { kind: 'authority', idCol: 'authority_id' },
+      });
+      expect(col).not.toHaveProperty('align');
+      expect(JSON.stringify(col)).not.toContain('href');
+    }
+  });
+
+  it('rebuilds a fully-specified column with EXACTLY the pinned keys (nothing dropped, nothing extra)', () => {
+    // The explicit rebuild in bindReport copies a fixed list of fields; REBUILT_COLUMN_KEYS pins that
+    // list to the type at compile time, and this pins the runtime side: a column carrying every known
+    // field comes out with every one of them, and an unknown model-supplied key does not survive.
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority',
+              header: 'Институция',
+              align: 'left',
+              format: 'text',
+              link: { kind: 'authority', idCol: 'authority_id', href: 'javascript:alert(1)' },
+              width: 120,
+            } as unknown as EmitTableColumn,
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      const block = out.report.blocks[0];
+      expect(block?.type).toBe('table');
+      if (block?.type === 'table') {
+        const col = block.columns[0]!;
+        expect(Object.keys(col).sort()).toEqual(Object.keys(REBUILT_COLUMN_KEYS).sort());
+        expect(Object.keys(col.link!).sort()).toEqual(Object.keys(REBUILT_LINK_KEYS).sort());
+      }
     }
   });
 
@@ -478,6 +556,23 @@ describe('findProseNumbers', () => {
     // too, so the gate must decode it as well as the lowercase form.
     expect(findProseNumbers('сума &#X31;&#X32; млрд')).not.toHaveLength(0);
     expect(findProseNumbers('Сумата &#X31;&#X32;&#X33;&#X34;&#X35; е голяма')).not.toHaveLength(0);
+    // NAMED references decode in a renderer as well — `&nbsp;` joins a number to its unit, `&shy;` is
+    // an invisible soft hyphen, `&euro;` is the currency (review f/u on #321).
+    for (const s of [
+      '12&nbsp;млн лева',
+      '3 т&shy;рлн лева',
+      '12 &euro;',
+      '&euro;12',
+      '12&amp;nbsp;млн лева', // double-encoded: decode to a fixpoint
+      '95&percnt; от договорите',
+      '12&period;000&period;000 лева',
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    expect(
+      bindReport(emit([{ type: 'text', md: 'Изплатени са 12&nbsp;млн лева.' }]), results).ok,
+    ).toBe(false);
+    expect(findProseNumbers('ВиК &amp; пътища, &bdquo;Софийска вода&ldquo;')).toHaveLength(0);
   });
 
   it('flags spelled-out thousands and non-€/лв currencies (review #80, follow-up)', () => {
@@ -487,6 +582,194 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('платиха 9999 USD')).not.toHaveLength(0);
     // a genuine `3 < 5` (no tag — `<` not followed by a letter) must stay clean (no false positive)
     expect(findProseNumbers('3 < 5 е вярно твърдение')).toHaveLength(0);
+  });
+
+  it('flags spelled magnitudes at every scale via the -илион/-илиард suffix (review follow-up)', () => {
+    // "3 трилиона лева" slipped the whole gate: the digit "3" cannot reach "лева" across the Cyrillic word.
+    // The stem now matches the -илион/-илиард suffixes, so the row is closed upward — квинтилион/секстилион
+    // are covered too, and милион/милиард (the суффикс supersets) still match (ydimitrof review).
+    expect(findProseNumbers('По изчисления са усвоени 3 трилиона лева')).not.toHaveLength(0);
+    expect(findProseNumbers('два билиона евро')).not.toHaveLength(0);
+    expect(findProseNumbers('трилион')).not.toHaveLength(0);
+    expect(findProseNumbers('квадрилион')).not.toHaveLength(0);
+    // The gap the reviewer flagged: magnitudes above квадрилион.
+    expect(findProseNumbers('три квинтилиона')).not.toHaveLength(0);
+    expect(findProseNumbers('секстилион лева')).not.toHaveLength(0);
+    // Regression: the original магнитуди still match through the suffix stems, not an explicit list.
+    expect(findProseNumbers('5 милиона')).not.toHaveLength(0);
+    expect(findProseNumbers('12 милиарда')).not.toHaveLength(0);
+    expect(findProseNumbers('триста хиляди')).not.toHaveLength(0);
+    // Spelled-out numeral + ABBREVIATED magnitude has neither a digit (for the \d…млрд pattern) nor
+    // a full-word stem — the abbreviations must be stems too (review f/u on #320, ydimitrof).
+    expect(findProseNumbers('дванадесет млрд. лева')).not.toHaveLength(0);
+    expect(findProseNumbers('около три млн.')).not.toHaveLength(0);
+    expect(findProseNumbers('двадесет и пет млн лева')).not.toHaveLength(0);
+    expect(findProseNumbers('петте млн')).not.toHaveLength(0);
+    expect(findProseNumbers('стотици млн. евро')).not.toHaveLength(0);
+    expect(findProseNumbers('няколко млрд.')).not.toHaveLength(0);
+    // трлн: no digit, no `-илион` stem, no млн/млрд — it slipped the whole gate (review f/u).
+    expect(findProseNumbers('три трлн лева')).not.toHaveLength(0);
+    expect(findProseNumbers('няколко трлн.')).not.toHaveLength(0);
+    // …and the DIGIT form of the same magnitude, the one a model most likely writes (review f/u on #321).
+    expect(findProseNumbers('дълг от 12 трлн. лева')).not.toHaveLength(0);
+    expect(findProseNumbers('1,5 трлн')).not.toHaveLength(0);
+    // Long-scale forms and the top of the prefix list stay closed.
+    expect(findProseNumbers('квадрилиард')).not.toHaveLength(0);
+    expect(findProseNumbers('децилион')).not.toHaveLength(0);
+    expect(findProseNumbers('милионер')).not.toHaveLength(0); // accepted over-flag (safe direction)
+  });
+
+  it('flags compound, colloquial and approximate numerals before млн/млрд/трлн (a closed numeral list leaked — review f/u on #321)', () => {
+    // The numeral+abbreviation branch used a CLOSED list of cardinals: "два и половина млрд." (the
+    // word before the unit is "половина"), the colloquial tens, "стотина"/"десетина"/"дузина" and the
+    // fractions all fell outside it, so ordinary Bulgarian financial phrasing froze an unbound figure
+    // onto the report. The branch now flags ANY word before the unit except a unit preposition.
+    for (const s of [
+      'Изплатени са два и половина млрд. лева на един изпълнител.',
+      'двайсет млн. лева',
+      'трийсет млрд.',
+      'стотина млн. евро',
+      'десетина млн.',
+      'четвърт млрд.',
+      'три четвърти млн.',
+      'дузина млн.',
+      'няколкостотин млн.',
+      '12-те млн. са усвоени',
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    const out = bindReport(
+      emit([{ type: 'text', md: 'Изплатени са два и половина млрд. лева на един изпълнител.' }]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+  });
+
+  it('flags a unit spelled with look-alike letters from another script (review f/u on #321)', () => {
+    // Every unit pattern is spelled in ONE script, so a single swapped letter broke the match while the
+    // page still reads the unit: Latin t/m/p/o/a/x/e inside a Cyrillic unit, Greek τ/ρ/ο, Cyrillic Е/ѕ/е
+    // inside a Latin one — and the italic twins a renderer shows for `*…*` (m≈т, u≈и).
+    for (const s of [
+      '3 tрлн лева', // Latin t
+      '5 mлн лева', // Latin m
+      '12 млpд. лева', // Latin p
+      'три tрлн лева', // word + unit branch
+      'дванадесет mлрд.',
+      '5 милиoна лева', // Latin o in the stem
+      'два милиaрда евро', // Latin a
+      '300 xиляди', // Latin x
+      '300 xил. лв',
+      '12 лeва', // currency with Latin e
+      '12 eвро',
+      '95 пpоцента', // Latin p
+      '12 нa сто', // Latin a
+      '12 TPЛН', // upper-case Latin T, P
+      '12 MЛH', // upper-case Latin M, H
+      '3 τρлн', // Greek tau, rho
+      '5 милиοна', // Greek omicron
+      '12 ЕUR', // Cyrillic Е in a Latin unit
+      'ЕUR 1234',
+      '12 uѕd', // Cyrillic dze
+      '1.2е10', // Cyrillic е in scientific notation
+      '3 mрлн', // italic т read as m
+      '5 мuлиона', // italic и read as u
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    // Through the report door: the look-alike amount cannot reach a text block.
+    const out = bindReport(emit([{ type: 'text', md: 'Изплатени са 3 tрлн лева.' }]), results);
+    expect(out.ok).toBe(false);
+    // Folding only adds scans: prose that merely mixes in Latin words or bare units stays clean.
+    for (const s of [
+      'Данни от OECD и EU за 2023 г.',
+      'CPV кодът и ЕИК на изпълнителя',
+      'Стойност (млн. EUR)',
+      'Стойност в млн. лв.',
+      'суми, изразени във млрд. евро',
+    ]) {
+      expect(findProseNumbers(s), s).toHaveLength(0);
+    }
+  });
+
+  it('sees through invisible characters and combining marks inside a unit (review f/u on #321)', () => {
+    // The reader sees "млн"/"трлн"/"eur" whatever invisible format character (soft hyphen, word joiner,
+    // LRM, ALM) or combining mark sits inside the word, but the contiguous patterns did not.
+    for (const s of [
+      '3 тр\u00adлн лева', // soft hyphen
+      '12 м\u2060лн лева', // word joiner
+      '12 м\u200eлн', // left-to-right mark
+      '12 м\u061cлн', // Arabic letter mark
+      'платени 12 мл\u0301н лева', // combining acute
+      '12 e\u0301ur', // combining acute on a Latin unit
+      '5 mл\u0301н', // a look-alike AND a mark in one word
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    // Ordinary Bulgarian — й, ѝ, a stress mark — stays clean.
+    for (const s of ['Който и да е изпълнител, ѝ се плаща навреме', 'Сумата е голя\u0301ма']) {
+      expect(findProseNumbers(s), s).toHaveLength(0);
+    }
+  });
+
+  it('refuses bidi control characters in every prose slot — an override reorders what the reader sees', () => {
+    // "\u202eнлм\u202c" is stored as "нлм" but DISPLAYS as "млн": no scan of the logical string can
+    // match that, and no prose here needs a bidi control, so the gate refuses them outright.
+    const md = 'Изплатени са 12 \u202eнлм\u202c лева.';
+    expect(findProseNumbers(md)).toHaveLength(0); // the number gate alone cannot see it…
+    for (const out of [
+      bindReport(emit([{ type: 'text', md }]), results),
+      bindReport(emit([{ type: 'callout', title: 'Бележка\u200f', md: 'текст' }]), results),
+      // the display path decodes entities, so an entity-encoded control counts too
+      bindReport(emit([{ type: 'text', md: 'Сума 12 &#x202e;нлм&#x202c; лева' }]), results),
+      bindReport(emit([{ type: 'text', md: 'Сума&rlm; 12' }]), results),
+    ]) {
+      expect(out.ok).toBe(false); // …so the prose gate refuses the control itself
+      if (!out.ok) expect(out.errors.join(' ')).toMatch(/bidi/);
+    }
+  });
+
+  it("does NOT flag a bare млн./млрд. unit (the site's own column-header style carries no number)", () => {
+    // Alone — after punctuation, a line start or a unit PREPOSITION — the abbreviation is a unit,
+    // exactly like "хил.". A noun directly before it ("Стойност млн. €") is the accepted over-flag:
+    // without a complete numeral dictionary it cannot be told apart from "стотина млн.", and the
+    // safe direction is to flag (the model is asked to parenthesise the unit).
+    expect(findProseNumbers('Стойност (млн. €)')).toHaveLength(0);
+    expect(findProseNumbers('Стойност в млн. лв.')).toHaveLength(0);
+    expect(findProseNumbers('Стойност (в млн. €)')).toHaveLength(0);
+    expect(findProseNumbers('суми, изразени във млрд. евро')).toHaveLength(0);
+    expect(findProseNumbers('Похарчено, млрд. лв.')).toHaveLength(0);
+    expect(findProseNumbers('млрд. лв.')).toHaveLength(0);
+    expect(findProseNumbers('Сума (хил. €)')).toHaveLength(0);
+    expect(findProseNumbers('Стойност млн. €')).not.toHaveLength(0); // accepted over-flag (see above)
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [{ key: 'spent_eur', header: 'Похарчено (млн. €)', format: 'money' }],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+  });
+
+  it('does NOT flag ordinary words that merely END in -илион (павилион — a routine tender subject)', () => {
+    // The bare suffix matched "павилиони" and rejected a legitimate title as an unbound number the
+    // model could not rewrite; the suffix is anchored to the numeral prefixes instead (review f/u).
+    expect(findProseNumbers('Доставка на павилиони за автобусни спирки')).toHaveLength(0);
+    expect(findProseNumbers('Павилион на спирката')).toHaveLength(0);
+    expect(findProseNumbers('Илион')).toHaveLength(0);
+    expect(findProseNumbers('маси за билярд')).toHaveLength(0);
+    const out = bindReport(
+      {
+        title: 'Павилиони по спирки — възложители',
+        question: '',
+        blocks: [{ type: 'text', md: 'Няма данни.' }],
+      },
+      results,
+    );
+    expect(out.ok).toBe(true);
   });
 
   it('folds alternative Unicode digit forms a reader still reads as numbers (review #80, red-team R1)', () => {
@@ -583,6 +866,25 @@ describe('sanitizeProse — no raw HTML reaches a public report', () => {
     expect(sanitizeProse('[x](javascript&#58;alert(1))')).not.toMatch(/javascript:/i);
     // an entity-encoded tag is likewise stripped once decoded
     expect(sanitizeProse('&#60;script&#62;alert(1)&#60;/script&#62;')).not.toMatch(/<script/i);
+  });
+
+  it('decodes NAMED HTML entities too — a renderer does (review f/u on #321)', () => {
+    // `&colon;` is the HTML5 name for `:`, and a markdown renderer decodes it inside a link target, so
+    // `javascript&colon;` is the same executable href as `javascript&#58;`.
+    expect(sanitizeProse('[x](javascript&colon;alert(1))')).not.toMatch(/javascript/i);
+    // A named-entity-encoded tag is stripped exactly like the numeric one…
+    expect(sanitizeProse('&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(
+      sanitizeProse('&#60;script&#62;alert(1)&#60;/script&#62;'),
+    );
+    // …also double-encoded (decode to a fixpoint).
+    expect(sanitizeProse('&amp;lt;img src=x onerror=alert(1)&amp;gt;')).not.toMatch(/img|&lt;/i);
+    // STRICT decoding, like a CommonMark renderer: a legacy no-semicolon form stays literal, so a URL
+    // query is not mangled (`&copy=2` would become `©=2` under the browser's legacy rules).
+    expect(sanitizeProse('[източник](https://app.eop.bg/today/1?a=1&copy=2)')).toContain('&copy=2');
+    // Ordinary prose keeps its meaning.
+    expect(sanitizeProse('Ремонт и поддръжка на ВиК &amp; пътища')).toBe(
+      'Ремонт и поддръжка на ВиК & пътища',
+    );
   });
 });
 

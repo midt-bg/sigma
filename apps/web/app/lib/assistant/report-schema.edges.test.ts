@@ -1,6 +1,7 @@
 // Report binding at its edges: a value that is not a finite number never plots, an entity that names no
-// character stays as written, a missing or empty cell binds as null — never `undefined` — and a data block
-// pointing at a result that does not exist is an error the model must fix, not an empty block.
+// character becomes U+FFFD as a renderer shows it, a missing or empty cell binds as null — never
+// `undefined` — and a data block pointing at a result that does not exist is an error the model must fix,
+// not an empty block.
 import { describe, expect, it } from 'vitest';
 import {
   asNumber,
@@ -29,10 +30,10 @@ describe('asNumber — only finite numbers', () => {
 });
 
 describe('sanitizeProse — numeric entities that name no character', () => {
-  it('leaves an out-of-range entity as written', () => {
-    expect(sanitizeProse('а &#1114112; б &#x110000; в &#65; г')).toBe(
-      'а &#1114112; б &#x110000; в A г',
-    );
+  it('turns an out-of-range entity into U+FFFD, as a renderer does, without throwing', () => {
+    // CommonMark/HTML5 decode a reference past U+10FFFF to the replacement character, so the sanitizer
+    // and the number gate follow the page (they used to leave it as written — review f/u on #321).
+    expect(sanitizeProse('а &#1114112; б &#x110000; в &#65; г')).toBe('а \ufffd б \ufffd в A г');
   });
 });
 
