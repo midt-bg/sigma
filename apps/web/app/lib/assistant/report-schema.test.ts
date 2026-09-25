@@ -556,6 +556,23 @@ describe('findProseNumbers', () => {
     // too, so the gate must decode it as well as the lowercase form.
     expect(findProseNumbers('сума &#X31;&#X32; млрд')).not.toHaveLength(0);
     expect(findProseNumbers('Сумата &#X31;&#X32;&#X33;&#X34;&#X35; е голяма')).not.toHaveLength(0);
+    // NAMED references decode in a renderer as well — `&nbsp;` joins a number to its unit, `&shy;` is
+    // an invisible soft hyphen, `&euro;` is the currency (review f/u on #321).
+    for (const s of [
+      '12&nbsp;млн лева',
+      '3 т&shy;рлн лева',
+      '12 &euro;',
+      '&euro;12',
+      '12&amp;nbsp;млн лева', // double-encoded: decode to a fixpoint
+      '95&percnt; от договорите',
+      '12&period;000&period;000 лева',
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    expect(
+      bindReport(emit([{ type: 'text', md: 'Изплатени са 12&nbsp;млн лева.' }]), results).ok,
+    ).toBe(false);
+    expect(findProseNumbers('ВиК &amp; пътища, &bdquo;Софийска вода&ldquo;')).toHaveLength(0);
   });
 
   it('flags spelled-out thousands and non-€/лв currencies (review #80, follow-up)', () => {
@@ -702,8 +719,9 @@ describe('findProseNumbers', () => {
     for (const out of [
       bindReport(emit([{ type: 'text', md }]), results),
       bindReport(emit([{ type: 'callout', title: 'Бележка\u200f', md: 'текст' }]), results),
-      // the display path decodes numeric entities, so an entity-encoded override counts too
+      // the display path decodes entities, so an entity-encoded control counts too
       bindReport(emit([{ type: 'text', md: 'Сума 12 &#x202e;нлм&#x202c; лева' }]), results),
+      bindReport(emit([{ type: 'text', md: 'Сума&rlm; 12' }]), results),
     ]) {
       expect(out.ok).toBe(false); // …so the prose gate refuses the control itself
       if (!out.ok) expect(out.errors.join(' ')).toMatch(/bidi/);
@@ -848,6 +866,25 @@ describe('sanitizeProse — no raw HTML reaches a public report', () => {
     expect(sanitizeProse('[x](javascript&#58;alert(1))')).not.toMatch(/javascript:/i);
     // an entity-encoded tag is likewise stripped once decoded
     expect(sanitizeProse('&#60;script&#62;alert(1)&#60;/script&#62;')).not.toMatch(/<script/i);
+  });
+
+  it('decodes NAMED HTML entities too — a renderer does (review f/u on #321)', () => {
+    // `&colon;` is the HTML5 name for `:`, and a markdown renderer decodes it inside a link target, so
+    // `javascript&colon;` is the same executable href as `javascript&#58;`.
+    expect(sanitizeProse('[x](javascript&colon;alert(1))')).not.toMatch(/javascript/i);
+    // A named-entity-encoded tag is stripped exactly like the numeric one…
+    expect(sanitizeProse('&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(
+      sanitizeProse('&#60;script&#62;alert(1)&#60;/script&#62;'),
+    );
+    // …also double-encoded (decode to a fixpoint).
+    expect(sanitizeProse('&amp;lt;img src=x onerror=alert(1)&amp;gt;')).not.toMatch(/img|&lt;/i);
+    // STRICT decoding, like a CommonMark renderer: a legacy no-semicolon form stays literal, so a URL
+    // query is not mangled (`&copy=2` would become `©=2` under the browser's legacy rules).
+    expect(sanitizeProse('[източник](https://app.eop.bg/today/1?a=1&copy=2)')).toContain('&copy=2');
+    // Ordinary prose keeps its meaning.
+    expect(sanitizeProse('Ремонт и поддръжка на ВиК &amp; пътища')).toBe(
+      'Ремонт и поддръжка на ВиК & пътища',
+    );
   });
 });
 

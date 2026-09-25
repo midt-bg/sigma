@@ -95,6 +95,9 @@ importers:
       ai:
         specifier: ^6.0.208
         version: 6.0.208(zod@4.4.3)
+      entities:
+        specifier: ^8.0.0
+        version: 8.0.0
       isbot:
         specifier: ^5.1.36
         version: 5.1.40

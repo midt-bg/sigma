@@ -8,7 +8,10 @@
 // HTML — closes the stored-XSS vector on the public /reports/:id, spec §7) and must not carry
 // material numbers.
 //
-// This module is pure (no deps, no bindings) so it is unit-testable and deploy-independent.
+// This module is pure (no bindings; its one dependency, `entities`, is a pure HTML-entity decoder) so it
+// is unit-testable and deploy-independent.
+
+import { decodeHTMLStrict } from 'entities';
 
 export type CellFormat = 'money' | 'number' | 'percent' | 'date' | 'text';
 export type EntityKind = 'company' | 'authority' | 'contract';
@@ -201,9 +204,10 @@ function stripTags(s: string): string {
 // Until the Phase-2 markdown renderer (no raw-HTML passthrough) lands, this strip is the SOLE barrier
 // against markup in the public report (spec §7/§9), so it must hold on its own.
 export function sanitizeProse(md: string): string {
-  // Decode numeric HTML entities first so an entity-encoded tag or scheme (`&#60;script&#62;`,
-  // `javascript&#58;…`) is seen by the tag strip and the scheme defang below (review #80, ydimitrof).
-  let out = stripTags(decodeNumericEntities(md));
+  // Decode HTML entities first so an entity-encoded tag or scheme (`&#60;script&#62;`, `&lt;script&gt;`,
+  // `javascript&#58;…`, `javascript&colon;…`) is seen by the tag strip and the scheme defang below
+  // (review #80, ydimitrof; named entities review f/u on #321).
+  let out = stripTags(decodeEntities(md));
   // Defang dangerous URL schemes a markdown link/image target could carry — `[t](javascript:…)` is NOT
   // inside <…>, so the tag strip misses it, and a markdown renderer would emit an executable href
   // (review #80). javascript:/vbscript: are never legitimate prose (and could autolink), so defang them
@@ -288,26 +292,28 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   /(?:\$|usd)\s*\d[\d.,\s]{0,40}/giu, // $1234, USD 1 234 (currency-first)
 ];
 
-const codePoint = (n: number, fallback: string): string =>
-  Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : fallback;
-
-// Decode numeric HTML entities (`&#58;` / `&#x3a;` / `&#X3A;`) to their character. A markdown renderer
-// decodes these, so the sanitizer must see through them before stripping tags / defanging schemes —
-// otherwise an entity-encoded tag or scheme (`&#60;script&#62;`, `javascript&#58;…`) survives
-// sanitizeProse, the SOLE pre-renderer barrier — and the number gate must decode them before scanning
-// (review #80, ydimitrof). The hex form accepts BOTH `&#x..;` and `&#X..;`: HTML5 numeric references are
-// case-insensitive on the `x`, so an uppercase `&#X31;` is decoded by renderers too and a case-sensitive
-// `x`-only match let it bypass both the number gate and the tag strip (review #80, follow-up).
-function decodeNumericEntities(s: string): string {
+// Decode HTML character references — numeric (`&#58;` / `&#x3a;` / `&#X3A;`) AND every HTML5 named one
+// (`&colon;`, `&nbsp;`, `&shy;`, `&euro;`, `&lt;`, …) — to their characters. A markdown renderer decodes
+// these, so the sanitizer must see through them before stripping tags / defanging schemes — otherwise an
+// entity-encoded tag or scheme (`&#60;script&#62;`, `javascript&colon;…`) survives sanitizeProse, the
+// SOLE pre-renderer barrier — and the number gate must decode them before scanning (review #80,
+// ydimitrof). Numeric-only decoding let `12&nbsp;млн`, `3 т&shy;рлн`, `12 &euro;` and
+// `javascript&colon;` through (review f/u on #321); the named table is the complete HTML5 set, from
+// `entities` (the decoder parse5/jsdom use). STRICT mode — only `;`-terminated references — because
+// that is what a CommonMark renderer decodes: the browser's legacy no-semicolon forms (`&copy=2` in a
+// URL query) stay literal on the page, so decoding them here would make the gate and the page disagree.
+// One value differs from micromark: a numeric reference to a C0/C1 control or a noncharacter follows
+// HTML5 (`&#128;` → "€") where micromark emits U+FFFD — but sanitizeProse decodes BEFORE the renderer,
+// so the page shows the same character the gate scans, and none of these can form or hide a digit.
+function decodeEntities(s: string): string {
   // Decode to a FIXPOINT, not a single pass: a double-encoded entity (`1&#38;#50;000` → `1&#50;000` →
   // `12000`) survives one pass — it passes the number gate as `1&#50;000` while a renderer decodes it the
-  // rest of the way to a fabricated `12000` (review #80, ydimitrof). Each pass turns an entity into one
-  // char so the string strictly shrinks and converges; the iteration bound is a cheap pathology backstop.
+  // rest of the way to a fabricated `12000` (review #80, ydimitrof). Each pass turns every reference into
+  // fewer chars than it spelled, so the string strictly shrinks and converges; the iteration bound is a
+  // cheap pathology backstop.
   let prev = s;
   for (let i = 0; i < 8; i++) {
-    const next = prev
-      .replace(/&#(\d{1,7});/g, (m, d) => codePoint(Number(d), m))
-      .replace(/&#[xX]([0-9a-fA-F]{1,6});/g, (m, h) => codePoint(parseInt(h, 16), m));
+    const next = decodeHTMLStrict(prev);
     if (next === prev) break;
     prev = next;
   }
@@ -337,14 +343,15 @@ function foldDigits(text: string): string {
 // Markdown can split a number from its magnitude word (`**12** **млрд.**` → "12 млрд."); a renderer
 // shows no invisible format character — zero-width space/joiners, BOM, soft hyphen, word joiner, bidi
 // marks, every \p{Cf} (`1​234​567` → "1234567", `тр\u00adлн` → "трлн"; the class was only the first
-// four until review f/u on #321) — and decodes numeric HTML entities (`12&#48;&#48;&#48;` → "12000").
+// four until review f/u on #321) — and decodes HTML entities (`12&#48;&#48;&#48;` → "12000",
+// `12&nbsp;млн` → "12 млн").
 // Decode/strip those, drop emphasis, collapse whitespace (review #80).
 // NB: stripTags here mirrors the display path (sanitizeProse → stripTags). Without it a model can split a
 // number with inert tags (`12<x>345<y>678`): the digit run never forms for the patterns above, the gate
 // passes, yet sanitizeProse removes the tags and re-joins it to a fabricated "12345678" on the page — the
 // §9.1 vector. Decode entities → strip tags → fold digits, so the gate scans the displayed string (#80 f/u).
 function deMarkdown(text: string): string {
-  return foldDigits(stripTags(decodeNumericEntities(text)))
+  return foldDigits(stripTags(decodeEntities(text)))
     .replace(/\p{Cf}/gu, '') // invisible format characters (zero-width, soft hyphen, word joiner, …)
     .replace(/[*_`~\\]/g, '')
     .replace(/\s+/g, ' ');
@@ -470,7 +477,7 @@ function gateProse(value: string, label: string, errors: string[]): void {
     errors.push(`${label}: too long (${value.length} chars); keep prose concise`);
     return; // do NOT scan an over-long string (ReDoS guard)
   }
-  if (BIDI_CONTROL.test(decodeNumericEntities(value))) {
+  if (BIDI_CONTROL.test(decodeEntities(value))) {
     errors.push(`${label}: bidi control characters are not allowed`);
   }
   const nums = findProseNumbers(value);
