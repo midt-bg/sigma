@@ -335,24 +335,116 @@ function foldDigits(text: string): string {
 
 // Normalise prose to what a reader/renderer actually sees, so the number gate is not blinded by markup.
 // Markdown can split a number from its magnitude word (`**12** **млрд.**` → "12 млрд."); a renderer
-// collapses zero-width separators (`1​234​567` → "1234567") and decodes numeric HTML entities
-// (`12&#48;&#48;&#48;` → "12000"). Decode/strip those, drop emphasis, collapse whitespace (review #80).
+// shows no invisible format character — zero-width space/joiners, BOM, soft hyphen, word joiner, bidi
+// marks, every \p{Cf} (`1​234​567` → "1234567", `тр\u00adлн` → "трлн"; the class was only the first
+// four until review f/u on #321) — and decodes numeric HTML entities (`12&#48;&#48;&#48;` → "12000").
+// Decode/strip those, drop emphasis, collapse whitespace (review #80).
 // NB: stripTags here mirrors the display path (sanitizeProse → stripTags). Without it a model can split a
 // number with inert tags (`12<x>345<y>678`): the digit run never forms for the patterns above, the gate
 // passes, yet sanitizeProse removes the tags and re-joins it to a fabricated "12345678" on the page — the
 // §9.1 vector. Decode entities → strip tags → fold digits, so the gate scans the displayed string (#80 f/u).
 function deMarkdown(text: string): string {
   return foldDigits(stripTags(decodeNumericEntities(text)))
-    .replace(/[\u200b-\u200d\ufeff]/g, '') // zero-width space / non-joiner / joiner / BOM
+    .replace(/\p{Cf}/gu, '') // invisible format characters (zero-width, soft hyphen, word joiner, …)
     .replace(/[*_`~\\]/g, '')
     .replace(/\s+/g, ' ');
+}
+
+// Every unit pattern above is spelled in ONE script, so a single look-alike letter from another script
+// broke the match while the page still reads the unit: Latin t in "tрлн", Latin o in "милиoна", Greek
+// τρ in "τρлн", Cyrillic Е in "ЕUR", Cyrillic е in "1.2е10" (review f/u on #321). findProseNumbers
+// therefore also scans copies with the look-alikes folded into the script the patterns use. The italic
+// map adds the twins a renderer shows for `*…*` — italic т reads as m, и as u, п as n, д as g — so it
+// is a separate copy (m cannot fold to both м and т at once). Folding only ADDS scans, so it can never
+// remove a hit; and Latin text cannot fold into a false Cyrillic unit, because almost every unit has a
+// letter with no Latin twin (л, ц, ъ, я) — only an all-caps "EBPO" after a digit or "HA CTO" could.
+const TO_CYRILLIC: Readonly<Record<string, string>> = {
+  a: 'а',
+  c: 'с',
+  e: 'е',
+  k: 'к',
+  m: 'м',
+  o: 'о',
+  p: 'р',
+  t: 'т',
+  x: 'х',
+  y: 'у',
+  A: 'А',
+  B: 'В',
+  C: 'С',
+  E: 'Е',
+  H: 'Н',
+  K: 'К',
+  M: 'М',
+  O: 'О',
+  P: 'Р',
+  T: 'Т',
+  X: 'Х',
+  Y: 'У',
+  α: 'а',
+  κ: 'к',
+  ο: 'о',
+  ρ: 'р',
+  τ: 'т',
+  χ: 'х',
+  Α: 'А',
+  Β: 'В',
+  Ε: 'Е',
+  Η: 'Н',
+  Κ: 'К',
+  Μ: 'М',
+  Ο: 'О',
+  Ρ: 'Р',
+  Τ: 'Т',
+  Υ: 'У',
+  Χ: 'Х',
+};
+const TO_CYRILLIC_ITALIC: Readonly<Record<string, string>> = {
+  ...TO_CYRILLIC,
+  g: 'д',
+  m: 'т',
+  n: 'п',
+  u: 'и',
+};
+// Only the letters of the Latin-script units (eur, usd, the `e` of scientific notation) need a fold. A
+// Cyrillic е between digits ("5е-3") now reads as scientific notation — the over-flag the Latin form
+// always had, and the safe direction.
+const TO_LATIN: Readonly<Record<string, string>> = {
+  е: 'e',
+  Е: 'E',
+  ѕ: 's',
+  Ѕ: 'S',
+  ԁ: 'd',
+  Ε: 'E',
+  υ: 'u',
+};
+
+const CONFUSABLE_FOLDS = [TO_CYRILLIC, TO_CYRILLIC_ITALIC, TO_LATIN].map((map) => ({
+  re: new RegExp(`[${Object.keys(map).join('')}]`, 'gu'),
+  map,
+}));
+
+function foldConfusables(text: string): string[] {
+  return CONFUSABLE_FOLDS.map(({ re, map }) => text.replace(re, (ch) => map[ch]!));
+}
+
+// A reader looks straight through a combining mark: "мл\u0301н" and "e\u0301ur" still read as
+// "млн"/"eur" (review f/u on #321). NFD detaches an accent from its base letter so it can go; that
+// also turns й into и, which no unit pattern contains, so the copy only ever gains hits.
+function stripMarks(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '');
 }
 
 /** Return the material-number tokens found in prose (empty ⇒ clean). Used to gate text/callout. */
 export function findProseNumbers(text: string): string[] {
   const hits: string[] = [];
-  // Scan the raw text AND a markdown-stripped copy so neither plain nor markup-split numbers slip.
-  for (const scan of [text, deMarkdown(text)]) {
+  // Scan the raw text AND a markdown-stripped copy so neither plain nor markup-split numbers slip, plus
+  // that displayed copy with its combining marks dropped and its look-alike letters folded (stripMarks,
+  // foldConfusables). Folding the mark-free copy covers the marked one too: dropping a mark never
+  // removes a letter a pattern needs. A copy identical to another is scanned once.
+  const displayed = deMarkdown(text);
+  const plain = stripMarks(displayed);
+  for (const scan of new Set([text, displayed, plain, ...foldConfusables(plain)])) {
     for (const re of PROSE_NUMBER_PATTERNS) {
       for (const m of scan.matchAll(re)) hits.push(m[0].trim());
     }
@@ -367,10 +459,19 @@ const MAX_PROSE_LEN = 2000;
 
 // THE single material-number gate for every model-authored prose slot (folds the previously open-coded
 // copies — a new slot can no longer forget it, review #80). `label` is the slot-specific error prefix.
+// Bidi controls (LRM/RLM/ALM, embeddings, overrides, isolates) change the ORDER a reader sees letters
+// in: "\u202eнлм\u202c" is stored as "нлм" but displays as "млн", so no scan of the stored string can
+// catch it. No prose here needs one, so every prose slot refuses them outright — checked after numeric
+// entities are decoded, since the display path decodes `&#x202e;` too (review f/u on #321).
+const BIDI_CONTROL = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+
 function gateProse(value: string, label: string, errors: string[]): void {
   if (value.length > MAX_PROSE_LEN) {
     errors.push(`${label}: too long (${value.length} chars); keep prose concise`);
     return; // do NOT scan an over-long string (ReDoS guard)
+  }
+  if (BIDI_CONTROL.test(decodeNumericEntities(value))) {
+    errors.push(`${label}: bidi control characters are not allowed`);
   }
   const nums = findProseNumbers(value);
   if (nums.length) errors.push(`${label} (${nums.join(', ')})`);
