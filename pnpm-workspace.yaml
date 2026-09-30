@@ -21,10 +21,12 @@ overrides:
   #                 CVSS 7.4, plus GHSA-8xcm-r25x-g524, GHSA-jr45-8vmc-qm54, GHSA-m8rv-5g2x-5cg5,
   #                 GHSA-v3r7-h72x-cjcm), all fixed in 7.29.0. The range already admitted it; the
   #                 lockfile had simply not moved, so the audit gate went red on main.
+  #   undici <7.29.1 — ten further advisories against 7.29.0 (up to CVSS 7.5, GHSA-rfgv-xxqx-mfg5),
+  #                 all fixed in 7.29.1. Same path, same reach: miniflare's local fetch only.
   ws: '^8.21.0'
   vite@7: '^7.3.5'
   vite@8: '^8.0.16'
-  undici: '^7.29.0'
+  undici: '^7.29.1'
   #   @babel/core <7.29.6 — arbitrary file read via sourceMappingURL (GHSA-4x5r-pxfx-6jf8);
   #                 dev/build-time only (via @react-router/dev), never ships to the Worker.
   '@babel/core': '^7.29.6'
