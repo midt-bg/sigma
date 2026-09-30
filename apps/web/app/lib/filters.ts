@@ -192,6 +192,7 @@ export const PARAM_ORDER = [
   'bids', // /contracts single-bid filter
   'value',
   'stake', // /conflicts
+  'role', // /conflicts
   'signal', // /conflicts
   'institution', // /conflicts
   'authority',

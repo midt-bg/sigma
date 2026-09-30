@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
 import {
   companyProfileHref,
+  applyRoleScope,
   conflictListFilters,
   contractHref,
   declaredStakeNoun,
@@ -528,13 +529,17 @@ describe('/conflicts list filters', () => {
       ),
     ).toEqual({
       stake: 'family',
+      role: 'direct',
       signals: ['own'],
       institutions: ['РУСЕ'],
       sort: 'total',
       q: 'Иван',
     });
+    expect(conflictListFilters(sp('role=all')).role).toBe('all');
+    expect(conflictListFilters(sp('role=bogus')).role).toBe('direct');
     expect(conflictListFilters(sp('stake=x&sort=y'))).toEqual({
       stake: null,
+      role: 'direct',
       signals: [],
       institutions: [],
       sort: 'period',
@@ -683,4 +688,55 @@ it('reads the registry-role stake filter and keeps registry rows out of the own/
   expect(f('registry')).toEqual(['reg']);
   expect(f('self')).toEqual([own.officialSlug]);
   expect(f(null)).toEqual([own.officialSlug, 'reg']);
+});
+
+describe('applyRoleScope', () => {
+  const base: ConflictPersonRow = {
+    official: 'Иван Минев',
+    officialSlug: 'a',
+    institution: null,
+    position: null,
+    companyCount: 2,
+    soleCompany: null,
+    contractCount: 3,
+    contractValueEur: 900,
+    contemporaneousValueEur: 900,
+    stakeKind: 'registry',
+    ownInstitution: false,
+    hasContemporaneous: true,
+  };
+  const company = (eik: string, registryRole: 'owner' | 'manager' | 'board') => ({
+    company: eik,
+    eik,
+    self: 0,
+    family: 0,
+    registry: 1,
+    registryRole,
+  });
+  const direct = {
+    companyCount: 1,
+    contractCount: 1,
+    contractValueEur: 40,
+    contemporaneousValueEur: null,
+    hasContemporaneous: false,
+  };
+  it('keeps declared rows, drops a seat-only row, and trims one with both to what it owns or manages', () => {
+    const declared = { ...base, stakeKind: 'self' as const, officialSlug: 'd' };
+    const seat = {
+      ...base,
+      officialSlug: 's',
+      companies: [company('1', 'board')],
+      direct: null,
+    };
+    const both = {
+      ...base,
+      officialSlug: 'b',
+      companies: [company('2', 'manager'), company('3', 'board')],
+      direct,
+    };
+    const scoped = applyRoleScope([declared, seat, both], 'direct');
+    expect(scoped.map((r) => r.officialSlug)).toEqual(['d', 'b']);
+    expect(scoped[1]).toMatchObject({ ...direct, companies: [company('2', 'manager')] });
+    expect(applyRoleScope([declared, seat, both], 'all')).toEqual([declared, seat, both]);
+  });
 });

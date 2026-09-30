@@ -19,6 +19,7 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'page', // keyed unconditionally — harmless over-key when there's no cursor
   'procedure',
   'q',
+  'role', // /conflicts — ownership and management, or also the seats on collegial bodies
   'sector',
   'signal', // /conflicts — own institution / in the declared window
   'sort',

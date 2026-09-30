@@ -323,14 +323,46 @@ it('counts the governing body of a private winner, not the seats that only overs
       INSERT INTO tenders VALUES('t','a');
       INSERT INTO contracts VALUES('c4','b3','t','2020-01-01',7);`);
 
-    for (const role of ['manager', 'board_of_directors', 'management_board', 'governing_body']) {
+    const manager = await rolesFor('manager');
+    expect(manager).toHaveLength(1);
+    expect(manager[0]?.companies?.[0]).toMatchObject({ eik: '333333333', registryRole: 'manager' });
+    expect(manager[0]?.direct).toMatchObject({ companyCount: 1, contractValueEur: 7 });
+    // A seat on a collegial body is listed, named as such, and has no figures without the seats.
+    for (const role of ['board_of_directors', 'management_board', 'governing_body']) {
       const rows = await rolesFor(role);
       expect(rows, role).toHaveLength(1);
       expect(rows[0]?.companies?.[0], role).toMatchObject({
         eik: '333333333',
-        registryRole: 'manager',
+        registryRole: 'board',
       });
+      expect(rows[0]?.direct, role).toBeNull();
     }
+    // Ownership in one company and a seat in another: the figures without the seats keep the first only.
+    db.exec(`INSERT INTO bidders VALUES('b4','444444444','Собствено',NULL);
+      INSERT INTO company_totals VALUES('b4',1);
+      INSERT INTO registry_deeds VALUES('444444444','ok','2026-09-01');
+      INSERT INTO contracts VALUES('c5','b4','t','2020-03-01',40);`);
+    const mixed = await (async () => {
+      db.exec(`DELETE FROM registry_roles;
+        INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES
+          ('${indent}','person','board_of_directors','333333333'),('${indent}','person','partner','444444444');`);
+      return await getRegistryRolePersonRows(d1FromSqlite(db));
+    })();
+    expect(mixed[0]).toMatchObject({
+      companyCount: 2,
+      contractValueEur: 47,
+      direct: {
+        companyCount: 1,
+        contractCount: 1,
+        contractValueEur: 40,
+        contemporaneousValueEur: 40,
+        hasContemporaneous: true,
+      },
+    });
+    expect(mixed[0]?.companies?.map((c) => [c.eik, c.registryRole])).toEqual([
+      ['444444444', 'owner'],
+      ['333333333', 'board'],
+    ]);
     for (const role of ['supervisory_board', 'controlling_board', 'procurator', 'branch_manager'])
       expect(await rolesFor(role), role).toEqual([]);
   } finally {

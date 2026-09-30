@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRoutesStub } from 'react-router';
 import type { ConflictLink } from '@sigma/api-contract';
 import {
+  type ConflictPersonRow,
   groupByPerson,
   conflictListFilters,
   filterConflictRows,
@@ -106,6 +107,7 @@ async function renderConflicts(
   links: ConflictLink[],
   authority: { slug: string; name: string } | null = null,
   url = '/conflicts',
+  registryRows: ConflictPersonRow[] = [],
 ) {
   const Stub = createRoutesStub([
     {
@@ -114,7 +116,7 @@ async function renderConflicts(
       loader: ({ request }) => {
         const sp = new URL(request.url).searchParams;
         const filters = conflictListFilters(sp);
-        const all = groupByPerson(links);
+        const all = [...groupByPerson(links), ...registryRows];
         const rows = sortConflictRows(filterConflictRows(all, filters), filters.sort);
         const page = Number(sp.get('page') || 1);
         return {
@@ -130,6 +132,7 @@ async function renderConflicts(
             own: all.filter((r) => r.ownInstitution).length,
             window: all.filter((r) => r.hasContemporaneous).length,
             institutions: institutionOptions(all, filters.institutions),
+            role: { direct: all.length - 1, all: all.length },
           },
         };
       },
@@ -221,6 +224,39 @@ describe('/conflicts route — render', () => {
       ),
     ).toEqual(['period', 'total', 'contracts']);
     expect(sorts.filter((a) => a.getAttribute('aria-current') === 'true')).toEqual([sorts[1]]);
+  });
+
+  // The seats on collegial bodies are a second step of the same choice, not a hidden box: the default says
+  // what it holds and how many, and a seat is named as a seat wherever it is shown.
+  it('offers the role scope in two steps and names a seat as a seat', async () => {
+    const seat: ConflictPersonRow = {
+      official: 'Член Тестов',
+      officialSlug: 'seat',
+      institution: null,
+      position: null,
+      companyCount: 1,
+      companies: [
+        { company: 'ТЕСТ АД', eik: '555', self: 0, family: 0, registry: 1, registryRole: 'board' },
+      ],
+      soleCompany: null,
+      contractCount: 1,
+      contractValueEur: 10,
+      contemporaneousValueEur: null,
+      stakeKind: 'registry',
+      ownInstitution: false,
+      hasContemporaneous: false,
+      direct: null,
+    };
+    await renderConflicts([link()], null, '/conflicts?role=all&stake=registry', [seat]);
+    const group = container.querySelector('details[aria-label="Роля в дружеството"]')!;
+    const labels = [...group.querySelectorAll('label')].map((l) => l.textContent!.trim());
+    expect(labels).toEqual([
+      'собственост или управление1',
+      'всички роли, включително членство в съвет2',
+    ]);
+    expect(group.querySelector<HTMLInputElement>('input[value="all"]')!.checked).toBe(true);
+    expect(text()).toContain('членство в съвет по Търговския регистър');
+    expect(text()).toContain('или като член на съвет на директорите');
   });
 
   it('says which institution the list is narrowed to, and how to widen it', async () => {
