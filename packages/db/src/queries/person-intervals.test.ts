@@ -148,3 +148,36 @@ it('has no band without an office, or without a tie', () => {
     }),
   ).toEqual({});
 });
+
+it('ignores a role it cannot place in time, and ties a declarant the register does not identify by the declarations alone', async () => {
+  const role = (over: Partial<Parameters<typeof overlapBands>[0]['roles'][number]> = {}) => ({
+    eik: '1',
+    addedOn: '2020-01-01',
+    removedOn: null,
+    removedSet: 0,
+    uncertainAfter: null,
+    observedOn: '2021-12-31',
+    ...over,
+  });
+  const office = {
+    officeYears: ['2020', '2021'],
+    bounds: [{ opened: '2020-01-01', closed: '2021-12-31' }],
+    declared: [],
+  };
+  // No start, an end the register records but no date can be read from, an end before the start.
+  expect(overlapBands({ ...office, roles: [role({ addedOn: null })] })).toEqual({});
+  expect(overlapBands({ ...office, roles: [role({ removedSet: 1, removedOn: null })] })).toEqual(
+    {},
+  );
+  expect(overlapBands({ ...office, roles: [role({ uncertainAfter: '2019-06-01' })] })).toEqual({});
+  // Two roles from the same day: the longer one decides where the band ends.
+  expect(
+    overlapBands({
+      ...office,
+      roles: [role({ observedOn: '2021-03-31' }), role({ observedOn: '2020-06-30' })],
+    }),
+  ).toEqual({ '1': [['2020-01-01', '2021-03-31']] });
+  // Without a registry identity the person has no roles: only the declared stake ties them.
+  const { bands } = await getTimelineIntervals(fixture(), null, ['official', 'alias']);
+  expect(Object.keys(bands)).toEqual(['222222222']);
+});

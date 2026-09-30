@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { ConflictLink, PersonDeclaration, PersonRole } from '@sigma/api-contract';
 import type { InterestObservation, TimelineContracts } from '@sigma/db';
 import type { LoadedPersonProfile } from './person-profile.server';
-import { emptyActivity } from './person-profile.test-support';
+import { emptyActivity, emptyIntervals } from './person-profile.test-support';
 import {
   insideSpans,
   officeSpans,
@@ -101,6 +101,7 @@ function profile(over: {
     declarations: over.declarations ?? [],
     activity: emptyActivity,
     totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],

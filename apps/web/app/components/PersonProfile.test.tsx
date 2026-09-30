@@ -17,6 +17,7 @@ import { money } from '@sigma/shared';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { layoutTies } from '../lib/tie-layout.server';
 import { PersonProfile } from './PersonProfile';
+import { emptyIntervals } from '../lib/person-profile.test-support';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -122,6 +123,7 @@ function profile(over: Partial<LoadedPersonProfile> = {}): LoadedPersonProfile {
     declarations: [],
     activity,
     totals: { companies: 1, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: layoutTies(person.network),
     aliases: [],
     relatives: [],
@@ -260,6 +262,7 @@ describe('PersonProfile', () => {
         person: null,
         name: link.official,
         links: [link],
+        timelineIntervals: emptyIntervals,
         tieLayout: null,
         aliases: [],
         relatives: [],

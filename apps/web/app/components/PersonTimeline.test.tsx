@@ -5,7 +5,7 @@ import { createRoutesStub } from 'react-router';
 import { expect, it, vi } from 'vitest';
 import type { ConflictLink } from '@sigma/api-contract';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
-import { emptyActivity } from '../lib/person-profile.test-support';
+import { emptyActivity, emptyIntervals } from '../lib/person-profile.test-support';
 import { timelineCompanies, type TimelineCompany } from '../lib/person-timeline';
 import { PersonProfile } from './PersonProfile';
 import { PersonTimeline } from './PersonTimeline';
@@ -107,6 +107,7 @@ it('shows one company for multiple source identities, sequential sections and hi
     },
     activity: emptyActivity,
     totals: { companies: 1, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -324,6 +325,7 @@ it('puts offices and public enterprises under „Заемани длъжност
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
     totals: { companies: 2, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -364,6 +366,7 @@ it('renders nothing when there are no dated facts or companies', () => {
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
     totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -393,6 +396,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
     totals: { companies: 1, contracts: 3, valueEur: 100, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],
