@@ -5,7 +5,7 @@ import { createRoutesStub } from 'react-router';
 import { expect, it, vi } from 'vitest';
 import type { ConflictLink } from '@sigma/api-contract';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
-import { emptyActivity } from '../lib/person-profile.test-support';
+import { emptyActivity, emptyIntervals } from '../lib/person-profile.test-support';
 import { timelineCompanies, type TimelineCompany } from '../lib/person-timeline';
 import { PersonProfile } from './PersonProfile';
 import { PersonTimeline } from './PersonTimeline';
@@ -107,6 +107,7 @@ it('shows one company for multiple source identities, sequential sections and hi
     },
     activity: emptyActivity,
     totals: { companies: 1, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -324,6 +325,7 @@ it('puts offices and public enterprises under „Заемани длъжност
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
     totals: { companies: 2, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -364,6 +366,7 @@ it('renders nothing when there are no dated facts or companies', () => {
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
     totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -393,6 +396,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
     totals: { companies: 1, contracts: 3, valueEur: 100, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -516,5 +520,211 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     } else {
       delete (HTMLElement.prototype as Partial<HTMLElement>).scrollBy;
     }
+  }
+});
+
+// The timeline as intervals. The band sits under every row of its company, the office is drawn from its
+// declarations, and each procurement is a span from its announcement to its signing.
+it('draws the overlap band, the office and each procurement from announcement to signing', () => {
+  const eik = '123456789';
+  const declaration = (id: string, year: string, type: string, declaredOn: string | null) => ({
+    id,
+    year,
+    template: 'assets',
+    type,
+    declaredOn,
+    submittedOn: null,
+    institution: 'Община Тест',
+    position: 'Съветник',
+    url: `https://register.cacbg.bg/${id}.xml`,
+    companyEiks: [eik],
+  });
+  const p = {
+    person: {
+      slug: 'x',
+      name: 'ИВАН ПЕТРОВ ТЕСТОВ',
+      roles: [
+        {
+          company: { name: 'ТЕСТ ГРУП ЕООД', eik, href: `/companies/${eik}` },
+          role: 'manager',
+          share: null,
+          sharePct: null,
+          addedOn: '2020-02-01',
+          removedOn: null,
+          entryNumber: 'e1',
+          fetchedAt: '2025-03-10T08:00:00Z',
+        },
+      ],
+      companies: 1,
+      wonEur: 0,
+      asOf: '2025-03-10',
+      network: { center: null, nodes: [], edges: [], omitted: 0 },
+    },
+    name: 'Иван Петров Тестов',
+    links: [],
+    declarations: [
+      declaration('d21', '2021', 'Entry', '2021-04-20'),
+      declaration('d22', '2022', 'Annualy', '2023-05-10'),
+    ],
+    timeline: {
+      reads: [{ eik, asOf: '2025-03-10T08:00:00Z' }],
+      buyers: [],
+      institutionProfiles: [{ institution: 'Община Тест', authorityId: 'auth:1' }],
+      observations: [],
+      contracts: [
+        {
+          eik,
+          company: 'ТЕСТ ГРУП ЕООД',
+          year: '2022',
+          contracts: 3,
+          role: 3,
+          declared: 0,
+          tied: 1,
+          eligible: 3,
+          valueEur: 300,
+        },
+      ],
+    },
+    timelineIntervals: {
+      bands: { [eik]: [['2021-01-01', '2022-12-31']] },
+      declared: [],
+      procurements: [
+        {
+          id: 'c1',
+          eik,
+          subject: 'Ремонт',
+          authority: 'Община Тест',
+          authorityId: 'auth:1',
+          announcedAt: '2022-03-01',
+          signedAt: '2022-05-01',
+          valueEur: 100,
+          bids: 1,
+          tied: true,
+        },
+        {
+          id: 'c2',
+          eik,
+          subject: 'Доставка',
+          authority: 'Друга община',
+          authorityId: 'auth:2',
+          announcedAt: '2022-10-01',
+          signedAt: '2023-02-01',
+          valueEur: 100,
+          bids: 4,
+          tied: false,
+        },
+        {
+          id: 'c3',
+          eik,
+          subject: null,
+          authority: 'Друга община',
+          authorityId: 'auth:2',
+          announcedAt: null,
+          signedAt: '2024-01-15',
+          valueEur: null,
+          bids: null,
+          tied: false,
+        },
+      ],
+    },
+    activity: emptyActivity,
+    totals: { companies: 1, contracts: 3, valueEur: 300, declaredCount: 0, declaredEur: null },
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as unknown as LoadedPersonProfile;
+  const companies = timelineCompanies(p);
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={companies} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub />));
+    const company = el.querySelector('.person-time-company')!;
+    // The band under every row of the company — the role, the contracts and the procurements' one lane —
+    // so the column stays unbroken.
+    expect(company.querySelectorAll('.time-band')).toHaveLength(3);
+    expect(el.querySelectorAll('.time-lane .time-band')).toHaveLength(1);
+    expect(el.querySelector('.person-time')!.getAttribute('data-band-mismatch')).toBe('0');
+    // The office: 2021 anchored by the entry filing, the end not known.
+    const office = el.querySelector('.time-institution .time-office')!;
+    expect(office.getAttribute('aria-label')).toContain('встъпителна декларация 20.04.2021');
+    expect(office.getAttribute('aria-label')).toContain('краят не е известен');
+    // Always drawn: there is nothing to open.
+    expect(el.querySelector('.time-toggle, .person-time button')).toBeNull();
+    const marks = [...el.querySelectorAll<HTMLAnchorElement>('.time-procurement')];
+    expect(marks.map((m) => m.className.split(' ')[1])).toEqual(['tied', 'announced', 'context']);
+    expect(marks[0]!.getAttribute('href')).toMatch(/^\/contracts\//);
+    expect(marks[1]!.getAttribute('aria-label')).toContain(
+      'обявена по време на съвпадението, подписана извън него',
+    );
+    expect(marks[2]!.getAttribute('aria-label')).toContain('без дата на обявяване');
+    // Pointing at a procurement shows its tooltip; leaving hides it. The mark still leads to the contract.
+    expect(el.querySelector('.time-tip')).toBeNull();
+    act(() => {
+      marks[0]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
+    const tip = el.querySelector('.time-tip')!;
+    expect(tip.getAttribute('aria-hidden')).toBe('true');
+    expect(tip.querySelector('.time-tip-title')!.textContent).toBe('Ремонт');
+    expect(tip.textContent).toContain('Община Тест');
+    // Its buyer is the person's own institution: the building mark on the axis, and a line here.
+    expect(marks[0]!.classList.contains('own')).toBe(true);
+    expect(marks[0]!.querySelector('svg')).not.toBeNull();
+    expect(marks[0]!.getAttribute('aria-label')).toContain(
+      'възложител от институциите в декларациите',
+    );
+    expect(marks[1]!.classList.contains('own')).toBe(false);
+    expect(tip.querySelector('.time-tip-own')!.textContent).toContain(
+      'Възложител от институциите в декларациите',
+    );
+    expect(tip.textContent).toContain('Обявена 01.03.2022 → подписан 01.05.2022 · 61 дни');
+    expect(tip.textContent).toContain('Една оферта');
+    expect(tip.querySelector('.time-tip-overlap')!.textContent).toBe(
+      'Подписан по време на съвпадението',
+    );
+    act(() => {
+      marks[0]!.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+    });
+    expect(el.querySelector('.time-tip')).toBeNull();
+    // The keyboard gets it too; an undated announcement and unknown offers say only what is known.
+    act(() => marks[2]!.focus());
+    expect(el.querySelector('.time-tip')!.textContent).toContain('Подписан 15.01.2024');
+    expect(el.querySelector('.time-tip')!.textContent).not.toContain('Оферти');
+    act(() => marks[2]!.blur());
+    expect(el.querySelector('.time-tip')).toBeNull();
+    // Every other element of the axis has its own tooltip, and none of them a second, native one.
+    const hover = (target: Element) => {
+      act(() => {
+        target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      });
+      const text = el.querySelector('.time-tip')?.textContent ?? '';
+      act(() => {
+        target.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      });
+      return text;
+    };
+    const square = el.querySelector('.time-institution .time-observation')!;
+    expect(square.hasAttribute('title')).toBe(false);
+    expect(hover(square)).toMatch(/Встъпителна.*За 2021 г\.Община Тест · Съветник/);
+    expect(hover(el.querySelector('.time-institution .time-office')!)).toContain(
+      'Краят не е известен — последната декларация е за 2022 г.',
+    );
+    const role = el.querySelector('.time-role')!;
+    expect(role.hasAttribute('title')).toBe(false);
+    expect(hover(role)).toMatch(/Вписана 01\.02\.2020.*В сила към 10\.03\.2025/);
+    expect(hover(el.querySelector('.time-contract.eligible')!)).toMatch(
+      /2022 · 1 договор в съвпадение.*Всички за годината: 3 договора/,
+    );
+    expect(hover(el.querySelector('.person-time-company .time-band')!)).toContain(
+      '01.01.2021 – 31.12.2022',
+    );
+    expect(el.querySelector('.time-tip')).toBeNull();
+  } finally {
+    act(() => root.unmount());
+    el.remove();
   }
 });

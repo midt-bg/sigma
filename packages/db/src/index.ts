@@ -16,3 +16,9 @@ export {
   type InterestObservation,
   type TimelineContracts,
 } from './queries/person-timeline';
+export {
+  getTimelineIntervals,
+  type DaySpan,
+  type TimelineIntervals,
+  type TimelineProcurement,
+} from './queries/person-intervals';

@@ -1,9 +1,28 @@
-import { Fragment, useRef, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  Fragment,
+  useRef,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import { Link, useLocation } from 'react-router';
-import { count, date, money } from '@sigma/shared';
-import type { PersonDeclaration } from '@sigma/api-contract';
+import { count, date, money, pct } from '@sigma/shared';
+import type { PersonDeclaration, PersonRole } from '@sigma/api-contract';
+import { contractSlug, type TimelineContracts, type TimelineProcurement } from '@sigma/db';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
-import { timelineYears, positiveObservation, type TimelineCompany } from '../lib/person-timeline';
+import {
+  timelineYears,
+  positiveObservation,
+  officeSpans,
+  packLanes,
+  insideSpans,
+  yearSpans,
+  type OfficeSpan,
+  type TimelineCompany,
+} from '../lib/person-timeline';
 import { declarationRowId, roleRowId, revealProfileTarget } from '../lib/profile-navigation';
 import { declarationTypeLabel } from './Declarations';
 import { groupDeclaredInstitutions, institutionKey } from '../lib/conflicts';
@@ -37,6 +56,8 @@ export function PersonTimeline({
   const years = timelineYears(p, companies);
   const scroll = useRef<HTMLDivElement>(null);
   const [scrollable, setScrollable] = useState(false);
+  const [tip, setTip] = useState<TimelineTip | null>(null);
+  const intervals = p.timelineIntervals ?? null;
   const hasDeclarations = p.declarations.length > 0;
   useEffect(() => {
     const el = scroll.current;
@@ -49,16 +70,71 @@ export function PersonTimeline({
     observer.observe(el);
     return () => observer.disconnect();
   }, [p.name, years.length]);
+  useEffect(() => {
+    if (!tip) return;
+    const hide = () => setTip(null);
+    window.addEventListener('scroll', hide, { passive: true });
+    return () => window.removeEventListener('scroll', hide);
+  }, [tip]);
   if (!years.length && !companies.length) return null;
   const first = Date.UTC(years[0] ?? 1970, 0, 1),
     last = Date.UTC((years.at(-1) ?? 1970) + 1, 0, 1),
     span = last - first;
   const x = (day: string) => Math.max(0, Math.min(100, ((Date.parse(day) - first) / span) * 100));
   const yearStyle = (year: number): CSSProperties => ({ left: `${x(`${year}-07-02`)}%` });
-  const row = (key: string, label: ReactNode, marks: ReactNode, extra = '') => (
+  const between = (from: string, to: string): CSSProperties => ({
+    left: `${x(from)}%`,
+    width: `${Math.max(0.15, x(to) - x(from))}%`,
+  });
+  // One tooltip for the whole axis, placed against the viewport so the scrolling canvas cannot clip it,
+  // under the pointer on a long span and under the element on focus. It repeats for the eye what each
+  // mark's own label already says to a screen reader; decorative spans are for the pointer only.
+  const showTip = (el: Element, content: ReactNode, pointerX?: number) => {
+    const box = el.getBoundingClientRect();
+    const anchor = pointerX ?? box.left + box.width / 2;
+    const left = Math.max(12, Math.min(anchor - 150, window.innerWidth - 312));
+    setTip(
+      box.bottom + 220 < window.innerHeight
+        ? { content, left, top: box.bottom + 8 }
+        : { content, left, bottom: window.innerHeight - box.top + 8 },
+    );
+  };
+  const hideTip = () => setTip(null);
+  const tipProps = (content: () => ReactNode, focusable = true) => ({
+    onMouseEnter: (event: ReactMouseEvent<HTMLElement>) =>
+      showTip(event.currentTarget, content(), event.clientX),
+    onMouseLeave: hideTip,
+    ...(focusable
+      ? {
+          onFocus: (event: ReactFocusEvent<HTMLElement>) => showTip(event.currentTarget, content()),
+          onBlur: hideTip,
+        }
+      : {}),
+  });
+  // The overlap band sits under every row of its company, so the rows together read as one column.
+  const band = (spans: [string, string][] | undefined) =>
+    (spans ?? []).map(([from, to]) => (
+      <span
+        key={`band-${from}`}
+        className="time-band"
+        style={between(from, to)}
+        aria-hidden="true"
+        {...tipProps(() => bandTip(from, to), false)}
+      />
+    ));
+  const row = (
+    key: string,
+    label: ReactNode,
+    marks: ReactNode,
+    extra = '',
+    under?: [string, string][],
+  ) => (
     <div className={`person-time-row ${extra}`} key={key}>
       <div className="person-time-label">{label}</div>
-      <div className="person-time-track">{marks}</div>
+      <div className="person-time-track">
+        {band(under)}
+        {marks}
+      </div>
     </div>
   );
   const declarationLink = (
@@ -66,23 +142,36 @@ export function PersonTimeline({
     label: ReactNode,
     className?: string,
     style?: CSSProperties,
-  ) => (
-    <a
-      key={d.id}
-      href={`#${declarationRowId(d.id)}`}
-      className={className}
-      style={style}
-      aria-label={`${d.year ?? ''} · ${declarationTypeLabel(d)} · ${date(d.declaredOn)}${className?.includes('time-disputed') ? '; разминаване между годишни декларации' : ''}; виж декларацията в таблицата`}
-      title={`${declarationTypeLabel(d)} · ${date(d.declaredOn)}${className?.includes('time-disputed') ? ' · разминаване между годишни декларации' : ''}`}
-      onClick={(e) => {
-        e.preventDefault();
-        revealProfileTarget(declarationRowId(d.id));
-      }}
-    >
-      {label}
-    </a>
-  );
-  const documents = (docs: PersonDeclaration[], extra = '', disputedIds: string[] = []) => {
+    context?: string,
+  ) => {
+    const disputed = !!className?.includes('time-disputed');
+    return (
+      <a
+        key={d.id}
+        href={`#${declarationRowId(d.id)}`}
+        className={className}
+        style={style}
+        aria-label={`${d.year ?? ''} · ${declarationTypeLabel(d)} · ${date(d.declaredOn)}${disputed ? '; разминаване между годишни декларации' : ''}; виж декларацията в таблицата`}
+        {...(label == null
+          ? tipProps(() => declarationTip(d, context, disputed))
+          : {
+              title: `${declarationTypeLabel(d)} · ${date(d.declaredOn)}${disputed ? ' · разминаване между годишни декларации' : ''}`,
+            })}
+        onClick={(e) => {
+          e.preventDefault();
+          revealProfileTarget(declarationRowId(d.id));
+        }}
+      >
+        {label}
+      </a>
+    );
+  };
+  const documents = (
+    docs: PersonDeclaration[],
+    extra = '',
+    disputedIds: string[] = [],
+    context?: string,
+  ) => {
     const byYear = new Map<string, number>();
     const dated = docs.filter((d) => d.year && years.includes(+d.year));
     const marks = dated.map((d) => {
@@ -96,6 +185,7 @@ export function PersonTimeline({
           ...yearStyle(+d.year!),
           top: 10 + offset * 22,
         },
+        context,
       );
     });
     return (
@@ -111,8 +201,81 @@ export function PersonTimeline({
     if (authority) q.set('authority', authority);
     return `${location.pathname}?${q}#contract-filters`;
   };
+  // An office drawn as its years, solid where the declarations anchor it, faded where not.
+  const officeBars = (docs: PersonDeclaration[], institution: string, positions: string[]) =>
+    officeSpans(docs).map((o) => {
+      const s = x(o.from),
+        w = Math.max(0.15, x(o.to) - s);
+      const first = o.from.slice(0, 4),
+        last = o.to.slice(0, 4);
+      const a = ((x(o.knownStart ?? `${first}-12-31`) - s) / w) * 100;
+      const b = o.knownEnd ? 100 : ((x(`${last}-01-01`) - s) / w) * 100;
+      const label = `Длъжност ${first}${first === last ? '' : `–${last}`}: ${
+        o.knownStart ? `встъпителна декларация ${date(o.knownStart)}` : 'началото не е известно'
+      }; ${o.knownEnd ? `финална декларация ${date(o.knownEnd)}` : 'краят не е известен'}`;
+      return (
+        <span
+          key={o.from}
+          role="img"
+          className={`time-office ${a > b ? 'time-office-faded' : ''}`}
+          style={{
+            left: `${s}%`,
+            width: `${w}%`,
+            ...(a > b
+              ? {}
+              : {
+                  background: `linear-gradient(to right, var(--office-faded) 0%, var(--office) ${a}%, var(--office) ${b}%, var(--office-faded) 100%)`,
+                }),
+          }}
+          aria-label={label}
+          {...tipProps(() => officeTip(institution, positions, o), false)}
+        />
+      );
+    });
   const institutionProfiles = p.timeline.institutionProfiles ?? [];
   const ownIds = new Set(institutionProfiles.map((i) => i.authorityId).filter(Boolean));
+  const procurementMark = (pr: TimelineProcurement, under: [string, string][] | undefined) => {
+    const kind: ProcurementKind = pr.tied
+      ? 'tied'
+      : insideSpans(under, pr.announcedAt)
+        ? 'announced'
+        : 'context';
+    // The buyer is one of the institutions in the person's own declarations: the same test, and the same
+    // building mark, as the year bins and the legend use.
+    const own = ownIds.has(pr.authorityId);
+    const label = [
+      pr.subject || 'Договор',
+      pr.authority,
+      own ? 'възложител от институциите в декларациите' : null,
+      pr.announcedAt ? `обявена ${date(pr.announcedAt)}` : 'без дата на обявяване',
+      `подписан ${date(pr.signedAt)}`,
+      pr.valueEur != null ? money(pr.valueEur) : null,
+      kind === 'tied'
+        ? 'подписан по време на съвпадението'
+        : kind === 'announced'
+          ? 'обявена по време на съвпадението, подписана извън него'
+          : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return (
+      <Link
+        key={pr.id}
+        to={`/contracts/${contractSlug(pr.id)}`}
+        className={`time-procurement ${kind} ${own ? 'own' : ''} ${pr.announcedAt ? '' : 'time-undated-start'}`}
+        style={between(pr.announcedAt ?? pr.signedAt, pr.signedAt)}
+        aria-label={label}
+        {...tipProps(() => procurementTip(pr, kind, own))}
+      >
+        {own && <InstitutionSymbol />}
+      </Link>
+    );
+  };
+  const bandMismatch = intervals
+    ? intervals.procurements.filter(
+        (pr) => pr.tied !== insideSpans(intervals.bands[pr.eik], pr.signedAt),
+      ).length
+    : undefined;
   return (
     <Section
       id="timeline"
@@ -148,6 +311,25 @@ export function PersonTimeline({
           <span>
             <i className="time-symbol context" /> договори
           </span>
+        )}
+        {intervals && (
+          <>
+            <span>
+              <i className="time-symbol band" /> съвпадение{' '}
+              <Explanation text="Дните, в които подписан договор се брои за съвпадение: лицето е свързано със същото дружество (вписана роля или деклариран дял) и заема публична длъжност. Същото правило като червените числа." />
+            </span>
+            <span>
+              <i className="time-symbol office" /> длъжност{' '}
+              <Explanation text="Годините с декларация за институцията. Твърд край — по датата на встъпителната или финалната декларация, която се подава до месец след събитието. Избледнял край — в рамките на годината той не е известен." />
+            </span>
+            <span>
+              <i className="time-symbol procurement" /> поръчка: обявяване → подписване
+            </span>
+            <span>
+              <i className="time-symbol announced" /> обявена по време на съвпадението, подписана
+              извън него
+            </span>
+          </>
         )}
         {(p.timeline.buyers ?? []).some((b) => ownIds.has(b.id)) && (
           <span>
@@ -193,8 +375,13 @@ export function PersonTimeline({
         role="region"
         aria-label="Обща времева линия, превъртай хоризонтално при нужда"
         tabIndex={0}
+        onScroll={hideTip}
       >
-        <div className="person-time" style={{ '--timeline-years': years.length } as CSSProperties}>
+        <div
+          className="person-time"
+          style={{ '--timeline-years': years.length } as CSSProperties}
+          data-band-mismatch={bandMismatch}
+        >
           {!!years.length &&
             row(
               'axis',
@@ -230,7 +417,14 @@ export function PersonTimeline({
                 </strong>
                 <small>{institution.positions.join('; ')}</small>
               </>,
-              documents(docs),
+              intervals ? (
+                <>
+                  {officeBars(docs, institution.institution, institution.positions)}
+                  {documents(docs)}
+                </>
+              ) : (
+                documents(docs)
+              ),
               'time-institution',
             );
           })}
@@ -246,6 +440,8 @@ export function PersonTimeline({
             );
             const disputed = c.observations.filter((o) => o.disputed || o.timing === 'not_listed');
             const undated = c.contracts.filter((r) => !r.year).reduce((n, r) => n + r.contracts, 0);
+            const under = intervals?.bands[c.eik];
+            const procurements = intervals?.procurements.filter((pr) => pr.eik === c.eik) ?? [];
 
             return (
               <Fragment key={c.eik}>
@@ -325,19 +521,36 @@ export function PersonTimeline({
                         : scope === 'self'
                           ? 'Деклариран собствен дял'
                           : 'Дял на свързано лице';
+                    const declaredYears = (intervals?.declared ?? [])
+                      .filter((d) => d.eik === c.eik && d.scope === scope)
+                      .map((d) => d.year);
                     return docs.length
                       ? row(
                           `${c.eik}-${scope}`,
                           label,
-                          documents(
-                            docs,
-                            scope === 'family'
-                              ? 'time-family'
-                              : scope === 'management'
-                                ? 'time-management'
-                                : '',
-                            observations.filter((o) => o.disputed).map((o) => o.declarationId),
-                          ),
+                          <>
+                            {yearSpans(declaredYears).map(([from, to]) => (
+                              <span
+                                key={`declared-${from}`}
+                                className="time-declared"
+                                style={between(from, to)}
+                                aria-hidden="true"
+                                {...tipProps(() => declaredTip(label, c.name, from, to), false)}
+                              />
+                            ))}
+                            {documents(
+                              docs,
+                              scope === 'family'
+                                ? 'time-family'
+                                : scope === 'management'
+                                  ? 'time-management'
+                                  : '',
+                              observations.filter((o) => o.disputed).map((o) => o.declarationId),
+                              `${label} · ${c.name}`,
+                            )}
+                          </>,
+                          '',
+                          under,
                         )
                       : null;
                   })}
@@ -377,8 +590,8 @@ export function PersonTimeline({
                                 left: `${x(r.addedOn)}%`,
                                 width: `${Math.max(0.15, x(end!) - x(r.addedOn))}%`,
                               }}
-                              title={label}
                               aria-label={label}
+                              {...tipProps(() => roleTip(r, c.name, c.asOf))}
                             />
                           ) : (
                             <span key={i} className="small muted">
@@ -386,6 +599,8 @@ export function PersonTimeline({
                             </span>
                           );
                         }),
+                      '',
+                      under,
                     ),
                   )}
                   {c.contracts.some((r) => r.year) &&
@@ -409,6 +624,7 @@ export function PersonTimeline({
                                   to={contractHref(c.eik, r.year, 'tied')}
                                   className="time-contract eligible"
                                   aria-label={`${r.year}: ${r.tied} договора, подписани докато лицето е и на длъжност, и свързано с ${c.name}`}
+                                  {...tipProps(() => contractsTip(r, c.name, 'tied'))}
                                 >
                                   {count(r.tied)}
                                 </Link>
@@ -418,6 +634,7 @@ export function PersonTimeline({
                                   to={contractHref(c.eik, r.year, 'untied')}
                                   className="time-contract context"
                                   aria-label={`${r.year}: ${r.contracts - r.tied} договора извън съвпадението на длъжността и връзката с ${c.name}`}
+                                  {...tipProps(() => contractsTip(r, c.name, 'untied'))}
                                 >
                                   {count(r.contracts - r.tied)}
                                 </Link>
@@ -461,13 +678,36 @@ export function PersonTimeline({
                           );
                         }),
                       'time-contracts',
+                      under,
                     )}
+                  {procurements.length > 0 && (
+                    <div className="time-lanes">
+                      {packLanes(procurements).map((lane, i) =>
+                        row(
+                          `${c.eik}-lane-${i}`,
+                          i === 0 ? <small>Поръчки: обявяване → подписване</small> : null,
+                          lane.map((pr) => procurementMark(pr, under)),
+                          'time-lane',
+                          under,
+                        ),
+                      )}
+                    </div>
+                  )}
                 </div>
               </Fragment>
             );
           })}
         </div>
       </div>
+      {tip && (
+        <div
+          className="help-popover time-tip"
+          aria-hidden="true"
+          style={{ left: tip.left, top: tip.top, bottom: tip.bottom }}
+        >
+          {tip.content}
+        </div>
+      )}
       <p className="small muted person-time-note">
         Числата са брой договори за годината. Червеното означава година с налична декларация за
         институция и длъжност на лицето, независимо от периода на участие в дружеството. Това не
@@ -476,5 +716,173 @@ export function PersonTimeline({
         извеждаме период.
       </p>
     </Section>
+  );
+}
+
+type ProcurementKind = 'tied' | 'announced' | 'context';
+interface TimelineTip {
+  content: ReactNode;
+  left: number;
+  top?: number;
+  bottom?: number;
+}
+
+const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;
+const yearsLabel = (from: string, to: string) =>
+  from.slice(0, 4) === to.slice(0, 4)
+    ? `${from.slice(0, 4)} г.`
+    : `${from.slice(0, 4)}–${to.slice(0, 4)} г.`;
+
+function declarationTip(d: PersonDeclaration, context: string | undefined, disputed: boolean) {
+  return (
+    <>
+      <strong className="time-tip-title">{declarationTypeLabel(d)}</strong>
+      {d.year && <span>За {d.year} г.</span>}
+      {d.institution && (
+        <span>
+          {d.institution}
+          {d.position ? ` · ${d.position}` : ''}
+        </span>
+      )}
+      {context && <span>{context}</span>}
+      {d.declaredOn && <span>Дата на документа {date(d.declaredOn)}</span>}
+      {d.submittedOn && d.submittedOn !== d.declaredOn && (
+        <span>Подадена {date(d.submittedOn)}</span>
+      )}
+      {disputed && (
+        <span className="time-tip-overlap">
+          Разминаване: дялът липсва в друга декларация за същата година
+        </span>
+      )}
+      <small className="muted">Кликни, за да видиш декларацията</small>
+    </>
+  );
+}
+
+function officeTip(institution: string, positions: string[], o: OfficeSpan) {
+  const first = o.from.slice(0, 4),
+    last = o.to.slice(0, 4);
+  return (
+    <>
+      <strong className="time-tip-title">{institution}</strong>
+      {positions.length > 0 && <span>{positions.join('; ')}</span>}
+      <span>Години с декларация: {yearsLabel(o.from, o.to)}</span>
+      <span>
+        {o.knownStart
+          ? `Встъпителна декларация ${date(o.knownStart)}`
+          : `Началото не е известно — първата декларация е за ${first} г.`}
+      </span>
+      <span>
+        {o.knownEnd
+          ? `Финална декларация ${date(o.knownEnd)}`
+          : `Краят не е известен — последната декларация е за ${last} г.`}
+      </span>
+      {(o.knownStart || o.knownEnd) && (
+        <small className="muted">Декларацията се подава до месец след събитието.</small>
+      )}
+    </>
+  );
+}
+
+function roleTip(r: PersonRole, company: string, asOf: string | null) {
+  return (
+    <>
+      <strong className="time-tip-title">{ROLE_LABEL[r.role]}</strong>
+      <span>{company}</span>
+      <span>Вписана {date(r.addedOn)}</span>
+      <span>
+        {r.removedOn
+          ? `Заличена ${date(r.removedOn)}`
+          : r.uncertainAfter
+            ? `Неустановено след ${date(r.uncertainAfter)}`
+            : `В сила към ${date(asOf)} — последна справка в регистъра`}
+      </span>
+      {r.sharePct != null && <span>Дял {pct(r.sharePct)}</span>}
+      <span>Вписване № {r.entryNumber}</span>
+      <small className="muted">Кликни за реда в таблицата с роли</small>
+    </>
+  );
+}
+
+function contractsTip(r: TimelineContracts, company: string, part: 'tied' | 'untied') {
+  return (
+    <>
+      <strong className="time-tip-title">
+        {r.year} ·{' '}
+        {part === 'tied'
+          ? `${plural(r.tied, 'договор', 'договора')} в съвпадение`
+          : `${plural(r.contracts - r.tied, 'договор', 'договора')} извън съвпадението`}
+      </strong>
+      <span>{company}</span>
+      {part === 'tied' && (
+        <span className="time-tip-overlap">
+          Подписани, докато лицето е на длъжност и свързано с дружеството
+        </span>
+      )}
+      <span>
+        Всички за годината: {plural(r.contracts, 'договор', 'договора')} · {money(r.valueEur)}
+      </span>
+      <small className="muted">Кликни за списъка с договорите</small>
+    </>
+  );
+}
+
+function bandTip(from: string, to: string) {
+  return (
+    <>
+      <strong className="time-tip-title">Съвпадение</strong>
+      <span className="time-tip-value">
+        {date(from)} – {date(to)}
+      </span>
+      <span>
+        Лицето е на длъжност и свързано с дружеството. Договорите, подписани в този период, са
+        червени.
+      </span>
+    </>
+  );
+}
+
+function declaredTip(label: string, company: string, from: string, to: string) {
+  return (
+    <>
+      <strong className="time-tip-title">{label}</strong>
+      <span>{company}</span>
+      <span className="time-tip-value">{yearsLabel(from, to)}</span>
+      <span>Годините, в които декларациите свързват лицето с дружеството.</span>
+    </>
+  );
+}
+
+function procurementTip(pr: TimelineProcurement, kind: ProcurementKind, own: boolean) {
+  const days = pr.announcedAt
+    ? Math.round((Date.parse(pr.signedAt) - Date.parse(pr.announcedAt)) / 864e5)
+    : null;
+  return (
+    <>
+      <strong className="time-tip-title">{pr.subject || 'Договор'}</strong>
+      <span className="time-tip-value">{money(pr.valueEur)}</span>
+      <span>{pr.authority}</span>
+      {own && (
+        <span className="time-tip-own">
+          <InstitutionSymbol /> Възложител от институциите в декларациите
+        </span>
+      )}
+      <span>
+        {pr.announcedAt
+          ? `Обявена ${date(pr.announcedAt)} → подписан ${date(pr.signedAt)} · ${plural(days!, 'ден', 'дни')}`
+          : `Подписан ${date(pr.signedAt)}`}
+      </span>
+      {pr.bids != null && (
+        <span>{pr.bids === 1 ? 'Една оферта' : `Оферти: ${count(pr.bids)}`}</span>
+      )}
+      {kind !== 'context' && (
+        <span className="time-tip-overlap">
+          {kind === 'tied'
+            ? 'Подписан по време на съвпадението'
+            : 'Обявена по време на съвпадението, подписана извън него'}
+        </span>
+      )}
+      <small className="muted">Кликни за целия договор</small>
+    </>
   );
 }

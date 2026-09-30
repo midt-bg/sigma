@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRoutesStub } from 'react-router';
 import Person, { headers, meta } from './person';
-import { emptyActivity } from '../lib/person-profile.test-support';
+import { emptyActivity, emptyIntervals } from '../lib/person-profile.test-support';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,6 +30,7 @@ const profile: LoadedPersonProfile = {
   declarations: [],
   activity: emptyActivity,
   totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+  timelineIntervals: emptyIntervals,
   tieLayout: null,
   aliases: [],
   relatives: [],

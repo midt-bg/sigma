@@ -678,3 +678,173 @@ td .chip {
 .declaration-discrepancy a {
   text-decoration: underline;
 }
+
+/* The timeline as intervals: the overlap band, the offices and each procurement as a span. */
+.person-time {
+  --office: #b71916;
+  --office-faded: rgba(183, 25, 22, 0.16);
+}
+.time-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(183, 25, 22, 0.09);
+  border-inline: 1px solid rgba(183, 25, 22, 0.35);
+}
+/* Among the procurements the band stays silent: their own tooltips are what the pointer is after. */
+.time-lane .time-band {
+  pointer-events: none;
+}
+.time-office {
+  position: absolute;
+  top: 16px;
+  height: 4px;
+  min-width: 2px;
+  background: var(--office);
+}
+.time-office.time-office-faded {
+  background: var(--office-faded);
+}
+.time-declared {
+  position: absolute;
+  top: 13px;
+  height: 9px;
+  background: repeating-linear-gradient(135deg, rgba(183, 25, 22, 0.28) 0 2px, transparent 2px 5px);
+}
+.person-time-row.time-lane {
+  min-height: 14px;
+}
+.time-lane .person-time-label {
+  padding-block: 0;
+}
+.time-lane .person-time-track {
+  min-height: 14px;
+}
+.time-procurement {
+  position: absolute;
+  top: 6px;
+  height: 2px;
+  min-width: 1px;
+  background: #9a948b;
+}
+.time-procurement::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid #9a948b;
+  background: var(--paper, #faf8f2);
+}
+.time-procurement.tied {
+  background: #b71916;
+}
+.time-procurement.tied::after {
+  border-color: #b71916;
+  background: #b71916;
+}
+.time-procurement.announced {
+  background: repeating-linear-gradient(to right, #b71916 0 3px, transparent 3px 5px);
+}
+.time-procurement:focus-visible {
+  outline: 2px solid #b71916;
+  outline-offset: 3px;
+}
+.time-symbol.band {
+  width: 18px;
+  background: rgba(183, 25, 22, 0.09);
+  border-inline: 1px solid rgba(183, 25, 22, 0.35);
+}
+.time-symbol.office {
+  width: 24px;
+  height: 4px;
+  background: linear-gradient(to right, rgba(183, 25, 22, 0.16), #b71916 45%);
+}
+.time-symbol.procurement {
+  width: 24px;
+  height: 2px;
+  background: #9a948b;
+}
+.time-symbol.announced {
+  width: 24px;
+  height: 2px;
+  background: repeating-linear-gradient(to right, #b71916 0 3px, transparent 3px 5px);
+}
+.time-tip {
+  width: 300px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+.time-tip > * {
+  display: block;
+}
+.time-tip-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.time-tip-value {
+  font-family: var(--font-mono, monospace);
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+.time-tip-overlap {
+  margin-top: 4px;
+  color: #b71916;
+  font-weight: 600;
+}
+.time-tip small {
+  margin-top: 6px;
+}
+/* A procurement whose buyer is one of the person's own institutions: a heavier line, ending just before
+   the building mark of the legend, which stands at the signing on whatever lies beneath — no box of its
+   own, so it sits on the band as cleanly as on the paper. */
+.time-procurement.own {
+  top: 5px;
+  height: 4px;
+  background: none;
+}
+.time-procurement.own::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 7px;
+  top: 0;
+  bottom: 0;
+  background: #9a948b;
+}
+.time-procurement.own.tied::before {
+  background: #b71916;
+}
+.time-procurement.own.announced::before {
+  background: repeating-linear-gradient(to right, #b71916 0 3px, transparent 3px 5px);
+}
+.time-procurement.own::after {
+  display: none;
+}
+.time-procurement.own svg {
+  position: absolute;
+  right: -8px;
+  top: -6px;
+  width: 16px;
+  height: 16px;
+  color: var(--ink, #171511);
+  stroke-width: 1.8;
+}
+.time-procurement.own.tied svg {
+  color: #b71916;
+}
+.time-tip-own {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-weight: 600;
+}
