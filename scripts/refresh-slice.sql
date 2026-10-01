@@ -483,15 +483,23 @@ SELECT authority_id, authority_name, authority_eik, authority_type FROM member_d
 
 -- Learn the modal authority for each valid УНП prefix from the full existing tender history. Raw
 -- staging contains only the touched slice here, so it cannot provide a stable corpus-wide map.
+-- Only the prefixes this window's joint tenders ask for (the table's one reader joins on them): every
+-- prefix of the history was a scan of all tenders and some four thousand rows written on each run.
+-- `source_id` is unique, so each prefix's tenders are an index range: those starting `ppppp-`.
 CREATE TABLE refresh_unp_prefix_authorities (
   prefix TEXT PRIMARY KEY,
   authority_eik TEXT NOT NULL
 );
-WITH prefix_observations AS (
-  SELECT SUBSTR(source_id, 1, 5) AS prefix, SUBSTR(authority_id, 6) AS authority_eik
-  FROM tenders
-  WHERE authority_id NOT LIKE '%;%'
-    AND source_id GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
+WITH wanted AS (
+  SELECT DISTINCT SUBSTR(unp, 1, 5) AS prefix
+  FROM refresh_joint_authority_members
+  WHERE unp GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
+), prefix_observations AS (
+  SELECT w.prefix, SUBSTR(t.authority_id, 6) AS authority_eik
+  FROM wanted w
+  CROSS JOIN tenders t ON t.source_id >= w.prefix || '-' AND t.source_id < w.prefix || '.'
+  WHERE t.authority_id NOT LIKE '%;%'
+    AND t.source_id GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
 ), ranked AS (
   SELECT prefix, authority_eik,
     ROW_NUMBER() OVER (
@@ -1029,36 +1037,46 @@ WHERE id IN (SELECT authority_id FROM refresh_touched_authorities)
 
 -- @refresh-batch lot-values
 CREATE INDEX IF NOT EXISTS idx_raw_tenders_tender_id ON raw_tenders(tender_id);
+-- `rn = 1` is applied inside `mapped`, not next to the join. Outside, it was the only equality on the CTE the
+-- planner could index, so it scanned every served lot and, for each, every first-ranked row of the window:
+-- the most expensive statement of the refresh (≈ 100 million rows read per run). Filtered inside, the window's
+-- lots drive the update and each finds its row by the primary key; `lots.id IN (…)` keeps that order should
+-- the planner reconsider. A lot with both values already set is skipped — COALESCE could only rewrite them.
 WITH mapped AS (
-  SELECT
-    'lot:' || rt.unp || ':' || CASE
-      WHEN rl.lot_id LIKE 'LOT-%' AND REPLACE(rl.lot_id, 'LOT-', '') <> '' AND REPLACE(rl.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(rl.lot_id, 'LOT-', '') AS INTEGER)
-      WHEN rl.lot_id <> '' AND rl.lot_id NOT GLOB '*[^0-9]*' THEN CAST(rl.lot_id AS INTEGER)
-      ELSE rl.lot_id
-    END AS domain_lot_id,
-    rl.value_amount,
-    rl.value_currency,
-    ROW_NUMBER() OVER (
-      PARTITION BY 'lot:' || rt.unp || ':' || CASE
+  SELECT domain_lot_id, value_amount, value_currency
+  FROM (
+    SELECT
+      'lot:' || rt.unp || ':' || CASE
         WHEN rl.lot_id LIKE 'LOT-%' AND REPLACE(rl.lot_id, 'LOT-', '') <> '' AND REPLACE(rl.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(rl.lot_id, 'LOT-', '') AS INTEGER)
         WHEN rl.lot_id <> '' AND rl.lot_id NOT GLOB '*[^0-9]*' THEN CAST(rl.lot_id AS INTEGER)
         ELSE rl.lot_id
-      END
-      ORDER BY rl.id DESC
-    ) AS rn
-  FROM raw_ocds_lots rl
-  JOIN raw_tenders rt ON rt.tender_id = rl.tender_id
-  WHERE rl.tender_id IS NOT NULL
-    AND rl.lot_id IS NOT NULL
-    AND rt.unp IS NOT NULL
+      END AS domain_lot_id,
+      rl.value_amount,
+      rl.value_currency,
+      ROW_NUMBER() OVER (
+        PARTITION BY 'lot:' || rt.unp || ':' || CASE
+          WHEN rl.lot_id LIKE 'LOT-%' AND REPLACE(rl.lot_id, 'LOT-', '') <> '' AND REPLACE(rl.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(rl.lot_id, 'LOT-', '') AS INTEGER)
+          WHEN rl.lot_id <> '' AND rl.lot_id NOT GLOB '*[^0-9]*' THEN CAST(rl.lot_id AS INTEGER)
+          ELSE rl.lot_id
+        END
+        ORDER BY rl.id DESC
+      ) AS rn
+    FROM raw_ocds_lots rl
+    JOIN raw_tenders rt ON rt.tender_id = rl.tender_id
+    WHERE rl.tender_id IS NOT NULL
+      AND rl.lot_id IS NOT NULL
+      AND rt.unp IS NOT NULL
+  )
+  WHERE rn = 1
 )
 UPDATE lots
 SET
   value_amount = COALESCE(lots.value_amount, mapped.value_amount),
   value_currency = COALESCE(lots.value_currency, mapped.value_currency)
 FROM mapped
-WHERE mapped.rn = 1
-  AND mapped.domain_lot_id = lots.id;
+WHERE mapped.domain_lot_id = lots.id
+  AND lots.id IN (SELECT domain_lot_id FROM mapped)
+  AND (lots.value_amount IS NULL OR lots.value_currency IS NULL);
 
 -- @refresh-batch synthetic-tenders
 -- ── 3) Synthetic 'неизвестна' tenders for OCDS УНП (ocid) — matches normalize step 2b ───────────────
@@ -1984,10 +2002,12 @@ FROM (
 INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
 SELECT DISTINCT authority_id FROM refresh_joint_authority_members;
 
+-- By the tender's key: inside EXISTS, `'t:' || c.unp = tenders.id` could use no index, so every tender not
+-- yet awarded scanned the window's contracts.
 UPDATE tenders
 SET status = 'awarded'
 WHERE status <> 'awarded'
-  AND EXISTS (SELECT 1 FROM raw_contracts c WHERE 't:' || c.unp = tenders.id);
+  AND id IN (SELECT 't:' || unp FROM raw_contracts);
 
 -- Record what THIS batch inserted or replaced — in THIS batch. Every @refresh-batch is one atomic D1
 -- batch and nothing spans them, so the ids a batch touches must be written in the same batch as the
