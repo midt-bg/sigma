@@ -5,6 +5,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloud
 import { NonRetryableError } from 'cloudflare:workflows';
 import {
   acquireRefreshLease,
+  addDays,
   createTransientStaging,
   dropTransientStaging,
   loadFxRates,
@@ -36,11 +37,13 @@ import {
   seedEntryPasses,
   nextEntryPass,
   recordEntryPage,
+  deferEntryPass,
   deferPortal,
   deferDeed,
   deferXml,
   storeDeed,
   derivePublicOwnership,
+  entryFeedHealth,
 } from './registry';
 
 export interface Env extends DeclarationEnv {
@@ -484,6 +487,8 @@ interface RegistryResult {
   absent: number;
   roles: number;
   publicOwned?: number;
+  /** Set when the portal feed has stopped moving (see `registry_feed_stale`). */
+  feedStale?: boolean;
 }
 
 // Partidas per step: small, so a retried step re-reads little (storing is idempotent, the queue is the cursor).
@@ -494,6 +499,21 @@ const REGISTRY_MAX_DEEDS = 2_500;
 const REGISTRY_MAX_PAGES = 600;
 // The published XML API has no configured quota; actual Retry-After responses still apply.
 const REGISTRY_PACE_MS = 0;
+// The portal feed is stuck when passes are due and none has completed for two days — a weekend, in which
+// the four daily runs had every chance — and a day is abandoned once it stays open three weeks, a week past
+// its second, fourteen-day pass.
+const REGISTRY_FEED_STUCK_MS = 48 * 3600000;
+const REGISTRY_FEED_ABANDONED_DAYS = 21;
+
+/** A refusal about the one day asked for — an answer that cannot be read, or the portal saying it has no
+ *  list for that day — and not about the service: those carry no HTTP status and are not a failed request. */
+function dayOnlyRefusal(error: unknown): boolean {
+  return (
+    error instanceof RegistryError &&
+    error.status === undefined &&
+    !error.message.startsWith('registry request failed')
+  );
+}
 
 // Published XML partidas and portal entry-day passes have their own lease beside procurement.
 // Pending entry signals survive until confirmed by exact timestamps in the XML history.
@@ -553,7 +573,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
           nextEntryPass(this.env.DB, today, new Date().toISOString()),
         );
         if (!pass) break;
-        // Both ways the portal closes a pass early: its Retry-After answer, or any other failed read.
+        // The service refused — its Retry-After, a 5xx, the network: every pass waits for it.
         const deferPass = async (name: string, retryMs: number, error: string | null) => {
           await fenced(name, () =>
             deferPortal(this.env.DB, new Date(Date.now() + retryMs).toISOString()),
@@ -562,6 +582,21 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
             JSON.stringify({
               event: 'registry_portal_deferred',
               day: pass.day,
+              page: pass.next_page,
+              error,
+            }),
+          );
+        };
+        // The answer for this one day cannot be used: that day waits until tomorrow and the run goes on
+        // with the next one. Deferring the whole portal for it put the same day first again six hours
+        // later — one Sunday held every later day back for ten days (20.09.2026).
+        const deferDay = async (name: string, error: string) => {
+          await fenced(name, () => deferEntryPass(this.env.DB, pass, addDays(today, 1)));
+          console.warn(
+            JSON.stringify({
+              event: 'registry_pass_deferred',
+              day: pass.day,
+              delay: pass.delay,
               page: pass.next_page,
               error,
             }),
@@ -578,6 +613,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
                 response: await client.changes(pass.day, pass.next_page),
                 error: null,
                 retryMs: 0,
+                dayOnly: false,
               };
             } catch (error) {
               return {
@@ -585,24 +621,62 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
                 error: String(error),
                 retryMs:
                   error instanceof RegistryError ? (error.retryMs ?? 6 * 3600000) : 6 * 3600000,
+                dayOnly: dayOnlyRefusal(error),
               };
             }
           });
           if (!read.response) {
+            if (read.dayOnly) {
+              await deferDay(`portal-day-defer:${page}`, String(read.error));
+              continue;
+            }
             await deferPass(`portal-retry-after:${page}`, read.retryMs, read.error);
             break;
           }
           const response = read.response;
-          result.changed += await fenced(`portal-save:${page}`, () =>
-            recordEntryPage(this.env.DB, pass, response, new Date().toISOString()),
-          );
+          let recorded: number;
+          try {
+            recorded = await fenced(`portal-save:${page}`, () =>
+              recordEntryPage(this.env.DB, pass, response, new Date().toISOString()),
+            );
+          } catch (error) {
+            if (error instanceof NonRetryableError) throw error;
+            // The day's own pass refuses the page: served twice, or short of the first page's count.
+            await deferDay(`portal-day-defer:${page}`, String(error));
+            continue;
+          }
+          result.changed += recorded;
           if (!response.hasMore) result.changeDays++;
         } catch (error) {
+          // What is left to land here is the run's own D1 work failing; give the portal six hours.
           if (error instanceof NonRetryableError) throw error;
-          const wait =
-            error instanceof RegistryError ? (error.retryMs ?? 6 * 3600000) : 6 * 3600000;
-          await deferPass(`portal-defer:${page}`, wait, String(error));
+          await deferPass(`portal-defer:${page}`, 6 * 3600000, String(error));
           break;
+        }
+      }
+      // A feed that stops moving says so at error level, where an alert can see it: the run itself still
+      // completes, and a quiet „Completed" every six hours is what hid ten stuck days.
+      if (baseline === 'ready') {
+        const health = await step.do('entry-feed-health', () =>
+          entryFeedHealth(this.env.DB, today),
+        );
+        const lastProgress =
+          health.lastProgressAt === null ? Number.NaN : Date.parse(health.lastProgressAt);
+        const stuck = health.due > 0 && !(Date.now() - lastProgress < REGISTRY_FEED_STUCK_MS);
+        const abandoned =
+          health.oldestOpenDay !== null &&
+          health.oldestOpenDay < addDays(today, -REGISTRY_FEED_ABANDONED_DAYS);
+        if (stuck || abandoned) {
+          result.feedStale = true;
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              event: 'registry_feed_stale',
+              stuck,
+              abandoned,
+              ...health,
+            }),
+          );
         }
       }
       result.queuedNew = await fenced('queue-new-winners', async () =>

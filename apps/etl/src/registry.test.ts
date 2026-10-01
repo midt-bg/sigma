@@ -21,6 +21,8 @@ import {
   recordEntryPage,
   deferDeed,
   deferPortal,
+  deferEntryPass,
+  entryFeedHealth,
   deferXml,
   derivePublicOwnership,
 } from './registry';
@@ -527,6 +529,64 @@ describe('lease, baseline and portal pass edges', () => {
       'repeated a page',
     );
     expect(p.row()).toMatchObject({ next_page: 2, rows_seen: 1, completed_at: null });
+  });
+
+  it('closes a day without entries on its first, empty page', async () => {
+    const p = await onePass();
+    await recordEntryPage(p.db, await p.pass(), { items: [], hasMore: false, total: 0 }, NOW);
+    expect(p.row()).toMatchObject({
+      next_page: 2,
+      first_count: 0,
+      rows_seen: 0,
+      completed_at: NOW,
+    });
+    expect(await nextEntryPass(p.db, '2026-09-13', NOW)).toBeNull();
+  });
+
+  it('lets a deferred day wait while the next goes on, and keeps its place within the day', async () => {
+    const s = served();
+    s.sqlite.exec(
+      `INSERT INTO registry_entry_state (id,seeded_through,baseline_status,baseline_through)
+       VALUES(1,'2026-09-10','ready','2026-09-10')`,
+    );
+    await seedEntryPasses(s.db, '2026-09-13', NOW);
+    const first = (await nextEntryPass(s.db, '2026-09-13', NOW))!;
+    expect(first.day).toBe('2026-09-11');
+    await recordEntryPage(
+      s.db,
+      first,
+      { items: [change('111111111')], hasMore: true, total: 30 },
+      NOW,
+    );
+    const started = (await nextEntryPass(s.db, '2026-09-13', NOW))!;
+    await deferEntryPass(s.db, started, '2026-09-14');
+    expect((await nextEntryPass(s.db, '2026-09-13', NOW))?.day).toBe('2026-09-12');
+    // Back the next day, on the page it had reached.
+    expect(await nextEntryPass(s.db, '2026-09-14', '2026-09-14T00:00:00Z')).toMatchObject({
+      day: '2026-09-11',
+      next_page: 2,
+      rows_seen: 1,
+      first_count: 30,
+    });
+  });
+
+  it('reports how far the feed is behind and when it last moved', async () => {
+    const p = await onePass();
+    expect(await entryFeedHealth(p.db, '2026-09-13')).toEqual({
+      due: 1,
+      oldestOpenDay: '2026-09-12',
+      lastProgressAt: null,
+    });
+    // Before the first pass completes, the accepted import is the last progress.
+    p.sqlite.exec(`UPDATE registry_entry_state SET baseline_completed_at='2026-09-11T20:00:00Z'`);
+    expect((await entryFeedHealth(p.db, '2026-09-13')).lastProgressAt).toBe('2026-09-11T20:00:00Z');
+    await recordEntryPage(p.db, await p.pass(), { items: [], hasMore: false, total: 0 }, NOW);
+    // The day's second, fourteen-day pass is still open but not yet due.
+    expect(await entryFeedHealth(p.db, '2026-09-13')).toEqual({
+      due: 0,
+      oldestOpenDay: '2026-09-12',
+      lastProgressAt: NOW,
+    });
   });
 
   it('holds every portal pass back until the portal deferral has passed', async () => {

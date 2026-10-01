@@ -381,6 +381,48 @@ export async function nextEntryPass(
     .bind(today, now)
     .first<EntryPass>();
 }
+/** Move one pass to a later day, keeping its place within the day (page, count, last page) as it was. A day
+ *  whose answer cannot be used then waits on its own, instead of holding every later day back with it. */
+export async function deferEntryPass(
+  db: D1Database,
+  pass: Pick<EntryPass, 'day' | 'delay'>,
+  dueOn: string,
+): Promise<void> {
+  await db
+    .prepare(
+      'UPDATE registry_entry_passes SET due_on=?3 WHERE day=?1 AND delay=?2 AND completed_at IS NULL',
+    )
+    .bind(pass.day, pass.delay, dueOn)
+    .run();
+}
+
+export interface EntryFeedHealth {
+  /** Open passes whose day has come. */
+  due: number;
+  /** The earliest day with a pass still open. */
+  oldestOpenDay: string | null;
+  /** When a pass last completed — or the full import was accepted, before the first one did. */
+  lastProgressAt: string | null;
+}
+
+/** How far the portal feed is behind, for the run to say so when it stops moving. */
+export async function entryFeedHealth(db: D1Database, today: string): Promise<EntryFeedHealth> {
+  // A SELECT without FROM answers with exactly one row.
+  const row = (await db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM registry_entry_passes WHERE completed_at IS NULL AND due_on <= ?1) AS due,
+         (SELECT MIN(day) FROM registry_entry_passes WHERE completed_at IS NULL) AS oldestOpenDay,
+         COALESCE(
+           (SELECT MAX(completed_at) FROM registry_entry_passes),
+           (SELECT baseline_completed_at FROM registry_entry_state WHERE id=1)
+         ) AS lastProgressAt`,
+    )
+    .bind(today)
+    .first<EntryFeedHealth>())!;
+  return { due: row.due, oldestOpenDay: row.oldestOpenDay, lastProgressAt: row.lastProgressAt };
+}
+
 export async function deferPortal(db: D1Database, until: string): Promise<void> {
   await db
     .prepare('UPDATE registry_entry_state SET portal_retry_at=?1 WHERE id=1')

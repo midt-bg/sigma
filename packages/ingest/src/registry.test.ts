@@ -261,6 +261,28 @@ it('takes the day total from the first page only when the portal gives a count',
   expect(await c.changes('2026-09-01')).toMatchObject({ total: null, hasMore: false });
   expect(await c.changes('2026-09-01')).toEqual({ items: [], total: null, hasMore: false });
 });
+it('reads the empty body of a day without entries as an empty day, only on its own count', async () => {
+  // What the portal sends for a Sunday: 200, `Count: 0` and no body at all — not `[]`.
+  const empty = (headers: Record<string, string> = {}) => new Response('', { headers });
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValueOnce(empty({ Count: '0' }))
+      .mockResolvedValueOnce(empty({ Count: '0' }))
+      .mockResolvedValueOnce(empty())
+      .mockResolvedValueOnce(empty({ Count: '3' }))
+      .mockResolvedValueOnce(new Response('[{"uic":')),
+  );
+  const c = registryClient({ baseUrl: 'https://registry.test' });
+  expect(await c.changes('2026-09-20')).toEqual({ items: [], total: 0, hasMore: false });
+  // Past the last page: nothing more, and no count of its own — the pass checks it against page one.
+  expect(await c.changes('2026-09-20', 2)).toEqual({ items: [], total: null, hasMore: false });
+  // A first page with nothing in it and no zero count of its own is not an empty day.
+  await expect(c.changes('2026-09-20')).rejects.toThrow('portal sent no entry list for 2026-09-20');
+  await expect(c.changes('2026-09-20')).rejects.toThrow('portal sent no entry list for 2026-09-20');
+  await expect(c.changes('2026-09-20')).rejects.toThrow('invalid portal entry list');
+});
 it('refuses a day the portal does not know and an entry list it cannot trust', async () => {
   const entry = { uic: '000000001', date: '2026-09-01T10:00:00', companyFullName: 'Тест' };
   const list = (body: unknown) => new Response(JSON.stringify(body));
