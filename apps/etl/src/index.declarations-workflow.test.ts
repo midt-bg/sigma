@@ -7,7 +7,7 @@ import type { Env } from './index';
 
 // `scheduled` tells the weekly tick from the six-hourly one by comparing the platform's cron string to
 // DECLARATIONS_CRON, so the deployed schedule and the constant must be the same string — and Sunday must
-// be spelled `7`, because the Cloudflare API rejects `0 3 * * 0` and the deploy dies at the trigger step.
+// be spelled `1`: Cloudflare counts 1 = Sunday … 7 = Saturday, rejects `0`, and `7` ran on Saturdays.
 it('deploys the very cron the weekly branch compares against', () => {
   const toml = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), '../wrangler.toml'),
@@ -16,7 +16,7 @@ it('deploys the very cron the weekly branch compares against', () => {
   const crons = /^crons = \[(.*)\]$/m.exec(toml)?.[1];
   expect(crons, 'no crons in wrangler.toml').toBeDefined();
   expect(crons).toContain(`"${DECLARATIONS_CRON}"`);
-  expect(DECLARATIONS_CRON.split(' ').at(-1), 'Sunday is 7 for the Cloudflare API').not.toBe('0');
+  expect(DECLARATIONS_CRON.split(' ').at(-1), 'Sunday is 1 for the Cloudflare API').toBe('1');
 });
 
 // dev and the deployed Workers must run the same compatibility date: the declarations container reaches
