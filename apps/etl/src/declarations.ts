@@ -196,6 +196,19 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
     });
   }
   private async finish(run: DeclarationRun, state: 'complete' | 'failed', reason?: string) {
+    // A failed run ends quietly otherwise — the container's own log is the only trace, and nothing alerts
+    // on it. The weekly run of 26.09.2026 was found four days later, by hand.
+    if (state === 'failed')
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          event: 'declarations_run_failed',
+          runId: run.runId,
+          stage: run.attemptStage ?? run.stage,
+          attempt: run.attempt,
+          reason: reason?.slice(0, 500) ?? null,
+        }),
+      );
     await this.ctx.container!.destroy();
     await this.ctx.storage.put('run', {
       ...run,
@@ -424,9 +437,12 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         // happened on stage on 20.09.2026: chunk 017 failed and a completed, published run was recorded
         // as failed with a stale search index. Each chunk is its own delete+insert, so repeating one is
         // safe.
+        //
+        // `snapshot` is the same weather: schema files every run re-applies and a read-only export.
+        // wrangler's import-status race ended the weekly run of 26.09.2026 there, in its third minute.
         if (
           status.state === 'yielded' ||
-          ['fetch', 'import', 'registry', 'reindex'].includes(status.stage) ||
+          ['fetch', 'import', 'snapshot', 'registry', 'reindex'].includes(status.stage) ||
           status.signal
         )
           await this.retry(run, reason, status.state === 'yielded');

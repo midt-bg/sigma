@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './cacbg/corpus.mjs';
+import { retryD1 } from './d1-retry.mjs';
 import { importSql } from './cacbg/import-sql.mjs';
 import { progress } from './cacbg/progress.mjs';
 import { assertD1TargetAuthorized, parseWranglerJson, TABLES } from './ship-related-persons.mjs';
@@ -90,11 +91,22 @@ const wrangler = (args, output = false) =>
     stdio: output ? 'pipe' : 'inherit',
     maxBuffer: 32 * 1024 * 1024,
   });
+// A call that converges — a schema file every run re-applies, a chunk that deletes and re-inserts its own
+// rows, an export, a read — survives wrangler's import-status race and D1's short faults by being repeated
+// (scripts/d1-retry.mjs). The one write that does not converge, the column added below, stays `wrangler()`.
+const repeatable = (args, output = false, before = () => {}) =>
+  retryD1(
+    () => {
+      before();
+      return wrangler(args, output);
+    },
+    { label: `${args[1]} ${String(args.at(-1)).split('/').at(-1)}`.slice(0, 120) },
+  );
 const d1 = process.env.SIGMA_D1_NAME;
 mkdirSync(work, { recursive: true });
 if (remote) {
   if (!flag('yes')) throw Error('--remote requires --yes');
-  const info = JSON.parse(wrangler(['d1', 'info', d1, '--json'], true));
+  const info = JSON.parse(repeatable(['d1', 'info', d1, '--json'], true));
   assertD1TargetAuthorized({
     remote,
     shipEnv: env.SIGMA_SHIP_ENV ?? '',
@@ -160,7 +172,7 @@ if (doing('snapshot') && remote) {
     '0018_person_entities',
     '0022_person_relatives',
   ])
-    wrangler([
+    repeatable([
       'd1',
       'execute',
       d1,
@@ -178,9 +190,9 @@ if (doing('snapshot') && remote) {
       '',
     ),
   );
-  wrangler(['d1', 'execute', d1, '--remote', '--yes', '--file', registrySchema]);
+  repeatable(['d1', 'execute', d1, '--remote', '--yes', '--file', registrySchema]);
   const columns = parseWranglerJson(
-    wrangler(
+    repeatable(
       ['d1', 'execute', d1, '--remote', '--json', '--command', 'PRAGMA table_info(registry_roles)'],
       true,
     ),
@@ -196,7 +208,7 @@ if (doing('snapshot') && remote) {
       'ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT',
     ]);
   for (const name of ['0019_registry_scoped_birthdates', '0020_registry_company_history'])
-    wrangler([
+    repeatable([
       'd1',
       'execute',
       d1,
@@ -224,17 +236,21 @@ if (doing('snapshot') && remote) {
     ]),
   ];
   const sql = join(work, 'source.sql');
-  rmSync(sql, { force: true });
-  wrangler([
-    'd1',
-    'export',
-    d1,
-    '--remote',
-    '--skip-confirmation',
-    ...tables.flatMap((t) => ['--table', t]),
-    '--output',
-    sql,
-  ]);
+  // A repeated export starts from no file, never from a half-written one.
+  repeatable(
+    [
+      'd1',
+      'export',
+      d1,
+      '--remote',
+      '--skip-confirmation',
+      ...tables.flatMap((t) => ['--table', t]),
+      '--output',
+      sql,
+    ],
+    false,
+    () => rmSync(sql, { force: true }),
+  );
   rmSync(db, { force: true });
   console.log('Importing the D1 snapshot into the working SQLite database …');
   importSql(db, sql);
@@ -242,7 +258,7 @@ if (doing('snapshot') && remote) {
   const local = new DatabaseSync(db, { readOnly: true });
   for (const t of tables) {
     const answer = parseWranglerJson(
-      wrangler(
+      repeatable(
         ['d1', 'execute', d1, '--remote', '--json', '--command', `SELECT COUNT(*) n FROM ${t}`],
         true,
       ),
@@ -308,7 +324,7 @@ if (doing('publish') && remote) {
   const applyReindex = (name, sql) => {
     const file = join(work, `${name}.sql`);
     writeFileSync(file, sql);
-    wrangler(['d1', 'execute', d1, '--remote', '--yes', '--file', file]);
+    repeatable(['d1', 'execute', d1, '--remote', '--yes', '--file', file]);
   };
 
   applyReindex('reindex-entities', emitRefreshGroup('entity-search-index'));
@@ -349,7 +365,7 @@ if (doing('publish') && remote) {
      )`,
   ]);
   // Everyone else with a page, after the officials are final.
-  wrangler([
+  repeatable([
     'd1',
     'execute',
     d1,

@@ -565,3 +565,51 @@ it('retries a failed reindex chunk instead of throwing away a published run', as
   await g.job().alarm();
   expect(g.run().state).toBe('failed');
 });
+
+// The snapshot re-applies schema files and exports a read-only copy: wrangler's import-status race
+// („Not currently importing anything" for an import that already finished) ended the weekly run of
+// 26.09.2026 there, three minutes in, with a week of declarations unread.
+it('retries a failed snapshot instead of ending the weekly run', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-snapshot');
+  await f.job().alarm();
+  f.answer({
+    state: 'failed',
+    stage: 'snapshot',
+    completed: 0,
+    reason: 'Error: Command failed: wrangler d1 execute … 0010_publishing_gate_constraints.sql',
+  });
+  await f.job().alarm();
+  expect(f.run().state).toBe('running');
+  expect(f.run().retryAt).toBeGreaterThan(Date.now());
+});
+
+it('says at error level when a run fails, and stays quiet when it completes', async () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const f = fixture();
+    await f.job().startRun('workflow-failed');
+    await f.job().alarm();
+    f.answer({ state: 'failed', stage: 'audit', completed: 3, reason: 'audit findings' });
+    await f.job().alarm();
+    expect(f.run().state).toBe('failed');
+    expect(error).toHaveBeenCalledOnce();
+    expect(JSON.parse(error.mock.calls[0]![0] as string)).toMatchObject({
+      level: 'error',
+      event: 'declarations_run_failed',
+      runId: f.run().runId,
+      stage: 'audit',
+      reason: 'audit findings',
+    });
+
+    const g = fixture();
+    await g.job().startRun('workflow-complete');
+    await g.job().alarm();
+    g.answer({ state: 'complete', stage: 'reindex', audit: true, published: true });
+    await g.job().alarm();
+    expect(g.run().state).toBe('complete');
+    expect(error).toHaveBeenCalledOnce();
+  } finally {
+    error.mockRestore();
+  }
+});
