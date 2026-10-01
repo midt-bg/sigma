@@ -65,7 +65,7 @@ describe('refresh-slice statement shape', () => {
   it('keeps every UPDATE … FROM <cte> small enough that the planner survived it', () => {
     // The band is measured, not guessed — all three points observed on this file:
     // (code lines = comments and blank lines stripped, exactly as `code()` below counts them):
-    //   lot-values  ·  30 code lines ·  1 nested SELECT  · runs fine (since 2026-06)
+    //   lot-values  ·  35 code lines ·  3 nested SELECTs · runs fine (30 lines and 1 since 2026-06)
     //   amendments  · 105 code lines ·  5 nested SELECTs · runs fine (after this split)
     //   amendments  · 247 code lines · 19 nested SELECTs · OOMed D1 for nineteen days
     const offenders = refreshSliceStatementGroups(SQL)

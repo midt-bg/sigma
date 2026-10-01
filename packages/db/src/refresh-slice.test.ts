@@ -587,6 +587,98 @@ describe('joint-procurement authority attribution', () => {
   );
 });
 
+describe('refresh-slice lot values', () => {
+  // The window's OCDS lots fill the served lots by their domain id: only an empty field is filled, the
+  // latest OCDS row of a lot wins, `LOT-n` and `n` are the same lot, and a lot outside the window or an
+  // OCDS lot with no served row is left alone.
+  it('fills only the empty fields of the window lots, from the latest OCDS row of each', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-lot-values-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      seedEopBaseDay(dbPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type)
+           VALUES ('auth:323456789', 'Authority LV', '323456789', 'public');
+         INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status)
+           VALUES ('t:UNP-LV-1', 'UNP-LV-1', 'Lot tender', 'auth:323456789', 'BGN', 'open', 'published'),
+                  ('t:UNP-LV-2', 'UNP-LV-2', 'Other tender', 'auth:323456789', 'BGN', 'open', 'published');
+         INSERT INTO lots (id, tender_id, title, value_amount, value_currency) VALUES
+           ('lot:UNP-LV-1:1', 't:UNP-LV-1', 'Empty lot', NULL, NULL),
+           ('lot:UNP-LV-1:2', 't:UNP-LV-1', 'Valued, no currency', 7, NULL),
+           ('lot:UNP-LV-1:A3', 't:UNP-LV-1', 'Fully valued', 9, 'BGN'),
+           ('lot:UNP-LV-1:4', 't:UNP-LV-1', 'No amount upstream', NULL, NULL),
+           ('lot:UNP-LV-2:1', 't:UNP-LV-2', 'Outside the window', NULL, NULL);
+         INSERT INTO raw_tenders
+           (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+            estimated_value, currency, authority_name, authority_eik, authority_type, lot_id, published_at)
+         VALUES ('ocds:2026-06-01', 2026, '2026-06-07T00:00:00Z', 'UNP-LV-1', 'TENDER-LV-1', 'open',
+                 'Lot tender', 1000, 'BGN', 'Authority LV', '323456789', 'public', NULL, '2026-06-01');
+         INSERT INTO raw_ocds_lots (id, source, fetched_at, tender_id, lot_id, value_amount, value_currency)
+         VALUES (1, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', 'LOT-1', 100, 'EUR'),
+                (2, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', '1', 150, 'BGN'),
+                (3, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', 'LOT-2', 200, 'EUR'),
+                (4, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', 'A3', 300, 'EUR'),
+                (5, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', '4', NULL, 'EUR'),
+                (6, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', '99', 5, 'EUR');`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+
+      expect(
+        sqliteJson<{ id: string; value_amount: number | null; value_currency: string | null }>(
+          dbPath,
+          "SELECT id, value_amount, value_currency FROM lots WHERE id GLOB 'lot:UNP-LV-*' ORDER BY id",
+        ),
+      ).toEqual([
+        { id: 'lot:UNP-LV-1:1', value_amount: 150, value_currency: 'BGN' },
+        { id: 'lot:UNP-LV-1:2', value_amount: 7, value_currency: 'EUR' },
+        { id: 'lot:UNP-LV-1:4', value_amount: null, value_currency: 'EUR' },
+        { id: 'lot:UNP-LV-1:A3', value_amount: 9, value_currency: 'BGN' },
+        { id: 'lot:UNP-LV-2:1', value_amount: null, value_currency: null },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('refresh-slice tender status', () => {
+  it('marks a served tender awarded when the window brings its contract, and no other', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-awarded-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type)
+           VALUES ('auth:223456787', 'Authority Shared', '223456787', 'public');
+         INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status)
+           VALUES ('t:UNP-SHARED', 'UNP-SHARED', 'Shared tender', 'auth:223456787', 'BGN', 'open', 'published'),
+                  ('t:UNP-QUIET', 'UNP-QUIET', 'Quiet tender', 'auth:223456787', 'BGN', 'open', 'published');`,
+      );
+      // A contract for an already served tender, with no tender header in the window.
+      seedEopOnlySharedNumber(dbPath);
+      sqlite(dbPath, "DELETE FROM raw_tenders WHERE unp = 'UNP-SHARED';");
+
+      readScript(dbPath, refreshSlicePath);
+
+      expect(
+        sqliteJson<{ id: string; status: string }>(
+          dbPath,
+          "SELECT id, status FROM tenders WHERE id IN ('t:UNP-SHARED', 't:UNP-QUIET') ORDER BY id",
+        ),
+      ).toEqual([
+        { id: 't:UNP-QUIET', status: 'published' },
+        { id: 't:UNP-SHARED', status: 'awarded' },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('refresh-slice EOP base derivation', () => {
   it('derives new eop base rows as c:e contracts and is idempotent', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
