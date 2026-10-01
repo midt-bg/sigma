@@ -656,18 +656,27 @@ it('sorts period values and keeps unknown amounts last', () => {
     link({ officialSlug: 'b' }),
     link({ officialSlug: 'c' }),
   ]);
-  Object.assign(rows.find((r) => r.officialSlug === 'a')!, {
-    contemporaneousValueEur: null,
-    hasContemporaneous: true,
-  });
-  Object.assign(rows.find((r) => r.officialSlug === 'b')!, {
-    contemporaneousValueEur: 0,
-    hasContemporaneous: true,
-  });
-  Object.assign(rows.find((r) => r.officialSlug === 'c')!, {
-    contemporaneousValueEur: 100,
-    hasContemporaneous: true,
-  });
+  Object.assign(
+    rows.find((r) => r.officialSlug === 'a')!,
+    {
+      contemporaneousValueEur: null,
+      hasContemporaneous: true,
+    },
+  );
+  Object.assign(
+    rows.find((r) => r.officialSlug === 'b')!,
+    {
+      contemporaneousValueEur: 0,
+      hasContemporaneous: true,
+    },
+  );
+  Object.assign(
+    rows.find((r) => r.officialSlug === 'c')!,
+    {
+      contemporaneousValueEur: 100,
+      hasContemporaneous: true,
+    },
+  );
   expect(conflictListFilters(new URLSearchParams('sort=period-contracts')).sort).toBe('period');
   expect(sortConflictRows(rows, 'period').map((r) => r.officialSlug)).toEqual(['c', 'b', 'a']);
 });

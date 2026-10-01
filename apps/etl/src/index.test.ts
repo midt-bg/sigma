@@ -630,8 +630,7 @@ describe('RefreshWorkflow — refresh lease', () => {
     }) as WorkflowEvent<{ today: string }>;
   const leaseRow = (db: DatabaseSync) =>
     db.prepare('SELECT holder, expires_at FROM refresh_lease WHERE id = 1').get() as
-      | { holder: string; expires_at: string }
-      | undefined;
+      { holder: string; expires_at: string } | undefined;
   const plantLease = (db: DatabaseSync, holder: string, expiresAt: string) =>
     db.exec(
       `CREATE TABLE IF NOT EXISTS refresh_lease (id INTEGER PRIMARY KEY CHECK (id = 1), holder TEXT NOT NULL, acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL);

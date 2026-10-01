@@ -4,14 +4,7 @@ import { amendmentValueTreatment } from './amendment-total.ts';
 
 export type BaseCategory = 'contracts' | 'tenders' | 'annexes';
 export type BaseCoercionKind =
-  | 'text'
-  | 'int'
-  | 'real'
-  | 'bool'
-  | 'date'
-  | 'real_signed'
-  | 'secured_inverse'
-  | 'variants_enum';
+  'text' | 'int' | 'real' | 'bool' | 'date' | 'real_signed' | 'secured_inverse' | 'variants_enum';
 export type BaseStagingValue = string | number | null;
 export type BaseStagingRow = Record<string, BaseStagingValue>;
 
