@@ -515,13 +515,37 @@ const GOLDEN = {
   // 10) but adds 0 to the paired value_eur SUM (its amount_eur is NULL): the 9-contract eu '0' sums 341100.
   // sector: the same unfiltered count, so division 33 holds c9 too — 5 where sector_totals (amount-filtered)
   // holds 4 — at the same 91000; 45 is 5 / 300100 in both. year: all 10 are signed in 2026.
+  // single_offer/priced is the home page's one-offer share, where `contracts` is the PRICED count: c4 1000,
+  // c6 100 and c7 0 are the single-bid contracts, all with a known amount (c7's is zero) → 3 / 1100.
   facetCounts: [
     { facet: 'eu', key: '0', contracts: 9, value_eur: 341100 },
     { facet: 'eu', key: '1', contracts: 1, value_eur: 50000 },
     { facet: 'procedure', key: 'open', contracts: 10, value_eur: 391100 },
     { facet: 'sector', key: '33', contracts: 5, value_eur: 91000 },
     { facet: 'sector', key: '45', contracts: 5, value_eur: 300100 },
+    { facet: 'single_offer', key: 'priced', contracts: 3, value_eur: 1100 },
     { facet: 'year', key: '2026', contracts: 10, value_eur: 391100 },
+  ],
+
+  // contract_rollup, the contracts list's headline per filter combination ('(all)' = filter not set). All ten
+  // contracts are listed (each has a tender, an authority and a bidder). unverified = no amount (c9) or
+  // value_low (c7). One offer: c4 1000 + c6 100 + c7 0 (c7 unverified). EU: c2 alone. cpv33: c3 45000 + c4
+  // 1000 + c5 15000 + c8 30000 + c9 (no amount, unverified). Under 100k: c2 50000, c3 45000, c4 1000, c5
+  // 15000, c6 100, c7 0, c8 30000 = 141100; c1 100000 and c10 150000 make 100k-1m; c9 has no bucket ('').
+  contractRollup: [
+    { where: {}, contracts: 10, value_eur: 391100, unverified: 2 },
+    { where: { one_offer: '1' }, contracts: 3, value_eur: 1100, unverified: 1 },
+    { where: { eu: '1' }, contracts: 1, value_eur: 50000, unverified: 0 },
+    { where: { sector: '33' }, contracts: 5, value_eur: 91000, unverified: 1 },
+    { where: { value_bucket: 'lt100k' }, contracts: 7, value_eur: 141100, unverified: 1 },
+    { where: { value_bucket: '100k-1m' }, contracts: 2, value_eur: 250000, unverified: 0 },
+    { where: { value_bucket: '' }, contracts: 1, value_eur: 0, unverified: 1 },
+    {
+      where: { year: '2026', sector: '45', one_offer: '1' },
+      contracts: 2,
+      value_eur: 100,
+      unverified: 1,
+    },
   ],
 
   // A1→B1 c1+c7+c10 = 250000 | A1→B2 c2+c6 = 50100 | A2→B1 c3+c5 = 60000 | A2→B2 c8 = 30000 | A2→B3 c4 = 1000
@@ -643,6 +667,20 @@ describe('golden dataset (#99): hand-verified totals through the full derive pip
          FROM flow_pairs ORDER BY authority_id, bidder_id`,
       ),
     ).toEqual(GOLDEN.flowPairs);
+  });
+
+  it('matches the contracts list rollup', () => {
+    const dims = ['procedure_type', 'eu', 'sector', 'one_offer', 'value_bucket', 'year'] as const;
+    for (const { where, ...expected } of GOLDEN.contractRollup) {
+      const set = where as Partial<Record<(typeof dims)[number], string>>;
+      const [row] = sqliteJson(
+        db,
+        `SELECT contracts, ROUND(value_eur, 2) AS value_eur, unverified FROM contract_rollup WHERE ${dims
+          .map((d) => `${d} = '${set[d] ?? '(all)'}'`)
+          .join(' AND ')}`,
+      );
+      expect(row, JSON.stringify(where)).toEqual(expected);
+    }
   });
 
   it('matches home_totals', () => {

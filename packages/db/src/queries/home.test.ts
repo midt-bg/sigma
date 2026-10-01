@@ -65,9 +65,12 @@ const totalsRow = {
 function fake(
   totals: typeof totalsRow | null,
   singleOffer: { value_eur: number; contracts: number } | null = { value_eur: 50000, contracts: 1 },
+  // The precomputed single-offer row in facet_counts; null is a database the refresh has not filled yet.
+  storedSingleOffer: { value_eur: number; contracts: number } | null = null,
 ): FakeD1 {
   return fakeD1([
     { when: 'home_totals', first: totals },
+    { when: "facet = 'single_offer'", first: storedSingleOffer },
     { when: 'company_totals', all: [companyRow] },
     { when: "type_group = 'община'", all: [authorityRow] },
     { when: 'type_group IN', all: [authorityRow] },
@@ -136,5 +139,19 @@ describe('getHomeData', () => {
     const data = await getHomeData(fake(totalsRow, null).db);
 
     expect(data.singleOffer).toEqual({ valueEur: 0, contracts: 0 });
+  });
+
+  it('reads the precomputed single-offer totals instead of scanning the contracts', async () => {
+    const calls = fake(
+      totalsRow,
+      { value_eur: 1, contracts: 1 },
+      { value_eur: 70000, contracts: 3 },
+    );
+    const data = await getHomeData(calls.db);
+
+    expect(data.singleOffer).toEqual({ valueEur: 70000, contracts: 3 });
+    expect(
+      calls.sql.some((query) => query.includes('FROM contracts WHERE bids_received = 1')),
+    ).toBe(false);
   });
 });

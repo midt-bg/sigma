@@ -101,7 +101,14 @@ export const TABLES: TableDoc[] = [
   {
     name: 'facet_counts',
     grain: 'брой за филтър-фасет',
-    columns: "facet ('procedure'|'eu'|'sector'|'year'), key, contracts",
+    columns:
+      "facet ('procedure'|'eu'|'sector'|'year'|'single_offer'), key, contracts (при 'single_offer' — само с известна стойност)",
+  },
+  {
+    name: 'contract_rollup',
+    grain: 'обобщение на списъка с договори за всяка комбинация от филтрите',
+    columns:
+      "procedure_type, eu, sector, one_offer, value_bucket, year ('(all)' = филтърът не е зададен), contracts, value_eur, unverified",
   },
   {
     name: 'flow_pairs',

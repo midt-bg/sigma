@@ -44,6 +44,29 @@ export function toHomeTotals(totalsRow: HomeTotalsRow | null): HomeTotals {
 // общини, болници и образование — those live in the full list).
 const STATE_TYPES = ['министерство', 'агенция', 'държавна компания', 'друго'];
 
+/**
+ * Money portion of single-offer contracts vs the whole corpus (totals.valueEur is the denominator): the
+ * metric's bids = 1 filter, on the same canonical value base as every rollup — all known amount_eur values,
+ * regardless of value_flag. Precomputed with the other corpus-wide totals (facet_counts, where `contracts` is
+ * the priced count); a database the refresh has not filled yet counts live, as before.
+ */
+async function singleOfferTotals(
+  db: D1Database,
+): Promise<{ value_eur: number; contracts: number } | null> {
+  const stored = await db
+    .prepare(
+      `SELECT value_eur, contracts FROM facet_counts WHERE facet = 'single_offer' AND key = 'priced'`,
+    )
+    .first<{ value_eur: number; contracts: number }>();
+  if (stored) return stored;
+  return db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_eur), 0) AS value_eur, COUNT(*) AS contracts
+         FROM contracts WHERE bids_received = 1 AND amount_eur IS NOT NULL`,
+    )
+    .first<{ value_eur: number; contracts: number }>();
+}
+
 /** Home page: the KPI strip (from home_totals), top-10 companies, and the ministries/общини slices. */
 export async function getHomeData(db: D1Database): Promise<HomeData> {
   const totalsRow = await db
@@ -75,15 +98,7 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
         .all<AuthorityTotalsRow>(),
       listSingleOfferContracts(db, 'recent', 10),
       listSingleOfferContracts(db, 'value', 10),
-      // Money portion of single-offer contracts vs the whole corpus (totals.valueEur is the
-      // denominator). Keep the metric's bids = 1 filter, then use the same canonical value base as
-      // every rollup: all known amount_eur values, regardless of value_flag.
-      db
-        .prepare(
-          `SELECT COALESCE(SUM(amount_eur), 0) AS value_eur, COUNT(*) AS contracts
-         FROM contracts WHERE bids_received = 1 AND amount_eur IS NOT NULL`,
-        )
-        .first<{ value_eur: number; contracts: number }>(),
+      singleOfferTotals(db),
     ]);
 
   return {

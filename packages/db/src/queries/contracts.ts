@@ -1,5 +1,6 @@
 // Contracts — the atomic record. The list reads the base `contracts` table (filtered/sorted, keyset
-// page of 15); facet counts are grouped or read from facet_counts; CSV is streamed.
+// page of 15); its headline comes from contract_rollup where the filters allow; facet counts are grouped
+// or read from facet_counts; CSV is streamed.
 
 import type { ContractListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
@@ -111,11 +112,16 @@ const SELECT = `
          t.cpv_code, c.eu_funded, t.authority_id, a.name AS authority_name,
          c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind,
          t.procedure_type, c.signed_at, c.bids_received, c.amount_eur, c.value_flag`;
-const FROM = `
-  FROM contracts c
+const JOINS = `
   JOIN tenders t ON t.id = c.tender_id
   JOIN authorities a ON a.id = t.authority_id
   JOIN bidders b ON b.id = c.bidder_id`;
+const FROM = `
+  FROM contracts c${JOINS}`;
+// The same rows, reached from a candidate set `cand` of contract ids (see drivingFilter); CROSS JOIN keeps the
+// candidates as the outer loop.
+const FROM_CANDIDATES = `
+  FROM cand CROSS JOIN contracts c ON c.id = cand.id${JOINS}`;
 
 /**
  * Build the WHERE fragment (with a leading ' WHERE ') + params shared by list, summary and CSV.
@@ -204,6 +210,238 @@ function contractFilterSignature(p: ContractListParams): string {
   return filterSignature(filters);
 }
 
+// ── The headline from contract_rollup (migration 0024) ───────────────────────────────────────────
+// The rollup holds the list's count, value and unconfirmed values for every combination of its rail filters,
+// so the headline is a few primary-key reads instead of a sum over the corpus — which was most of what an
+// uncached list page cost. Its dimensions are the list's own expressions (see the migration); a filter it
+// does not hold is counted live, as before.
+
+/** The rollup's value for a dimension the filter leaves open. */
+const ROLLUP_ALL = '(all)';
+const ROLLUP_KEY_DIMS = ['procedure_type', 'eu', 'sector', 'one_offer', 'value_bucket'] as const;
+
+interface RollupSelection {
+  /** Per dimension, the values the filter accepts; null when it is left open. */
+  dims: Record<(typeof ROLLUP_KEY_DIMS)[number], string[] | null>;
+  /** Four-digit years chosen, null when none is. */
+  years: string[] | null;
+  /** „Неизвестна" chosen: no four-digit year, or one after the current. */
+  unknownYear: boolean;
+}
+
+/**
+ * The rollup rows a filter set selects, or null when it sets a filter the rollup does not hold: an authority,
+ * a bidder, a search, a year token that is not four digits (the list matches it against the start of the
+ * date, the rollup holds only years and 'unknown'), or an empty sector (the rollup files no code under '').
+ * Mirrors buildFilters, including what it ignores: an unknown procedure group, value bucket or EU mode.
+ */
+function rollupSelection(p: ContractListParams): RollupSelection | null {
+  if (p.authority || p.bidder || searchMatchQuery(p.q ?? '')) return null;
+  // Each value once: a repeated one would repeat its candidate range below.
+  const years = [...new Set(p.years ?? [])].filter((y) => y !== YEAR_UNKNOWN);
+  if (years.some((y) => !/^[0-9]{4}$/.test(y))) return null;
+  const sectors = [...new Set(p.sectors ?? [])];
+  if (sectors.some((s) => s === '')) return null;
+  const types = (p.procedureGroups ?? []).flatMap(
+    (k) => PROCEDURE_GROUPS.find((g) => g.key === k)?.types ?? [],
+  );
+  return {
+    dims: {
+      procedure_type: types.length ? types : null,
+      eu: p.eu === 'eu' ? ['1'] : p.eu === 'national' ? ['0'] : null,
+      sector: sectors.length ? sectors : null,
+      one_offer: p.bids === 'one' ? ['1'] : null,
+      value_bucket: p.valueBucket && VALUE_BUCKETS[p.valueBucket] ? [p.valueBucket] : null,
+    },
+    years: years.length ? years : null,
+    unknownYear: (p.years?.length ?? 0) > years.length,
+  };
+}
+
+const OPEN: RollupSelection = {
+  dims: { procedure_type: null, eu: null, sector: null, one_offer: null, value_bucket: null },
+  years: null,
+  unknownYear: false,
+};
+
+/** WHERE over contract_rollup for a selection: an open dimension is its '(all)' row, never a sum of values. */
+function rollupWhere(sel: RollupSelection): { sql: string; params: unknown[] } {
+  const parts: string[] = [];
+  const params: unknown[] = [];
+  for (const dim of ROLLUP_KEY_DIMS) {
+    const values = sel.dims[dim];
+    parts.push(values ? `${dim} IN (${qs(values.length)})` : `${dim} = '${ROLLUP_ALL}'`);
+    if (values) params.push(...values);
+  }
+  const years: string[] = [];
+  if (sel.years) {
+    years.push(`year IN (${qs(sel.years.length)})`);
+    params.push(...sel.years);
+  }
+  // „Неизвестна" is 'unknown' plus every year after the current one, the list's live definition. As text both
+  // sort after the current year, and '(all)' before it.
+  if (sel.unknownYear) {
+    years.push('year > ?');
+    params.push(String(new Date().getUTCFullYear()));
+  }
+  parts.push(years.length > 1 ? `(${years.join(' OR ')})` : (years[0] ?? `year = '${ROLLUP_ALL}'`));
+  return { sql: parts.join(' AND '), params };
+}
+
+const ROLLUP_GRAND = `(SELECT contracts FROM contract_rollup WHERE ${rollupWhere(OPEN).sql})`;
+const missingRollup = (e: unknown) => /no such table:?\s*contract_rollup/i.test(String(e));
+
+type ContractsSummary = { total: number; valueEur: number; suspect: number };
+
+/** The headline from the rollup; null when the filters need a live count or the rollup is not filled yet. */
+async function rollupSummary(
+  db: D1Database,
+  p: ContractListParams,
+): Promise<ContractsSummary | null> {
+  const sel = rollupSelection(p);
+  if (!sel) return null;
+  const where = rollupWhere(sel);
+  try {
+    const row = await db
+      .prepare(
+        `SELECT ${ROLLUP_GRAND} AS grand, COALESCE(SUM(contracts), 0) AS total,
+                COALESCE(SUM(value_eur), 0) AS eur, COALESCE(SUM(unverified), 0) AS suspect
+         FROM contract_rollup WHERE ${where.sql}`,
+      )
+      .bind(...where.params)
+      .first<{ grand: number | null; total: number; eur: number; suspect: number }>();
+    // A rollup without its all-open row is one the refresh has not filled: count live.
+    if (row?.grand == null) return null;
+    return { total: row.total, valueEur: row.eur, suspect: row.suspect };
+  } catch (e) {
+    if (missingRollup(e)) return null;
+    throw e;
+  }
+}
+
+/**
+ * A keyset page walks the sort index until it has pageSize + 1 matches. With matches spread evenly that is
+ * about (pageSize + 1) × rows in range / matched, so a filter that matches a few hundred contracts reads most
+ * of the index for every page. Past this many rows a page is read from candidates instead (drivingFilter).
+ */
+const WALK_BUDGET = 4000;
+
+/** The successor of a code's last character: [code, next) holds exactly the strings that start with it. */
+const prefixEnd = (code: string) =>
+  code.slice(0, -1) + String.fromCharCode(code.charCodeAt(code.length - 1) + 1);
+
+interface SortBound {
+  lo: string | number;
+  hi: string | number | null;
+  /** The bound's own filter, for its count in the rollup. */
+  only: RollupSelection;
+}
+
+/**
+ * A range on the sort column that the filters already imply: the chosen signing years under a date sort, the
+ * value bucket under a value sort. It removes no row the filters keep, so the page is the same; but the walk
+ * starts and stops inside the range instead of first crossing every later year, or every larger amount.
+ */
+function sortBound(p: ContractListParams, sort: ContractSort): SortBound | null {
+  if (sort === 'date-desc' || sort === 'date-asc') {
+    const years = p.years ?? [];
+    // A matching contract has a signing date that starts with one of the years: never NULL, so either
+    // sort expression is the date itself. „Неизвестна" (or any other token) has no such range.
+    if (!years.length || !years.every((y) => /^[0-9]{4}$/.test(y))) return null;
+    const sorted = [...years].sort();
+    return { lo: sorted[0]!, hi: prefixEnd(sorted[sorted.length - 1]!), only: { ...OPEN, years } };
+  }
+  const bucket = p.valueBucket ? VALUE_BUCKETS[p.valueBucket] : undefined;
+  if (!bucket) return null;
+  // A matching contract has an amount in [lo, hi), never NULL, so the expression is the amount itself.
+  return {
+    lo: bucket[0],
+    hi: bucket[1],
+    only: { ...OPEN, dims: { ...OPEN.dims, value_bucket: [p.valueBucket!] } },
+  };
+}
+
+/**
+ * The ids a sparse filter's page should be read from, or null to walk the sort index as usual. One indexed
+ * filter — the signing years as date ranges, the sectors as CPV ranges, the value bucket as an amount range —
+ * finds its contracts by its index (INDEXED BY: the cost below assumes that path), and every other filter is
+ * applied right there, so only the matches are looked up again. Used when the rollup counts that filter's
+ * contracts below the walk. The page query still applies every filter and the same order, so the rows are the
+ * same either way; only how they are reached changes.
+ */
+async function drivingFilter(
+  db: D1Database,
+  p: ContractListParams,
+  filters: { sql: string; params: unknown[] },
+  bound: SortBound | null,
+  matched: number,
+  pageSize: number,
+): Promise<{ sql: string; params: unknown[] } | null> {
+  const sel = rollupSelection(p);
+  if (!sel) return null;
+  const rest = filters.sql ? ` AND ${filters.sql.slice(7)}` : '';
+  const options: { only: RollupSelection; sql: string; params: unknown[] }[] = [];
+  if (sel.years && !sel.unknownYear) {
+    options.push({
+      only: { ...OPEN, years: sel.years },
+      sql: `SELECT c.id FROM contracts c INDEXED BY idx_contracts_signed JOIN tenders t ON t.id = c.tender_id
+            WHERE (${sel.years.map(() => '(c.signed_at >= ? AND c.signed_at < ?)').join(' OR ')})${rest}`,
+      params: [...sel.years.flatMap((y) => [y, prefixEnd(y)]), ...filters.params],
+    });
+  }
+  const sectors = sel.dims.sector;
+  if (sectors?.every((s) => /^[0-9]{2}$/.test(s))) {
+    options.push({
+      only: { ...OPEN, dims: { ...OPEN.dims, sector: sectors } },
+      sql: `SELECT c.id FROM tenders t INDEXED BY idx_tenders_cpv CROSS JOIN contracts c ON c.tender_id = t.id
+            WHERE (${sectors.map(() => '(t.cpv_code >= ? AND t.cpv_code < ?)').join(' OR ')})${rest}`,
+      params: [...sectors.flatMap((s) => [s, prefixEnd(s)]), ...filters.params],
+    });
+  }
+  const bucket = sel.dims.value_bucket && VALUE_BUCKETS[sel.dims.value_bucket[0]!];
+  if (sel.dims.value_bucket && bucket) {
+    const [lo, hi] = bucket;
+    options.push({
+      only: { ...OPEN, dims: { ...OPEN.dims, value_bucket: sel.dims.value_bucket } },
+      sql: `SELECT c.id FROM contracts c INDEXED BY idx_contracts_amount_eur JOIN tenders t ON t.id = c.tender_id
+            WHERE c.amount_eur >= ?${hi == null ? '' : ' AND c.amount_eur < ?'}${rest}`,
+      params: [...(hi == null ? [lo] : [lo, hi]), ...filters.params],
+    });
+  }
+  if (!options.length) return null;
+  // The walk's range: the bound's own contracts when the sort is bounded, else every listed one.
+  const counts = [rollupWhere(bound?.only ?? OPEN), ...options.map((o) => rollupWhere(o.only))];
+  // `grand` is NULL until the refresh fills the rollup; every m<i> is a COALESCEd count, never NULL.
+  let row: ({ grand: number | null } & Record<`m${number}`, number>) | null;
+  try {
+    row = await db
+      .prepare(
+        `SELECT ${ROLLUP_GRAND} AS grand, ${counts
+          .map(
+            (w, i) =>
+              `(SELECT COALESCE(SUM(contracts), 0) FROM contract_rollup WHERE ${w.sql}) AS m${i}`,
+          )
+          .join(', ')}`,
+      )
+      .bind(...counts.flatMap((w) => w.params))
+      .first<{ grand: number | null } & Record<`m${number}`, number>>();
+  } catch (e) {
+    if (missingRollup(e)) return null;
+    throw e;
+  }
+  if (row?.grand == null) return null;
+  const range = row.m0!;
+  const walk = Math.min(range, ((pageSize + 1) * range) / matched);
+  if (walk <= WALK_BUDGET) return null;
+  let best: { sql: string; params: unknown[] } | null = null;
+  let bestCount = walk;
+  for (const [i, o] of options.entries()) {
+    const n = row[`m${i + 1}`]!;
+    if (n < bestCount) [best, bestCount] = [{ sql: o.sql, params: o.params }, n];
+  }
+  return best;
+}
+
 function toItem(r: ContractRow): ContractListItem {
   const authorityName = cleanName(r.authority_name);
   const bidderName = cleanName(r.bidder_name);
@@ -265,7 +503,8 @@ export async function listContracts(
   // The caller may inject a (cached) summary to skip the COUNT/SUM scan — see apps/web KV caching.
   summaryOverride?: { total: number; valueEur: number; suspect: number },
 ): Promise<ContractListResult> {
-  const sort = SORTS[p.sort as keyof typeof SORTS] ?? SORTS['value-desc'];
+  const sortKey = normalizeContractSort(p.sort);
+  const sort = SORTS[sortKey];
   const pageSize = p.pageSize ?? 15;
   const filters = buildFilters(p);
   const signature = contractFilterSignature(p);
@@ -278,20 +517,36 @@ export async function listContracts(
     allowedSortCols: Object.values(SORTS).map((s) => s.expr),
   });
 
-  const conds = [filters.sql ? filters.sql.slice(7) : '', ks.whereSql]
+  const summary = summaryOverride ?? (await contractsSummary(db, p));
+  const bound = sortBound(p, sortKey);
+  const boundSql = bound
+    ? `${sort.expr} >= ?${bound.hi == null ? '' : ` AND ${sort.expr} < ?`}`
+    : '';
+  const boundParams = bound ? (bound.hi == null ? [bound.lo] : [bound.lo, bound.hi]) : [];
+  const conds = [filters.sql ? filters.sql.slice(7) : '', boundSql, ks.whereSql]
     .filter(Boolean)
     .join(' AND ');
-  const sql = `${SELECT}, ${sort.expr} AS sort_value ${FROM}${conds ? ' WHERE ' + conds : ''} ${ks.orderSql} LIMIT ?`;
-  const { results } = await db
-    .prepare(sql)
-    .bind(...filters.params, ...ks.params, pageSize + 1)
-    .all<ContractRow & { sort_value: string | number }>();
+  // A filter nothing matches has no page to read: walking the sort index for it reads all of it.
+  let results: (ContractRow & { sort_value: string | number })[] = [];
+  if (summary.total > 0) {
+    const driver = await drivingFilter(db, p, filters, bound, summary.total, pageSize);
+    const sql = `${driver ? `WITH cand AS MATERIALIZED (${driver.sql})` : ''}${SELECT}, ${sort.expr} AS sort_value ${driver ? FROM_CANDIDATES : FROM}${conds ? ' WHERE ' + conds : ''} ${ks.orderSql} LIMIT ?`;
+    ({ results } = await db
+      .prepare(sql)
+      .bind(
+        ...(driver?.params ?? []),
+        ...filters.params,
+        ...boundParams,
+        ...ks.params,
+        pageSize + 1,
+      )
+      .all<ContractRow & { sort_value: string | number }>());
+  }
 
   const hasMore = results.length > pageSize;
   let rows = results.slice(0, pageSize);
   if (ks.reverse) rows = rows.reverse();
 
-  const summary = summaryOverride ?? (await contractsSummary(db, p));
   const cursors = pageCursors({
     rows: rows.map((r) => ({ sortValue: r.sort_value, id: r.id })),
     hasMore,
@@ -310,11 +565,18 @@ export async function listContracts(
   };
 }
 
-/** Total rows, canonical-EUR sum and suspect tally for the current filter (the list headline). */
+/**
+ * Total rows, canonical-EUR sum and suspect tally for the current filter (the list headline): from the
+ * rollup when the filters are ones it holds, counted live otherwise.
+ */
 export async function contractsSummary(
   db: D1Database,
   p: ContractListParams,
-): Promise<{ total: number; valueEur: number; suspect: number }> {
+): Promise<ContractsSummary> {
+  return (await rollupSummary(db, p)) ?? liveSummary(db, p);
+}
+
+async function liveSummary(db: D1Database, p: ContractListParams): Promise<ContractsSummary> {
   const filters = buildFilters(p);
   // The money sum follows the site-wide value base: every non-NULL amount_eur, regardless of flag.
   // The badge is a separate data-quality metric: NULL values plus value_low rows, which are summed
