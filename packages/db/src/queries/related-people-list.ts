@@ -21,8 +21,14 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   WHERE ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
     AND (?1 IS NULL OR il.eik IN (SELECT eik FROM paid))
 ), office_years AS MATERIALIZED (
+  -- The office years of exactly the people listed, read from their own declarations — every declarant the
+  -- register proves to be the same identity included — rather than from all of them: a scan of the whole
+  -- declarations table was most of what one uncached list cost. CROSS JOIN keeps that order of reading.
   SELECT DISTINCT COALESCE(pl.registry_indent,d.person_id) identity,d.declared_year year
-  FROM declarations d LEFT JOIN person_registry_links pl ON pl.person_id=d.person_id
+  FROM (SELECT person_id FROM links
+        UNION SELECT lp.person_id FROM person_registry_links lp JOIN links lk ON lp.registry_indent=lk.identity) who
+  CROSS JOIN declarations d ON d.person_id=who.person_id
+  LEFT JOIN person_registry_links pl ON pl.person_id=d.person_id
   WHERE ${declaredOfficeYear()}
 ), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM links)')}
 ), company_contracts AS MATERIALIZED (
@@ -55,16 +61,27 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
 export async function getRelatedPersonRows(db: D1Database, authorityId?: string) {
   const result = await db
     .prepare(
-      `${CTE}
-    SELECT p.*,r.name,r.person_id,t.*,
-      (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',co.self,'family',co.family,'manages',co.manages)) FROM (
-        SELECT l.eik,COALESCE(b.name,l.eik) company,MAX(l.relation IN ('owns','owns+manages')) self,
+      // Each row's companies and offices, gathered once per identity: as subqueries per row they read the
+      // whole `links` list again for every person in the list.
+      `${CTE}, identity_companies AS MATERIALIZED (
+      SELECT identity,json_group_array(json_object('eik',eik,'company',company,'self',self,'family',family,'manages',manages)) companies
+      FROM (
+        SELECT l.identity,l.eik,COALESCE(b.name,l.eik) company,MAX(l.relation IN ('owns','owns+manages')) self,
           MAX(l.interest_class='family_ownership') family,MAX(l.relation='manages') manages
-        FROM links l JOIN bidders b ON b.eik_normalized=l.eik WHERE l.identity=p.identity GROUP BY l.eik ORDER BY b.name
-      ) co) companies,
+        FROM links l JOIN bidders b ON b.eik_normalized=l.eik GROUP BY l.identity,l.eik ORDER BY l.identity,b.name
+      ) GROUP BY identity
+    ), identity_offices AS MATERIALIZED (
+      SELECT identity,json_group_array(json_object('institution',institution,'position',position,'year',year)) offices
+      FROM (
+        SELECT ip.identity,d.institution,d.position,d.declared_year year
+        FROM (SELECT DISTINCT identity,person_id FROM links) ip CROSS JOIN declarations d ON d.person_id=ip.person_id
+        ORDER BY ip.identity,d.person_id,d.rowid
+      ) GROUP BY identity
+    )
+    SELECT p.*,r.name,r.person_id,t.*,
+      COALESCE((SELECT ic.companies FROM identity_companies ic WHERE ic.identity=p.identity),'[]') companies,
       (SELECT b.name FROM bidders b WHERE b.eik_normalized=r.eik ORDER BY b.id LIMIT 1) company,r.eik,
-      (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year))
-        FROM declarations d WHERE d.person_id IN (SELECT person_id FROM links WHERE identity=p.identity)) offices
+      COALESCE((SELECT io.offices FROM identity_offices io WHERE io.identity=p.identity),'[]') offices
     FROM grouped_people p JOIN representatives r ON r.identity=p.identity AND r.rn=1 JOIN totals t ON t.identity=p.identity
     ORDER BY CASE WHEN p.own_institution THEN 2 WHEN t.has_window THEN 1 ELSE 0 END DESC,
       t.total_eur DESC,p.identity`,
@@ -149,16 +166,15 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   ), roles AS MATERIALIZED (
     SELECT pe.person_id, pe.identity, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner,
       MAX(r.role IN ('sole_owner','partner','trader','manager')) direct
-    FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
+    -- CROSS JOIN reads from the few listed people to their roles; left free, the planner walked every
+    -- company with contracts and looked each one's roles up instead.
+    FROM people pe CROSS JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
       AND r.role IN ('sole_owner','partner','trader','manager',
                      'board_of_directors','management_board','governing_body')
     JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
     JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
     WHERE ?1 IS NULL OR r.eik IN (SELECT eik FROM paid)
     GROUP BY pe.person_id, r.eik
-  ), office_years AS MATERIALIZED (
-    SELECT DISTINCT d.person_id, d.declared_year year FROM declarations d
-    WHERE d.person_id IN (SELECT person_id FROM roles) AND ${declaredOfficeYear()}
   ), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM roles)')}
   ), company_contracts AS MATERIALIZED (
     SELECT c.id, b.eik_normalized eik, c.amount_eur, c.signed_at
@@ -172,7 +188,11 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     -- 64 contracts. Same predicate as during_role (person-activity.ts), so the list and the profile
     -- cannot disagree: an open role counts only up to the last successful read of the partida.
     SELECT ro.person_id, c.id, c.eik, c.amount_eur, MAX(ro.direct) direct,
-      MAX(oy.person_id IS NOT NULL AND ${withinOffice('ob', 'c.signed_at')} AND EXISTS (SELECT 1 FROM registry_roles rr
+      -- The office year straight from the person's declarations, by their index: a materialised list of office
+      -- years has no index and was scanned whole for every contract.
+      MAX(EXISTS (SELECT 1 FROM declarations dy WHERE dy.person_id=ro.person_id
+          AND dy.declared_year=strftime('%Y',c.signed_at) AND ${declaredOfficeYear('dy')})
+        AND ${withinOffice('ob', 'c.signed_at')} AND EXISTS (SELECT 1 FROM registry_roles rr
         WHERE rr.subject_id=ro.identity AND rr.subject_kind='person' AND rr.eik=ro.eik
           AND rr.role IN ('sole_owner','partner','trader','manager',
                           'board_of_directors','management_board','governing_body')
@@ -182,7 +202,6 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
             SELECT 1 FROM registry_deeds rd WHERE rd.eik=rr.eik AND rd.outcome='ok'
               AND date(c.signed_at)<=date(rd.fetched_at)))))) in_window
     FROM roles ro JOIN company_contracts c ON c.eik=ro.eik
-    LEFT JOIN office_years oy ON oy.person_id=ro.person_id AND oy.year=strftime('%Y',c.signed_at)
     LEFT JOIN office_bounds ob ON ob.person_id=ro.person_id
     GROUP BY ro.person_id, c.id
   ), totals AS (

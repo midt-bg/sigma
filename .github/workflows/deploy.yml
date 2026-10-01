@@ -255,7 +255,8 @@ jobs:
             0018_person_entities \
             0019_registry_scoped_birthdates \
             0020_registry_company_history \
-            0022_person_relatives
+            0022_person_relatives \
+            0023_read_path_indexes
           do
             bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" "../../packages/db/migrations/${migration}.sql"
           done
