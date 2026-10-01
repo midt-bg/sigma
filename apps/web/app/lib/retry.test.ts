@@ -26,6 +26,20 @@ describe('withDbRetry', () => {
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
+  it('answers an overloaded D1 with a 503 at once instead of asking it again', async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValue(new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.'));
+
+    const refusal = await withDbRetry(fn).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(Response);
+    expect((refusal as Response).status).toBe(503);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   it('never retries a thrown Response (404/redirect control flow)', async () => {
     const notFound = new Response('Not Found', { status: 404 });
     const fn = vi.fn().mockRejectedValue(notFound);

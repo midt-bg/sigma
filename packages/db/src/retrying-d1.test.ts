@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { recordingD1 } from '@sigma/test-support';
 import { getDb } from './readonly-d1';
+import { d1OverloadedResponse, isD1Overloaded } from './retrying-d1';
 
 // A blip on one query used to reject the whole loader and render the full-page error boundary. A crawl
 // of 220 pages during a weekly declarations run hit it twice, on pages whose loaders had no retry.
@@ -101,4 +102,43 @@ it('logs a non-Error rejection as it is and keeps retrying', async () => {
   await expect(getDb({ DB: db }).prepare('SELECT 1').all()).resolves.toBeDefined();
   expect(warn).toHaveBeenCalledWith(expect.stringContaining('attempt 1/3'), 'D1_ERROR: dropped');
   warn.mockRestore();
+});
+
+// D1's back-pressure is not a blip: repeating the scan lengthens the queue that caused it. The request
+// ends on the first refusal, as the 503 the router renders — on every attempt, the last one included.
+it('turns an overloaded D1 into a 503 at once instead of asking again', async () => {
+  for (const failuresBeforeOverload of [0, 2]) {
+    let tries = 0;
+    const { db } = recordingD1([
+      {
+        when: [],
+        all: () => {
+          tries += 1;
+          if (tries <= failuresBeforeOverload) throw new Error('D1_ERROR: network connection lost');
+          throw new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.');
+        },
+      },
+    ]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const refusal = await getDb({ DB: db })
+      .prepare('SELECT 1')
+      .all()
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    warn.mockRestore();
+    expect(refusal).toBeInstanceOf(Response);
+    expect((refusal as Response).status).toBe(503);
+    expect(tries).toBe(failuresBeforeOverload + 1);
+  }
+});
+
+it('tells D1 back-pressure from a transient fault, whatever was thrown', () => {
+  expect(
+    isD1Overloaded(new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.')),
+  ).toBe(true);
+  expect(isD1Overloaded('D1_ERROR: Requests queued for too long')).toBe(true);
+  expect(isD1Overloaded(new Error('D1_ERROR: network connection lost'))).toBe(false);
+  expect(d1OverloadedResponse().status).toBe(503);
 });

@@ -9,6 +9,8 @@
 // effects. Thrown `Response`s (404 / redirect) are intentional control flow, never transient, so
 // they pass straight through without consuming a retry.
 
+import { d1OverloadedResponse, isD1Overloaded } from '@sigma/db';
+
 const BACKOFF_MS = [50, 150];
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -28,6 +30,8 @@ export async function withDbRetry<T>(fn: () => Promise<T>, attempts = 3): Promis
     } catch (error) {
       // 404 / redirect — intentional, not a fault. Never retry; surface it on the first throw.
       if (error instanceof Response) throw error;
+      // D1's back-pressure: asking again only lengthens its queue (packages/db, retrying-d1.ts).
+      if (isD1Overloaded(error)) throw d1OverloadedResponse();
       lastError = error;
       if (attempt < total - 1) {
         // Logged so the otherwise-silent transient faults are visible in Workers logs.

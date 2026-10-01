@@ -187,5 +187,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (isNoindexNamesPath(request)) hardened.headers.set('X-Robots-Tag', 'noindex');
   if (cacheable) ctx.waitUntil(edgeCache.put(key, hardened.clone()));
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
+  // An overloaded D1 ends the request as a 503 (packages/db, retrying-d1.ts): say when to come back — a
+  // crawler backs off on it, where a 500 reads as a broken page. Never cached: only an ok response is put.
+  if (hardened.status === 503) {
+    hardened.headers.set('Retry-After', '30');
+    hardened.headers.set('Cache-Control', 'no-store');
+  }
   return hardened;
 }
