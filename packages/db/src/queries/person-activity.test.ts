@@ -330,6 +330,23 @@ it('the shared timeline covers all contracts without the 500-card limit and sepa
   expect(result.observations.find((o) => o.timing === 'prior')!.reportedYear).toBe('2025');
 });
 
+it('reads the authority names only for a person with declarations to match them against', async () => {
+  const d1 = fixture();
+  const sql: string[] = [];
+  const recorded = new Proxy(d1, {
+    get: (target, prop, receiver) =>
+      prop === 'prepare'
+        ? (query: string) => (sql.push(query), target.prepare(query))
+        : Reflect.get(target, prop, receiver),
+  });
+  const authorityNames = () => sql.filter((q) => q.includes('JOIN authority_totals')).length;
+  // Known only from the register: no declaration, so no institution to link and no names to read.
+  expect((await getPersonTimeline(recorded, 'person', [])).institutionProfiles).toEqual([]);
+  expect(authorityNames()).toBe(0);
+  await getPersonTimeline(recorded, 'person', ['official']);
+  expect(authorityNames()).toBe(1);
+});
+
 it('includes every proven source identity of the register identity, with or without a public interest', async () => {
   const d1 = fixture();
   db.exec(
