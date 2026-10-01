@@ -29,7 +29,9 @@ export async function getPersonDestinations(db: D1Database, id: string) {
       CASE WHEN s.entity_id IS NULL THEN 'source' ELSE 'person' END kind,
       (SELECT count(*) FROM declarations d WHERE d.person_id=p.id) declaration_count,
       (SELECT group_concat(DISTINCT institution) FROM declarations d WHERE d.person_id=p.id) institutions
-      FROM person_source_aliases a JOIN person_sources s ON s.id=a.source_id AND s.active=1 AND s.namespace='cacbg'
+      -- CROSS JOIN fixes the order: the alias first, by its key. Left free, the planner read every 'cacbg'
+      -- source through the namespace index to find the one or two the alias names.
+      FROM person_source_aliases a CROSS JOIN person_sources s ON s.id=a.source_id AND s.active=1 AND s.namespace='cacbg'
       JOIN persons p ON p.id=coalesce(s.entity_id,s.legacy_person_id)
       WHERE a.alias_id=? AND EXISTS(SELECT 1 FROM declarations d WHERE d.person_id=p.id)
       ORDER BY p.name,p.id`,
@@ -52,11 +54,14 @@ export async function getPersonDestinations(db: D1Database, id: string) {
 /** Every name the person's declarations were filed under, for the ids that make up one profile. */
 export async function getPersonSourceNames(db: D1Database, ids: string[]): Promise<string[]> {
   if (!ids.length) return [];
+  const placeholders = ids.map((_, i) => `?${i + 1}`).join(',');
   const rows = await db
     .prepare(
+      // The same set as coalesce(entity_id, legacy_person_id) IN (…), spelled so the entity and legacy
+      // indexes answer it; `+` keeps the planner off the namespace index, which reads every 'cacbg' source.
       `SELECT DISTINCT s.name FROM person_sources s
-       WHERE s.active=1 AND s.namespace='cacbg'
-         AND coalesce(s.entity_id,s.legacy_person_id) IN (${ids.map(() => '?').join(',')})
+       WHERE s.active=1 AND +s.namespace='cacbg'
+         AND (s.entity_id IN (${placeholders}) OR (s.entity_id IS NULL AND s.legacy_person_id IN (${placeholders})))
        ORDER BY s.name`,
     )
     .bind(...ids)
