@@ -101,7 +101,7 @@ export const TABLES: TableDoc[] = [
   {
     name: 'facet_counts',
     grain: 'брой за филтър-фасет',
-    columns: "facet ('year'|'procedure'|'eu'), key, contracts",
+    columns: "facet ('procedure'|'eu'|'sector'|'year'), key, contracts",
   },
   {
     name: 'flow_pairs',

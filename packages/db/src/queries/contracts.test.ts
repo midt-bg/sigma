@@ -324,6 +324,50 @@ describe('streamContractsCsv', () => {
   });
 });
 
+describe('getContractFacets — precomputed sector and year rows', () => {
+  it('reads sector and year from facet_counts without scanning contracts', async () => {
+    const fake = facetDb({
+      rollup: [
+        { facet: 'eu', key: '1', contracts: 3 },
+        { facet: 'sector', key: '45', contracts: 7 },
+        { facet: 'sector', key: '72', contracts: 9 },
+        { facet: 'sector', key: '', contracts: 1 }, // CPV-less contracts: counted, never a sector
+        { facet: 'year', key: '2024', contracts: 6 },
+        { facet: 'year', key: 'unknown', contracts: 2 },
+        { facet: 'year', key: '2025', contracts: 5 },
+      ],
+      // A live answer that would be wrong: reading it would show in the counts below.
+      sectors: [{ division: '45', contracts: 999 }],
+      years: [{ key: '2024', contracts: 999 }],
+    });
+    const facets = await getContractFacets(fake.db);
+    expect(fake.sql).toEqual([expect.stringContaining('FROM facet_counts')]);
+    expect(facets.sectors.map((s) => [s.value, s.count])).toEqual([
+      ['72', 9],
+      ['45', 7],
+    ]);
+    expect(facets.years.map((y) => [y.value, y.count])).toEqual([
+      ['2025', 5],
+      ['2024', 6],
+      ['unknown', 2],
+    ]);
+  });
+
+  it('counts live only the facet a not-yet-refreshed database lacks', async () => {
+    const fake = facetDb({
+      rollup: [{ facet: 'sector', key: '45', contracts: 7 }],
+      years: [{ key: '2023', contracts: 4 }],
+    });
+    const facets = await getContractFacets(fake.db);
+    expect(fake.sql.some((sql) => sql.includes('JOIN tenders t ON t.id = c.tender_id'))).toBe(
+      false,
+    );
+    expect(fake.sql.some((sql) => sql.includes('GROUP BY key'))).toBe(true);
+    expect(facets.sectors).toEqual([expect.objectContaining({ value: '45', count: 7 })]);
+    expect(facets.years).toEqual([expect.objectContaining({ value: '2023', count: 4 })]);
+  });
+});
+
 describe('getContractFacets — sector, year and authority facets', () => {
   it('counts sectors from the same CPV division expression used by list filters', async () => {
     const fake = facetDb({ sectors: [{ division: '45', contracts: 7 }] });

@@ -110,10 +110,29 @@ describe('refresh-slice statement shape', () => {
     expect(drops.filter((i) => i > SQL.indexOf('FROM amend_contract_base'))).toHaveLength(1);
   });
 
+  it('counts the corpus-wide totals from one cube, created once and dropped on both sides', () => {
+    // data_freshness, home_totals, sector_totals and facet_counts were eight scans of the whole contracts
+    // table per refresh; they now fold one grouped pass. A total that went back to scanning `contracts`
+    // directly would bring the scans back — the only direct reads left are the index-backed date bounds.
+    const globals = refreshSliceStatementGroups(SQL).find((g) => g.name === 'globals');
+    expect(globals, 'no `globals` batch').toBeDefined();
+    const body = globals!.statements.map(code).join(';\n');
+    const create = body.indexOf('CREATE TABLE contract_cube AS');
+    const drops = [...body.matchAll(/DROP TABLE IF EXISTS contract_cube\b/g)].map((m) => m.index);
+    expect((body.match(/CREATE TABLE contract_cube\b/g) ?? []).length).toBe(1);
+    expect(drops.filter((i) => i < create)).toHaveLength(1);
+    expect(drops.filter((i) => i > body.lastIndexOf('FROM contract_cube'))).toHaveLength(1);
+    const scans = [...body.matchAll(/FROM contracts\b(?! c LEFT JOIN tenders)([^;]*)/g)]
+      .map((m) => m[1] ?? '')
+      .filter((rest) => !/^\s+WHERE signed_at\b/.test(rest));
+    expect(scans, 'a total in `globals` reads the contracts table directly again').toEqual([]);
+  });
+
   it('registers the transient table so an aborted run is swept', () => {
     // Without this, a run that dies between CREATE and DROP leaves the table in D1 until the next
     // refresh happens to reach its DROP — exactly the kind of silent residue this batch already bit us with.
     const refreshTs = readFileSync(join(ROOT, 'packages/ingest/src/refresh.ts'), 'utf8');
     expect(refreshTs).toMatch(/SCRATCH_TABLES\s*=\s*\[[^\]]*'amend_contract_base'/);
+    expect(refreshTs).toMatch(/SCRATCH_TABLES\s*=\s*\[[^\]]*'contract_cube'/);
   });
 });

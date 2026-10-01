@@ -513,10 +513,15 @@ const GOLDEN = {
   // procedure: all 10 contracts are 'open'. eu: c2 alone is eu_funded (50000); the other 9 (incl. c9) are
   // key '0'. facet_counts is NOT amount_eur-filtered, so c9 lifts both COUNT(*)s (eu '0' 8→9, procedure
   // 10) but adds 0 to the paired value_eur SUM (its amount_eur is NULL): the 9-contract eu '0' sums 341100.
+  // sector: the same unfiltered count, so division 33 holds c9 too — 5 where sector_totals (amount-filtered)
+  // holds 4 — at the same 91000; 45 is 5 / 300100 in both. year: all 10 are signed in 2026.
   facetCounts: [
     { facet: 'eu', key: '0', contracts: 9, value_eur: 341100 },
     { facet: 'eu', key: '1', contracts: 1, value_eur: 50000 },
     { facet: 'procedure', key: 'open', contracts: 10, value_eur: 391100 },
+    { facet: 'sector', key: '33', contracts: 5, value_eur: 91000 },
+    { facet: 'sector', key: '45', contracts: 5, value_eur: 300100 },
+    { facet: 'year', key: '2026', contracts: 10, value_eur: 391100 },
   ],
 
   // A1→B1 c1+c7+c10 = 250000 | A1→B2 c2+c6 = 50100 | A2→B1 c3+c5 = 60000 | A2→B2 c8 = 30000 | A2→B3 c4 = 1000
