@@ -1,4 +1,5 @@
 import { createRequestHandler } from 'react-router';
+import { isIndexedHost } from '../app/lib/indexing';
 import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/security';
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { rateLimitAssistantRoute } from './assistant-rate-limit';
@@ -184,7 +185,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   const hardened = await hardenResponse(response, cacheable);
   // Set BEFORE the cache put so the stored copy carries it — the HIT path (above) rebuilds headers from the
   // cached response, so a noindex baked into the cached entry is preserved on every subsequent HIT.
-  if (isNoindexNamesPath(request)) hardened.headers.set('X-Robots-Tag', 'noindex');
+  // Outside the production site (stage, dev, a workers.dev twin) every page is noindex, whatever it names.
+  if (isNoindexNamesPath(request) || !isIndexedHost(request))
+    hardened.headers.set('X-Robots-Tag', 'noindex');
   if (cacheable) ctx.waitUntil(edgeCache.put(key, hardened.clone()));
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
   // An overloaded D1 ends the request as a 503 (packages/db, retrying-d1.ts): say when to come back — a
