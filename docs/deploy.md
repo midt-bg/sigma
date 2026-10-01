@@ -254,9 +254,10 @@ ETL-ът по необходимост е отделен worker — той но�
 
 ## 6. Заключване преди пускане — Cloudflare Access (Zero Trust)
 
-СИГМА е публичен портал за прозрачност, но и двете внедрявания се държат **частни до пускане** зад
-**Cloudflare Access**. Production (`sigma.midt.bg`) е заключен **преди пускане** и се отваря на
-go-live (без redeploy); staging остава заключен постоянно за екипа.
+СИГМА е публичен портал за прозрачност; до пускането production (`sigma.midt.bg`) се пази **частен**
+зад **Cloudflare Access** и се отваря на go-live (без redeploy). Staging **не е** зад Access: той е
+публичен, а търсачките стоят настрана по кода — на всеки адрес освен `sigma.midt.bg` robots.txt е
+`Disallow: /` и всеки отговор носи `X-Robots-Tag: noindex` (`apps/web/app/lib/indexing.ts`).
 
 > **Решение: Access, не in-worker парола.** По-ранен план заключваше *вътре* в worker-а (KV
 > `published` флаг + Basic Auth), защото Access не можеше да защити `workers.dev` URL, а v1 нямаше
@@ -292,10 +293,11 @@ gate-а. Това е стъпката, която хората забравят.
 отказан; `workers.dev` URL-ът вече не отговаря.
 
 **Публично на пускане (без redeploy).** Изтрийте Access приложението на `sigma.midt.bg` или задайте
-неговата policy на **Bypass / Everyone**. Staging пази своето приложение, така че екипният preview
-остава частен; пре-заключете prod по всяко време чрез възстановяване на policy-то.
+неговата policy на **Bypass / Everyone**; пре-заключете prod по всяко време чрез възстановяване на
+policy-то.
 
-**Staging gate.** Същата идея — one-click *Enable Cloudflare Access* на
+**Staging gate (не се ползва).** Решено е staging да остане публичен, без Access — индексирането го
+спира кодът по-горе. Ако някога трябва да се заключи, идеята е същата — one-click *Enable Cloudflare Access* на
 `sigma-stage.<sub>.workers.dev` (Settings → Domains & Routes) или дайте на staging
 `staging.sigma.midt.bg` + собствено Access приложение.
 

@@ -134,19 +134,33 @@ describe('handleRequest — /conflicts responses are noindex (HTML + .data twin)
   }
 
   // Methodology is the deliberately-indexed public credibility anchor (ADR-0020/0021) — HTML and .data alike.
-  for (const url of ['http://local/conflicts/methodology']) {
-    it(`does NOT noindex ${url.replace('http://local', '')} (indexed anchor)`, async () => {
+  // Indexed on the production site only: every other host is noindex as a whole.
+  for (const url of ['https://sigma.midt.bg/conflicts/methodology']) {
+    it(`does NOT noindex ${url.replace('https://sigma.midt.bg', '')} (indexed anchor)`, async () => {
       const req = new Request(url, { headers: { 'CF-Connecting-IP': '203.0.113.51' } });
       const res = await workerFetch(req, env(underLimit), ctx);
       expect(res.headers.get('X-Robots-Tag')).toBeNull();
     });
   }
 
-  it('does NOT noindex a company listing (/companies)', async () => {
-    const req = new Request('http://local/companies', {
+  it('does NOT noindex a company listing (/companies) on the production site', async () => {
+    const req = new Request('https://sigma.midt.bg/companies', {
       headers: { 'CF-Connecting-IP': '203.0.113.52' },
     });
     const res = await workerFetch(req, env(underLimit), ctx);
     expect(res.headers.get('X-Robots-Tag')).toBeNull();
+  });
+
+  // Stage, dev and the production Worker's workers.dev twin serve the same pages: none of them is indexed.
+  it('noindexes every page outside the production site', async () => {
+    for (const url of [
+      'https://sigma-stage.midt.bg/companies',
+      'https://sigma-dev.cf-midt.workers.dev/conflicts/methodology',
+      'https://sigma.cf-midt.workers.dev/',
+    ]) {
+      const req = new Request(url, { headers: { 'CF-Connecting-IP': '203.0.113.53' } });
+      const res = await workerFetch(req, env(underLimit), ctx);
+      expect(res.headers.get('X-Robots-Tag'), url).toBe('noindex');
+    }
   });
 });
