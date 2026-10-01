@@ -66,6 +66,7 @@ describe('refresh-slice statement shape', () => {
     // The band is measured, not guessed — all three points observed on this file:
     // (code lines = comments and blank lines stripped, exactly as `code()` below counts them):
     //   lot-values  ·  35 code lines ·  3 nested SELECTs · runs fine (30 lines and 1 since 2026-06)
+    //   enrich-*    ·  22 code lines ·  7 nested SELECTs · runs fine (each, since 2026-10)
     //   amendments  · 105 code lines ·  5 nested SELECTs · runs fine (after this split)
     //   amendments  · 247 code lines · 19 nested SELECTs · OOMed D1 for nineteen days
     const offenders = refreshSliceStatementGroups(SQL)

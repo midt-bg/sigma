@@ -679,6 +679,77 @@ describe('refresh-slice tender status', () => {
   });
 });
 
+describe('refresh-slice rewrites only what changed', () => {
+  // flow_pairs and the entity rows of the search index are recomputed in full on every run, so a drift in
+  // them heals — but a row that already holds its value is left as it is, not deleted and written again.
+  it('heals flow_pairs and the entity search rows without touching the unchanged ones', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-writes-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      seedEopBaseDay(dbPath);
+      readScript(dbPath, refreshSlicePath);
+
+      type Pair = { authority_id: string; bidder_id: string; won_eur: number };
+      const pairsSql = `SELECT authority_id, bidder_id, authority_name, bidder_name, bidder_kind,
+          round(won_eur, 6) AS won_eur, contracts FROM flow_pairs ORDER BY authority_id, bidder_id`;
+      const entitySql = `SELECT rowid AS rid, kind, ref, title, ident, subtitle, round(amount, 6) AS amount
+          FROM search_index WHERE kind IN ('company', 'authority') ORDER BY kind, ref`;
+      const pairs = sqliteJson<Pair>(dbPath, pairsSql);
+      const entities = sqliteJson<{ rid: number; kind: string; ref: string }>(dbPath, entitySql);
+      const companies = entities.filter((e) => e.kind === 'company');
+      const authority = entities.find((e) => e.kind === 'authority');
+      expect(pairs).toHaveLength(2);
+      expect(companies).toHaveLength(2);
+      expect(authority).toBeDefined();
+      const [drifted, kept] = pairs as [Pair, Pair];
+      const [renamed, untouched] = companies as [(typeof companies)[0], (typeof companies)[0]];
+
+      // The drifts an earlier fault could leave behind: a pair with no contracts, a pair with a wrong
+      // sum, a stale company row, a company row with a wrong title, an authority row gone missing.
+      sqlite(
+        dbPath,
+        `CREATE TABLE pair_writes (op TEXT, authority_id TEXT, bidder_id TEXT);
+         CREATE TRIGGER pair_insert AFTER INSERT ON flow_pairs
+           BEGIN INSERT INTO pair_writes VALUES ('insert', new.authority_id, new.bidder_id); END;
+         CREATE TRIGGER pair_update AFTER UPDATE ON flow_pairs
+           BEGIN INSERT INTO pair_writes VALUES ('update', new.authority_id, new.bidder_id); END;
+         CREATE TRIGGER pair_delete AFTER DELETE ON flow_pairs
+           BEGIN INSERT INTO pair_writes VALUES ('delete', old.authority_id, old.bidder_id); END;
+         INSERT INTO flow_pairs VALUES ('auth:123456786', 'eik:000000000', 'Stale', 'Stale', 'company', 1, 1);
+         UPDATE flow_pairs SET won_eur = won_eur + 1
+           WHERE authority_id = ${sqlValue(drifted.authority_id)} AND bidder_id = ${sqlValue(drifted.bidder_id)};
+         INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
+           VALUES ('company', 'eik:000000000', 'Stale', '000000000', '', 1);
+         UPDATE search_index SET title = 'Wrong title' WHERE rowid = ${renamed.rid};
+         DELETE FROM search_index WHERE rowid = ${authority?.rid};
+         DELETE FROM pair_writes;`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+
+      expect(sqliteJson(dbPath, pairsSql)).toEqual(pairs);
+      expect(
+        sqliteJson(dbPath, 'SELECT op, authority_id, bidder_id FROM pair_writes ORDER BY op'),
+      ).toEqual([
+        { op: 'delete', authority_id: 'auth:123456786', bidder_id: 'eik:000000000' },
+        { op: 'update', authority_id: drifted.authority_id, bidder_id: drifted.bidder_id },
+      ]);
+      expect(kept.bidder_id).not.toBe(drifted.bidder_id);
+
+      const healed = sqliteJson<{ rid: number; kind: string; ref: string }>(dbPath, entitySql);
+      const content = (rows: { rid: number }[]) => rows.map(({ rid: _rid, ...rest }) => rest);
+      expect(content(healed)).toEqual(content(entities));
+      const rid = (ref: string) => healed.find((e) => e.ref === ref)?.rid;
+      expect(rid(untouched.ref)).toBe(untouched.rid);
+      expect(rid(renamed.ref)).not.toBe(renamed.rid);
+      expect(rid(authority!.ref)).not.toBe(authority!.rid);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('refresh-slice EOP base derivation', () => {
   it('derives new eop base rows as c:e contracts and is idempotent', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
@@ -1594,7 +1665,17 @@ describe('refresh-slice EOP base derivation', () => {
       const authorityAfterWindow2 = sqliteJson(sliceDb, authoritySql);
       const bidderAfterWindow2 = sqliteJson(sliceDb, bidderSql);
 
+      // The same window again changes no enrichment field, so the enrichment writes no row at all.
+      sqlite(
+        sliceDb,
+        `CREATE TABLE enrich_writes (tbl TEXT, id TEXT);
+         CREATE TRIGGER enrich_authority AFTER UPDATE OF nuts, settlement, address, contact_email, contact_phone
+           ON authorities BEGIN INSERT INTO enrich_writes VALUES ('authorities', new.id); END;
+         CREATE TRIGGER enrich_bidder AFTER UPDATE OF nuts, settlement, address, contact_email, contact_phone
+           ON bidders BEGIN INSERT INTO enrich_writes VALUES ('bidders', new.id); END;`,
+      );
       readScript(sliceDb, refreshSlicePath);
+      expect(sqliteJson(sliceDb, 'SELECT * FROM enrich_writes')).toEqual([]);
       expect(sqliteJson(sliceDb, 'SELECT * FROM parties ORDER BY party_key')).toEqual(
         partiesAfterWindow2,
       );

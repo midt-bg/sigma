@@ -977,14 +977,32 @@ FROM ranked
 WHERE rn = 1;
 
 -- @refresh-batch enrich-authorities
--- Party/contact enrichment for entities touched by the refreshed staging.
-UPDATE authorities SET
-  nuts       = COALESCE((SELECT p.region_nuts    FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.region_nuts, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), nuts),
-  settlement = COALESCE((SELECT p.locality       FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.locality, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), settlement),
-  address    = COALESCE((SELECT p.street_address FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.street_address, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), address),
-  contact_email = COALESCE((SELECT p.contact_email FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.contact_email, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_email),
-  contact_phone = COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.contact_phone, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_phone)
-WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = authorities.bulstat);
+-- Party/contact enrichment for entities touched by the refreshed staging. The five fields are computed for
+-- every authority with a party, as before, but a row is written only when one of them changes: rewriting
+-- each such authority on every run, though nearly none had changed, made this one of the refresh's
+-- larger writers. The same holds for the bidders below.
+WITH fresh AS (
+  SELECT a.id,
+    COALESCE((SELECT p.region_nuts FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.region_nuts, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.nuts) AS nuts,
+    COALESCE((SELECT p.locality FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.locality, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.settlement) AS settlement,
+    COALESCE((SELECT p.street_address FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.street_address, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.address) AS address,
+    COALESCE((SELECT p.contact_email FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.contact_email, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.contact_email) AS contact_email,
+    COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.contact_phone, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.contact_phone) AS contact_phone
+  FROM authorities a
+  WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = a.bulstat)
+)
+UPDATE authorities
+SET nuts = f.nuts, settlement = f.settlement, address = f.address,
+  contact_email = f.contact_email, contact_phone = f.contact_phone
+FROM fresh f
+WHERE f.id = authorities.id
+  AND (authorities.nuts IS NOT f.nuts OR authorities.settlement IS NOT f.settlement OR authorities.address IS NOT f.address
+    OR authorities.contact_email IS NOT f.contact_email OR authorities.contact_phone IS NOT f.contact_phone);
 
 -- Same batch as the UPDATE above: settlement/region/contact land in authority_totals.
 INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
@@ -998,13 +1016,28 @@ WHERE a.bulstat IN (
     SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL
   );
 -- @refresh-batch enrich-bidders
-UPDATE bidders SET
-  nuts       = COALESCE((SELECT p.region_nuts    FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.region_nuts, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), nuts),
-  settlement = COALESCE((SELECT p.locality       FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.locality, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), settlement),
-  address    = COALESCE((SELECT p.street_address FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.street_address, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), address),
-  contact_email = COALESCE((SELECT p.contact_email FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.contact_email, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_email),
-  contact_phone = COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.contact_phone, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_phone)
-WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = bidders.eik_normalized);
+WITH fresh AS (
+  SELECT b.id,
+    COALESCE((SELECT p.region_nuts FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.region_nuts, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.nuts) AS nuts,
+    COALESCE((SELECT p.locality FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.locality, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.settlement) AS settlement,
+    COALESCE((SELECT p.street_address FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.street_address, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.address) AS address,
+    COALESCE((SELECT p.contact_email FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.contact_email, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.contact_email) AS contact_email,
+    COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.contact_phone, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.contact_phone) AS contact_phone
+  FROM bidders b
+  WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = b.eik_normalized)
+)
+UPDATE bidders
+SET nuts = f.nuts, settlement = f.settlement, address = f.address,
+  contact_email = f.contact_email, contact_phone = f.contact_phone
+FROM fresh f
+WHERE f.id = bidders.id
+  AND (bidders.nuts IS NOT f.nuts OR bidders.settlement IS NOT f.settlement OR bidders.address IS NOT f.address
+    OR bidders.contact_email IS NOT f.contact_email OR bidders.contact_phone IS NOT f.contact_phone);
 
 -- Same batch as the UPDATE above: settlement lands in company_totals.
 INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
@@ -2627,23 +2660,82 @@ WHERE cca.authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
 GROUP BY cca.authority_id;
 
 -- @refresh-batch flow-pairs
-DELETE FROM flow_pairs;
+-- Still recomputed in full on every run, so the table keeps healing itself, but only a pair that changed is
+-- written. Deleting and re-inserting every pair — about 72 thousand, each a row plus four index entries —
+-- made this the refresh's biggest writer, some 360 thousand rows a run, nearly all identical to what they
+-- replaced. A pair is replaced when a name, the kind or the count changed, or its sum moved by half a cent
+-- or more: less is the float noise of adding the same contracts in another order, and the integrity gate's
+-- tolerance over the whole table is 5 €.
+DELETE FROM flow_pairs
+WHERE (authority_id, bidder_id) NOT IN (
+  SELECT t.authority_id, c.bidder_id
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
+  WHERE c.amount_eur IS NOT NULL
+);
 INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts)
-SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*)
-FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
-WHERE c.amount_eur IS NOT NULL
-GROUP BY t.authority_id, c.bidder_id;
+SELECT f.authority_id, f.bidder_id, f.authority_name, f.bidder_name, f.bidder_kind, f.won_eur, f.contracts
+FROM (
+  SELECT t.authority_id, c.bidder_id, a.name AS authority_name, b.name AS bidder_name, b.kind AS bidder_kind,
+    SUM(c.amount_eur) AS won_eur, COUNT(*) AS contracts
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
+  WHERE c.amount_eur IS NOT NULL
+  GROUP BY t.authority_id, c.bidder_id
+) f
+WHERE NOT EXISTS (
+  SELECT 1 FROM flow_pairs p
+  WHERE p.authority_id = f.authority_id AND p.bidder_id = f.bidder_id
+    AND p.authority_name IS f.authority_name AND p.bidder_name IS f.bidder_name
+    AND p.bidder_kind IS f.bidder_kind AND p.contracts = f.contracts
+    AND abs(p.won_eur - f.won_eur) < 0.005
+)
+ON CONFLICT (authority_id, bidder_id) DO UPDATE SET
+  authority_name = excluded.authority_name,
+  bidder_name = excluded.bidder_name,
+  bidder_kind = excluded.bidder_kind,
+  won_eur = excluded.won_eur,
+  contracts = excluded.contracts;
 
 -- @refresh-batch entity-search-index
-DELETE FROM search_index WHERE kind = 'company';
+-- The company and authority rows are rewritten only where they differ from their totals row. Deleting and
+-- re-inserting all of them — some 22 thousand — rewrote the search index on every run although nearly
+-- nothing in it had changed. A stale or vanished row is deleted, then every totals row the index no longer
+-- holds is inserted: EXCEPT compares all the shown fields at once and treats NULLs as equal, like the IS
+-- comparisons of the delete. The index is FTS5, where `kind` and `ref` are not indexed, so each statement
+-- reads it once; the totals side is a lookup by its primary key.
+DELETE FROM search_index WHERE rowid IN (
+  SELECT s.rowid FROM search_index s
+  LEFT JOIN company_totals ct ON ct.bidder_id = s.ref AND ct.bidder_id <> 'unknown:анонимен'
+  WHERE s.kind = 'company'
+    AND (ct.bidder_id IS NULL OR ct.name IS NOT s.title OR COALESCE(ct.eik, '') IS NOT s.ident
+      OR COALESCE(ct.settlement, '') IS NOT s.subtitle OR ct.won_eur IS NOT s.amount)
+);
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
-SELECT 'company', ct.bidder_id, ct.name, COALESCE(ct.eik, ''), COALESCE(ct.settlement, ''), ct.won_eur
-FROM company_totals ct
-WHERE ct.bidder_id <> 'unknown:анонимен';
-DELETE FROM search_index WHERE kind = 'authority';
+SELECT 'company', ref, title, ident, subtitle, amount
+FROM (
+  SELECT ct.bidder_id AS ref, ct.name AS title, COALESCE(ct.eik, '') AS ident,
+    COALESCE(ct.settlement, '') AS subtitle, ct.won_eur AS amount
+  FROM company_totals ct
+  WHERE ct.bidder_id <> 'unknown:анонимен'
+  EXCEPT
+  SELECT ref, title, ident, subtitle, amount FROM search_index WHERE kind = 'company'
+);
+DELETE FROM search_index WHERE rowid IN (
+  SELECT s.rowid FROM search_index s
+  LEFT JOIN authority_totals at ON at.authority_id = s.ref
+  WHERE s.kind = 'authority'
+    AND (at.authority_id IS NULL OR at.name IS NOT s.title
+      OR COALESCE(substr(at.authority_id, 6), '') IS NOT s.ident
+      OR COALESCE(at.settlement, '') IS NOT s.subtitle OR at.spent_eur IS NOT s.amount)
+);
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
-SELECT 'authority', at.authority_id, at.name, COALESCE(substr(at.authority_id, 6), ''), COALESCE(at.settlement, ''), at.spent_eur
-FROM authority_totals at;
+SELECT 'authority', ref, title, ident, subtitle, amount
+FROM (
+  SELECT at.authority_id AS ref, at.name AS title, COALESCE(substr(at.authority_id, 6), '') AS ident,
+    COALESCE(at.settlement, '') AS subtitle, at.spent_eur AS amount
+  FROM authority_totals at
+  EXCEPT
+  SELECT ref, title, ident, subtitle, amount FROM search_index WHERE kind = 'authority'
+);
 -- @refresh-batch official-search-index
 -- Contract refreshes can only change the displayed amount for officials linked to a touched bidder.
 -- Rebuild those officials from all of their links; a full related-persons publish owns withdrawals and
