@@ -157,15 +157,11 @@ jobs:
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           # prod leaves SIGMA_D1_NAME unset and uses the committed 'sigma' default (as wrangler-render does);
           # a bare "$SIGMA_D1_NAME" would run `d1 execute ""` and fail the prod release. Mirror that default.
-          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0003_related_persons_foundation.sql
+          bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../packages/db/migrations/0003_related_persons_foundation.sql
           # 0009 attaches the Trade Register evidence seal (#279, ADR-0033). Both migrations are
           # applied by name here because wrangler's migration ledger is empty on this D1 (the base
           # schema was created out-of-band), so `d1 migrations apply` would collide on 0000.
-          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0009_interest_link_evidence.sql
+          bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../packages/db/migrations/0009_interest_link_evidence.sql
           # 0010 owns the publishing-gate enforcement for EVERY database (#279 §2) — fresh and already
           # deployed alike. It is deliberately NOT declared in 0003: that migration is already applied
           # everywhere, `CREATE TABLE IF NOT EXISTS` never revisits an existing table, and the ship step
@@ -177,18 +173,12 @@ jobs:
           # omits it on some declarations; the natural-key index folds those with COALESCE instead.
           # Idempotent: every statement is `IF NOT EXISTS` over a converging definition, so re-applying it
           # on each deploy is a no-op. Verified by three consecutive applications, gate still enforcing.
-          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0010_publishing_gate_constraints.sql
+          bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../packages/db/migrations/0010_publishing_gate_constraints.sql
           # 0012: old official ids → the id each became (ADR-0040), read by the official pages; the
           # related-persons job fills it. 0013: the register layer's tables (ADR-0041), which the ETL
           # Worker writes. Both CREATE … IF NOT EXISTS, so re-applying them on each deploy is a no-op.
-          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0012_person_redirects.sql
-          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0013_registry.sql
+          bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../packages/db/migrations/0012_person_redirects.sql
+          bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../packages/db/migrations/0013_registry.sql
 
       - name: Apply the V2 person and registry schema
         if: steps.guard.outputs.ok == 'true'
@@ -200,9 +190,7 @@ jobs:
             0015_person_observations \
             0016_registry_entry_sync
           do
-            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-              --config wrangler.deploy.jsonc --remote --yes \
-              --file "../../packages/db/migrations/${migration}.sql"
+            bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" "../../packages/db/migrations/${migration}.sql"
           done
 
           # 0017 mixes idempotent tables/indexes with one ALTER TABLE. Apply the former on every
@@ -210,8 +198,7 @@ jobs:
           identity_schema="$RUNNER_TEMP/0017_registry_identity_observations.sql"
           sed '/^ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT;$/d' \
             packages/db/migrations/0017_registry_identity_observations.sql > "$identity_schema"
-          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-            --config wrangler.deploy.jsonc --remote --yes --file "$identity_schema"
+          bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" "$identity_schema"
 
           schema_json="$(pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
             --config wrangler.deploy.jsonc --remote --yes --json \
@@ -270,9 +257,7 @@ jobs:
             0020_registry_company_history \
             0022_person_relatives
           do
-            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-              --config wrangler.deploy.jsonc --remote --yes \
-              --file "../../packages/db/migrations/${migration}.sql"
+            bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" "../../packages/db/migrations/${migration}.sql"
           done
 
           ensure_column registry_entry_state baseline_status \
@@ -321,12 +306,8 @@ jobs:
           set -e
 
           repair_currency_values() {
-            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-              --config wrangler.deploy.jsonc --remote --yes \
-              --file ../../scripts/backfill-current-value-currency.sql
-            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-              --config wrangler.deploy.jsonc --remote --yes \
-              --file ../../scripts/precompute.sql
+            bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../scripts/backfill-current-value-currency.sql
+            bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../scripts/precompute.sql
             pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
               --config wrangler.deploy.jsonc --remote --yes \
               --command "CREATE TABLE sigma_backfill_0002_current_value_currency (completed_at TEXT NOT NULL DEFAULT (datetime('now')))"
@@ -337,9 +318,7 @@ jobs:
               echo "current_value_currency already exists; one-time migration is complete."
               ;;
             1)
-              pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
-                --config wrangler.deploy.jsonc --remote --yes \
-                --file ../../packages/db/migrations/0002_current_value_currency.sql
+              bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../packages/db/migrations/0002_current_value_currency.sql
               repair_currency_values
               ;;
             3)
@@ -424,6 +403,17 @@ jobs:
           ensure_column contract_number_raw "contract_number_raw TEXT"
           ensure_column link_method         "link_method TEXT"
 
+      # The curated list of state public enterprises (scripts/seed-state-owned.sql, ADR-0047) is data that
+      # ships with the code, yet only a full import or a slot rebuild ever applied it — a served database kept
+      # the list it was built with. The file replaces the list whole (DELETE + INSERT, one import). The next
+      # refresh re-derives every winner's ownership from it, the next registry run the companies held through
+      # it, and the next declarations run its day-job correction.
+      - name: Sync the curated public-ownership list
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../scripts/seed-state-owned.sql
+
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
         if: steps.guard.outputs.ok == 'true'
@@ -489,3 +479,9 @@ jobs:
             [ -n "$value" ] || { echo "$name is empty; leaving the Worker secret unchanged."; continue; }
             printf '%s' "$value" | pnpm --filter @sigma/etl exec wrangler secret put "$name" --config wrangler.deploy.toml
           done
+
+      # The declarations run's checkpoints and fetch events are read by nothing once it is over; without
+      # expiry rules they stay for good, and the rules existed only where someone had set them by hand.
+      - name: Expire the declarations run's leftovers in R2
+        if: steps.guard.outputs.ok == 'true'
+        run: bash scripts/ensure-r2-lifecycle.sh "${SIGMA_DECLARATIONS_BUCKET:-sigma-declarations}"
