@@ -88,11 +88,15 @@ export async function getPersonTimeline(
       )
       .bind(JSON.stringify(ids))
       .all<{ institution: string }>(),
-    db
-      .prepare(
-        'SELECT a.id,a.name FROM authorities a JOIN authority_totals t ON t.authority_id=a.id',
-      )
-      .all<{ id: string; name: string }>(),
+    // Every authority's name, only to match the declared institutions below: a person known only from
+    // the register (no declaration ids) has none, and those are most of the profiles.
+    ids.length
+      ? db
+          .prepare(
+            'SELECT a.id,a.name FROM authorities a JOIN authority_totals t ON t.authority_id=a.id',
+          )
+          .all<{ id: string; name: string }>()
+      : { results: [] as { id: string; name: string }[] },
   ]);
   // Exact organisation names only. A locality (e.g. „Несебър“) cannot identify a municipality.
   const key = (name: string) =>
