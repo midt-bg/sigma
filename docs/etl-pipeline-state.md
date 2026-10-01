@@ -35,7 +35,7 @@ Scoped, идемпотентен дневен delta refresh. Заменя сам
 
 **Записва директно в live (served) таблици — няма blue-green swap:**
 - contracts (DELETE стари `c:e:`/`c:o:` от прозореца → INSERT нови с `amount_eur`)
-- `authority_totals`, `company_totals`, `flow_pairs`, `home_totals`, `sector_totals`, `facet_counts`, `cpv_division_stats` (DELETE + REPLACE на засегнатите rollup-и)
+- `authority_totals`, `company_totals`, `flow_pairs`, `home_totals`, `sector_totals`, `facet_counts`, `contract_rollup`, `cpv_division_stats` (DELETE + REPLACE на засегнатите rollup-и; `contract_rollup` записва само променените редове)
 - `search_index`, `data_freshness`
 
 **Извиква се от:**
@@ -118,7 +118,7 @@ Gate-ът е вързан **само в operator скриптовете** (`impo
 | Rollup | Поведение | Глобална консистентност |
 |--------|-----------|--------------------------|
 | `company_totals`, `authority_totals` | **scoped** към touched множеството (`refresh-slice.sql:1262`) | зависи от touched множеството |
-| `home_totals`, `sector_totals`, `facet_counts`, `flow_pairs`, `cpv_division_stats`, `data_freshness` | **full-recompute** всеки run | по конструкция ✅ |
+| `home_totals`, `sector_totals`, `facet_counts`, `contract_rollup`, `flow_pairs`, `cpv_division_stats`, `data_freshness` | **full-recompute** всеки run | по конструкция ✅ |
 
 _(Към #97; вече не е така, виж бележката по-долу.)_ Touched множеството се строеше от **новата** атрибуция (`refresh-slice.sql:1198–1239`), след DELETE+INSERT на договорите. Contract id-то вгражда `bidder_key` (`refresh-slice.sql:527`), а DELETE-ът мачва само по `contract_number + tender` (ред 499).
 

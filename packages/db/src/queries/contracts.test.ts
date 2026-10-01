@@ -53,6 +53,8 @@ function listDb(
   // `1=0` is the guard the list query uses for an input it could not decode — the page it returns
   // must be empty, and the count that goes with it zero. Its routes come first so the guard wins.
   return fakeD1([
+    // An empty contract_rollup (no all-open row): the headline is counted live, as these tests expect.
+    { when: 'contract_rollup', first: null },
     { when: '1=0', all: [] },
     { when: '1=0', first: { total: 0, eur: 0, suspect: 0 } },
     { when: 'COUNT(*) AS total', first: summary },
@@ -213,9 +215,72 @@ describe('buildFilters (via listContracts)', () => {
 
 describe('contractsSummary', () => {
   it('returns zeroed totals when the aggregate row is missing', async () => {
-    const db = fakeD1([{ when: 'COUNT(*) AS total', first: null }]).db; // no aggregate row
+    const db = fakeD1([
+      { when: 'contract_rollup', first: null },
+      { when: 'COUNT(*) AS total', first: null }, // no aggregate row
+    ]).db;
     const summary = await contractsSummary(db, {});
     expect(summary).toEqual({ total: 0, valueEur: 0, suspect: 0 });
+  });
+
+  // A database that predates contract_rollup counts live; any other failure is a real one and surfaces.
+  const failing = (message: string) => () => {
+    throw new Error(message);
+  };
+
+  it('counts live while contract_rollup does not exist', async () => {
+    const db = fakeD1([
+      { when: 'contract_rollup', first: failing('D1_ERROR: no such table: contract_rollup') },
+      { when: 'COUNT(*) AS total', first: { total: 4, eur: 40, suspect: 1 } },
+    ]).db;
+    expect(await contractsSummary(db, { years: ['2024'] })).toEqual({
+      total: 4,
+      valueEur: 40,
+      suspect: 1,
+    });
+  });
+
+  it('does not mistake another rollup failure for a missing table', async () => {
+    const db = fakeD1([
+      { when: 'contract_rollup', first: failing('D1_ERROR: database is locked') },
+    ]).db;
+    await expect(contractsSummary(db, { years: ['2024'] })).rejects.toThrow('database is locked');
+  });
+});
+
+describe('listContracts — the page of a sparse filter without its rollup', () => {
+  // A headline the caller already holds (the route counts it first) can come from the live count while the
+  // rollup is missing; the page then asks the rollup whether to start from candidates, and must walk.
+  const sparse = { years: ['2019'], sectors: ['45'], pageSize: 10 };
+  const summary = { total: 3, valueEur: 30, suspect: 0 };
+
+  it('walks the sort index when contract_rollup does not exist', async () => {
+    const fake = fakeD1([
+      {
+        when: 'contract_rollup',
+        first: () => {
+          throw new Error('no such table: contract_rollup');
+        },
+      },
+      { when: 'FROM contracts c', all: [contractRow] },
+    ]);
+    const page = await listContracts(fake.db, sparse, summary);
+    expect(page.items).toHaveLength(1);
+    const query = fake.sql.find((s) => s.includes('sort_value'))!;
+    expect(query).not.toContain('WITH cand');
+  });
+
+  it('surfaces any other failure of the rollup', async () => {
+    const fake = fakeD1([
+      {
+        when: 'contract_rollup',
+        first: () => {
+          throw new Error('D1_ERROR: database is locked');
+        },
+      },
+      { when: 'FROM contracts c', all: [contractRow] },
+    ]);
+    await expect(listContracts(fake.db, sparse, summary)).rejects.toThrow('database is locked');
   });
 });
 

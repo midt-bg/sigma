@@ -2717,19 +2717,38 @@ DROP TABLE IF EXISTS contract_cube;
 CREATE TABLE contract_cube AS
 SELECT
   t.id IS NOT NULL AS has_tender,
+  -- A contract the contracts list shows: its FROM joins the tender, the authority and the bidder.
+  t.id IS NOT NULL AND a.id IS NOT NULL AND b.id IS NOT NULL AS in_list,
   t.procedure_type AS procedure_type,
-  CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END AS eu,
+  -- '?' keeps a value other than 0, 1 or NULL apart: the list's „EU" filter is `= 1` and „national" is
+  -- `IS NULL OR = 0`, so such a contract is in neither. The EU facet folds it into '0', as it always did.
+  CASE WHEN c.eu_funded = 1 THEN '1' WHEN c.eu_funded = 0 OR c.eu_funded IS NULL THEN '0' ELSE '?' END AS eu,
   COALESCE(substr(t.cpv_code, 1, 2), '') AS sector,
   CASE WHEN substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]' THEN substr(c.signed_at, 1, 4) ELSE 'unknown' END AS year,
   CASE WHEN c.id LIKE 'c:e:%' THEN 'eop' WHEN c.id LIKE 'c:o:%' THEN 'ocds' ELSE 'other' END AS src,
+  CASE WHEN c.bids_received = 1 THEN '1' ELSE '0' END AS one_offer,
+  -- The list's value buckets (VALUE_BUCKETS in contracts.ts), each [lower, upper).
+  CASE
+    WHEN c.amount_eur >= 100000000 THEN 'gt100m'
+    WHEN c.amount_eur >= 10000000 THEN '10m-100m'
+    WHEN c.amount_eur >= 1000000 THEN '1m-10m'
+    WHEN c.amount_eur >= 100000 THEN '100k-1m'
+    WHEN c.amount_eur >= 0 THEN 'lt100k'
+    ELSE ''
+  END AS value_bucket,
   COUNT(*) AS contracts,
   COUNT(c.amount_eur) AS priced,
   COALESCE(SUM(c.amount_eur), 0) AS value_eur,
   SUM(c.value_flag = 'value_suspect') AS suspect,
+  -- The list's „unconfirmed value" badge: no amount, or one flagged as too low to trust.
+  SUM(c.amount_eur IS NULL OR c.value_flag = 'value_low') AS unverified,
   MAX(CASE WHEN c.signed_at <= date('now') THEN c.signed_at END) AS max_signed
-FROM contracts c LEFT JOIN tenders t ON t.id = c.tender_id
--- By position: the dimensions are the first six result columns, and an alias must not meet a column name.
-GROUP BY 1, 2, 3, 4, 5, 6;
+FROM contracts c
+LEFT JOIN tenders t ON t.id = c.tender_id
+LEFT JOIN authorities a ON a.id = t.authority_id
+LEFT JOIN bidders b ON b.id = c.bidder_id
+-- By position: the dimensions are the first nine result columns, and an alias must not meet a column name.
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9;
 
 DELETE FROM data_freshness;
 INSERT INTO data_freshness (source, as_of, rows, refreshed_at)
@@ -2764,7 +2783,8 @@ INSERT INTO facet_counts (facet, key, contracts, value_eur)
 SELECT 'procedure', procedure_type, SUM(contracts), SUM(value_eur)
 FROM contract_cube WHERE has_tender = 1 GROUP BY procedure_type;
 INSERT INTO facet_counts (facet, key, contracts, value_eur)
-SELECT 'eu', eu, SUM(contracts), SUM(value_eur) FROM contract_cube GROUP BY eu;
+SELECT 'eu', CASE WHEN eu = '1' THEN '1' ELSE '0' END, SUM(contracts), SUM(value_eur)
+FROM contract_cube GROUP BY CASE WHEN eu = '1' THEN '1' ELSE '0' END;
 -- The contracts list's sector and year facets, which every uncached list page shows: read from here instead
 -- of two full scans per request — those scans were the bulk of the rows D1 read, and what a crawler turned
 -- into an overloaded database. Same expressions as getContractFacets' live fallback.
@@ -2773,6 +2793,68 @@ SELECT 'sector', sector, SUM(contracts), SUM(value_eur)
 FROM contract_cube WHERE has_tender = 1 GROUP BY sector;
 INSERT INTO facet_counts (facet, key, contracts, value_eur)
 SELECT 'year', year, SUM(contracts), SUM(value_eur) FROM contract_cube GROUP BY year;
+-- The single-offer share on the home page (home.ts): priced contracts with one offer — `contracts` here is
+-- that priced count — and their value. All contracts, as the home page counts them, not only listed ones.
+INSERT INTO facet_counts (facet, key, contracts, value_eur)
+SELECT 'single_offer', 'priced', COALESCE(SUM(priced), 0), COALESCE(SUM(value_eur), 0)
+FROM contract_cube WHERE one_offer = '1';
+
+-- @refresh-batch contract-rollup
+-- The contracts list's headline for every combination of its filters (migration 0024): each of the six
+-- dimensions either one of its values or '(all)', so 64 groupings of the listed contracts in the cube. Only a
+-- row that changed is written: a vanished combination is deleted, a new or changed one upserted. A value is
+-- compared to half a cent; adding the same contracts in another order moves it by far less.
+CREATE TABLE IF NOT EXISTS contract_rollup (
+  procedure_type TEXT NOT NULL,
+  eu             TEXT NOT NULL,
+  sector         TEXT NOT NULL,
+  one_offer      TEXT NOT NULL,
+  value_bucket   TEXT NOT NULL,
+  year           TEXT NOT NULL,
+  contracts      INTEGER NOT NULL,
+  value_eur      REAL NOT NULL,
+  unverified     INTEGER NOT NULL,
+  PRIMARY KEY (procedure_type, eu, sector, one_offer, value_bucket, year)
+) WITHOUT ROWID;
+WITH RECURSIVE masks(m) AS (SELECT 0 UNION ALL SELECT m + 1 FROM masks WHERE m < 63)
+DELETE FROM contract_rollup
+WHERE (procedure_type, eu, sector, one_offer, value_bucket, year) NOT IN (
+  SELECT
+    CASE WHEN m & 1 THEN '(all)' ELSE procedure_type END,
+    CASE WHEN m & 2 THEN '(all)' ELSE eu END,
+    CASE WHEN m & 4 THEN '(all)' ELSE sector END,
+    CASE WHEN m & 8 THEN '(all)' ELSE one_offer END,
+    CASE WHEN m & 16 THEN '(all)' ELSE value_bucket END,
+    CASE WHEN m & 32 THEN '(all)' ELSE year END
+  FROM contract_cube CROSS JOIN masks
+  WHERE in_list = 1
+);
+WITH RECURSIVE masks(m) AS (SELECT 0 UNION ALL SELECT m + 1 FROM masks WHERE m < 63),
+fresh AS (
+  SELECT
+    CASE WHEN m & 1 THEN '(all)' ELSE procedure_type END AS procedure_type,
+    CASE WHEN m & 2 THEN '(all)' ELSE eu END AS eu,
+    CASE WHEN m & 4 THEN '(all)' ELSE sector END AS sector,
+    CASE WHEN m & 8 THEN '(all)' ELSE one_offer END AS one_offer,
+    CASE WHEN m & 16 THEN '(all)' ELSE value_bucket END AS value_bucket,
+    CASE WHEN m & 32 THEN '(all)' ELSE year END AS year,
+    SUM(contracts) AS contracts, SUM(value_eur) AS value_eur, SUM(unverified) AS unverified
+  FROM contract_cube CROSS JOIN masks
+  WHERE in_list = 1
+  GROUP BY 1, 2, 3, 4, 5, 6
+)
+INSERT INTO contract_rollup (procedure_type, eu, sector, one_offer, value_bucket, year, contracts, value_eur, unverified)
+SELECT f.procedure_type, f.eu, f.sector, f.one_offer, f.value_bucket, f.year, f.contracts, f.value_eur, f.unverified
+FROM fresh f
+WHERE NOT EXISTS (
+  SELECT 1 FROM contract_rollup r
+  WHERE r.procedure_type = f.procedure_type AND r.eu = f.eu AND r.sector = f.sector
+    AND r.one_offer = f.one_offer AND r.value_bucket = f.value_bucket AND r.year = f.year
+    AND r.contracts = f.contracts AND r.unverified = f.unverified
+    AND abs(r.value_eur - f.value_eur) < 0.005
+)
+ON CONFLICT (procedure_type, eu, sector, one_offer, value_bucket, year) DO UPDATE SET
+  contracts = excluded.contracts, value_eur = excluded.value_eur, unverified = excluded.unverified;
 DROP TABLE IF EXISTS contract_cube;
 
 -- @refresh-batch cohort-stats

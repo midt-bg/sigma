@@ -114,15 +114,21 @@ describe('refresh-slice statement shape', () => {
     // data_freshness, home_totals, sector_totals and facet_counts were eight scans of the whole contracts
     // table per refresh; they now fold one grouped pass. A total that went back to scanning `contracts`
     // directly would bring the scans back — the only direct reads left are the index-backed date bounds.
-    const globals = refreshSliceStatementGroups(SQL).find((g) => g.name === 'globals');
-    expect(globals, 'no `globals` batch').toBeDefined();
-    const body = globals!.statements.map(code).join(';\n');
+    // The cube lives from `globals` through `contract-rollup`, the batch after it, which drops it.
+    const groups = refreshSliceStatementGroups(SQL);
+    const at = groups.findIndex((g) => g.name === 'globals');
+    expect(at, 'no `globals` batch').toBeGreaterThan(-1);
+    expect(groups[at + 1]?.name, '`contract-rollup` must follow `globals`').toBe('contract-rollup');
+    const body = groups
+      .slice(at, at + 2)
+      .flatMap((g) => g.statements.map(code))
+      .join(';\n');
     const create = body.indexOf('CREATE TABLE contract_cube AS');
     const drops = [...body.matchAll(/DROP TABLE IF EXISTS contract_cube\b/g)].map((m) => m.index);
     expect((body.match(/CREATE TABLE contract_cube\b/g) ?? []).length).toBe(1);
     expect(drops.filter((i) => i < create)).toHaveLength(1);
     expect(drops.filter((i) => i > body.lastIndexOf('FROM contract_cube'))).toHaveLength(1);
-    const scans = [...body.matchAll(/FROM contracts\b(?! c LEFT JOIN tenders)([^;]*)/g)]
+    const scans = [...body.matchAll(/FROM contracts\b(?!\s+c\s+LEFT JOIN tenders)([^;]*)/g)]
       .map((m) => m[1] ?? '')
       .filter((rest) => !/^\s+WHERE signed_at\b/.test(rest));
     expect(scans, 'a total in `globals` reads the contracts table directly again').toEqual([]);
