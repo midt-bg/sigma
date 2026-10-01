@@ -102,3 +102,9 @@ invocation_logs = true
 enabled = false
 persist = true
 head_sampling_rate = 1
+
+# Real-time Issues (wrangler 4.142+): an uncaught exception, a failed invocation or a console.error becomes an
+# issue, and the account's „Real-Time Issue" notification sends it by e-mail. The runs' own error-level events
+# (registry_feed_stale, declarations_run_failed) are written for it — a quiet „Completed" hid a stuck feed.
+[observability.issues]
+enabled = true
