@@ -337,35 +337,45 @@ export interface ContractFacets {
 }
 
 /**
- * Rail facets for the contracts list. Procedure/EU come from precomputed counts (no scans).
- * The year facet is computed live from `contracts` so its buckets reconcile with the contracts total:
- * the precomputed `facet_counts` year rows are clamped to a fixed date window and drop outlier years
- * (2016/2019/2029) plus null/malformed dates, which silently hid ~36 rows. This grouped scan rides the
- * `signed_at` index and yields every real year, plus a "Неизвестна" bucket for null/unparseable dates.
+ * Rail facets for the contracts list, read from the precomputed `facet_counts` (precompute.sql and every
+ * refresh). Sector and year used to be counted live, by two full scans on every uncached list page: they
+ * were the bulk of the rows D1 read, and a crawler walking the list's pages overloaded the database with
+ * them. The year buckets keep the live semantics — every real year plus „Неизвестна" for a null or
+ * malformed date, so they reconcile with the contracts total. A database the refresh has not yet filled
+ * with the sector or year rows is counted live, as before.
  */
 export async function getContractFacets(db: D1Database): Promise<ContractFacets> {
   const facetRows = await db
     .prepare(`SELECT facet, key, contracts FROM facet_counts`)
     .all<{ facet: string; key: string; contracts: number }>();
-  const sectorRows = await db
-    .prepare(
-      `SELECT substr(t.cpv_code, 1, 2) AS division, COUNT(*) AS contracts
-       FROM contracts c JOIN tenders t ON t.id = c.tender_id
-       GROUP BY division`,
-    )
-    .all<{ division: string; contracts: number }>();
-  const yearRows = await db
-    .prepare(
-      `SELECT CASE WHEN ${YEAR_KNOWN} THEN substr(c.signed_at, 1, 4) ELSE '${YEAR_UNKNOWN}' END AS key,
-              COUNT(*) AS contracts
-       FROM contracts c GROUP BY key`,
-    )
-    .all<{ key: string; contracts: number }>();
   const rows = facetRows.results;
+  const precomputed = (facet: string) => rows.filter((r) => r.facet === facet);
+  const sectorRows = precomputed('sector').length
+    ? precomputed('sector').map((r) => ({ division: r.key, contracts: r.contracts }))
+    : (
+        await db
+          .prepare(
+            `SELECT substr(t.cpv_code, 1, 2) AS division, COUNT(*) AS contracts
+             FROM contracts c JOIN tenders t ON t.id = c.tender_id
+             GROUP BY division`,
+          )
+          .all<{ division: string; contracts: number }>()
+      ).results;
+  const yearRows = precomputed('year').length
+    ? precomputed('year').map((r) => ({ key: r.key, contracts: r.contracts }))
+    : (
+        await db
+          .prepare(
+            `SELECT CASE WHEN ${YEAR_KNOWN} THEN substr(c.signed_at, 1, 4) ELSE '${YEAR_UNKNOWN}' END AS key,
+                    COUNT(*) AS contracts
+             FROM contracts c GROUP BY key`,
+          )
+          .all<{ key: string; contracts: number }>()
+      ).results;
 
   const currentYear = new Date().getUTCFullYear();
   const yearBuckets = new Map<string, number>();
-  for (const r of yearRows.results) {
+  for (const r of yearRows) {
     const year = Number(r.key);
     const key = r.key === YEAR_UNKNOWN || year > currentYear ? YEAR_UNKNOWN : r.key;
     yearBuckets.set(key, (yearBuckets.get(key) ?? 0) + r.contracts);
@@ -393,7 +403,7 @@ export async function getContractFacets(db: D1Database): Promise<ContractFacets>
     count: procByGroup.get(g.key) ?? 0,
   })).filter((f) => f.count > 0);
 
-  const sectorByCode = new Map(sectorRows.results.map((r) => [r.division, r.contracts]));
+  const sectorByCode = new Map(sectorRows.map((r) => [r.division, r.contracts]));
   const sectors = CPV_SECTORS.map((s) => ({
     value: s.code,
     label: s.short ?? s.label,

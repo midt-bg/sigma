@@ -114,7 +114,7 @@ D1 таксува **прочетени** редове, затова класац
 | `company_totals`  | фирма                 | Класация компании, headline на профила.   |
 | `authority_totals`| институция            | Класация институции, headline.            |
 | `sector_totals`   | CPV дивизия           | Sector facet + филтър-броячи.             |
-| `facet_counts`    | (facet, key)          | Броячи за филтрите (year/procedure/eu).   |
+| `facet_counts`    | (facet, key)          | Броячи за филтрите (procedure/eu/sector/year). |
 | `flow_pairs`      | (институция, фирма)   | Sankey на потоците + таблицата.           |
 | `search_index`    | FTS5 ред              | Глобално търсене (Кирилица+Латиница, accent/case-folded). |
 

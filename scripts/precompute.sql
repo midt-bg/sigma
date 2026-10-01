@@ -108,15 +108,38 @@ FROM contract_co_authorities cca
 JOIN contracts c ON c.id = cca.contract_id
 GROUP BY cca.authority_id;
 
+-- One pass over the corpus for every corpus-wide count written from it — data_freshness, home_totals' contract
+-- count, value and suspect rows, sector_totals, and the contracts list's facets (procedure, EU, sector, year):
+-- grouped once into a small cube, a few thousand rows, then folded per total. They were eight scans of the
+-- whole contracts table. The LEFT JOIN and `has_tender` keep each total's own base exactly as it was: the
+-- tender-joined ones (procedure, sector, sector_totals) and the contracts-only ones (EU, year, home, freshness).
+DROP TABLE IF EXISTS contract_cube;
+CREATE TABLE contract_cube AS
+SELECT
+  t.id IS NOT NULL AS has_tender,
+  t.procedure_type AS procedure_type,
+  CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END AS eu,
+  COALESCE(substr(t.cpv_code, 1, 2), '') AS sector,
+  CASE WHEN substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]' THEN substr(c.signed_at, 1, 4) ELSE 'unknown' END AS year,
+  CASE WHEN c.id LIKE 'c:e:%' THEN 'eop' WHEN c.id LIKE 'c:o:%' THEN 'ocds' ELSE 'other' END AS src,
+  COUNT(*) AS contracts,
+  COUNT(c.amount_eur) AS priced,
+  COALESCE(SUM(c.amount_eur), 0) AS value_eur,
+  SUM(c.value_flag = 'value_suspect') AS suspect,
+  MAX(CASE WHEN c.signed_at <= date('now') THEN c.signed_at END) AS max_signed
+FROM contracts c LEFT JOIN tenders t ON t.id = c.tender_id
+-- By position: the dimensions are the first six result columns, and an alias must not meet a column name.
+GROUP BY 1, 2, 3, 4, 5, 6;
+
 -- home_totals uses the browsable leaderboard grains for authority/bidder counts, and the same
 -- freshness definition as refresh-slice.sql: latest in-corpus signed contract date.
 INSERT INTO home_totals (id, contracts, value_eur, authorities, bidders, suspect, first_date, last_date, as_of, refreshed_at)
 SELECT 1,
-  (SELECT COUNT(*) FROM contracts),
-  (SELECT COALESCE(SUM(amount_eur), 0) FROM contracts),
+  (SELECT COALESCE(SUM(contracts), 0) FROM contract_cube),
+  (SELECT COALESCE(SUM(value_eur), 0) FROM contract_cube),
   (SELECT COUNT(*) FROM authority_totals),
   (SELECT COUNT(*) FROM company_totals),
-  (SELECT COUNT(*) FROM contracts WHERE value_flag = 'value_suspect'),
+  (SELECT COALESCE(SUM(suspect), 0) FROM contract_cube),
   (SELECT MIN(signed_at) FROM contracts WHERE signed_at >= '2020-01-01' AND signed_at <= date('now')),
   (SELECT MAX(signed_at) FROM contracts WHERE signed_at <= date('now')),
   (SELECT MAX(signed_at) FROM contracts WHERE signed_at <= date('now')),
@@ -128,24 +151,32 @@ CREATE TABLE IF NOT EXISTS sector_totals (
 );
 DELETE FROM sector_totals;
 INSERT INTO sector_totals (division, contracts, value_eur)
-SELECT substr(t.cpv_code, 1, 2), COUNT(*), COALESCE(SUM(c.amount_eur), 0)
-FROM contracts c JOIN tenders t ON t.id = c.tender_id
-WHERE c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
-GROUP BY substr(t.cpv_code, 1, 2);
+SELECT sector, SUM(priced), SUM(value_eur)
+FROM contract_cube
+WHERE has_tender = 1 AND sector <> ''
+GROUP BY sector
+HAVING SUM(priced) > 0;
 
--- ── 4b) facet_counts (procedure_type / EU; year is recomputed live by getContractFacets) ───────────
+-- ── 4b) facet_counts (procedure_type / EU / sector / year — the contracts list's facets) ─────────
 CREATE TABLE IF NOT EXISTS facet_counts (
   facet TEXT NOT NULL, key TEXT NOT NULL, contracts INTEGER NOT NULL, value_eur REAL NOT NULL,
   PRIMARY KEY (facet, key)
 );
 DELETE FROM facet_counts;
 INSERT INTO facet_counts (facet, key, contracts, value_eur)
-SELECT 'procedure', t.procedure_type, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
-FROM contracts c JOIN tenders t ON t.id = c.tender_id
-GROUP BY t.procedure_type;
+SELECT 'procedure', procedure_type, SUM(contracts), SUM(value_eur)
+FROM contract_cube WHERE has_tender = 1 GROUP BY procedure_type;
 INSERT INTO facet_counts (facet, key, contracts, value_eur)
-SELECT 'eu', CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
-FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
+SELECT 'eu', eu, SUM(contracts), SUM(value_eur) FROM contract_cube GROUP BY eu;
+-- The contracts list's sector and year facets, which every uncached list page shows: read from here instead
+-- of two full scans per request — those scans were the bulk of the rows D1 read, and what a crawler turned
+-- into an overloaded database. Same expressions as getContractFacets' live fallback.
+INSERT INTO facet_counts (facet, key, contracts, value_eur)
+SELECT 'sector', sector, SUM(contracts), SUM(value_eur)
+FROM contract_cube WHERE has_tender = 1 GROUP BY sector;
+INSERT INTO facet_counts (facet, key, contracts, value_eur)
+SELECT 'year', year, SUM(contracts), SUM(value_eur) FROM contract_cube GROUP BY year;
+DROP TABLE IF EXISTS contract_cube;
 
 -- ── 4c) cpv_division_stats (value percentiles per CPV division - „Подобни договори" benchmark) ──
 -- Nearest-rank percentiles (k = ceil(q*n), emulated as CAST(n*q + 0.9999999 AS INTEGER) because

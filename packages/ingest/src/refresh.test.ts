@@ -140,6 +140,7 @@ describe('transient staging statements', () => {
       'DROP TABLE IF EXISTS raw_amendments',
       'DROP TABLE IF EXISTS raw_tenders',
       'DROP TABLE IF EXISTS raw_contracts',
+      'DROP TABLE IF EXISTS contract_cube',
       'DROP TABLE IF EXISTS amend_contract_base',
       'DROP TABLE IF EXISTS amendment_contract_resolve',
     ]);
