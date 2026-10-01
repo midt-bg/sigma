@@ -761,9 +761,11 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
 }
 
 /** The cron that starts the declarations run: Sundays 03:00 UTC — a bad run then leaves the working
- * week to fix it, and the register is quiet at the weekend. Sunday is `7`: the Cloudflare API refuses
- * `0 3 * * 0` outright, and `scheduled` compares this string to the one the platform sends. */
-export const DECLARATIONS_CRON = '0 3 * * 7';
+ * week to fix it, and the register is quiet at the weekend. Cloudflare numbers the weekdays from
+ * 1 = Sunday to 7 = Saturday, not the usual 0 = Sunday: the `7` this used to carry started the run on
+ * Saturdays (26.09.2026), and `0` the API refuses outright. `scheduled` compares this string to the one
+ * the platform sends, so the number stays a number. */
+export const DECLARATIONS_CRON = '0 3 * * 1';
 
 /** How long an operator-started run may be waited on before the workflow gives up with its OWN error.
  * A Workflow instance is capped at 1,024 steps on the free plan, and each poll costs two (a sleep and a
