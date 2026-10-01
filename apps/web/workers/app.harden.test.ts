@@ -12,6 +12,12 @@ const HTML_WITH_NONCE = `<!doctype html><script nonce="${NONCE}">window.__d=1;</
 vi.mock('react-router', () => ({
   createRequestHandler: () => async (request: Request) => {
     const url = new URL(request.url);
+    // What the router answers when a loader's D1 read was refused as overloaded (a thrown 503).
+    if (url.pathname === '/overloaded')
+      return new Response('<p>Грешка</p>', {
+        status: 503,
+        headers: { 'Content-Type': 'text/html', 'Cache-Control': 'public, s-maxage=60' },
+      });
     if (url.pathname === '/no-content-type') {
       // Cacheable (s-maxage) but no Content-Type → isHtml's `?? ''` fallback, nonce stays null.
       return new Response('raw', {
@@ -102,6 +108,15 @@ describe('app.ts response hardening', () => {
   it('short-circuits an OPTIONS preflight before the loader', async () => {
     const { res } = await run('https://x/anything', { method: 'OPTIONS' });
     expect(res.headers.get('Allow')).toContain('GET');
+  });
+
+  it('tells a client refused by an overloaded D1 when to come back, and caches nothing', async () => {
+    const { res } = await run('https://x/overloaded');
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('30');
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(res.headers.get('X-Edge-Cache')).toBe('BYPASS');
+    expect(store.size).toBe(0);
   });
 
   it('handles a cacheable response with no Content-Type (isHtml fallback) without hardening', async () => {
