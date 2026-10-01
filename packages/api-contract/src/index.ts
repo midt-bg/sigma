@@ -252,12 +252,7 @@ export interface ContractParty {
  *  them: `value_low` (published far below the forecast) reads nothing like `annex_total_suspect`
  *  (a known 2× double-count). */
 export type ContractValueFlag =
-  | 'ok'
-  | 'review'
-  | 'value_low'
-  | 'value_suspect'
-  | 'annex_suspect'
-  | 'annex_total_suspect';
+  'ok' | 'review' | 'value_low' | 'value_suspect' | 'annex_suspect' | 'annex_total_suspect';
 
 export interface ContractValueTimeline {
   estimatedEur: number | null; // lot forecast when available; otherwise procurement-level forecast
@@ -382,14 +377,7 @@ export interface CpvCohortStats {
  *  claimed when the cohort is large enough for that cut to be real AND the percentile anchors around
  *  it are distinct (so a tie-collapsed or tiny cohort never yields a fake „top 1%"). */
 export type CohortBand =
-  | 'top1'
-  | 'top5'
-  | 'top10'
-  | 'top25'
-  | 'above-median'
-  | 'at-median'
-  | 'below-median'
-  | 'bottom25';
+  'top1' | 'top5' | 'top10' | 'top25' | 'above-median' | 'at-median' | 'below-median' | 'bottom25';
 
 /** The „Подобни договори" benchmark for the contract page - null when there is no honest cohort. */
 export interface ContractCohortBenchmark {

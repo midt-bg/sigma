@@ -80,14 +80,12 @@ export async function loadPersonProfile(
       observations: timeline.observations.filter((o) => companyEiks.has(o.eik)),
     },
     timelineIntervals,
-    declarations: declarations.map(
-      (d): PersonDeclaration => ({
-        ...d,
-        companyEiks: d.companyEiks.filter((eik) => companyEiks.has(eik)),
-        interests: d.interests?.filter((i) => i.eik !== null && companyEiks.has(i.eik)),
-        discrepancies: d.discrepancies?.filter((c) => companyEiks.has(c.eik)),
-      }),
-    ),
+    declarations: declarations.map((d): PersonDeclaration => ({
+      ...d,
+      companyEiks: d.companyEiks.filter((eik) => companyEiks.has(eik)),
+      interests: d.interests?.filter((i) => i.eik !== null && companyEiks.has(i.eik)),
+      discrepancies: d.discrepancies?.filter((c) => companyEiks.has(c.eik)),
+    })),
     activity,
     totals: {
       companies: activity.companyCount,

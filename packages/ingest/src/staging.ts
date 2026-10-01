@@ -19,11 +19,7 @@ import {
 const CHUNK = 100;
 
 type StagingRow =
-  | ContractStagingRow
-  | AmendmentStagingRow
-  | PartyStagingRow
-  | LotStagingRow
-  | BaseStagingRow;
+  ContractStagingRow | AmendmentStagingRow | PartyStagingRow | LotStagingRow | BaseStagingRow;
 
 /** Where one mapped row set lands: the raw table and its insert column list. */
 export interface StagingTarget {

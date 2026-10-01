@@ -225,13 +225,7 @@ export function categoryForDivision(division: string | null | undefined): CpvCat
 // non-competitive bucket, the one worth the reader's eye). Counts in comments are corpus tallies.
 
 export type ProcedureGroupKey =
-  | 'open'
-  | 'competition'
-  | 'collection'
-  | 'negotiated_invited'
-  | 'direct'
-  | 'other'
-  | 'unknown';
+  'open' | 'competition' | 'collection' | 'negotiated_invited' | 'direct' | 'other' | 'unknown';
 
 export interface ProcedureGroup {
   key: ProcedureGroupKey;

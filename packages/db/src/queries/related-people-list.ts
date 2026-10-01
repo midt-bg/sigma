@@ -123,9 +123,7 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
     contractValueEur: r.total_eur,
     contemporaneousValueEur: r.window_eur,
     stakeKind: (r.self_stake && r.family_stake ? 'mixed' : r.self_stake ? 'self' : 'family') as
-      | 'mixed'
-      | 'self'
-      | 'family',
+      'mixed' | 'self' | 'family',
     ownInstitution: !!r.own_institution,
     hasContemporaneous: !!r.has_window,
     declaredOffices: JSON.parse(r.offices) as {
