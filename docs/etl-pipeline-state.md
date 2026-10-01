@@ -38,6 +38,10 @@ Scoped, идемпотентен дневен delta refresh. Заменя сам
 - `authority_totals`, `company_totals`, `flow_pairs`, `home_totals`, `sector_totals`, `facet_counts`, `contract_rollup`, `cpv_division_stats` (DELETE + REPLACE на засегнатите rollup-и; `contract_rollup` записва само променените редове)
 - `search_index`, `data_freshness`
 
+`flow_pairs`, редовете на компаниите и институциите в `search_index` и обогатяването на институциите и фирмите от
+`parties` се пресмятат изцяло на всеки ход, но се записват само редовете, които се различават от записаното
+(сумата на `flow_pairs` — с поносимост половин цент за шума от събирането в друг ред). Ход без промени не пише в тях.
+
 **Извиква се от:**
 - Worker: `apps/etl/src/index.ts` → `RefreshWorkflow` → `runRefreshSliceStatementGroup()`
 - CLI: `scripts/import.mjs` → `runSliceDerive()`
