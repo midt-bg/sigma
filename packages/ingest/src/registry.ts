@@ -204,7 +204,20 @@ export function registryClient(opts: RegistryClientOptions) {
     }).toString();
     const res = await get(url.toString(), 'application/json');
     if (!res) throw new RegistryError(`portal has no entry list for ${day}`);
-    const raw: unknown = await res.json();
+    const count = res.headers.get('Count');
+    // A day without entries comes back as an empty body with `Count: 0`, not as `[]` — on 20.09.2026, a
+    // Sunday, that failed the JSON parse and held every later day back for ten days. An empty body is the
+    // empty list only where the first page's own count says so; a later page carries no count of its own
+    // (the portal sends 0 there whatever it holds), and the pass checks it against the first page's.
+    const body = await res.text();
+    if (!body.trim() && page === 1 && count !== '0')
+      throw new RegistryError(`portal sent no entry list for ${day}`);
+    let raw: unknown;
+    try {
+      raw = body.trim() ? JSON.parse(body) : [];
+    } catch {
+      throw new RegistryError('invalid portal entry list');
+    }
     if (!Array.isArray(raw) || raw.length > REGISTRY_CHANGES_PAGE)
       throw new RegistryError('invalid portal entry list');
     const items = raw.map((value) => {
@@ -218,7 +231,6 @@ export function registryClient(opts: RegistryClientOptions) {
         throw new RegistryError('invalid portal entry');
       return { uic: r.uic as string, entryDate: r.date, companyName: string(r.companyFullName) };
     });
-    const count = res.headers.get('Count');
     const total = page === 1 && count !== null && /^\d+$/.test(count) ? Number(count) : null;
     return { items, total, hasMore: items.length === REGISTRY_CHANGES_PAGE };
   }
