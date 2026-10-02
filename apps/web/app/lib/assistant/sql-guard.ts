@@ -40,34 +40,62 @@ const FORBIDDEN = [
   'REVOKE',
 ];
 
-// Strip `/* block */` and `-- line` comments, but NOT when they fall inside a single-quoted string
-// literal — a regex pass that ignored literals silently corrupted query semantics: `name = 'a/*b*/c'`
-// became `name = 'a c'` (wrong rows), and `'x -- y'` was truncated to an unterminated string (fail-closed
-// false-deny). The executed SQL is this stripped string, so the corruption is invisible. Mirror the
-// literal/`''`-escape handling of splitStatements below so both layers model strings the same way
-// (review #80, follow-up). A `--`/`/*` inside a literal is preserved as data.
+// SQLite's FOUR quoting forms — '…' (string literal), "…" and `…` (quoted identifiers; SQLite also
+// accepts "…" as a literal) and […] (MS-style identifier). Inside ANY of them a comment marker, a `;`
+// or another quote char is DATA. The scanners below modelled only '…', so a `'` inside a double-quoted
+// alias (`AS "x'y"`) flipped them into "in string" for the rest of the statement: a later `/**/` or
+// `--` survived stripping verbatim, `group_concat/**/(x)` then slipped the function regex (which allows
+// only whitespace before the paren) while SQLite tokenises the comment as whitespace and runs the
+// aggregate — and the AST layer, which never looked at function names, let it through too (review f/u
+// on #223). The three symmetric forms escape their own closer by doubling it ('a''b', "a""b", `a``b`);
+// `]` has no escape. An unterminated span runs to the end of the input, which the AST guard then fails
+// to parse (fail-closed).
+const QUOTE_CLOSER: ReadonlyMap<string, string> = new Map([
+  ["'", "'"],
+  ['"', '"'],
+  ['`', '`'],
+  ['[', ']'],
+]);
+
+/** Index just past the quoted span opening at `start` (an opener char), or -1 if it never closes. */
+function quotedSpanClose(sql: string, start: number): number {
+  const close = QUOTE_CLOSER.get(sql[start]!)!;
+  let i = start + 1;
+  while (i < sql.length) {
+    if (sql[i] === close) {
+      if (close !== ']' && sql[i + 1] === close) {
+        i += 2; // doubled closer: an escaped quote, still inside the span
+        continue;
+      }
+      return i + 1;
+    }
+    i++;
+  }
+  return -1;
+}
+
+/** Index just past the quoted span opening at `start` (an opener char); `sql.length` if unterminated. */
+function quotedSpanEnd(sql: string, start: number): number {
+  const end = quotedSpanClose(sql, start);
+  return end === -1 ? sql.length : end;
+}
+
+// Strip `/* block */` and `-- line` comments, but NOT when they fall inside a quoted span — a regex
+// pass that ignored literals silently corrupted query semantics: `name = 'a/*b*/c'` became
+// `name = 'a c'` (wrong rows), and `'x -- y'` was truncated to an unterminated string (fail-closed
+// false-deny). The executed SQL is this stripped string, so the corruption is invisible. Both scanners
+// share quotedSpanEnd so they model quoting the same way (review #80, follow-up; all four forms, review
+// f/u on #223). A `--`/`/*` inside a span is preserved as data.
 function stripComments(sql: string): string {
   let out = '';
   let i = 0;
   const n = sql.length;
-  let inString = false;
   while (i < n) {
     const ch = sql[i]!;
-    if (inString) {
-      if (ch === "'" && sql[i + 1] === "'") {
-        out += "''"; // escaped quote inside a literal — consume both, stay in the string
-        i += 2;
-        continue;
-      }
-      out += ch;
-      if (ch === "'") inString = false;
-      i++;
-      continue;
-    }
-    if (ch === "'") {
-      inString = true;
-      out += ch;
-      i++;
+    if (QUOTE_CLOSER.has(ch)) {
+      const end = quotedSpanEnd(sql, i);
+      out += sql.slice(i, end); // verbatim — comment markers inside are data
+      i = end;
       continue;
     }
     if (ch === '-' && sql[i + 1] === '-') {
@@ -89,34 +117,173 @@ function stripComments(sql: string): string {
   return out;
 }
 
-// Split on `;` at the top level, treating a `;` inside a single-quoted string literal as data, not a
-// statement separator — otherwise a benign `SELECT ';' …` is mis-counted as stacked statements and
-// rejected (review #80). SQLite escapes a quote inside a literal by doubling it (`'a''b'` is the value
-// `a'b`), so a `''` pair is consumed as data and does NOT toggle the string — a plain toggle on every
-// `'` mis-models the literal (review #80). A real stacked statement still splits; an unbalanced quote
-// just yields one segment (the AST guard then fails to parse it).
+// Split on `;` at the top level, treating a `;` inside a quoted span (literal OR quoted identifier) as
+// data, not a statement separator — otherwise a benign `SELECT ';' …` is mis-counted as stacked
+// statements and rejected (review #80). SQLite escapes a quote inside a span by doubling it (`'a''b'`
+// is the value `a'b`), so a doubled closer is consumed as data and does NOT end the span — a plain
+// toggle on every quote mis-models it (review #80). A real stacked statement still splits; an
+// unbalanced quote just yields one segment (the AST guard then fails to parse it).
 function splitStatements(sql: string): string[] {
   const out: string[] = [];
   let current = '';
-  let inString = false;
-  for (let i = 0; i < sql.length; i++) {
+  let i = 0;
+  while (i < sql.length) {
     const ch = sql[i]!;
-    if (ch === "'" && inString && sql[i + 1] === "'") {
-      // Escaped quote inside a literal: consume both chars and stay in the string.
-      current += "''";
-      i++;
-    } else if (ch === "'") {
-      inString = !inString;
-      current += ch;
-    } else if (ch === ';' && !inString) {
+    if (QUOTE_CLOSER.has(ch)) {
+      const end = quotedSpanEnd(sql, i);
+      current += sql.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (ch === ';') {
       out.push(current);
       current = '';
     } else {
       current += ch;
     }
+    i++;
   }
   out.push(current);
   return out.map((s) => s.trim()).filter(Boolean);
+}
+
+// Function names no analytics query needs and that amplify memory or reach outside the data — the WHY is
+// at the check in assertReadOnlySelect below. ONE definition for BOTH layers: the lexical regex there and
+// the AST walk in sql-ast-guard.ts, which tests the parser-resolved call name (comments, quoting and case
+// already gone), so the two can never drift apart and no lexical trick can hide a name from the second
+// layer (review f/u on #223).
+const DENIED_FUNCTION_ALTERNATION =
+  'load_extension|randomblob|zeroblob|printf|format|group_concat|string_agg|jsonb?_group_(?:array|object)';
+/** Whole-name test for a resolved function name (case-insensitive). */
+export const DENIED_FUNCTION_NAME = new RegExp(`^(?:${DENIED_FUNCTION_ALTERNATION})$`, 'i');
+// Lexical form: the name, an optional closing quote (see below), whitespace, `(`.
+const DENIED_FUNCTION_CALL = new RegExp(
+  `\\b(?:${DENIED_FUNCTION_ALTERNATION})["'\\]\`]?\\s*\\(`,
+  'i',
+);
+
+// The lexical checks in assertReadOnlySelect run on a copy with every single-quoted STRING LITERAL
+// emptied to `''`: in EXPRESSION position a literal is data, never executable, so a keyword or a denied
+// function name inside one (`WHERE subject LIKE '%group_concat(%'`, `'%DROP TABLE%'`) is not a call and
+// must not be refused — the AST layer denies only REAL calls, so the lexical layer was the only one
+// failing toward over-block there (review f/u, ydimitrof). Quoted IDENTIFIERS ("…", `…`, […]) stay
+// visible on purpose: SQLite resolves `"group_concat"(x)` to the built-in, so that name has to be seen.
+// (SQLite's legacy double-quoted-STRING fallback means `LIKE "%printf(%"` is still over-blocked — a
+// misfeature no query here needs, and over-block is the safe direction.) The one place a single-quoted
+// token is NOT data is table position: SQLite's grammar has `nm ::= id | STRING`, so `FROM 'sqlite_master'`
+// reads the real catalog — blanking would blind the catalog/pragma backstops to that spelling, which is
+// why assertReadOnlySelect refuses any quoted token in table position outright (hasQuotedTableName,
+// review f/u). Function names are `id` only (`'printf'(x)` is a syntax error), so the function regex
+// loses nothing. An UNTERMINATED span is left visible: it is a tokenizer error SQLite never runs, not
+// data, and blanking it would hide everything after the opener — `'x AND 1=1 -- DROP TABLE t` — from
+// every check (review f/u on #223). The statement RETURNED to the caller is the real one.
+function blankStringLiterals(sql: string): string {
+  let out = '';
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i]!;
+    if (QUOTE_CLOSER.has(ch)) {
+      const end = quotedSpanClose(sql, i);
+      if (end === -1) return out + sql.slice(i);
+      out += ch === "'" ? "''" : sql.slice(i, end);
+      i = end;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+// A FROM clause's table list closes at one of these words at the paren depth it opened in. A subquery
+// opener right after `FROM (` means the parenthesis holds a SELECT, not a parenthesised table list.
+// `window` is left out on purpose: it is a soft keyword SQLite also accepts as an implicit table alias
+// (`FROM contracts window, 'sqlite_master'`), and a WINDOW clause's own commas only separate window
+// names, so keeping the list open there costs nothing (review f/u on #223).
+const FROM_LIST_END = new Set([
+  'where',
+  'group',
+  'order',
+  'limit',
+  'having',
+  'union',
+  'intersect',
+  'except',
+]);
+const SUBQUERY_START = new Set(['select', 'with', 'values']);
+// SQLite treats every non-ASCII character as an identifier character.
+const WORD = /[\w$\u0080-\u{10FFFF}]+/uy;
+
+/**
+ * True when a single-quoted token sits where SQLite reads it as a TABLE name (`nm ::= id | STRING`):
+ * right after FROM/JOIN, after a comma of a FROM list, inside a parenthesised table list, or after a
+ * schema qualifier — `FROM 'sqlite_master'`, `FROM ('sqlite_master')`, `FROM contracts, 'sqlite_master'`,
+ * `FROM main.'sqlite_master'`. A comma or parenthesis anywhere else (`IN ('a', 'b')`, a select list,
+ * ORDER BY) is expression syntax and the literal after it is data. Runs on the blanked copy, where every
+ * literal reads `''`. A FROM-only regex missed the parenthesised and comma forms (review f/u on #223).
+ */
+function hasQuotedTableName(sql: string): boolean {
+  const listDepths = new Set<number>(); // paren depths holding an open FROM table list
+  let depth = 0;
+  let expectTable = false; // the next token is a table reference
+  let afterTable = false; // the previous token was a table name, so a `.` qualifies it
+  let prevWord = '';
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i]!;
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+    if (QUOTE_CLOSER.has(ch)) {
+      if (ch === "'" && expectTable) return true;
+      afterTable = expectTable; // `"main".'t'`
+      expectTable = false;
+      prevWord = '';
+      i = quotedSpanEnd(sql, i);
+      continue;
+    }
+    WORD.lastIndex = i;
+    const word = WORD.exec(sql);
+    if (word) {
+      const w = word[0].toLowerCase();
+      i += word[0].length;
+      // `a IS [NOT] DISTINCT FROM b` compares two expressions; that FROM opens no table list.
+      if ((w === 'from' && prevWord !== 'distinct') || w === 'join') {
+        if (w === 'from') listDepths.add(depth);
+        expectTable = true;
+        afterTable = false;
+      } else {
+        if (FROM_LIST_END.has(w) || (expectTable && SUBQUERY_START.has(w))) {
+          listDepths.delete(depth);
+        }
+        afterTable = expectTable;
+        expectTable = false;
+      }
+      prevWord = w;
+      continue;
+    }
+    i++;
+    prevWord = '';
+    if (ch === '(') {
+      depth++;
+      if (expectTable) listDepths.add(depth); // `FROM (a, 'b')`: still expecting a table
+      afterTable = false;
+    } else if (ch === ')') {
+      listDepths.delete(depth);
+      depth = Math.max(0, depth - 1);
+      expectTable = afterTable = false;
+    } else if (ch === ',') {
+      expectTable = listDepths.has(depth);
+      afterTable = false;
+    } else if (ch === '.') {
+      expectTable = afterTable;
+      afterTable = false;
+    } else {
+      expectTable = afterTable = false;
+    }
+  }
+  return false;
 }
 
 export type GuardResult = { ok: true; sql: string } | { ok: false; reason: string };
@@ -132,14 +299,27 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
     return { ok: false, reason: 'only a single statement is allowed' };
   }
   const sql = statements[0]!;
+  // Every check from here on reads `lexical` (string literals blanked, see blankStringLiterals); `sql`
+  // — the real statement — is what gets returned and executed.
+  const lexical = blankStringLiterals(sql);
 
-  if (!/^(select|with)\b/i.test(sql)) {
+  if (!/^(select|with)\b/i.test(lexical)) {
     return { ok: false, reason: 'query must start with SELECT or WITH' };
+  }
+
+  // A single-quoted token in TABLE position is an identifier to SQLite (`nm ::= id | STRING`): `FROM
+  // 'sqlite_master'`, `FROM main.'sqlite_master'`, `JOIN 'sqlite_master' m`, `FROM 'json_each'(…)`,
+  // `FROM ('sqlite_master')`, `FROM contracts, 'sqlite_master'` all execute against the real object.
+  // The blanking above turns every such token into `''`, so refuse any quoted token in table position
+  // here — the catalog, pragma_ and TVF checks below cannot see it any more, and the AST guard must not
+  // be the only layer that does (review f/u). No legitimate query quotes a table name this way.
+  if (hasQuotedTableName(lexical)) {
+    return { ok: false, reason: 'single-quoted table names are not allowed' };
   }
 
   // Whole-word keyword blocklist (cheap second layer; the AST parser is the real guard).
   for (const kw of FORBIDDEN) {
-    if (new RegExp(`\\b${kw}\\b`, 'i').test(sql)) {
+    if (new RegExp(`\\b${kw}\\b`, 'i').test(lexical)) {
       return { ok: false, reason: `forbidden keyword: ${kw}` };
     }
   }
@@ -147,21 +327,21 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // `\bPRAGMA\b` above does NOT catch the table-valued *function* form `pragma_table_info(...)` (the
   // `_` is a word char, so there is no boundary). Block the `pragma_*` identifiers here too — the AST
   // guard rejects all table-valued functions, this is the cheap belt-and-braces layer (review #80).
-  if (/\bpragma_\w+/i.test(sql)) {
+  if (/\bpragma_\w+/i.test(lexical)) {
     return { ok: false, reason: 'pragma functions are not allowed' };
   }
 
   // Common table-valued functions are invisible to the AST allowlist (parser.tableList() returns []
   // for them), so they are the same blind spot as pragma_*. The AST guard rejects every TVF in a FROM
   // at any depth; this is the cheap first-layer catch for the well-known ones (review #80, ydimitrof H1).
-  if (/\b(?:json_each|json_tree|generate_series)\s*\(/i.test(sql)) {
+  if (/\b(?:json_each|json_tree|generate_series)\s*\(/i.test(lexical)) {
     return { ok: false, reason: 'table-valued functions are not allowed' };
   }
 
   // Schema-catalog tables are the crown-jewel enumeration target. The AST guard now scopes CTE names
   // lexically (so an out-of-scope `sqlite_master` CTE can't exempt the real table), but keep a cheap
   // structural backstop on the two catalog names too — no legitimate query references them (review #80).
-  if (/\bsqlite_(?:master|schema)\b/i.test(sql)) {
+  if (/\bsqlite_(?:master|schema)\b/i.test(lexical)) {
     return { ok: false, reason: 'system catalog tables are not allowed' };
   }
 
@@ -169,9 +349,24 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // not a FROM source): `load_extension` loads a dynamic library (RCE where SQLite enables it — D1
   // disables it, but block defensively); `randomblob`/`zeroblob` build arbitrarily large blobs; and
   // `printf`/`format` with a width specifier (`printf('%1000000d', x)`) build arbitrarily large STRINGS.
-  // All materialise in Worker memory before capRows can measure the row — a single row can OOM the
-  // isolate. No analytics query needs any of them (review #80, red-team R2; printf/format f/u).
-  if (/\b(?:load_extension|randomblob|zeroblob|printf|format)\s*\(/i.test(sql)) {
+  // The string-building AGGREGATES are the same amplification class one step up — `group_concat` /
+  // `string_agg` (its official SQLite ≥3.44 synonym, `string_agg(X, sep)` — D1 runs a modern SQLite, so
+  // the alias reaches the same code path) / `json_group_array` / `json_group_object` — and their JSONB
+  // twins `jsonb_group_*` (SQLite ≥3.45, present in workerd's build) — collapse an ENTIRE
+  // full-table scan into ONE huge cell that materialises before capRows can measure it (and capRows keeps
+  // the first row whole), so a single returned row can OOM the isolate. All of these materialise in Worker
+  // memory before capRows sees the row; no analytics query needs any of them (review #80, red-team R2;
+  // printf/format + aggregate + string_agg alias f/u, ydimitrof). NB: this denylist is inherently a
+  // catch-up game against new aliases — a positive function allowlist is the durable fix (tracked separately).
+  // The optional quote class after the name closes the QUOTED-identifier bypass: SQLite resolves
+  // `"group_concat"(x)`, `[group_concat](x)` and `` `group_concat`(x) `` to the same built-in, while
+  // the bare-name regex saw only `group_concat"(` and never matched (review f/u, ydimitrof). `\b`
+  // before the name still anchors after an OPENING quote (quote chars are non-word). An identifier
+  // padded inside the quotes (`" group_concat"`) is a DIFFERENT identifier to SQLite — resolves to
+  // no built-in, so it needs no handling here. This regex is only as good as the comment stripping
+  // above (whitespace-only between name and paren); the AST layer re-checks the same names on the
+  // parsed call, so a stripping miss is not a bypass (review f/u on #223).
+  if (DENIED_FUNCTION_CALL.test(lexical)) {
     return { ok: false, reason: 'function not allowed' };
   }
   return { ok: true, sql };

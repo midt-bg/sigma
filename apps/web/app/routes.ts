@@ -5,6 +5,7 @@ export default [
   route('search', 'routes/search.tsx'),
   route('search/suggest', 'routes/search.suggest.tsx'),
   route('assistant/chat', 'routes/assistant.chat.tsx'),
+  route('assistant/health', 'routes/assistant.health.ts'),
   route('flows', 'routes/flows.tsx'),
   route('network', 'routes/network.tsx'),
   route('trends', 'routes/trends.tsx'),
