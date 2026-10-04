@@ -5,6 +5,7 @@
 // like getFlows; precompute is a possible follow-up.
 
 import type { TrendData, TrendPoint, TrendYear } from '@sigma/api-contract';
+import { getPartialStartYear } from './partial-years';
 import { sectorOptions } from './sectors';
 
 export interface TrendParams {
@@ -86,7 +87,7 @@ export async function getSpendingTrend(
   const s = scope(p);
 
   const seriesWhere = [YEAR_KNOWN, 'c.signed_at >= ?', "c.signed_at <= date('now')", ...s.where];
-  const [series, coverageRow, sectors, asOfRow] = await Promise.all([
+  const [series, coverageRow, sectors, asOfRow, startPartialYear] = await Promise.all([
     db
       .prepare(
         `SELECT substr(c.signed_at, 1, ${periodLen}) AS period,
@@ -108,6 +109,7 @@ export async function getSpendingTrend(
       .first<CoverageRow>(),
     includeSectors ? sectorOptions(db) : Promise.resolve([]),
     db.prepare('SELECT as_of FROM home_totals WHERE id = 1').first<{ as_of: string | null }>(),
+    getPartialStartYear(db),
   ]);
   // The final period (the as_of period) is still being filled; mark it so the chart and table do not
   // read its dip as a real decline, and so YoY is not computed against a partial year.
@@ -127,6 +129,8 @@ export async function getSpendingTrend(
           valueEur: r?.value_eur ?? 0,
           contracts: r?.contracts ?? 0,
           partial: period === partialPeriod,
+          // The first year of the series, while the source was being taken up (partial-years.ts).
+          ...(period.slice(0, 4) === startPartialYear ? { partialStart: true } : {}),
         };
       },
     );
@@ -142,17 +146,20 @@ export async function getSpendingTrend(
     yearMap.set(y, acc);
   }
   const sortedYears = [...yearMap.keys()].sort();
+  const isPartial = (year: string) => year === partialYear || year === startPartialYear;
   const years: TrendYear[] = sortedYears.map((year, i) => {
     const cur = yearMap.get(year)!;
-    const prev = i > 0 ? yearMap.get(sortedYears[i - 1]!)! : null;
-    const partial = year === partialYear;
+    const prevYear = i > 0 ? sortedYears[i - 1]! : null;
+    const prev = prevYear ? yearMap.get(prevYear)! : null;
+    const partial = isPartial(year);
     return {
       year,
       valueEur: cur.valueEur,
       contracts: cur.contracts,
-      // No YoY for the partial final year: a partial year against a full one reads as a false collapse.
+      // No YoY for a partial year, nor AGAINST one: the partial final year reads as a false collapse, and
+      // the year after the partial first year as a false boom (2021 „+290 %" over a 2020 still filling).
       yoyPct:
-        partial || !prev || prev.valueEur <= 0
+        partial || !prev || prev.valueEur <= 0 || isPartial(prevYear!)
           ? null
           : (cur.valueEur - prev.valueEur) / prev.valueEur,
       partial,

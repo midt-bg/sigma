@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import { COMPETITION_MIN_CONTRACTS } from '@sigma/config';
 import { count, date, money, pct } from '@sigma/shared';
-import { getMethodologyStats, getDb } from '@sigma/db';
+import { getMethodologyStats, getDb, getPartialStartYear } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -23,7 +23,12 @@ export const headers = cached(3600);
 
 // Pull the live corpus figures so the credibility-critical copy matches reality, not hard-coded numbers.
 export async function loader({ context }: Route.LoaderArgs) {
-  return getMethodologyStats(getDb(context.cloudflare.env));
+  const db = getDb(context.cloudflare.env);
+  const [stats, partialStartYear] = await Promise.all([
+    getMethodologyStats(db),
+    getPartialStartYear(db),
+  ]);
+  return { ...stats, partialStartYear };
 }
 
 const TOC = [
@@ -45,10 +50,14 @@ type GapRow = [string, string, 'has' | 'gap', string, 'info' | 'soft' | 'none'];
 export default function Methodology({ loaderData }: Route.ComponentProps) {
   const t = loaderData.totals;
   const endYear = coverageEndYear(t.asOf);
-  const period =
-    loaderData.firstDate && t.asOf
-      ? `${loaderData.firstDate.slice(0, 4)} г. — ${endYear} г. (${endYear} г. частично)`
-      : `${START_YEAR} г. — ${endYear} г. (${endYear} г. частично)`;
+  const startYear =
+    loaderData.firstDate && t.asOf ? loaderData.firstDate.slice(0, 4) : String(START_YEAR);
+  // The first year is partial when the source was still being taken up that year (partial-years.ts).
+  const partialYears =
+    loaderData.partialStartYear && loaderData.partialStartYear !== String(endYear)
+      ? `${loaderData.partialStartYear} и ${endYear}`
+      : String(endYear);
+  const period = `${startYear} г. — ${endYear} г. (${partialYears} г. частично)`;
   const gaps: GapRow[] = [
     ['Институция, име и ID', 'Обявление / OCDS parties', 'has', 'да', 'info'],
     ['Компания, име и ЕИК', 'Решение за избор + договор', 'has', 'да', 'info'],
