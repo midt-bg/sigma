@@ -346,6 +346,19 @@ describe('branch completion — coercion + column-kind fallbacks', () => {
     expect(secured(undefined)).toBeNull(); // unknown → null
   });
 
+  it('present_flag reads the kind of framework order as a yes, an explicit no as 0, and empty as null', () => {
+    const calloff = (v: unknown) =>
+      mapBaseRecord('contracts', { contractNumber: 'C', frameworkAgreementContract: v }, meta)
+        ?.framework_contract;
+    expect(calloff('Вътрешен конкурентен избор по РС')).toBe(1);
+    expect(calloff('Договор по РС с един изпълнител')).toBe(1);
+    expect(calloff('Да')).toBe(1);
+    expect(calloff('Не')).toBe(0);
+    expect(calloff('')).toBeNull();
+    expect(calloff(null)).toBeNull();
+    expect(baseSqlLiteral('contracts', 'framework_contract', 1)).toBe('1');
+  });
+
   it('variants_enum maps the two allowed tokens and nulls anything else', () => {
     const variants = (v: unknown) => mapBaseRecord('tenders', { hasVariants: v }, meta)?.variants;
     expect(variants('Разрешено')).toBe(1);
