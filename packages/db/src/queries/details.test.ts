@@ -556,7 +556,10 @@ function companyDb(
     { when: 'FROM bidders WHERE id=?', first: null },
     { when: 'nuts_regions', first: { legal_form: 'ООД', region: 'София' } },
     { when: 'AS primary_eur', first: extra },
-    { when: 'four_plus', first: { one: 1, two: 2, three: 0, four_plus: 1, unknown: 0 } },
+    {
+      when: 'four_plus',
+      first: { one: 1, two: 2, three: 0, four_plus: 1, unknown: 0, value_low: 4 },
+    },
     {
       when: ['AS agreements', 'amount_eur IS NULL'],
       first: { n: 3, agreements: 1, ceiling_eur: 500_000 },
@@ -592,7 +595,8 @@ describe('getCompany', () => {
     expect(d.euSharePct).toBeCloseTo(0.25); // 25000 / 100000
     expect(d.sectorSharePct).toBeCloseTo(0.6); // primary_eur 60000 / 100000
     expect(d.avgBids).toBe(2.3); // 2.34 rounded to 1dp
-    expect(d.suspect).toBe(3);
+    // the list's badge for the company: 4 value_low rows (summed) + 3 with no usable value
+    expect(d.suspect).toBe(7);
     // A framework agreement is disclosed apart, with its ceiling — not as an unconfirmed value.
     expect(d.frameworkAgreements).toBe(1);
     expect(d.frameworkCeilingEur).toBe(500_000);
@@ -703,7 +707,7 @@ function authorityDb(
 ): D1Database {
   return fakeD1([
     { when: 'FROM authority_totals', first: row },
-    { when: 'AVG(c.bids_received)', first: { avg_bids: 3.16 } },
+    { when: 'AVG(c.bids_received)', first: { avg_bids: 3.16, value_low: 5 } },
     {
       when: ['AS agreements', 'amount_eur IS NULL'],
       first: { n: 2, agreements: 2, ceiling_eur: 1_000_000 },
@@ -735,7 +739,7 @@ describe('getAuthority', () => {
     expect(d.spentEur).toBe(200000);
     expect(d.euSharePct).toBeCloseTo(0.25);
     expect(d.avgBids).toBe(3.2); // 3.16 → 3.2
-    expect(d.suspect).toBe(2);
+    expect(d.suspect).toBe(7); // 5 value_low + 2 with no usable value
     expect(d.frameworkAgreements).toBe(2);
     expect(d.frameworkCeilingEur).toBe(1_000_000);
     expect(d.topContractors[0]).toMatchObject({ slug: '1', wonEur: 120000, contracts: 8 });

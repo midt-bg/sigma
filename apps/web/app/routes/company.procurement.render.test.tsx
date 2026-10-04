@@ -255,7 +255,7 @@ describe('/companies/:eik — procurement profile', () => {
     expect(container.querySelector('.kicker')?.textContent).toContain('Група изпълнители');
     expect(container.querySelector('.kicker')?.textContent).toContain('дял на свързано лице');
     expect(container.textContent).toContain('Общо спечелено');
-    expect(container.textContent).toContain('Непотвърдена стойност');
+    expect(container.textContent).toContain('Вероятно грешна или липсваща стойност');
     expect(section('joint-contracts')?.textContent).toContain('Съвместна тестова доставка');
 
     const participants = section('participants')!;

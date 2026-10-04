@@ -89,14 +89,21 @@ describe('unverifiedValueNote', () => {
     expect(note.badge).toBe('двойно отчетена');
   });
 
-  it('falls back to a generic sentence for the other verdicts', () => {
+  it('names each of our own verdicts apart, with what the sums do with the contract', () => {
+    const badges = new Set<string>();
     for (const flag of ['value_suspect', 'annex_suspect', 'review'] as const) {
-      const note = unverifiedValueNote(v({ suspect: true, flag }))!;
-      expect(note.badge).toBe('непотвърдена стойност');
-      expect(note.scope).toBe('both');
-      // The catch-all cases are our verdict, not a demonstrable source defect — the heading must not
-      // claim the source got it wrong when the sentence under it only says our checks failed.
+      const note = unverifiedValueNote(v({ suspect: true, flag, procedureEstimatedEur: 1000 }))!;
+      badges.add(note.badge);
+      // Our verdict, not a demonstrable source defect — the heading must not claim the source got it wrong.
       expect(note.title).not.toContain('източника');
+      expect(note.headline).toContain('сумите');
     }
+    expect(badges.size).toBe(3);
+    expect(unverifiedValueNote(v({ suspect: true, flag: 'annex_suspect' }))!.scope).toBe('current');
+    // A suspect value with no procedure estimate to replace it is left out of the sums, and says so.
+    expect(
+      unverifiedValueNote(v({ suspect: true, flag: 'value_suspect', procedureEstimatedEur: null }))!
+        .headline,
+    ).toContain('не влиза в сумите');
   });
 });

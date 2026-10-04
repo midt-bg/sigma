@@ -146,9 +146,10 @@ SELECT
   -- outside [0, 1] (competition.ts, #153).
   COALESCE(SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_pos,
   SUM(c.value_flag = 'value_suspect') AS suspect,
-  -- The list's „unconfirmed value" badge: no amount, or one flagged as too low to trust. A framework
-  -- agreement's own record has no amount on purpose (its ceiling is not spending) and is not unconfirmed.
-  SUM((c.amount_eur IS NULL AND c.framework IS NOT 2) OR c.value_flag = 'value_low') AS unverified,
+  -- The list's headline count of values that are probably wrong at the source (value_low, summed as
+  -- published) or missing (no usable EUR figure, not summed). A framework agreement's own record is
+  -- neither: its figure is a ceiling, not spending, whatever its verdict.
+  SUM(c.framework IS NOT 2 AND (c.amount_eur IS NULL OR c.value_flag = 'value_low')) AS unverified,
   MAX(CASE WHEN c.signed_at <= date('now') THEN c.signed_at END) AS max_signed
 FROM contracts c
 LEFT JOIN tenders t ON t.id = c.tender_id

@@ -158,7 +158,10 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                   {result.suspect > 0 && (
                     <>
                       {' '}
-                      · <span className="suspect">{result.suspect} с непотвърдена стойност</span>
+                      ·{' '}
+                      <span className="suspect">
+                        {count(result.suspect)} с вероятно грешна или липсваща стойност
+                      </span>
                     </>
                   )}
                 </>

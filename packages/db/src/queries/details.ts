@@ -43,6 +43,13 @@ function eurFromNative(
   return fxRate == null ? null : v * fxRate;
 }
 
+/**
+ * An entity's „вероятно грешна или липсваща стойност" count is the contracts list's badge for it
+ * (contractsSummary): value_low rows, summed as published, plus the rows with no usable value. This is the
+ * value_low half, read with the summed rows the page already scans; framework agreements are never in it.
+ */
+const VALUE_LOW_SUM = `SUM(c.value_flag = 'value_low' AND c.framework IS NOT ${FRAMEWORK_AGREEMENT})`;
+
 interface ProcRow {
   procedure_type: string;
   n: number;
@@ -161,12 +168,20 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
                 SUM(CASE WHEN bids_received = 2 THEN 1 ELSE 0 END) AS two,
                 SUM(CASE WHEN bids_received = 3 THEN 1 ELSE 0 END) AS three,
                 SUM(CASE WHEN bids_received >= 4 THEN 1 ELSE 0 END) AS four_plus,
-                SUM(CASE WHEN bids_received IS NULL THEN 1 ELSE 0 END) AS unknown
-         FROM contracts WHERE bidder_id = ? AND amount_eur IS NOT NULL`,
+                SUM(CASE WHEN bids_received IS NULL THEN 1 ELSE 0 END) AS unknown,
+                ${VALUE_LOW_SUM} AS value_low
+         FROM contracts c WHERE bidder_id = ? AND amount_eur IS NOT NULL`,
         )
         .bind(bidderId)
-        .first<{ one: number; two: number; three: number; four_plus: number; unknown: number }>(),
-      // Rows with no summed value: unconfirmed ones, and framework agreements, whose ceiling is not spending.
+        .first<{
+          one: number;
+          two: number;
+          three: number;
+          four_plus: number;
+          unknown: number;
+          value_low: number | null;
+        }>(),
+      // Rows with no summed value: missing ones, and framework agreements, whose ceiling is not spending.
       db
         .prepare(
           `SELECT SUM(amount_eur IS NULL AND framework IS NOT ${FRAMEWORK_AGREEMENT}) AS n,
@@ -228,7 +243,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     avgBids: extra?.avg_bids != null ? Math.round(extra.avg_bids * 10) / 10 : null,
     periodFirst: row.first_date,
     periodLast: row.last_date,
-    suspect: suspectRow?.n ?? 0,
+    suspect: (suspectRow?.n ?? 0) + (bidsRow?.value_low ?? 0),
     frameworkAgreements: suspectRow?.agreements ?? 0,
     frameworkCeilingEur: suspectRow?.ceiling_eur ?? 0,
     topAuthorities,
@@ -330,12 +345,13 @@ export async function getAuthority(
       .all<ProcRow>(),
     db
       .prepare(
-        `SELECT AVG(c.bids_received) AS avg_bids FROM contracts c JOIN tenders t ON t.id = c.tender_id
+        `SELECT AVG(c.bids_received) AS avg_bids, ${VALUE_LOW_SUM} AS value_low
+         FROM contracts c JOIN tenders t ON t.id = c.tender_id
          WHERE t.authority_id = ? AND c.amount_eur IS NOT NULL`,
       )
       .bind(authorityId)
-      .first<{ avg_bids: number | null }>(),
-    // Rows with no summed value: unconfirmed ones, and framework agreements, whose ceiling is not spending.
+      .first<{ avg_bids: number | null; value_low: number | null }>(),
+    // Rows with no summed value: missing ones, and framework agreements, whose ceiling is not spending.
     db
       .prepare(
         `SELECT SUM(c.framework IS NOT ${FRAMEWORK_AGREEMENT}) AS n,
@@ -405,7 +421,7 @@ export async function getAuthority(
     avgBids: bidsRow?.avg_bids != null ? Math.round(bidsRow.avg_bids * 10) / 10 : null,
     periodFirst: row.first_date,
     periodLast: row.last_date,
-    suspect: suspectRow?.n ?? 0,
+    suspect: (suspectRow?.n ?? 0) + (bidsRow?.value_low ?? 0),
     frameworkAgreements: suspectRow?.agreements ?? 0,
     frameworkCeilingEur: suspectRow?.ceiling_eur ?? 0,
     topContractors,

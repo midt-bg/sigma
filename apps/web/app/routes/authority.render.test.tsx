@@ -10,7 +10,8 @@ import type {
   ProcedureCompetition,
   TrendData,
 } from '@sigma/api-contract';
-import Authority from './authority';
+import { layoutTies } from '../lib/tie-layout.server';
+import Authority, { meta } from './authority';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -169,5 +170,136 @@ describe('/authorities/:eik — the direct-award share', () => {
     expect(how).toContain('Пряко / без обявление · 3 договора');
     expect(how).toContain('Неизвестна · 5 договора');
     expect(how).not.toMatch(/\d %|\d%/);
+  });
+});
+
+// A fuller profile: every optional fact, the contractors table and the ties drawing.
+const ties2: CompanyTieNetwork = {
+  center: {
+    id: 'auth:000000000',
+    kind: 'authority',
+    label: 'Тестова институция',
+    slug: '000000000',
+    valueEur: 1_000_000,
+    hop: 0,
+    conflictsHref: null,
+  },
+  nodes: [
+    {
+      id: 'auth:000000000',
+      kind: 'authority',
+      label: 'Тестова институция',
+      slug: '000000000',
+      valueEur: 1_000_000,
+      hop: 0,
+      conflictsHref: null,
+    },
+    {
+      id: 'eik:111111111',
+      kind: 'company',
+      label: '„ТЕСТ ГРУП“ ЕООД',
+      slug: '111111111',
+      valueEur: 600_000,
+      hop: 1,
+      conflictsHref: null,
+    },
+  ],
+  edges: [
+    {
+      from: 'auth:000000000',
+      to: 'eik:111111111',
+      kind: 'money',
+      directed: true,
+      weightEur: 600_000,
+      occurrences: 3,
+      href: null,
+    },
+  ],
+  omitted: 0,
+};
+
+const fullData = {
+  ...baseData,
+  authority: {
+    ...authority,
+    name: '„ТЕСТ ЕНЕРДЖИ“ ЕАД',
+    settlement: null,
+    avgBids: null,
+    suspect: 3,
+    frameworkAgreements: 2,
+    frameworkCeilingEur: 2_000_000,
+    sectors: [
+      {
+        code: '45',
+        label: 'Строителство',
+        short: 'Строителство',
+        valueEur: 900_000,
+        sharePct: 0.9,
+      },
+    ],
+    sectorsOther: {
+      code: 'other',
+      label: '… още CPV категории',
+      short: 'други',
+      valueEur: 100_000,
+      sharePct: 0.1,
+    },
+    topContractors: [
+      {
+        slug: '111111111',
+        name: '„ТЕСТ ГРУП“ ЕООД',
+        displayName: '„ТЕСТ ГРУП“ ЕООД',
+        kind: 'consortium' as const,
+        wonEur: 600_000,
+        contracts: 3,
+        sharePct: 0.85,
+      },
+    ],
+    moreContractors: 5,
+  },
+  ties: ties2,
+  tieLayout: layoutTies(ties2),
+  conflicts: { companies: 2, ownCompanies: 1 },
+};
+
+describe('/authorities/:eik — the profile', () => {
+  it('shows every optional fact, the contractors and the ties', async () => {
+    await mount(fullData);
+
+    const facts = container.querySelector('dl')!.textContent;
+    expect(facts).toContain('Вероятно грешна или липсваща стойност3 договора');
+    expect(facts).toContain('Рамкови споразумения2 · таван');
+    expect(facts).toContain('2 изпълнители');
+    expect(facts).toContain('в т.ч. 1 — на лице от самата институция');
+    expect(facts).toContain('няма данни'); // no seat
+    expect(section('what')!.textContent).toContain('… още CPV категории');
+    expect(section('top-contractors')!.textContent).toContain('обединение');
+    expect(section('top-contractors')!.textContent).toContain('още 5 изпълнители');
+    expect(section('network')!.querySelector('svg')).not.toBeNull();
+  });
+
+  it('says so when no contract has a known number of offers or a classified procedure', async () => {
+    await mount({
+      ...baseData,
+      competition: { ...competition, contracts: 0 },
+      procedure: { ...procedure, classifiedContracts: 0 },
+    });
+
+    const block = section('single-offer')!.textContent;
+    expect(block).toContain('Няма договори с известен брой оферти.');
+    expect(block).toContain('Няма класифицирани договори по тип процедура.');
+  });
+});
+
+describe('/authorities/:eik — meta', () => {
+  it('names the authority, with a fallback when the data is missing', () => {
+    const titleOf = (tags: ReturnType<typeof meta>) =>
+      tags.find((tag): tag is { title: string } => 'title' in tag)?.title;
+    expect(
+      titleOf(meta({ data: baseData, params: { eik: '000000000' }, matches: [] } as never)),
+    ).toBe('Тестова институция — СИГМА');
+    expect(titleOf(meta({ data: undefined, params: { eik: 'x' }, matches: [] } as never))).toBe(
+      'Институция — СИГМА',
+    );
   });
 });

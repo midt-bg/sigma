@@ -135,7 +135,9 @@ export interface CompanyDetail {
   avgBids: number | null;
   periodFirst: string | null;
   periodLast: string | null;
-  suspect: number; // own contracts excluded from sums (suspect value)
+  /** Own contracts whose value is probably wrong at the source (value_low, summed as published) or missing
+   *  (not summed) — the contracts list's badge for this company. Framework agreements are never in it. */
+  suspect: number;
   /** Framework agreements this contractor is a party to, and their combined ceiling — the most the
    *  buyers may order under them. Never in the sums above: the orders are separate contracts. */
   frameworkAgreements: number;
@@ -204,6 +206,7 @@ export interface AuthorityDetail {
   avgBids: number | null;
   periodFirst: string | null;
   periodLast: string | null;
+  /** As CompanyDetail.suspect: the contracts list's „вероятно грешна или липсваща стойност" count. */
   suspect: number;
   /** Framework agreements this authority concluded, and their combined ceiling. Never in the spend
    *  above: what the buyers ordered under them are separate contracts. */
