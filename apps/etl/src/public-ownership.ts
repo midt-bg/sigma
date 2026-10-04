@@ -3,19 +3,15 @@
 
 // SQLite folds case for ASCII only, and the register writes an owner in capitals or not: each word in all
 // three spellings.
-const nameHas = (patterns: string[]) =>
+const nameHas = (patterns: string[], column = 'name') =>
   `(${patterns
     .flatMap((p) => [p.toUpperCase(), p.replace(/\p{L}/u, (c) => c.toUpperCase()), p])
-    .map((p) => `name LIKE '${p}'`)
+    .map((p) => `${column} LIKE '${p}'`)
     .join(' OR ')})`;
-const MUNICIPALITY = nameHas(['община%', 'столична община%']);
-const STATE = nameHas([
-  '%министерство%',
-  '%министър%',
-  '%държавата%',
-  'държава%',
-  '%народна банка%',
-]);
+const MUNICIPALITY_WORDS = ['община%', 'столична община%'];
+const STATE_WORDS = ['%министерство%', '%министър%', '%държавата%', 'държава%', '%народна банка%'];
+const MUNICIPALITY = nameHas(MUNICIPALITY_WORDS);
+const STATE = nameHas(STATE_WORDS);
 // A contracting authority of these kinds, with no partida of a trade company, is a public body.
 const PUBLIC_BODY_TYPES = [
   'Публичноправна организация',
@@ -29,18 +25,33 @@ const PUBLIC_BODY_TYPES = [
 const SHARE = (column: string) =>
   `CASE WHEN ${column} IS NULL OR trim(${column}) = '' THEN NULL
      ELSE CAST(REPLACE(REPLACE(trim(${column}), ' ', ''), ',', '.') AS REAL) END`;
-const PUBLIC_BODY = `public_body AS (
+// MATERIALIZED: computed once and joined by index. Inlined, it was re-read for every owner row, and on the
+// full register one pass ran past D1's CPU limit.
+const PUBLIC_BODY = `public_body AS MATERIALIZED (
     SELECT substr(id, 6) eik, type_group = 'община' municipal FROM authorities
     WHERE id GLOB 'auth:[0-9]*' AND type IN (${PUBLIC_BODY_TYPES.map((t) => `'${t}'`).join(', ')})
       AND substr(id, 6) NOT IN (SELECT eik FROM registry_deeds WHERE outcome = 'ok')
   )`;
-// Every standing owner of every company, persons included: a person among the owners is a private owner.
-const OWNERS = `owners AS (
+// Only a company with at least one standing public owner, and not public yet, can become public by its owners
+// as a whole or be left open by them — so only those companies' owners are judged. Same tests as `judged`.
+const CANDIDATES = `candidates AS MATERIALIZED (
+    SELECT DISTINCT r.eik FROM registry_roles r
+    WHERE r.subject_kind = 'entity' AND r.role IN ('sole_owner', 'partner')
+      AND r.removed_on IS NULL AND r.uncertain_after IS NULL
+      AND r.eik NOT IN (SELECT eik FROM public_owned_eik)
+      AND (r.subject_id IN (SELECT eik FROM public_body)
+        OR ${nameHas(MUNICIPALITY_WORDS, 'r.subject_name')} OR ${nameHas(STATE_WORDS, 'r.subject_name')}
+        OR r.subject_id IN (SELECT eik FROM state_owned_eik WHERE ownership_kind = 'state')
+        OR r.subject_id IN (SELECT eik FROM public_owned_eik))
+  )`;
+// Every standing owner of each candidate, persons included: a person among the owners is a private owner.
+const OWNERS = `owners AS MATERIALIZED (
     SELECT r.eik, r.subject_kind kind, r.subject_id owner, r.subject_name name, r.role,
       ${SHARE('r.share')} amount
     FROM registry_roles r
-    WHERE r.role IN ('sole_owner', 'partner') AND r.removed_on IS NULL AND r.uncertain_after IS NULL
-  ), capital AS (
+    WHERE r.eik IN (SELECT eik FROM candidates)
+      AND r.role IN ('sole_owner', 'partner') AND r.removed_on IS NULL AND r.uncertain_after IS NULL
+  ), capital AS MATERIALIZED (
     SELECT eik, SUM(amount) total FROM owners WHERE role = 'partner' GROUP BY eik
   )`;
 // Each owner judged against the companies already known to be public; `controls` is the single-owner rule.
@@ -64,7 +75,7 @@ const JUDGED = `judged AS (
 // recorded or not; or public owners together over half of a capital whose every share is recorded. Run after
 // the single-owner pass and repeated, so a company held through one found here is found on the next pass.
 const PUBLIC_TOGETHER = `INSERT OR IGNORE INTO public_owned_eik (eik, ownership_kind)
-  WITH ${OWNERS}, ${PUBLIC_BODY}, ${JUDGED}, companies AS (
+  WITH ${PUBLIC_BODY}, ${CANDIDATES}, ${OWNERS}, ${JUDGED}, companies AS (
     SELECT eik, COUNT(*) owners, SUM(public) public_owners,
       MAX(public AND controls) controlled, MAX(public AND controls AND municipal) controlled_municipal,
       MAX(public AND municipal) municipal,
@@ -128,7 +139,7 @@ export const PUBLIC_OWNERSHIP_SQL = [
 /** The companies whose ownership cannot be settled yet: not public, with a public owner beside an owner
  *  company whose partida has not been read or beside a share the register does not record. One row per
  *  standing owner of each such company — `unread` marks the owners whose partida would settle it. */
-export const PUBLIC_OWNER_UNSETTLED_SQL = `WITH ${OWNERS}, ${PUBLIC_BODY}, ${JUDGED}
+export const PUBLIC_OWNER_UNSETTLED_SQL = `WITH ${PUBLIC_BODY}, ${CANDIDATES}, ${OWNERS}, ${JUDGED}
   SELECT eik, owner, name, public, public = 0 AND unread = 1 AS unread FROM judged
   WHERE eik IN (
     SELECT eik FROM judged
