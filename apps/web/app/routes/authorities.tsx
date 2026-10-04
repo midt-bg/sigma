@@ -125,7 +125,12 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
       secondary: true,
       cell: (a) => (a.typeLabel ? <Chip>{a.typeLabel}</Chip> : null),
     },
-    { key: 'spent', header: 'Похарчено (€)', align: 'money', cell: (a) => moneyBare(a.spentEur) },
+    {
+      key: 'spent',
+      header: 'Стойност на договорите (€)',
+      align: 'money',
+      cell: (a) => moneyBare(a.spentEur),
+    },
     { key: 'contracts', header: 'Договори', align: 'money', cell: (a) => count(a.contracts) },
     { key: 'avg', header: 'Средна стойност (€)', align: 'money', cell: (a) => moneyBare(a.avgEur) },
   ];
@@ -137,7 +142,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker={`${count(page.total)} възложители`}
           title="Институции"
-          lede="Всяка институция, възложила поне един договор. Подреди ги по общо похарчено, по брой договори или по средна стойност. Филтрите остават в адреса."
+          lede="Всяка институция, възложила поне един договор. Подреди ги по обща стойност на договорите, по брой договори или по средна стойност. Филтрите остават в адреса."
         />
         <div className="split">
           <FilterRail groups={groups} sort={sort} clearHref="/authorities" csvHref={csvHref} />
@@ -147,7 +152,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
               activeSort={sort}
               searchLabel="Търсене сред институциите"
               sorts={[
-                { value: 'spent', label: 'похарчено' },
+                { value: 'spent', label: 'обща стойност' },
                 { value: 'count', label: 'договори' },
                 { value: 'avg', label: 'средна' },
                 { value: 'name', label: 'име' },
@@ -169,17 +174,18 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
                   columns={columns}
                   rows={page.items}
                   getKey={(a) => a.slug}
-                  caption="Институции по похарчено"
+                  caption="Институции по стойност на договорите"
                 />
               </div>
             )}
             {page.items.length > 0 && <Pagination nav={nav} pageSize={PAGE_SIZE.authorities} />}
             <Callout>
-              <h2>Какво означава „похарчено“?</h2>
+              <h2>Какво означава „стойност на договорите“?</h2>
               <p className="m-0">
                 Сумата от стойностите (в евро) на всички договори на дадена институция за периода{' '}
-                {range}. Видът на институцията (министерство, община, болница…) се определя по името
-                ѝ и е приблизителен. Виж <Link to="/methodology">методология</Link>.
+                {range} — стойностите на сключените договори, а не извършени плащания. Видът на
+                институцията (министерство, община, болница…) се определя по името ѝ и е
+                приблизителен. Виж <Link to="/methodology">методология</Link>.
               </p>
             </Callout>
           </section>

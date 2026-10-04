@@ -130,7 +130,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
               </p>
               <ul>
                 <li>
-                  <strong>Институции</strong> — възложителите. Кой колко харчи, на какво.
+                  <strong>Институции</strong> — възложителите. Кой какви договори е възложил и за
+                  колко.
                 </li>
                 <li>
                   <strong>Компании</strong> — изпълнителите, ключът е ЕИК. Колко е спечелила всяка,

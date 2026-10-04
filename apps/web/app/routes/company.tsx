@@ -473,19 +473,19 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             <Section
               id="from"
               title="Откъде печели"
-              hint={`Институции, подредени по сумата, платена на ${c.displayName.replace(/\.$/, '')}.`}
+              hint={`Институции, подредени по стойността на договорите им с ${c.displayName.replace(/\.$/, '')} — стойности на договорите, а не извършени плащания.`}
             >
               <div className="table-wrap tbl-cards">
                 <table>
                   <caption className="sr-only">
-                    Институции платци, подредени по сумата, платена на компанията
+                    Институции възложители, подредени по стойността на договорите им с компанията
                   </caption>
                   <thead>
                     <tr>
                       <th scope="col">#</th>
                       <th scope="col">Институция</th>
                       <th scope="col" className="num">
-                        Платено на компанията (€)
+                        Стойност на договорите (€)
                       </th>
                       <th scope="col" className="num">
                         Договори
@@ -502,7 +502,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                         <td className="cell-title" data-label="Институция">
                           <Link to={`/authorities/${a.slug}`}>{a.name}</Link>
                         </td>
-                        <td className="money" data-label="Платено (€)">
+                        <td className="money" data-label="Стойност (€)">
                           {moneyBare(a.paidEur)}
                         </td>
                         <td className="money" data-label="Договори">

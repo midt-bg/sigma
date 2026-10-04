@@ -29,7 +29,8 @@ const TIE_LABEL: Record<CompanyTieKind, string> = {
   subcontract: 'подизпълнител',
   declared_stake: 'общо свързано лице',
   role: 'роля по Търговския регистър',
-  money: 'плаща на',
+  // Contract values, never payments: SIGMA holds no payment data.
+  money: 'договори за',
 };
 
 /** How an edge is described in words — the accessible table and the tooltip use the same sentence. */
