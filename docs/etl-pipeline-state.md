@@ -8,13 +8,14 @@
 
 **Файл:** `scripts/integrity-checks.mjs`
 
-Reconciliation gate от 8 модулни проверки (6 при #97; +current-amount-parity и amendment-twin-dedup по-късно; редът е този на `runIntegrityChecks`), всяка с инжектиран `runner(sql) => rows[]`. `assertIntegrity(runner, { label, exit })` пуска всички, разпечатва резултата и излиза с код 1 при провал.
+Reconciliation gate от 9 модулни проверки (6 при #97; +current-amount-parity, annex-total-suspect-basis и amendment-twin-dedup по-късно; редът е този на `runIntegrityChecks`), всяка с инжектиран `runner(sql) => rows[]`. `assertIntegrity(runner, { label, exit })` пуска всички, разпечатва резултата и излиза с код 1 при провал.
 
 | # | Проверка | Клас | Какво валидира |
 |---|----------|------|----------------|
 | 0 | **Non-empty corpus** | 🟥 блокираща | `COUNT(contracts) > 0` — хваща катастрофален upstream провал или счупен derive, оставил 0 реда. |
 | 1 | **Rollup ↔ contracts** | 🟥 блокираща | `SUM(authority_totals.spent_eur)` = сумата по contracts; същото за `company_totals`, `flow_pairs`, `home_totals`; **точно 0 orphan реда** (договори без authority/bidder/tender). Толеранс ±5.0 EUR за float reassociation върху ~200k реда. |
 | 2 | **Current-amount parity** | 🟥 блокираща | `current_value_eur` е съгласувано с `amount_eur` там, където и двете са налични - една и съща стойност не може да се сервира с две различни суми. |
+| 2б | **Annex-total-suspect basis** (`annex-total-suspect-basis`) | 🟥 блокираща | Договор с `annex_total_suspect` се сумира по стойността при подписване, не по удвоената текуща — същият израз като derive-а, толеранс 1 цент. Self-skip при схема преди миграция 0002. |
 | 3 | **No negative values** | 🟥 / 🟨 | `value_flag='ok' AND amount_eur < 0` → **блокира** (бъг в Sigma). Негатив без ok-flag (upstream дефект) → само **WARN**. |
 | 4 | **EIK validity** | 🟥 блокираща | `eik_valid=1` ⇒ нормализиран 9/13-цифрен ЕИК; `eik_valid≠1` ⇒ `eik_normalized IS NULL`. Доказва, че normalize гаранцията е удържала. |
 | 5 | **Date sanity** | 🟨 предупредителна | Брои `signed_at` извън `[2007-01-01, днес]`. **Винаги връща ok:true** — upstream data quality, което Sigma не може да коригира (реален пример: `signed_at='2029-05-14'`). |

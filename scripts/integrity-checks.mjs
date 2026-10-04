@@ -192,6 +192,71 @@ export async function checkCurrentAmountParity(runner) {
   };
 }
 
+// 2b) An annex_total_suspect contract sums at its SIGNING value (#305): its annex announced a new total that
+// doubled the contract, so normalize-raw.sql and refresh-slice.sql fall back to signing and the contract page
+// itself calls the current value „двойно отчетена". A row carrying the current value instead (the one-time
+// 0002 backfill wrote exactly that once; scripts/repair-annex-total-suspect.sql undoes it) inflates every
+// total that sums amount_eur while each rollup still reconciles with it — rollup-reconciliation cannot see
+// it. The expected value is the derive's own expression, the one the repair file uses: the signing value in
+// the contract's currency, or with no signing value the current value in the amendment's currency, then EUR
+// as-is, BGN at the peg, anything else at the row's fx_rate. One cent of tolerance, like current-amount-parity.
+const ANNEX_TOTAL_SUSPECT_EXPECTED =
+  'WITH basis AS (' +
+  ' SELECT id, amount_eur, fx_rate, COALESCE(signing_value, current_value) AS trusted_native,' +
+  " CASE WHEN signing_value IS NOT NULL THEN COALESCE(NULLIF(currency, ''), 'BGN')" +
+  " ELSE COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') END AS trusted_currency" +
+  " FROM contracts WHERE value_flag = 'annex_total_suspect'" +
+  '), expected AS (' +
+  ' SELECT id, amount_eur, CASE WHEN trusted_native IS NULL THEN NULL' +
+  " WHEN trusted_currency = 'EUR' THEN trusted_native" +
+  " WHEN trusted_currency = 'BGN' THEN trusted_native / 1.95583" +
+  ' WHEN fx_rate IS NOT NULL THEN trusted_native * fx_rate ELSE NULL END AS amount_eur_expected' +
+  ' FROM basis)';
+export async function checkAnnexTotalSuspectBasis(runner) {
+  const name = 'annex-total-suspect-basis';
+  if (!(await tableExists(runner, 'contracts')))
+    return { name, ok: true, skipped: true, detail: 'contracts table absent' };
+  // The amendment's currency arrived with 0002; a schema before it has nothing to compare against.
+  const hasCurrency = num(
+    await scalar(
+      runner,
+      "SELECT COUNT(*) AS n FROM pragma_table_info('contracts') WHERE name = 'current_value_currency'",
+      'n',
+    ),
+  );
+  if (hasCurrency === 0)
+    return {
+      name,
+      ok: true,
+      skipped: true,
+      detail: 'contracts.current_value_currency absent (schema before migration 0002)',
+    };
+  const r =
+    (
+      await rows(
+        runner,
+        ANNEX_TOTAL_SUSPECT_EXPECTED +
+          ' SELECT COUNT(*) AS flagged,' +
+          ' COALESCE(SUM((amount_eur IS NULL) <> (amount_eur_expected IS NULL)' +
+          ' OR abs(amount_eur - amount_eur_expected) > 0.01), 0) AS wrong,' +
+          ' COALESCE(SUM(CASE WHEN abs(amount_eur - amount_eur_expected) > 0.01' +
+          ' THEN amount_eur - amount_eur_expected ELSE 0 END), 0) AS excess' +
+          ' FROM expected',
+      )
+    )[0] || {};
+  const flagged = num(r.flagged);
+  const wrong = num(r.wrong);
+  return {
+    name,
+    ok: wrong === 0,
+    skipped: false,
+    detail:
+      wrong === 0
+        ? `${flagged} annex_total_suspect contract(s) sum at their signing value`
+        : `${wrong} of ${flagged} annex_total_suspect contract(s) carry an amount_eur other than their signing value (Σ excess ${num(r.excess).toFixed(2)} €) — a doubled annex total is being summed`,
+  };
+}
+
 // 3) No negative values feeding the totals. Two classes, split by who controls the defect:
 //    - value_flag='ok' AND amount_eur<0 → HARD fail. A clean row cannot be negative except via a Sigma
 //      derivation bug (e.g. a sign flip); Sigma owns and can fix it.
@@ -408,6 +473,7 @@ export const CHECKS = [
   checkNonEmptyCorpus,
   checkRollupReconciliation,
   checkCurrentAmountParity,
+  checkAnnexTotalSuspectBasis,
   checkNoNegativeValues,
   checkEikValidity,
   checkDateSanity,

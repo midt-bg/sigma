@@ -126,6 +126,7 @@ describe('reconciliation gate — clean corpus', () => {
       'non-empty-corpus',
       'rollup-reconciliation',
       'current-amount-parity',
+      'annex-total-suspect-basis',
       'no-negative-values',
       'eik-validity',
       'date-sanity',

@@ -110,6 +110,16 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    `packages/db/src/golden-dataset.test.ts`, see [`review-testing.md`](review-testing.md)); this gate
    covers over-insertion, and invariant 0 covers empty-corpus.
 
+6. **An `annex_total_suspect` contract sums at its signing value** (`annex-total-suspect-basis`). Its annex
+   announced a new total that doubled the contract (#305), so the derive falls back to the signing value
+   and the contract page calls the current value „двойно отчетена". A row whose `amount_eur` is the doubled
+   current value inflates every total while each rollup still reconciles with it, so invariant 1 cannot
+   see it. The check recomputes the derive's own expression (signing value in the contract's currency, or
+   with no signing value the current value in the amendment's currency; EUR as-is, BGN at the peg, other
+   currencies at the row's `fx_rate`) and allows one cent. It self-skips on a schema before migration 0002.
+   `scripts/repair-annex-total-suspect.sql` repairs such rows on staging, where the one-time 0002 backfill
+   once wrote them.
+
 ## Tolerances (and what is *not* tolerated)
 
 - **The only tolerance is `EPS_EUR = 5.0`** (five euros), for float reassociation when `SUM()`ing the
