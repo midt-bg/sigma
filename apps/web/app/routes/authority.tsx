@@ -143,7 +143,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             { term: 'Период', value: periodRange(a.periodFirst, a.periodLast) },
             { term: 'Изпълнители', value: count(a.suppliers) },
             conflicts.companies > 0 && {
-              term: 'С деклариран дял на длъжностно лице',
+              // The count includes management-only links (ADR-0047 private_ownership) — not a stake.
+              term: 'С деклариран дял или управление на длъжностно лице',
               value: (
                 <Link to={`/conflicts?authority=${a.eik}`}>
                   {count(conflicts.companies)}{' '}
