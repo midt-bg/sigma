@@ -32,7 +32,9 @@ WITH basis AS (
       ELSE COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN')
     END AS trusted_currency
   FROM contracts
-  WHERE value_flag = 'annex_total_suspect'
+  -- A framework agreement's own record (framework = 2) carries its ceiling and is never summed: its
+  -- amount_eur stays NULL whatever its annex said.
+  WHERE value_flag = 'annex_total_suspect' AND framework IS NOT 2
 ), expected AS (
   SELECT id, amount_eur,
     CASE

@@ -205,7 +205,8 @@ const ANNEX_TOTAL_SUSPECT_EXPECTED =
   ' SELECT id, amount_eur, fx_rate, COALESCE(signing_value, current_value) AS trusted_native,' +
   " CASE WHEN signing_value IS NOT NULL THEN COALESCE(NULLIF(currency, ''), 'BGN')" +
   " ELSE COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') END AS trusted_currency" +
-  " FROM contracts WHERE value_flag = 'annex_total_suspect'" +
+  // A framework agreement's own record (framework = 2) is never summed; its NULL amount is right.
+  " FROM contracts WHERE value_flag = 'annex_total_suspect' AND framework IS NOT 2" +
   '), expected AS (' +
   ' SELECT id, amount_eur, CASE WHEN trusted_native IS NULL THEN NULL' +
   " WHEN trusted_currency = 'EUR' THEN trusted_native" +

@@ -135,7 +135,11 @@ function seed(db: string): void {
   sqlite(
     db,
     `INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, value_flag, current_value_currency, signing_value, current_value, fx_rate, amount_eur) VALUES\n  ${values};
-     INSERT INTO contract_co_authorities (contract_id, authority_id, ordinal) VALUES ('c:double-bgn','auth:1',0),('c:double-bgn','auth:3',1);`,
+     INSERT INTO contract_co_authorities (contract_id, authority_id, ordinal) VALUES ('c:double-bgn','auth:1',0),('c:double-bgn','auth:3',1);
+     -- A framework agreement's own record (framework = 2) whose annex also doubled it: its ceiling is
+     -- never summed, so its amount stays NULL and none of the three may give it one.
+     INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, value_flag, current_value_currency, signing_value, current_value, fx_rate, amount_eur, framework)
+     VALUES ('c:fa-ceiling','t:1','eik:000000001',1955830,'BGN','annex_total_suspect','BGN',1955830,3911660,NULL,NULL,2);`,
   );
 }
 const amounts = (db: string) =>
@@ -172,6 +176,7 @@ describe('repair-annex-total-suspect.sql', () => {
     expect(a['c:double-usd']).toBeCloseTo(900, 9);
     expect(a['c:ok']).toBe(2000000);
     expect(a['c:annex']).toBe(123);
+    expect(a['c:fa-ceiling']).toBeNull();
 
     expect(touched(db)).toEqual({
       contracts: ['c:double-bgn', 'c:double-usd', 'c:no-signing'],
@@ -229,13 +234,15 @@ describe('backfill-current-value-currency.sql', () => {
     expect(a['c:double-usd']).toBeCloseTo(900, 9);
     // an ok contract still sums at its current value
     expect(a['c:ok']).toBe(2000000);
+    // a framework agreement's ceiling never gets an amount, whatever v1 left in it
+    expect(a['c:fa-ceiling']).toBeNull();
     // the doubled current value is never shown as a current EUR figure
     expect(
       json<{ id: string; current_value_eur: number | null }>(
         db,
         "SELECT id, current_value_eur FROM contracts WHERE value_flag = 'annex_total_suspect' ORDER BY id",
       ).map((r) => r.current_value_eur),
-    ).toEqual([null, null, null, null]);
+    ).toEqual([null, null, null, null, null]);
   });
 });
 
@@ -260,6 +267,18 @@ describe('integrity gate — annex-total-suspect-basis', () => {
       name: 'annex-total-suspect-basis',
       ok: true,
       skipped: false,
+      detail: '4 annex_total_suspect contract(s) sum at their signing value',
+    });
+  });
+
+  it('leaves a framework-agreement ceiling unsummed and does not count it', async () => {
+    const db = freshDb();
+    seed(db);
+    readScript(db, repair);
+    expect(amounts(db)['c:fa-ceiling']).toBeNull();
+    // the ceiling is not among the four checked rows, and its NULL amount is not a failure
+    expect(await checkAnnexTotalSuspectBasis(runner(db))).toMatchObject({
+      ok: true,
       detail: '4 annex_total_suspect contract(s) sum at their signing value',
     });
   });

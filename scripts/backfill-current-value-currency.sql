@@ -51,6 +51,8 @@ WITH paired AS (
     id,
     derived_current_currency,
     CASE
+      -- A framework agreement's own record (framework = 2) carries its ceiling, never summed.
+      WHEN framework = 2 THEN NULL
       -- value_suspect is repaired from the procedure estimate upstream; do not replace that repair.
       WHEN value_flag = 'value_suspect' THEN amount_eur
       WHEN trusted_native IS NULL THEN NULL
