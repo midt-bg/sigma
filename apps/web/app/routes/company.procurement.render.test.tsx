@@ -80,6 +80,7 @@ const richCompany: CompanyDetail = {
       contracts: 8,
       valueEur: 320_000,
       sharePct: 1,
+      contractSharePct: 1,
     },
   ],
   bids: { one: 1, two: 2, three: 3, fourPlus: 1, unknown: 1 },

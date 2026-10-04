@@ -49,9 +49,14 @@ interface ProcRow {
   eur: number;
 }
 
-/** Fold scoped per-procedure_type counts into the 7 config groups → StackedBar slices. */
-function toProcedureMix(rows: ProcRow[]): ProcedureSlice[] {
+/**
+ * Fold scoped per-procedure_type counts into the 7 config groups → StackedBar slices. A group shows when
+ * it has value; with `counted`, also when it only has contracts — the authority page draws its bar by
+ * contract count, and a group whose contracts carry no amount is still part of that count.
+ */
+function toProcedureMix(rows: ProcRow[], { counted = false } = {}): ProcedureSlice[] {
   const total = rows.reduce((s, r) => s + (r.eur ?? 0), 0);
+  const totalContracts = rows.reduce((s, r) => s + r.n, 0);
   const byGroup = new Map<string, { contracts: number; valueEur: number }>();
   for (const r of rows) {
     const g = procedureGroup(r.procedure_type).key;
@@ -63,7 +68,7 @@ function toProcedureMix(rows: ProcRow[]): ProcedureSlice[] {
   const out: ProcedureSlice[] = [];
   for (const g of PROCEDURE_GROUPS) {
     const agg = byGroup.get(g.key);
-    if (!agg || agg.valueEur <= 0) continue;
+    if (!agg || (agg.valueEur <= 0 && !(counted && agg.contracts > 0))) continue;
     out.push({
       key: g.key,
       label: g.label,
@@ -72,6 +77,7 @@ function toProcedureMix(rows: ProcRow[]): ProcedureSlice[] {
       contracts: agg.contracts,
       valueEur: agg.valueEur,
       sharePct: total > 0 ? agg.valueEur / total : 0,
+      contractSharePct: totalContracts > 0 ? agg.contracts / totalContracts : 0,
     });
   }
   return out;
@@ -312,11 +318,13 @@ export async function getAuthority(
       )
       .bind(authorityId)
       .all<{ division: string; eur: number }>(),
+    // Every contract, with or without an amount: the page's bar counts contracts by procedure, on the
+    // same set as the direct-award share beside it (procedureCompetition), so its numbers add up to that one's.
     db
       .prepare(
         `SELECT t.procedure_type, COUNT(*) AS n, SUM(c.amount_eur) AS eur
          FROM contracts c JOIN tenders t ON t.id = c.tender_id
-         WHERE t.authority_id = ? AND c.amount_eur IS NOT NULL GROUP BY t.procedure_type`,
+         WHERE t.authority_id = ? GROUP BY t.procedure_type`,
       )
       .bind(authorityId)
       .all<ProcRow>(),
@@ -404,7 +412,7 @@ export async function getAuthority(
     moreContractors: Math.max(0, row.suppliers - topContractors.length),
     sectors,
     sectorsOther,
-    procedureMix: toProcedureMix(procRows.results),
+    procedureMix: toProcedureMix(procRows.results, { counted: true }),
     recentContracts: recent.items,
     topContracts: top.items,
   };

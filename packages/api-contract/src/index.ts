@@ -34,6 +34,7 @@ export interface ProcedureSlice {
   contracts: number;
   valueEur: number;
   sharePct: number; // 0–1 share of the entity's value
+  contractSharePct: number; // 0–1 share of the contracts the mix counts (all of them on the authority page)
 }
 
 /** A facet option (filter checkbox) with its result count. */
