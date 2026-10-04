@@ -424,6 +424,15 @@ describe('/conflicts/methodology — render', () => {
     expect(t).toContain('самоличността на дружеството');
   });
 
+  it('describes held links by the rule in force, with no number written into the prose', async () => {
+    // A count typed into the page outlives the data: it said „близо 400 … ≈408 млн. €" and a register that
+    // would become available, long after the register was read daily and the held links had changed.
+    await mount(ConflictMethodology as never, {});
+    const t = text();
+    expect(t).toContain('Задържани, не показани');
+    expect(t).not.toMatch(/близо 400|408 млн|регистърът стане достъпен|уникалността му/);
+  });
+
   it('states the three libel rails in plain language', async () => {
     await mount(ConflictMethodology as never, {});
     const t = text();
