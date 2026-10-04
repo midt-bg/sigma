@@ -207,7 +207,8 @@ export async function getCompanyFacets(db: D1Database): Promise<CompanyFacets> {
     .all<{ division: string; value_eur: number }>();
 
   const byKind = new Map(kindRows.results.map((r) => [r.kind, r.n]));
-  const kinds: FacetCount[] = (['company', 'consortium'] as EntityKind[]).map((k) => ({
+  // The parties to a framework agreement have no summed contract, so no company_totals row to facet.
+  const kinds: FacetCount[] = (['company', 'consortium'] as const).map((k) => ({
     value: k,
     label: ENTITY_TYPES[k],
     count: byKind.get(k) ?? 0,

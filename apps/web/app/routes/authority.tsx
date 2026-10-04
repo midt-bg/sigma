@@ -172,6 +172,11 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               value: `${count(a.suspect)} ${plural(a.suspect, 'договор', 'договора')}`,
               sub: 'в броя и в сумите, с прогнозната стойност вместо подадената',
             },
+            a.frameworkAgreements > 0 && {
+              term: 'Рамкови споразумения',
+              value: `${count(a.frameworkAgreements)} · таван ${money(a.frameworkCeilingEur)}`,
+              sub: 'таван, а не изразходвана сума — не влиза в сумите; броят се поръчките по тях',
+            },
           ]}
         />
 

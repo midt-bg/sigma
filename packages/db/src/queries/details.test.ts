@@ -557,7 +557,10 @@ function companyDb(
     { when: 'nuts_regions', first: { legal_form: 'ООД', region: 'София' } },
     { when: 'AS primary_eur', first: extra },
     { when: 'four_plus', first: { one: 1, two: 2, three: 0, four_plus: 1, unknown: 0 } },
-    { when: ['COUNT(*) AS n', 'amount_eur IS NULL'], first: { n: 3 } },
+    {
+      when: ['AS agreements', 'amount_eur IS NULL'],
+      first: { n: 3, agreements: 1, ceiling_eur: 500_000 },
+    },
     {
       when: 'AS paid',
       all: [
@@ -590,6 +593,9 @@ describe('getCompany', () => {
     expect(d.sectorSharePct).toBeCloseTo(0.6); // primary_eur 60000 / 100000
     expect(d.avgBids).toBe(2.3); // 2.34 rounded to 1dp
     expect(d.suspect).toBe(3);
+    // A framework agreement is disclosed apart, with its ceiling — not as an unconfirmed value.
+    expect(d.frameworkAgreements).toBe(1);
+    expect(d.frameworkCeilingEur).toBe(500_000);
     expect(d.topAuthorities[0]).toMatchObject({ slug: '1', paidEur: 60000, contracts: 6 });
     expect(d.topAuthorities[0]!.sharePct).toBeCloseTo(0.6);
     expect(d.moreAuthorities).toBe(2); // authorities 4 − 2 listed
@@ -648,7 +654,7 @@ describe('getCompany', () => {
       { when: 'nuts_regions', first: null }, // bidderMeta null
       { when: 'AS primary_eur', first: null }, // extra null
       { when: 'four_plus', first: null }, // bidsRow null
-      { when: ['COUNT(*) AS n', 'amount_eur IS NULL'], first: null }, // suspectRow null
+      { when: ['AS agreements', 'amount_eur IS NULL'], first: null }, // suspectRow null
       { when: 'AS paid', all: [] },
       {
         when: ['GROUP BY t.procedure_type', 'c.bidder_id'],
@@ -663,6 +669,8 @@ describe('getCompany', () => {
     expect(d.legalForm).toBeNull();
     expect(d.bids).toEqual({ one: 0, two: 0, three: 0, fourPlus: 0, unknown: 0 });
     expect(d.suspect).toBe(0);
+    expect(d.frameworkAgreements).toBe(0);
+    expect(d.frameworkCeilingEur).toBe(0);
     expect(d.sectorSharePct).toBeNull();
     expect(d.avgBids).toBeNull();
     expect(d.procedureMix).toEqual([]); // null proc value → group valueEur 0 → dropped
@@ -693,7 +701,10 @@ function authorityDb(
   return fakeD1([
     { when: 'FROM authority_totals', first: row },
     { when: 'AVG(c.bids_received)', first: { avg_bids: 3.16 } },
-    { when: ['COUNT(*) AS n', 'amount_eur IS NULL'], first: { n: 2 } },
+    {
+      when: ['AS agreements', 'amount_eur IS NULL'],
+      first: { n: 2, agreements: 2, ceiling_eur: 1_000_000 },
+    },
     {
       when: 'ORDER BY won DESC',
       all: [
@@ -725,6 +736,8 @@ describe('getAuthority', () => {
     expect(d.euSharePct).toBeCloseTo(0.25);
     expect(d.avgBids).toBe(3.2); // 3.16 → 3.2
     expect(d.suspect).toBe(2);
+    expect(d.frameworkAgreements).toBe(2);
+    expect(d.frameworkCeilingEur).toBe(1_000_000);
     expect(d.topContractors[0]).toMatchObject({ slug: '1', wonEur: 120000, contracts: 8 });
     expect(d.topContractors[0]!.sharePct).toBeCloseTo(0.6);
     expect(d.moreContractors).toBe(8); // suppliers 10 − 2 listed
@@ -777,7 +790,7 @@ describe('getAuthority', () => {
     const db = fakeD1([
       { when: 'FROM authority_totals', first: { ...authorityRow, spent_eur: 0 } },
       { when: 'AVG(c.bids_received)', first: { avg_bids: null } }, // avgBids null
-      { when: ['COUNT(*) AS n', 'amount_eur IS NULL'], first: null }, // suspectRow null → 0
+      { when: ['AS agreements', 'amount_eur IS NULL'], first: null }, // suspectRow null → 0
       {
         when: 'ORDER BY won DESC',
         all: [{ bidder_id: 'eik:1', name: 'A ООД', kind: 'company', won: 1, n: 1 }],
@@ -791,6 +804,8 @@ describe('getAuthority', () => {
     const d = (await getAuthority(db, 'auth:123456789'))!;
     expect(d.avgBids).toBeNull();
     expect(d.suspect).toBe(0);
+    expect(d.frameworkAgreements).toBe(0);
+    expect(d.frameworkCeilingEur).toBe(0);
     expect(d.sectors).toHaveLength(6); // 7 valid sectors → 6 shown + tail
     expect(d.sectors.some((s) => s.code === 'XX')).toBe(false); // unknown division dropped
     expect(d.sectorsOther).not.toBeNull();

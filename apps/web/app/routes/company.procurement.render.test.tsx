@@ -33,6 +33,8 @@ const contract: ContractListItem = {
   bidsReceived: 3,
   valueEur: 120_000,
   valueUnverified: false,
+  frameworkAgreement: false,
+  frameworkCeilingEur: null,
 };
 
 const richCompany: CompanyDetail = {
@@ -57,6 +59,8 @@ const richCompany: CompanyDetail = {
   periodFirst: '2021-01-01',
   periodLast: '2025-04-03',
   suspect: 2,
+  frameworkAgreements: 0,
+  frameworkCeilingEur: 0,
   topAuthorities: [
     {
       slug: 'test-authority',
@@ -315,6 +319,55 @@ describe('/companies/:eik — procurement profile', () => {
     expect(section('people')).toBeNull();
     expect(section('network')?.textContent).toContain('Не намираме връзки');
     expect(section('latest')).toBeNull();
+  });
+
+  it('names the parties to a framework agreement as such, with the ceiling apart from any sum', async () => {
+    const company: CompanyDetail = {
+      ...richCompany,
+      slug: 'test-agreement-parties',
+      name: 'ДОСТАВЧИК АЛФА ЕООД; ДОСТАВЧИК БЕТА ЕООД',
+      displayName: 'ДОСТАВЧИК АЛФА ЕООД и др.',
+      kind: 'framework_parties',
+      isConsortium: false,
+      eik: null,
+      hasEik: false,
+      ownershipKind: null,
+      wonEur: 0,
+      contracts: 0,
+      authorities: 0,
+      sector: null,
+      sectorSharePct: null,
+      euSharePct: 0,
+      avgBids: null,
+      suspect: 0,
+      frameworkAgreements: 1,
+      frameworkCeilingEur: 1_000_000,
+      topAuthorities: [],
+      moreAuthorities: 0,
+      procedureMix: [],
+      bids: { one: 0, two: 0, three: 0, fourPlus: 0, unknown: 0 },
+      topContracts: [],
+      recentContracts: [],
+      participants: [],
+      membershipNote: null,
+    };
+    await mount({
+      ...baseData,
+      company,
+      ties: { center: null, nodes: [], edges: [], omitted: 0 },
+      people: { asOf: null, roles: [] },
+      declarants: [],
+      jointContracts: [],
+      tieLayout: null,
+    });
+
+    const kicker = container.querySelector('.kicker')?.textContent ?? '';
+    expect(kicker).toContain('Страни по рамково споразумение');
+    expect(kicker).not.toContain('Участник');
+    expect(kicker).not.toContain('без ЕИК');
+    expect(container.textContent).toContain('не са обединение');
+    expect(container.textContent).toContain('Рамкови споразумения');
+    expect(container.textContent).toMatch(/1 · таван 1\sмлн/);
   });
 
   it('quotes a consortium membership note when the source has no structured member list', async () => {

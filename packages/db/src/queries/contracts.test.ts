@@ -196,6 +196,33 @@ describe('buildFilters (via listContracts)', () => {
     expect(page.items[0]!.sectorCode).toBeNull(); // r.cpv_code ? … : null
   });
 
+  it('marks a framework agreement row with its ceiling and leaves an order under it as a plain row', async () => {
+    const db = listDb([
+      {
+        ...contractRow,
+        id: 'c:agreement',
+        amount_eur: null,
+        framework: 2,
+        signing_value_eur: 1_000_000,
+        bidder_kind: 'framework_parties',
+      },
+      { ...contractRow, id: 'c:order', framework: 1, signing_value_eur: 1000 },
+    ]).db;
+    const [agreement, order] = (await listContracts(db, {})).items;
+    expect(agreement).toMatchObject({
+      valueEur: null,
+      frameworkAgreement: true,
+      frameworkCeilingEur: 1_000_000,
+      bidderKind: 'framework_parties',
+      isConsortium: false,
+    });
+    expect(order).toMatchObject({
+      valueEur: 1000,
+      frameworkAgreement: false,
+      frameworkCeilingEur: null,
+    });
+  });
+
   it('emits a backward page in reversed fetch order (before-cursor → reverse)', async () => {
     // 3 rows, pageSize 2 → a full page so the reverse is observable (pageSize 1 would hide it).
     const rows = [
@@ -356,10 +383,27 @@ describe('streamContractsCsv', () => {
     expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]); // UTF-8 BOM
     const csv = new TextDecoder().decode(bytes);
     expect(csv.split('\n')[0]).toBe(
-      'id,unp,subject,authority,authority_eik,contractor,contractor_eik,kind,sector_code,procedure,signed_at,value_eur,eu_funded,bids_received',
+      'id,unp,subject,authority,authority_eik,contractor,contractor_eik,kind,sector_code,procedure,signed_at,value_eur,eu_funded,bids_received,framework_ceiling_eur',
     );
     expect(csv).toContain('UNP-1');
     expect(csv).toContain('123456789'); // authority_eik column
+  });
+
+  it('gives a framework agreement an empty value_eur and its ceiling in the last column', async () => {
+    const agreement = {
+      ...csvRow,
+      amount_eur: null,
+      framework: 2,
+      signing_value_eur: 1_000_000,
+      bids_received: 3,
+    };
+    const order = { ...csvRow, amount_eur: 2000, framework: 1, signing_value_eur: 2000 };
+    const lines = (await streamContractsCsv(csvDb([[agreement, order], []]).db, {}).text())
+      .split('\n')
+      .filter(Boolean);
+    // trailing columns: …,value_eur,eu_funded,bids_received,framework_ceiling_eur
+    expect(lines[1]).toMatch(/,,0,3,1000000$/); // no summed value; the ceiling stands apart
+    expect(lines[2]).toMatch(/,2000,0,3,$/); // an order under it is an ordinary, summed contract
   });
 
   it('emits only the header when the filtered set is empty', async () => {
