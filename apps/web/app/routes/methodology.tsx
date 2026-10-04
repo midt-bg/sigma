@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { COMPETITION_MIN_CONTRACTS } from '@sigma/config';
 import { count, date, money, pct } from '@sigma/shared';
 import { getMethodologyStats, getDb } from '@sigma/db';
 import type { Route } from './+types/methodology';
@@ -411,7 +412,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     използва два от тях само като <strong>външен ориентир</strong>: дял с една
                     оферта — целево ≤ 10%, високо ≥ 20%; дял пряко възлагане — целево ≤ 5%, високо ≥
                     10%. Това е сравнение спрямо обща рамка, а не оценка на конкретна процедура или
-                    възложител.
+                    възложител. Сравнение се прави само при поне {COMPETITION_MIN_CONTRACTS}{' '}
+                    договора зад дела (с известен брой оферти, съответно с класифицирана процедура)
+                    — същият праг, по който се подреждат възложителите на страницата „Конкуренция";
+                    при по-малко делът се показва без оценка.
                   </p>
                   <span className="src">
                     →{' '}

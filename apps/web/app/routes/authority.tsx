@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
-import { EU_SCOREBOARD, type IndicatorRating, rateLowerIsBetter } from '@sigma/config';
+import { EU_SCOREBOARD, type IndicatorRating } from '@sigma/config';
+import { euRating, SMALL_SAMPLE_LABEL } from '../lib/eu-rating';
 import {
   count,
   money,
@@ -87,15 +88,15 @@ const RATING_LABEL: Record<IndicatorRating, string> = {
   mid: 'над целевата стойност на ЕС',
   bad: 'над прага на ЕС',
 };
-
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
   const { trend, ties, tieLayout, competition, procedure, conflicts } = loaderData;
   const ct = competition;
   // Both verdicts use the COUNT share - the basis the EU Scoreboard thresholds are defined on.
-  const singleOfferRating = rateLowerIsBetter(ct.singleOfferShare, EU_SCOREBOARD.singleBidder);
-  const directAwardRating = rateLowerIsBetter(
+  const singleOfferRating = euRating(ct.singleOfferShare, ct.contracts, EU_SCOREBOARD.singleBidder);
+  const directAwardRating = euRating(
     procedure.nonCompetitiveShare,
+    procedure.classifiedContracts,
     EU_SCOREBOARD.directAward,
   );
   const range = coverageRange(loaderData.coverage.coverageEndYear);
@@ -207,7 +208,9 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                 good={EU_SCOREBOARD.singleBidder.good}
                 bad={EU_SCOREBOARD.singleBidder.bad}
                 rating={singleOfferRating}
-                ratingLabel={RATING_LABEL[singleOfferRating]}
+                ratingLabel={
+                  singleOfferRating ? RATING_LABEL[singleOfferRating] : SMALL_SAMPLE_LABEL
+                }
                 detail={`${count(ct.singleOffer)} от ${count(ct.contracts)} договора · ${money(ct.singleOfferValueEur)} от ${money(ct.valueEur)} по стойност (${pct(ct.singleOfferValueShare)})`}
               />
             ) : (
@@ -221,7 +224,9 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                 good={EU_SCOREBOARD.directAward.good}
                 bad={EU_SCOREBOARD.directAward.bad}
                 rating={directAwardRating}
-                ratingLabel={RATING_LABEL[directAwardRating]}
+                ratingLabel={
+                  directAwardRating ? RATING_LABEL[directAwardRating] : SMALL_SAMPLE_LABEL
+                }
                 detail={`${count(procedure.nonCompetitiveContracts)} от ${count(procedure.classifiedContracts)} класифицирани договора`}
               />
             ) : (
