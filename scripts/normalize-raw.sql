@@ -734,6 +734,10 @@ WHERE ownership_kind IS NULL AND eik_valid = 1
 --    rows without a bounded prior rate stay NULL. fx_converted = 1 for foreign rows, and
 --    fx_rate carries the applied rate on the row (amount * fx_rate = amount_eur), so the original value,
 --    the rate, and the EUR value are all auditable without joining fx_rates.
+--    `framework` is 1 for an order placed under a framework agreement and 2 for the record of the
+--    agreement itself. That record carries the agreement's CEILING — the most its buyers may order
+--    under it, not money spent — so its amount_eur stays NULL and no sum or ranking ever reads it: the
+--    orders placed under the agreement are the contracts that carry the money.
 INSERT OR IGNORE INTO contracts
   (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at,
    contract_number, signing_value, current_value, current_value_currency, annex_count, eu_funded, bids_received,
@@ -803,6 +807,7 @@ SELECT
   x.value_flag,
   x.date_flag,
   CASE
+    WHEN x.framework_notice = 1 AND x.framework_contract IS NOT 1 THEN NULL
     WHEN x.value_flag = 'value_suspect' THEN x.proc_est_eur
     WHEN x.trusted_native IS NULL THEN NULL
     WHEN x.trusted_currency = 'EUR' THEN x.trusted_native
@@ -830,7 +835,7 @@ SELECT
   x.subcontractor_name,
   x.subcontract_value,
   x.eauction,
-  x.framework_contract,
+  CASE WHEN x.framework_contract = 1 THEN 1 WHEN x.framework_notice = 1 THEN 2 END,
   x.accelerated,
   x.strategic
 FROM (
@@ -1233,6 +1238,16 @@ SELECT
   contact_email, contact_phone
 FROM ranked
 WHERE rn = 1;
+
+-- 5z) The parties to a framework agreement. An agreement concluded with several suppliers names them all
+--     in one contractor field („А; Б; В"), which 4a reads as a joint bidder. They are the agreement's
+--     parties, who then compete for each order placed under it — not one bidder that won together. A
+--     contractor whose every contract is such an agreement record is marked as its parties, so it is
+--     never shown or linked as an обединение (refresh-slice.sql keeps the same rule).
+UPDATE bidders SET kind = 'framework_parties'
+WHERE kind = 'consortium' AND name LIKE '%;%'
+  AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = bidders.id AND c.framework = 2)
+  AND NOT EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = bidders.id AND c.framework IS NOT 2);
 
 -- 6) Location enrichment from OCDS parties (parties, populated from raw_ocds_parties).
 --    Match on ЕИК; take the most-recent non-null value (parties repeat across releases). OCDS covers

@@ -133,11 +133,13 @@ function safeD1(sql) {
   }
 }
 
+// A framework agreement's own record has no amount_eur on purpose (its ceiling is not spending).
+const FX_MISSING_SQL =
+  "SELECT COUNT(*) AS missing_fx FROM contracts WHERE currency NOT IN ('BGN','EUR') " +
+  "AND amount_eur IS NULL AND value_flag <> 'value_suspect' AND framework IS NOT 2";
+
 function assertFxPopulated() {
-  const rows = d1(
-    "SELECT COUNT(*) AS missing_fx FROM contracts WHERE currency NOT IN ('BGN','EUR') " +
-      "AND amount_eur IS NULL AND value_flag <> 'value_suspect'",
-  );
+  const rows = d1(FX_MISSING_SQL);
   const missing = Number(rows[0]?.missing_fx ?? 0);
   if (missing > 0) {
     console.error(
@@ -160,11 +162,7 @@ function sqliteJson(dbPath, sql) {
 }
 
 function assertFxPopulatedSqlite(dbPath) {
-  const rows = sqliteJson(
-    dbPath,
-    "SELECT COUNT(*) AS missing_fx FROM contracts WHERE currency NOT IN ('BGN','EUR') " +
-      "AND amount_eur IS NULL AND value_flag <> 'value_suspect'",
-  );
+  const rows = sqliteJson(dbPath, FX_MISSING_SQL);
   const missing = Number(rows[0]?.missing_fx ?? 0);
   if (missing > 0) {
     console.error(

@@ -741,7 +741,12 @@ ON CONFLICT(id) DO UPDATE SET
   eik_normalized = COALESCE(bidders.eik_normalized, excluded.eik_normalized),
   eik_valid = max(bidders.eik_valid, excluded.eik_valid),
   is_consortium = max(bidders.is_consortium, excluded.is_consortium),
-  kind = CASE WHEN max(bidders.is_consortium, excluded.is_consortium) = 1 THEN 'consortium' ELSE bidders.kind END;
+  -- The parties to a framework agreement keep their kind; `@refresh-batch company-totals` settles it.
+  kind = CASE
+    WHEN bidders.kind = 'framework_parties' THEN bidders.kind
+    WHEN max(bidders.is_consortium, excluded.is_consortium) = 1 THEN 'consortium'
+    ELSE bidders.kind
+  END;
 
 -- Curated public-owned winner classification. Exact EIK matches cover the allowlist; a valid 13-digit
 -- EIK is a branch and carries the ownership of the enterprise in its first nine digits.
@@ -1334,14 +1339,16 @@ SELECT
   x.subcontractor_name,
   x.subcontract_value,
   x.eauction,
-  x.framework_contract,
+  CASE WHEN x.framework_contract = 1 THEN 1 WHEN x.framework_notice = 1 THEN 2 END,
   x.accelerated,
   x.strategic
 FROM (
   SELECT q.*,
     -- value_suspect is repaired directly from proc_est_eur. value_low (and 'review') is populated here,
     -- so it counts in every sum; it is merely labelled in the UI. annex_suspect uses trusted_native's signing fallback.
+    -- A framework agreement's own record carries its ceiling and is never summed (normalize-raw.sql step 5).
     CASE
+      WHEN q.framework_notice = 1 AND q.framework_contract IS NOT 1 THEN NULL
       WHEN q.value_flag = 'value_suspect' THEN q.proc_est_eur
       WHEN q.trusted_currency = 'EUR' THEN q.trusted_native
       WHEN q.trusted_currency = 'BGN' THEN q.trusted_native / 1.95583
@@ -1703,14 +1710,16 @@ SELECT
   x.subcontractor_name,
   x.subcontract_value,
   x.eauction,
-  x.framework_contract,
+  CASE WHEN x.framework_contract = 1 THEN 1 WHEN x.framework_notice = 1 THEN 2 END,
   x.accelerated,
   x.strategic
 FROM (
   SELECT q.*,
     -- value_suspect is repaired directly from proc_est_eur. value_low (and 'review') is populated here,
     -- so it counts in every sum; it is merely labelled in the UI. annex_suspect uses trusted_native's signing fallback.
+    -- A framework agreement's own record carries its ceiling and is never summed (normalize-raw.sql step 5).
     CASE
+      WHEN q.framework_notice = 1 AND q.framework_contract IS NOT 1 THEN NULL
       WHEN q.value_flag = 'value_suspect' THEN q.proc_est_eur
       WHEN q.trusted_currency = 'EUR' THEN q.trusted_native
       WHEN q.trusted_currency = 'BGN' THEN q.trusted_native / 1.95583
@@ -2287,6 +2296,7 @@ DROP TABLE IF EXISTS amend_contract_base;
 
 CREATE TABLE amend_contract_base AS
   SELECT c.id, c.currency, c.signing_value, c.current_value, c.current_value_currency, c.fx_rate, c.value_flag,
+    c.framework,
     te.estimated_value AS proc_est_native,
     CASE
       -- current_value (when present) is denominated in current_value_currency (whichever
@@ -2470,6 +2480,7 @@ CREATE TABLE amend_contract_base AS
 
 WITH base AS (
   SELECT id, currency, signing_value, current_value, current_value_currency, fx_rate, proc_est_eur, proc_est_native,
+    framework,
     CASE
       WHEN c.value_flag NOT IN ('annex_suspect', 'annex_total_suspect')
         AND NOT (c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
@@ -2556,11 +2567,14 @@ WITH base AS (
     END AS new_current_value_eur,
     currency,
     fx_rate,
-    signing_value
+    signing_value,
+    framework
   FROM base
 ), recalculated AS (
   SELECT id, new_value_flag, display_native, trusted_native,
     CASE
+      -- A framework agreement's own record carries its ceiling, never summed (normalize-raw.sql step 5).
+      WHEN framework = 2 THEN NULL
       WHEN new_value_flag = 'value_suspect' THEN proc_est_eur
       WHEN trusted_native IS NULL THEN NULL
       WHEN trusted_currency = 'EUR' THEN trusted_native
@@ -2619,6 +2633,23 @@ DROP TABLE contractor_identity;
 -- 6) Refresh rollups + FTS. Only the D1-hot rollups are scoped to touched rows; cheaper rollups stay
 -- full-recomputed in isolated batches so convergence stays simple.
 -- @refresh-batch company-totals
+-- The parties to a framework agreement (normalize-raw.sql step 5z), for the contractors this slice
+-- touched: one whose every contract is an agreement record is its parties, and one that also holds an
+-- ordinary contract is a joint bidder again. Settled before the totals, which carry the kind.
+UPDATE bidders SET kind = 'framework_parties'
+WHERE id IN (SELECT bidder_id FROM refresh_touched_bidders)
+  AND kind = 'consortium' AND name LIKE '%;%'
+  AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = bidders.id AND c.framework = 2)
+  AND NOT EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = bidders.id AND c.framework IS NOT 2);
+UPDATE bidders SET kind = 'consortium'
+WHERE id IN (SELECT bidder_id FROM refresh_touched_bidders)
+  AND kind = 'framework_parties'
+  AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = bidders.id AND c.framework IS NOT 2);
+-- Like every batch that writes bidders, this one records them itself, after the write (the two updates
+-- above only ever reach bidders already in the set, so this keeps the rule rather than adding ids).
+INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
+SELECT id FROM bidders
+WHERE id IN (SELECT bidder_id FROM refresh_touched_bidders) AND kind IN ('framework_parties', 'consortium');
 DELETE FROM company_totals WHERE bidder_id IN (SELECT bidder_id FROM refresh_touched_bidders);
 INSERT INTO company_totals (bidder_id, name, kind, ownership_kind, eik, eik_valid, settlement, won_eur, contracts, authorities, eu_eur, first_date, last_date)
 SELECT b.id, b.name, b.kind, b.ownership_kind, b.eik_normalized, b.eik_valid, b.settlement,
@@ -2852,8 +2883,9 @@ SELECT
   COUNT(c.amount_eur) AS priced,
   COALESCE(SUM(c.amount_eur), 0) AS value_eur,
   SUM(c.value_flag = 'value_suspect') AS suspect,
-  -- The list's „unconfirmed value" badge: no amount, or one flagged as too low to trust.
-  SUM(c.amount_eur IS NULL OR c.value_flag = 'value_low') AS unverified,
+  -- The list's „unconfirmed value" badge: no amount, or one flagged as too low to trust. A framework
+  -- agreement's own record has no amount on purpose (its ceiling is not spending) and is not unconfirmed.
+  SUM((c.amount_eur IS NULL AND c.framework IS NOT 2) OR c.value_flag = 'value_low') AS unverified,
   MAX(CASE WHEN c.signed_at <= date('now') THEN c.signed_at END) AS max_signed
 FROM contracts c
 LEFT JOIN tenders t ON t.id = c.tender_id
