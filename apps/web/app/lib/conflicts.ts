@@ -34,6 +34,16 @@ export function declaredStakeNoun(links: { relation: string }[]): string {
     : 'собствен дял';
 }
 
+/** The chip in a company's header: what the officials declared about it, never more than every link says.
+ *  Management is not a stake, so a company whose officials declared only that they manage it says so. */
+export function declarantsChip(relations: readonly string[]): string {
+  if (relations.every((r) => r === 'related')) return 'дял на свързано лице';
+  if (relations.every((r) => r === 'manages')) return 'декларирано управление от длъжностно лице';
+  return relations.some((r) => r === 'manages' || r === 'owns+manages')
+    ? 'деклариран дял или управление на длъжностно лице'
+    : 'деклариран дял на длъжностно лице';
+}
+
 // Defense in depth: the slug is base64url and the ЕИК numeric today (so encoding is a no-op), but if either
 // assumption ever drifts, an un-escaped `/`, `?` or `#` would break routing and the cache key. Escape the
 // dynamic segments unconditionally (ydimitrof #226, conflicts.ts).

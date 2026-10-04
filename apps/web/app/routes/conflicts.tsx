@@ -29,6 +29,7 @@ import {
   officialRole,
   sortConflictRows,
   type ConflictPersonRow,
+  type ConflictStakeFilter,
 } from '../lib/conflicts';
 import { withParams, leaderboardRankOffset, type PageNav } from '../lib/filters';
 
@@ -118,6 +119,58 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     },
     { headers: { 'Cache-Control': everyone.length ? publicCache(3600) : 'no-store' } },
   );
+}
+
+const HISTORY =
+  'Показваме и доказани исторически връзки, с декларираните години и проверими източници.';
+
+/** The headings of the list, each true of every row the stake filter keeps: a declared stake, a declared
+ *  management, or a role only the Trade Register records. */
+function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
+  switch (stake) {
+    case 'registry':
+      return {
+        title: (
+          <>
+            Длъжностни лица, вписани в <em>Търговския регистър</em> при изпълнител
+          </>
+        ),
+        lede: `Длъжностни лица, които Търговският регистър вписва като собственик или управител${boards ? ' — или като член на съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка. В декларациите им няма публикувана връзка с това дружество.`,
+        caption: 'Длъжностни лица с вписана роля в регистъра при дружества изпълнители',
+      };
+    case 'self':
+      return {
+        title: (
+          <>
+            Длъжностни лица с деклариран <em>дял или управление</em> в компании изпълнители
+          </>
+        ),
+        lede: `Длъжностни лица, декларирали собствен дял в дружество, спечелило обществена поръчка, или че го управляват. ${HISTORY}`,
+        caption:
+          'Длъжностни лица с деклариран дял или декларирано управление в дружества изпълнители',
+      };
+    case 'family':
+      return {
+        title: (
+          <>
+            Длъжностни лица с <em>дял на свързано лице</em> в компании изпълнители
+          </>
+        ),
+        lede: `Длъжностни лица, декларирали дял на свързано лице в дружество, спечелило обществена поръчка. ${HISTORY}`,
+        caption: 'Длъжностни лица с деклариран дял на свързано лице в дружества изпълнители',
+      };
+    default:
+      return {
+        title: (
+          <>
+            Длъжностни лица и <em>дружества</em> изпълнители
+          </>
+        ),
+        lede: `Длъжностни лица, декларирали дял — свой или на свързано лице — или управление на дружество, спечелило обществена поръчка, и длъжностни лица, които Търговският регистър вписва в такова дружество. ${HISTORY}`,
+        caption:
+          'Длъжностни лица и дружества изпълнители: деклариран дял, декларирано управление или вписана роля в регистъра',
+      };
+  }
 }
 
 // The columns of the /conflicts person leaderboard (#287, plan §3.2). Rank is the corner badge on phone
@@ -330,9 +383,10 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       options: facets.institutions,
     },
   ];
-  // The registry-only bucket is exactly the people who did NOT name the company in their declaration, so
-  // the standing title („декларирали дял") states the opposite of what the filtered list shows.
-  const registryOnly = filters.stake === 'registry';
+  // Every heading over the list must be true of every row it shows. Unfiltered, the list holds declared
+  // stakes, declared management and roles the register alone records, so its headings name all three; a
+  // filter narrows them to what it keeps.
+  const listing = conflictListing(filters.stake, filters.role === 'all');
   const clearHref = authority ? `/conflicts?authority=${authority.slug}` : '/conflicts';
   const columns = personColumns(leaderboardRankOffset(page, PER_PAGE));
   const nav: PageNav = {
@@ -346,25 +400,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
     <>
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Свързани лица' }]} />
       <main id="main">
-        <PageHeader
-          kicker="Свързани лица"
-          title={
-            registryOnly ? (
-              <>
-                Длъжностни лица, вписани в <em>Търговския регистър</em> при изпълнител
-              </>
-            ) : (
-              <>
-                Длъжностни лица, декларирали <em>дял</em> в компании изпълнители
-              </>
-            )
-          }
-          lede={
-            registryOnly
-              ? `Длъжностни лица, които Търговският регистър вписва като собственик или управител${filters.role === 'all' ? ' — или като член на съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка, без това дружество да е посочено в декларацията им. Самоличността е доказана чрез друго дружество, което лицето само е декларирало.`
-              : 'Длъжностни лица, декларирали дял — свой или на свързано лице — в дружество, спечелило обществена поръчка. Показваме и доказани исторически връзки, с декларираните години и проверими източници.'
-          }
-        />
+        <PageHeader kicker="Свързани лица" title={listing.title} lede={listing.lede} />
 
         <Callout titleAs="h2" title="Как се извежда връзката — и какво не твърди">
           <p className="m-0">
@@ -403,7 +439,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
           <>
             <Section
               id="list"
-              title="Деклариран дял в компании изпълнители"
+              title="Длъжностни лица и дружества изпълнители"
               hint="„Стойност в периода“ включва договорите в годините с налична декларация за институция и длъжност на лицето. Това не установява точните дати на мандата. Липсващи години не се запълват. Общата стойност и общият брой договори обхващат всички налични договори на показаните дружества, включително при предходно участие."
             >
               <div className="split">
@@ -431,12 +467,16 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     </p>
                   ) : (
                     <>
+                      <p className="small muted conflicts-amounts-note">
+                        Сумите са стойности на договорите на дружествата, не пари, получени от
+                        лицата.
+                      </p>
                       <DataTable
                         className="conflicts-people-table"
                         columns={columns}
                         rows={pageRows}
                         getKey={(r) => r.officialSlug}
-                        caption="Длъжностни лица с деклариран дял в компании изпълнители"
+                        caption={listing.caption}
                       />
                       {pageCount > 1 && <Pagination nav={nav} pageSize={PER_PAGE} unit="лица" />}
                     </>

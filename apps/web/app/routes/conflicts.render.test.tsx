@@ -536,15 +536,78 @@ it('names the register that actually publishes the declarations', async () => {
   expect(text()).not.toContain('КПКОНПИ');
 });
 
-// The registry-only bucket holds exactly the people who did NOT name the company in their declaration,
-// so the standing title („декларирали дял") stated the opposite of what the filtered list shows.
-it('titles the registry-only list by what it actually holds', async () => {
-  await renderConflicts([link()]);
-  expect(container.querySelector('h1')?.textContent).toContain('декларирали');
+// Every heading over the list must hold for every row in it. Unfiltered, the list mixes declared stakes,
+// declared management and roles only the register records, so no heading may say „декларирали дял" of all.
+it('titles the list by what every row holds, and narrows the headings with the stake filter', async () => {
+  const headings = () => ({
+    h1: container.querySelector('h1')?.textContent ?? '',
+    h2: container.querySelector('#list')?.textContent ?? '',
+    caption: container.querySelector('caption')?.textContent ?? '',
+  });
 
-  await renderConflicts([link()], null, '/conflicts?stake=registry');
+  await renderConflicts([link()]);
+  expect(headings()).toEqual({
+    h1: 'Длъжностни лица и дружества изпълнители',
+    h2: 'Длъжностни лица и дружества изпълнители',
+    caption:
+      'Длъжностни лица и дружества изпълнители: деклариран дял, декларирано управление или вписана роля в регистъра',
+  });
+  expect(text()).not.toContain('декларирали дял — свой или на свързано лице — в дружество');
+  expect(text()).toContain(
+    'Сумите са стойности на договорите на дружествата, не пари, получени от лицата.',
+  );
+
+  await renderConflicts([link()], null, '/conflicts?stake=self');
+  expect(headings().h1).toBe(
+    'Длъжностни лица с деклариран дял или управление в компании изпълнители',
+  );
+  expect(headings().caption).toBe(
+    'Длъжностни лица с деклариран дял или декларирано управление в дружества изпълнители',
+  );
+
+  await renderConflicts([link({ relation: 'related' })], null, '/conflicts?stake=family');
+  expect(headings().h1).toBe('Длъжностни лица с дял на свързано лице в компании изпълнители');
+  expect(headings().caption).toBe(
+    'Длъжностни лица с деклариран дял на свързано лице в дружества изпълнители',
+  );
+});
+
+// The registry-only group is the people whose declarations have no PUBLISHED link with the company — a
+// held or a joint-stock link included. The lede says exactly that, not that the declaration omits it.
+it('says of the registry-only group only what the group proves', async () => {
+  const owner: ConflictPersonRow = {
+    official: 'Собственик Тестов',
+    officialSlug: 'owner',
+    institution: null,
+    position: null,
+    companyCount: 1,
+    companies: [
+      { company: 'ТЕСТ ООД', eik: '555', self: 0, family: 0, registry: 1, registryRole: 'owner' },
+    ],
+    soleCompany: null,
+    contractCount: 1,
+    contractValueEur: 10,
+    contemporaneousValueEur: null,
+    stakeKind: 'registry',
+    ownInstitution: false,
+    hasContemporaneous: false,
+    direct: null,
+  };
+  await renderConflicts([link()], null, '/conflicts?stake=registry', [owner]);
   const heading = container.querySelector('h1')?.textContent ?? '';
   expect(heading).toContain('Търговския регистър');
   expect(heading).not.toContain('декларирали');
-  expect(text()).toContain('без това дружество да е посочено в декларацията им');
+  expect(text()).toContain(
+    'на дружество, спечелило обществена поръчка. В декларациите им няма публикувана връзка с това дружество.',
+  );
+  expect(text()).not.toContain('без това дружество да е посочено');
+  expect(text()).not.toContain('Самоличността е доказана');
+  expect(container.querySelector('caption')?.textContent).toBe(
+    'Длъжностни лица с вписана роля в регистъра при дружества изпълнители',
+  );
+
+  await renderConflicts([link()], null, '/conflicts?stake=registry&role=all', [owner]);
+  expect(text()).toContain(
+    'собственик или управител — или като член на съвет на директорите, управителен съвет или друг орган на управление — на дружество',
+  );
 });
