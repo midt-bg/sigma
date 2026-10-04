@@ -38,11 +38,12 @@ function sqlite(dbPath: string, sql: string): string {
 function readScript(dbPath: string, path: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
 }
-// Substitute D1 `?` binds with SQL literals so the exported query runs through the sqlite3 CLI unchanged.
+// Substitute D1 binds with SQL literals so the exported query runs through the sqlite3 CLI unchanged: a
+// plain `?` takes the next value, a numbered `?N` the N-th.
 function lit(sql: string, ...vals: (string | number)[]): string {
   let i = 0;
-  return sql.replace(/\?/g, () => {
-    const v = vals[i++];
+  return sql.replace(/\?(\d+)?/g, (_match, n?: string) => {
+    const v = n ? vals[Number(n) - 1] : vals[i++];
     return typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`;
   });
 }
@@ -284,9 +285,11 @@ describe('свързани-лица SQL (real SQLite)', () => {
            ('person:boris|222','a:1','ОБЩИНА ТЕСТ',10,5000000,'none');`,
       );
       // The held link (ivan|999) and the ex-officio one (boris|222) are paid by the same body and still
-      // never count: the summary sits on the same gate as the list.
+      // never count: the summary sits on the same gate as the list. Its winners are the body's payees from
+      // the live contracts, as the /conflicts?authority= list reads them — 111, 333, 444 and 555 — not only
+      // the two the stored per-body breakdown names; the own-institution one comes from that breakdown.
       expect(rows(db, lit(AUTHORITY_CONFLICTS_SQL, 'a:1'))).toEqual([
-        { companies: 2, own_companies: 1 },
+        { companies: 4, own_companies: 1 },
       ]);
       expect(rows(db, lit(AUTHORITY_CONFLICTS_SQL, 'a:2'))).toEqual([
         { companies: 0, own_companies: 0 },

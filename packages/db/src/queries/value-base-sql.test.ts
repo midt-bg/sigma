@@ -156,3 +156,20 @@ describe('a company whose negative rows outweigh the rest', () => {
     ]);
   });
 });
+
+describe('the home companies figure', () => {
+  it('counts the companies the list shows, not the bucket of winners with no identity', async () => {
+    const { sqlite, db } = realDb();
+    sqlite.exec(`
+      INSERT INTO bidders (id, name, kind) VALUES ('unknown:1', 'Неустановен изпълнител', 'unknown');
+      INSERT INTO contracts
+        (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur)
+      VALUES ('c:unknown', 't:A45', 'unknown:1', 10, 'EUR', '2024-03-01', 2, 'ok', 10);
+    `);
+    sqlite.exec(precompute);
+
+    const [home, list] = await Promise.all([getHomeData(db), listCompanies(db, {})]);
+    expect(home.totals.bidders).toBe(2);
+    expect(home.totals.bidders).toBe(list.total);
+  });
+});

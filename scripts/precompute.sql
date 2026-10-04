@@ -165,7 +165,9 @@ SELECT 1,
   (SELECT COALESCE(SUM(contracts), 0) FROM contract_cube),
   (SELECT COALESCE(SUM(value_eur), 0) FROM contract_cube),
   (SELECT COUNT(*) FROM authority_totals),
-  (SELECT COUNT(*) FROM company_totals),
+  -- The companies the list and the search show (companies.ts): the bucket of winners with no identity is
+  -- not a company.
+  (SELECT COUNT(*) FROM company_totals WHERE kind <> 'unknown'),
   (SELECT COALESCE(SUM(suspect), 0) FROM contract_cube),
   (SELECT MIN(signed_at) FROM contracts WHERE signed_at >= '2020-01-01' AND signed_at <= date('now')),
   (SELECT MAX(signed_at) FROM contracts WHERE signed_at <= date('now')),

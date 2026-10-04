@@ -2,17 +2,10 @@ import { companyNamesAlike } from '@sigma/shared';
 import { declaredOfficeYear, officeBounds, withinOffice } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
+import { PAID_BY_AUTHORITY } from './authority-payees';
 
 // Canonical identity precedes grouping. Source person ids remain distinct unless the
 // declaration-to-registry bridge proves their public Indent; names are never a join key.
-// The authority's payees, read ONCE. As a correlated EXISTS inside `links` this ran per candidate link
-// and D1 answered „exceeded its CPU time limit and was reset" for any authority of real size — the filter
-// the institution profile links to was dead above roughly two thousand contracts.
-const PAID_BY_AUTHORITY = `paid AS MATERIALIZED (
-  SELECT DISTINCT b.eik_normalized eik FROM contracts c
-  JOIN tenders t ON t.id=c.tender_id JOIN bidders b ON b.id=c.bidder_id
-  WHERE ?1 IS NOT NULL AND t.authority_id=?1
-)`;
 
 const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   SELECT il.*, COALESCE(pl.registry_indent,il.person_id) identity, p.name
