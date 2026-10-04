@@ -108,6 +108,18 @@ describe('FilterRail', () => {
     ]);
   });
 
+  it('keeps „само една оферта" (bids=1) through a submit without JS and through a ticked box', async () => {
+    // The home page links straight to /contracts?bids=1; the rail has no control for it, so before the
+    // fix the no-JS submit dropped it and the list silently became all contracts.
+    await render([year], '/contracts?bids=1&sort=date-desc');
+    expect(hidden()).toEqual([
+      ['sort', 'date-desc'],
+      ['bids', '1'],
+    ]);
+    await click(box('year', '2024'));
+    expect(params().get('bids')).toBe('1');
+  });
+
   it('clears a single-choice group through its „all" option', async () => {
     const value: GroupSpec = {
       key: 'value',
