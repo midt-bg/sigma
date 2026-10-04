@@ -84,8 +84,19 @@ export function unverifiedValueNote(v: ContractValueTimeline): UnverifiedValueNo
 
   if (v.flag === 'value_low') {
     // `value_low` covers two different source defects: a non-positive value, and a value that is a
-    // rounding error next to the forecast. Only claim the ratio when it actually holds — the rule also
-    // fires on `COALESCE(current, signing) <= 0`, where there is no percentage to quote.
+    // rounding error next to the forecast. The rule fires on `COALESCE(current, signing) <= 0` too, so a
+    // contract signed at a normal price can carry it because its CURRENT value is 0 — then the signing
+    // value is fine and the sentence must be about the current one.
+    if (v.signingEur != null && v.signingEur > 0 && v.currentEur != null && v.currentEur <= 0) {
+      return {
+        title: 'Текущата стойност изглежда сгрешена в източника',
+        badge: 'вероятно грешна стойност',
+        scope: 'current',
+        headline: `Текущата стойност в източника е ${money(v.currentEur)}, а при сключване договорът е за ${money(v.signingEur)}. Нула след изменение не е реална цена на договора — най-често изменението е подадено без нова стойност.`,
+        detail: SOURCE,
+      };
+    }
+    // Only claim the ratio when it actually holds; with no usable forecast there is none to quote.
     const nonPositive = v.signingEur != null && v.signingEur <= 0;
     const ratio =
       v.signingEur != null && v.estimatedEur != null && v.estimatedEur > 0
@@ -95,7 +106,7 @@ export function unverifiedValueNote(v: ContractValueTimeline): UnverifiedValueNo
       ? `Публикуваната стойност на договора е ${money(v.signingEur)}.`
       : ratio != null && ratio < LOW_VALUE_SHARE
         ? `Публикуваната стойност е ${money(v.signingEur)} при прогнозна ${money(v.estimatedEur)} — под ${pct(LOW_VALUE_SHARE, 0)} от нея.`
-        : `Публикуваната стойност (${money(v.signingEur)}) е несъразмерно ниска спрямо прогнозната.`;
+        : `Публикуваната стойност (${money(v.signingEur)}) е несъразмерно ниска за договора.`;
     return {
       title: 'Стойността изглежда сгрешена в източника',
       badge: 'вероятно грешна стойност',
