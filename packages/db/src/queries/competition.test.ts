@@ -105,6 +105,7 @@ const CORPUS_TOTALS = 'AS single_value_eur';
 
 function fakeDb(): FakeD1 {
   return fakeD1([
+    { when: "facet = 'single_offer'", all: [] },
     { when: 'FROM sector_totals', all: [{ division: '45' }] },
     { when: 'FROM flow_pairs', all: FLOW_PAIRS },
     { when: 'JOIN bidders b', all: FLOW_PAIRS }, // filtered pairs
@@ -121,6 +122,7 @@ const scopedCall = (call: FakeD1Call) => call.binds.includes('auth:111');
 
 function scopedFakeDb(): FakeD1 {
   return fakeD1([
+    { when: "facet = 'single_offer'", all: [] },
     { when: 'FROM sector_totals', all: [{ division: '45' }] },
     { when: 'GROUP BY t.procedure_type', all: PROCEDURE_ROWS },
     { when: 'TRIM(t.procedure_type) IN (', all: DIRECT_AWARD_ROWS },
@@ -137,6 +139,37 @@ function scopedFakeDb(): FakeD1 {
     { when: CORPUS_TOTALS, first: (c) => (scopedCall(c) ? SCOPED_TOTALS : TOTALS) },
   ]);
 }
+
+describe('competitionTotals — the national share from the precomputed rows', () => {
+  const stored = [
+    { key: 'known', contracts: 200, value_eur: 5000 },
+    { key: 'one', contracts: 90, value_eur: 1500 },
+  ];
+
+  it('reads the rows the home page reads, and does not scan the contracts', async () => {
+    const f = fakeD1([{ when: "facet = 'single_offer'", all: stored }]);
+    const totals = await competitionTotals(f.db, {});
+    expect(totals).toMatchObject({ contracts: 200, singleOffer: 90, valueEur: 5000 });
+    expect(totals.singleOfferShare).toBeCloseTo(0.45);
+    expect(totals.singleOfferValueShare).toBeCloseTo(0.3);
+    expect(f.sql.some((s) => s.includes('FROM contracts'))).toBe(false);
+  });
+
+  it('counts live for a filtered scope or before the refresh wrote the rows', async () => {
+    const scoped = fakeD1([
+      { when: "facet = 'single_offer'", all: stored },
+      { when: CORPUS_TOTALS, first: TOTALS },
+    ]);
+    expect((await competitionTotals(scoped.db, { sector: '45' })).contracts).toBe(10);
+    expect(scoped.sql.some((s) => s.includes("facet = 'single_offer'"))).toBe(false);
+
+    const unfilled = fakeD1([
+      { when: "facet = 'single_offer'", all: [stored[0]!] },
+      { when: CORPUS_TOTALS, first: TOTALS },
+    ]);
+    expect((await competitionTotals(unfilled.db, {})).contracts).toBe(10);
+  });
+});
 
 describe('getCompetition', () => {
   it('computes the headline single-offer shares by count and by value', async () => {
@@ -200,6 +233,7 @@ describe('getCompetition', () => {
 
   it('does not divide by zero on an empty corpus', async () => {
     const emptyDb = fakeD1([
+      { when: "facet = 'single_offer'", all: [] },
       {
         when: CORPUS_TOTALS,
         first: { contracts: 0, single_offer: 0, value_eur: 0, single_value_eur: 0 },
@@ -222,6 +256,7 @@ describe('getCompetition', () => {
     // Sweeps the zero-guard false branches: `contracts > 0 ? … : 0`, `classified > 0 ? … : 0`,
     // `classifiedContracts > 0 ? … : 0`, the `row?.x ?? 0` nullish fallbacks, and the year scope filter.
     const db = fakeD1([
+      { when: "facet = 'single_offer'", all: [] },
       { when: CORPUS_TOTALS, first: null }, // totals row missing → every `row?.x ?? 0` falls back
       { when: 'FROM sector_totals', all: [] },
       { when: 'FROM flow_pairs', all: [] },
@@ -359,6 +394,7 @@ describe('getCompetitionSummary', () => {
 
   it('yields a null topConcentration when no authority qualifies', async () => {
     const emptyDb = fakeD1([
+      { when: "facet = 'single_offer'", all: [] },
       {
         when: CORPUS_TOTALS,
         first: { contracts: 0, single_offer: 0, value_eur: 0, single_value_eur: 0 },

@@ -515,15 +515,18 @@ const GOLDEN = {
   // 10) but adds 0 to the paired value_eur SUM (its amount_eur is NULL): the 9-contract eu '0' sums 341100.
   // sector: the same unfiltered count, so division 33 holds c9 too — 5 where sector_totals (amount-filtered)
   // holds 4 — at the same 91000; 45 is 5 / 300100 in both. year: all 10 are signed in 2026.
-  // single_offer/priced is the home page's one-offer share, where `contracts` is the PRICED count: c4 1000,
-  // c6 100 and c7 0 are the single-bid contracts, all with a known amount (c7's is zero) → 3 / 1100.
+  // single_offer is the national one-offer share (home, /analytics, /competition) on one base: /known is
+  // every contract with a known number of offers — all ten here (bids 1–4) — valued on positive amounts,
+  // so c7's zero and c9's NULL add nothing → 10 / 391100; /one is its single-bid subset, c4 1000, c6 100 and
+  // c7 0 → 3 / 1100.
   facetCounts: [
     { facet: 'eu', key: '0', contracts: 9, value_eur: 341100 },
     { facet: 'eu', key: '1', contracts: 1, value_eur: 50000 },
     { facet: 'procedure', key: 'open', contracts: 10, value_eur: 391100 },
     { facet: 'sector', key: '33', contracts: 5, value_eur: 91000 },
     { facet: 'sector', key: '45', contracts: 5, value_eur: 300100 },
-    { facet: 'single_offer', key: 'priced', contracts: 3, value_eur: 1100 },
+    { facet: 'single_offer', key: 'known', contracts: 10, value_eur: 391100 },
+    { facet: 'single_offer', key: 'one', contracts: 3, value_eur: 1100 },
     { facet: 'year', key: '2026', contracts: 10, value_eur: 391100 },
   ],
 

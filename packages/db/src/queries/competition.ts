@@ -77,6 +77,18 @@ export async function competitionTotals(
   db: D1Database,
   p: CompetitionParams,
 ): Promise<CompetitionTotals> {
+  // The national figure is precomputed on this same base (facet_counts single_offer/known and /one), the
+  // rows the home page reads: one national share on every page, and no scan of the corpus per request.
+  if (!p.sector && !p.year && !p.authorityId && (p.funding ?? 'all') === 'all') {
+    const stored = await db
+      .prepare(
+        `SELECT key, value_eur, contracts FROM facet_counts WHERE facet = 'single_offer' AND key IN ('one', 'known')`,
+      )
+      .all<{ key: string; value_eur: number; contracts: number }>();
+    const one = stored.results?.find((r) => r.key === 'one');
+    const known = stored.results?.find((r) => r.key === 'known');
+    if (one && known) return shares(known.contracts, one.contracts, known.value_eur, one.value_eur);
+  }
   const s = scope(p);
   const where = ['c.bids_received IS NOT NULL', 'c.bids_received >= 1', ...s.where];
   const row = await db
@@ -90,10 +102,20 @@ export async function competitionTotals(
     )
     .bind(...s.params)
     .first<TotalsRow>();
-  const contracts = row?.contracts ?? 0;
-  const singleOffer = row?.single_offer ?? 0;
-  const valueEur = row?.value_eur ?? 0;
-  const singleValueEur = row?.single_value_eur ?? 0;
+  return shares(
+    row?.contracts ?? 0,
+    row?.single_offer ?? 0,
+    row?.value_eur ?? 0,
+    row?.single_value_eur ?? 0,
+  );
+}
+
+function shares(
+  contracts: number,
+  singleOffer: number,
+  valueEur: number,
+  singleValueEur: number,
+): CompetitionTotals {
   return {
     contracts,
     singleOffer,

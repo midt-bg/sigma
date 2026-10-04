@@ -234,8 +234,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         </p>
         <SingleOfferPortion
           valueEur={singleOffer.valueEur}
-          totalEur={totals.valueEur}
-          scopeLabel="на всички поръчки"
+          totalEur={singleOffer.baseValueEur}
+          singleOffer={singleOffer.contracts}
+          contracts={singleOffer.baseContracts}
+          scopeLabel="на договорите с известен брой оферти"
         />
         <div
           className="tabset"

@@ -106,7 +106,7 @@ export const TABLES: TableDoc[] = [
     name: 'facet_counts',
     grain: 'брой за филтър-фасет',
     columns:
-      "facet ('procedure'|'eu'|'sector'|'year'|'single_offer'), key, contracts (при 'single_offer' — само с известна стойност)",
+      "facet ('procedure'|'eu'|'sector'|'year'|'single_offer'), key, contracts, value_eur (при 'single_offer': key 'known' = договорите с известен брой оферти, 'one' = тези с една оферта; value_eur — сумата на положителните стойности)",
   },
   {
     name: 'contract_rollup',
@@ -148,8 +148,9 @@ export const CANONICAL_QUERIES: { intent: string; sql: string }[] = [
     sql: 'SELECT substr(c.signed_at, 1, 4) AS year, SUM(c.amount_eur) AS total_eur\nFROM contracts c\nWHERE c.amount_eur IS NOT NULL AND c.signed_at IS NOT NULL\nGROUP BY year ORDER BY year;',
   },
   {
-    intent: 'Дял на договорите с една оферта',
-    sql: 'SELECT\n  SUM(CASE WHEN c.bids_received = 1 THEN c.amount_eur ELSE 0 END) AS single_offer_eur,\n  SUM(c.amount_eur) AS total_eur\nFROM contracts c WHERE c.amount_eur IS NOT NULL;',
+    intent:
+      'Дял на договорите с една оферта — сред договорите с известен брой оферти, както на сайта (стойност само от положителните суми)',
+    sql: 'SELECT\n  SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS single_offer,\n  COUNT(*) AS contracts,\n  SUM(CASE WHEN c.bids_received = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END) AS single_offer_eur,\n  SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END) AS total_eur\nFROM contracts c WHERE c.bids_received >= 1;',
   },
   {
     intent: 'Разход по CPV сектор',
