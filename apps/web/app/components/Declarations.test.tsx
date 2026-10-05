@@ -7,7 +7,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createRoutesStub } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PersonDeclaration } from '@sigma/api-contract';
-import { Declarations, declarationTypeLabel, declaredInterestLabel } from './Declarations';
+import {
+  Declarations,
+  declarationTypeLabel,
+  declaredEntryNote,
+  declaredInterestLabel,
+} from './Declarations';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,6 +76,30 @@ describe('declarationTypeLabel', () => {
     );
     expect(declarationTypeLabel({ type: null, template: 'interests' })).toBe('част II · интереси');
     expect(declarationTypeLabel({ type: 'Unexpected', template: 'legacy' })).toBe('декларация');
+  });
+});
+
+describe('declaredEntryNote', () => {
+  it('says why a declared entry is not counted, and what the register records — never a finding', () => {
+    expect(declaredEntryNote(interest())).toBeNull();
+    const shares = declaredEntryNote(interest({ kind: 'securities', status: 'shares' }))!;
+    expect(shares).toContain('регистърът не води акционерите');
+    const period = declaredEntryNote(
+      interest({ kind: 'management', timing: 'unknown', status: 'period' }),
+    )!;
+    expect(period).toContain('Декларация за промяна — периодът не е посочен');
+    const unconfirmed = declaredEntryNote(interest({ status: 'unconfirmed' }))!;
+    expect(unconfirmed).toContain('Регистърът не потвърждава, че е това дружество');
+    const board = declaredEntryNote(
+      interest({ kind: 'management', status: 'declared', registryRoles: ['board_of_directors'] }),
+    )!;
+    expect(board).toContain(
+      'Регистърът вписва лицето в дружеството като член на съвета на директорите',
+    );
+    for (const note of [shares, period, unconfirmed, board]) {
+      expect(note).toContain('Не се брои като декларирана връзка');
+      expect(note).not.toMatch(/конфликт|частен интерес|недеклар/);
+    }
   });
 });
 

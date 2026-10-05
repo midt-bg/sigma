@@ -28,6 +28,25 @@ export function declarationTypeLabel(d: Pick<PersonDeclaration, 'type' | 'templa
         : 'декларация';
   return kind ? `${kind} · ${template}` : template;
 }
+/** What Sigma established about an entry it shows as declared but does not count as a declared tie: the
+ *  reason, and the person's roles in the company when the register records them. Never a finding. */
+export function declaredEntryNote(
+  i: NonNullable<PersonDeclaration['interests']>[number],
+): string | null {
+  if (!i.status) return null;
+  const roles = i.registryRoles?.length
+    ? `Регистърът вписва лицето в дружеството като ${[...new Set(i.registryRoles.map((r) => ROLE_LABEL[r]))].join(', ')}. `
+    : '';
+  const reason =
+    i.status === 'shares'
+      ? 'Акции или дял в акционерно дружество: регистърът не води акционерите. '
+      : i.status === 'period'
+        ? 'Декларация за промяна — периодът не е посочен. '
+        : i.status === 'unconfirmed'
+          ? 'Регистърът не потвърждава, че е това дружество. '
+          : '';
+  return `${reason}${roles}Не се брои като декларирана връзка в „Свързани лица“.`;
+}
 export function declaredInterestLabel(
   i: NonNullable<PersonDeclaration['interests']>[number],
 ): string {
@@ -107,6 +126,7 @@ const columns: Column<PersonDeclaration>[] = [
                 <div className="small">
                   <Chip>{declaredInterestLabel(i)}</Chip>
                 </div>
+                {i.status && <p className="small muted">{declaredEntryNote(i)}</p>}
               </li>
             ))}
           </ul>

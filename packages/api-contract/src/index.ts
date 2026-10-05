@@ -971,5 +971,13 @@ export interface PersonDeclaration {
     kind: string;
     timing: string;
     scope: 'self' | 'family' | 'unknown';
+    /** Set on an entry Sigma shows as declared but does not count among the related persons, and why:
+     *  shares of a joint-stock company, a change declaration that gives no period, a company the register
+     *  does not confirm is the one declared, or none of these (`declared`). Absent on a counted entry. */
+    status?: DeclaredEntryStatus;
+    /** The person's roles in the company as the Trade Register records them, when it does. */
+    registryRoles?: RegistryRoleKind[];
   }[];
 }
+
+export type DeclaredEntryStatus = 'shares' | 'period' | 'unconfirmed' | 'declared';
