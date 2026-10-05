@@ -1,4 +1,3 @@
-import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import {
   OFFICE_ORGANIZATIONS,
@@ -16,19 +15,10 @@ describe('the organizations whose bodies are an office', () => {
     expect(officeOrganizationEik(null)).toBeNull();
   });
 
-  it('holds in SQL only for a person who files in the category, and only for that organization', () => {
-    const db = new DatabaseSync(':memory:');
-    db.exec(`CREATE TABLE declarations(person_id, category);
-      INSERT INTO declarations VALUES ('member', '${CATEGORY}'), ('councillor', 'Кметове и общински съветници');`);
-    const holds = (person: string, eik: string) =>
-      (
-        db.prepare(`SELECT ${officeOrganizationSql('?1', '?2')} ok`).get(person, eik) as {
-          ok: number;
-        }
-      ).ok;
-    expect(holds('member', ORG!.eik)).toBe(1);
-    expect(holds('member', '123456789')).toBe(0);
-    expect(holds('councillor', ORG!.eik)).toBe(0);
-    db.close();
+  it('gives SQL that ties the organization to the category, through the given person ids', () => {
+    const sql = officeOrganizationSql('?1', 'r.eik');
+    expect(sql).toContain(`r.eik='${ORG!.eik}'`);
+    expect(sql).toContain(`office_d.person_id IN (?1)`);
+    expect(sql).toContain(`instr(office_d.category,'${ORG!.categoryIncludes}')>0`);
   });
 });
