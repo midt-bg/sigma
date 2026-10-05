@@ -18,14 +18,14 @@ function fixture() {
   db.exec(`CREATE TABLE registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on,uncertain_after);
     CREATE TABLE registry_deeds(eik,outcome,fetched_at);
     CREATE TABLE interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year,relation);
-    CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+    CREATE TABLE interest_link_evidence(link_key,evidence_kind,matched_fact TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
     CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
     CREATE TABLE person_registry_links(person_id,registry_indent);
     CREATE TABLE bidders(id,name,eik_normalized,ownership_kind);
     CREATE TABLE company_totals(bidder_id,contracts);
     CREATE TABLE tenders(id,title,authority_id,published_at);
     CREATE TABLE authorities(id,name);
-    CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+    CREATE TABLE declarations(id,person_id,institution,position,declared_year,category TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
     CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
     CREATE TABLE contracts(id,contract_subject,bidder_id,tender_id,signed_at,amount_eur,bids_received);
     INSERT INTO authorities VALUES('auth:1','Община Тест');

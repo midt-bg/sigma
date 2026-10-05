@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RegistryRoleKind } from '@sigma/api-contract';
 import { d1FromSqlite } from '@sigma/test-support';
+import { OFFICE_ORGANIZATIONS } from '@sigma/shared';
 import { getAuthoritySupplierTies, getCompanyTies } from './company-ties';
 import { getRegistrySourceCompanies } from './person-identity';
 import { registryPersonIdFromSlug, registryPersonSlug } from './identity';
@@ -311,6 +312,39 @@ describe('getRegistryPerson', () => {
     // Nor does the seat reach the enterprise from a company the person also holds a role in.
     const net = await getCompanyTies(db, 'eik:111111111');
     expect(net.nodes.map((n) => n.id)).not.toContain('eik:977777777');
+  });
+
+  it('keeps the seat in the organization the person files for as a member of its bodies as an office', async () => {
+    const [ORG] = OFFICE_ORGANIZATIONS;
+    const db = served();
+    open!.exec(`
+      INSERT INTO bidders (id,name,bulstat,eik_normalized,eik_valid,kind) VALUES
+        ('eik:${ORG!.eik}','СДРУЖЕНИЕ ТЕСТОВА ОРГАНИЗАЦИЯ','${ORG!.eik}','${ORG!.eik}',1,'company');
+      INSERT INTO company_totals (bidder_id,name,kind,won_eur,contracts,authorities) VALUES
+        ('eik:${ORG!.eik}','СДРУЖЕНИЕ ТЕСТОВА ОРГАНИЗАЦИЯ','company',900000,5,2);
+      INSERT INTO registry_deeds (eik,name,legal_form,outcome,fetched_at) VALUES
+        ('${ORG!.eik}','ТЕСТОВА ОРГАНИЗАЦИЯ','ASSOC','ok','2026-09-10T03:00:00Z');
+      INSERT INTO registry_roles (eik,sub_uic,field_ident,role,subject_kind,subject_id,subject_name,entry_number,added_on)
+        VALUES ('${ORG!.eik}','0000','00125','governing_body','person','${ANNA}','АННА ПЕТРОВА','f1','2022-02-02');
+      INSERT INTO persons (id,name) VALUES ('person:anna','Анна Петрова');
+      INSERT INTO person_registry_links VALUES ('person:anna','${ANNA}','l','e','2026-09-10');
+    `);
+    const before = (await getRegistryPerson(db, ANNA))!;
+    // Filed for as no office: an organization like any other, in the graph and the totals.
+    expect(before.roles.find((r) => r.company.eik === ORG!.eik)!.company.office).toBeUndefined();
+    expect(before.network.nodes.map((n) => n.id)).toContain(`eik:${ORG!.eik}`);
+    open!
+      .exec(`INSERT INTO declarations (id,person_id,xml_file,folder_year,declared_year,template,category,institution,position,source_url)
+      VALUES ('decl:2025:a.xml','person:anna','a.xml','2025','2025','interests',
+        'Членовете на ръководните и на контролните ${ORG!.categoryIncludes}','НС','Член','https://example.test/a');`);
+    const p = (await getRegistryPerson(db, ANNA))!;
+    const seat = p.roles.find((r) => r.company.eik === ORG!.eik)!;
+    // Filed for as a member of its bodies: the seat is marked an office — never as public property — and stays
+    // out of the graph and the totals, as a seat in a public enterprise does.
+    expect(seat.company).toMatchObject({ office: true });
+    expect(seat.company.ownershipKind).toBeUndefined();
+    expect(p.network.nodes.map((n) => n.id)).not.toContain(`eik:${ORG!.eik}`);
+    expect(p.wonEur).toBe(before.wonEur - 900000);
   });
 
   it('marks the roles that ended', async () => {

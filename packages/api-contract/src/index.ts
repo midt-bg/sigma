@@ -589,7 +589,15 @@ export interface CompanyPeople {
 /** One role a person holds, or held, at one company. */
 export interface PersonRole {
   /** `ownershipKind`: a public enterprise, where a role is a held position (ADR-0047). */
-  company: { name: string; eik: string; href: string | null; ownershipKind?: OwnershipKind };
+  company: {
+    name: string;
+    eik: string;
+    href: string | null;
+    ownershipKind?: OwnershipKind;
+    /** The organization the person files declarations for as a member of its bodies: for this person the
+     *  seat is a held position, as in a public enterprise — the organization is not public property. */
+    office?: true;
+  };
   role: RegistryRoleKind;
   share: string | null;
   sharePct: number | null;

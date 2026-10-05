@@ -15,7 +15,7 @@ import type {
   RegistryRoleKind,
   RoleHolder,
 } from '@sigma/api-contract';
-import { cleanName, registryCompanyName } from '@sigma/shared';
+import { cleanName, officeOrganizationSql, registryCompanyName } from '@sigma/shared';
 import { companySlug, registryPersonSlug } from './identity';
 import { companyNode, personNode } from './tie-node';
 
@@ -281,6 +281,7 @@ interface PersonRoleRow {
   bidder_kind: 'company' | 'consortium' | null;
   won_eur: number | null;
   ownership_kind: OwnershipKind | null;
+  office: number;
 }
 
 const PERSON_SQL = `SELECT name FROM registry_persons WHERE indent = ?1`;
@@ -289,7 +290,9 @@ const PERSON_ROLES_SQL = `
   SELECT r.eik, r.role, r.share, ${sharePct('r')} AS share_pct,
          r.entry_number, r.added_on, r.removed_on, r.uncertain_after, d.name AS deed_name,
          d.fetched_at, b.id AS bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, ct.won_eur,
-         b.ownership_kind
+         b.ownership_kind,
+         -- The organization this person files declarations for as a member of its bodies: their office.
+         ${officeOrganizationSql('SELECT pl.person_id FROM person_registry_links pl WHERE pl.registry_indent = ?1', 'r.eik')} AS office
   FROM registry_roles r
   JOIN registry_deeds d ON d.eik = r.eik
   JOIN bidders b ON b.id = 'eik:' || r.eik
@@ -318,6 +321,7 @@ export async function getRegistryPerson(
           eik: r.eik,
           href: r.bidder_id ? `/companies/${companySlug(r.bidder_id)}` : null,
           ...(r.ownership_kind ? { ownershipKind: r.ownership_kind } : {}),
+          ...(r.office ? { office: true as const } : {}),
         },
         role: r.role,
         share: r.share,
@@ -334,7 +338,8 @@ export async function getRegistryPerson(
     // ones. A seat on the board of a public enterprise is a held position (ADR-0047 §2): the enterprise's
     // contracts are not the person's, not even through the registry role, so it is neither drawn nor counted.
     // The roles table above keeps the seat, marked by its ownership, and the timeline shows it as a position.
-    const privateRows = rows.results.filter((r) => !r.ownership_kind);
+    // So does the seat in the organization the person files declarations for as a member of its bodies.
+    const privateRows = rows.results.filter((r) => !r.ownership_kind && !r.office);
     const centre = personNode(indent, person.name, 0);
     const at = new Map<
       string,

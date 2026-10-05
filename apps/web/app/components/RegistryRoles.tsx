@@ -98,6 +98,12 @@ const companyColumn: Column<PersonRole> = {
           <OwnershipChip kind={r.company.ownershipKind} />
         </>
       )}
+      {!r.company.ownershipKind && r.company.office && (
+        <>
+          {' '}
+          <Chip>заемана длъжност</Chip>
+        </>
+      )}
     </>
   ),
 };

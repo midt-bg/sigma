@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import { d1FromSqlite, throwingD1 } from '@sigma/test-support';
+import { OFFICE_ORGANIZATIONS } from '@sigma/shared';
 import { getPersonActivity, getRegistryIdentity, getRegistryOfficials } from './person-activity';
 import { getPersonTimeline } from './person-timeline';
 let db: DatabaseSync;
@@ -25,7 +26,7 @@ function fixture() {
     CREATE TABLE registry_deeds(eik,outcome,fetched_at);
     INSERT INTO registry_deeds VALUES('111111111','ok','2026-08-30T12:00:00Z');
     CREATE TABLE interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year,relation);
-    CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+    CREATE TABLE interest_link_evidence(link_key,evidence_kind,matched_fact TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
     CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
     CREATE TABLE person_registry_links(person_id,registry_indent);
     CREATE TABLE bidders(id,name,eik_normalized,ownership_kind);
@@ -34,7 +35,7 @@ function fixture() {
     CREATE TABLE tenders(id,title,authority_id);
     CREATE TABLE authorities(id,name);
     CREATE TABLE authority_totals(authority_id);
-    CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+    CREATE TABLE declarations(id,person_id,institution,position,declared_year,category TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
     CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
     INSERT INTO authority_totals VALUES('auth:1');
     INSERT INTO declarations VALUES('dec20','official','Община','Съветник','2020'),('dec21','official','Община','Съветник','2021');
@@ -117,6 +118,29 @@ it('a role in a public enterprise brings none of its contracts; a declared manag
     new URLSearchParams('basis=self'),
   );
   expect(own.contracts.map((r) => r.id).sort()).toEqual(['a', 'b']);
+});
+it('a seat in the organization the person files for as a member of its bodies brings none of its contracts', async () => {
+  const [ORG] = OFFICE_ORGANIZATIONS;
+  const d1 = fixture();
+  // The fixture's declarations carry no category; this test needs one.
+  db.exec(`
+    CREATE TABLE declarations_copy AS SELECT id,person_id,institution,position,declared_year FROM declarations;
+    DROP TABLE declarations;
+    CREATE TABLE declarations(id,person_id,institution,position,declared_year,category);
+    INSERT INTO declarations SELECT *, NULL FROM declarations_copy;
+    DROP TABLE declarations_copy;
+    INSERT INTO declarations VALUES('org','official','НС','Член','2020','Членовете на ръководните и на контролните ${ORG!.categoryIncludes}');
+    INSERT INTO bidders(id,name,eik_normalized) VALUES('eik:${ORG!.eik}','Организация','${ORG!.eik}');
+    INSERT INTO company_totals VALUES('eik:${ORG!.eik}',1);
+    INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','${ORG!.eik}','governing_body','2000-01-01',NULL);
+    INSERT INTO contracts VALUES('org','Организация','eik:${ORG!.eik}','t','2020-01-01',70);
+  `);
+  const member = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(member.contracts.some((r) => r.id === 'org')).toBe(false);
+  // Filed under any other category, the organization is like any other company the person has a role in.
+  db.exec("UPDATE declarations SET category='Кметове и общински съветници' WHERE id='org'");
+  const other = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(other.contracts.some((r) => r.id === 'org')).toBe(true);
 });
 it('an open role supports contracts only through the last successful registry observation', async () => {
   const d1 = fixture();
