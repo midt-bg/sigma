@@ -923,6 +923,14 @@ const provenIdentities = new Map(
     .all()
     .map((r) => [r.id, r.registry_indent]),
 );
+// Family scope = the official's declaration discloses a related person's stake (relation 'related').
+// Self scope: owns / manages / owns+manages from material ownership + management roles. One definition: the
+// decision pass judges a stake and a management by different rungs (tr-rules-10), so it reads the same answer.
+function relationOf(rec) {
+  if (rec.scope === 'family') return 'related';
+  if (rec.kinds.has('management')) return rec.hasMaterialOwn ? 'owns+manages' : 'manages';
+  return 'owns'; // hasMaterialOwn is guaranteed here (immaterial self skipped)
+}
 function linkRecordFor(rec) {
   // The same skip the decision loop applies: an immaterial self record is census, not a link. Emitting
   // it would ask the decision pass a question no decision ever uses.
@@ -937,6 +945,7 @@ function linkRecordFor(rec) {
     declaredEik: rec.method === 'declared_eik',
     firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
     scope: rec.scope,
+    relation: relationOf(rec),
     relativeNames: [...rec.relativeNames].sort(),
   };
 }
@@ -1116,16 +1125,7 @@ for (const rec of agg.values()) {
     a.own = authOwn(a.name, instNorms, instNormsLong, locTokens, instWords);
     if (OWN_RANK[a.own] > OWN_RANK[ownInst]) ownInst = a.own;
   }
-  // Family scope = the official's declaration discloses a related person's stake (relation 'related').
-  // Self scope: owns / manages / owns+manages from material ownership + management roles.
-  const relation =
-    rec.scope === 'family'
-      ? 'related'
-      : rec.kinds.has('management')
-        ? rec.hasMaterialOwn
-          ? 'owns+manages'
-          : 'manages'
-        : 'owns'; // hasMaterialOwn is guaranteed here (immaterial self skipped above)
+  const relation = relationOf(rec);
   const iClass = interestClass(rec, relation);
   // Self link_key stays `pid|eik` (preserves human-curated suppression keys); family is a distinct claim.
   const linkKey = rec.scope === 'family' ? `${rec.pid}|${rec.eik}|family` : `${rec.pid}|${rec.eik}`;

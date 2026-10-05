@@ -64,6 +64,31 @@ test('only a natural person standing in a role the ladder reads is a holder', ()
   });
 });
 
+test('the bodies that run a company stand apart: a stake never reads them, a declared management does', () => {
+  const f = registryFacts(deedRow(), [
+    role('00190', 'ИВАН ПЕТРОВ ТЕСТОВ'),
+    role('00120', 'СТОЯН ПЕТРОВ ДИРЕКТОРОВ'), // board of directors
+    role('00125', 'ВЕРА ИВАНОВА СДРУЖЕНОВА'), // governing body of an association
+    role('00130', 'ЕМИЛ ГЕОРГИЕВ УПРАВЛЕНОВ', { removed_on: '2020-01-01' }), // management board, ended
+    role('00140', 'НАДЯ СТОЯНОВА НАДЗОРНА'), // supervisory board: not a body that runs it
+  ]);
+  assert.deepEqual(
+    f.holders.map((h) => h.field),
+    ['00190'],
+  );
+  assert.deepEqual(
+    f.bodyHolders.map((h) => [h.field, h.name]),
+    [
+      ['00120', 'СТОЯН ПЕТРОВ ДИРЕКТОРОВ'],
+      ['00125', 'ВЕРА ИВАНОВА СДРУЖЕНОВА'],
+    ],
+  );
+  assert.deepEqual(
+    f.endedBodyHolders.map((h) => [h.field, h.endedOn]),
+    [['00130', '2020-01-01']],
+  );
+});
+
 test('the holders come in one order, whatever order the rows came in', () => {
   const rows = [role('00190', 'Б'), role('00190', 'А'), role('00070', 'В')];
   assert.deepEqual(

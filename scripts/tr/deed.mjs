@@ -11,11 +11,17 @@
 // entities before matching — one person's given name combined with another's surname is a named public
 // claim about the wrong human being. Here there is nothing to split, and nothing to combine.
 
-import { OWNERSHIP_FIELDS, MANAGER_FIELD } from '../../packages/ingest/src/registry-roles.ts';
+import {
+  OWNERSHIP_FIELDS,
+  MANAGER_FIELD,
+  MANAGEMENT_BODY_FIELDS,
+} from '../../packages/ingest/src/registry-roles.ts';
 
-/** The manager field, then the ownership fields — the roles the ladder reads. */
-export const ROLE_FIELDS = [MANAGER_FIELD, ...OWNERSHIP_FIELDS];
-export { OWNERSHIP_FIELDS, MANAGER_FIELD };
+/** The manager field, then the ownership fields — the roles the ladder reads for any link. */
+const STAKE_FIELDS = [MANAGER_FIELD, ...OWNERSHIP_FIELDS];
+/** Every field the ladder reads: a declared management is also looked for on the bodies that run a company. */
+export const ROLE_FIELDS = [...STAKE_FIELDS, ...MANAGEMENT_BODY_FIELDS];
+export { OWNERSHIP_FIELDS, MANAGER_FIELD, MANAGEMENT_BODY_FIELDS };
 
 const isoDay = (v) => (v ? String(v).slice(0, 10) : null);
 
@@ -32,7 +38,25 @@ const isoDay = (v) => (v ? String(v).slice(0, 10) : null);
  *          added_on?:string|null, removed_on?:string|null}[]} roles  its `registry_roles` rows
  */
 export function registryFacts(deed, roles) {
-  const read = new Set(ROLE_FIELDS);
+  // The bodies that run a company are kept apart from the managers and owners: a declared stake is read
+  // against those two alone, exactly as before, and only a declared management also against the bodies.
+  const stake = registeredPeople(roles, new Set(STAKE_FIELDS));
+  const bodies = registeredPeople(roles, new Set(MANAGEMENT_BODY_FIELDS));
+  return {
+    uic: String(deed.eik),
+    name: deed.name ?? null,
+    legalForm: deed.legal_form ?? null,
+    seat: { settlement: deed.seat_settlement ?? '', entryDate: isoDay(deed.seat_entry_on) },
+    ownersEntryDate: isoDay(deed.owners_entry_on),
+    holders: stake.holders,
+    endedHolders: stake.endedHolders,
+    bodyHolders: bodies.holders,
+    endedBodyHolders: bodies.endedHolders,
+  };
+}
+
+/** The people standing in the given fields, and those whose role there ended or has an unclear end. */
+function registeredPeople(roles, read) {
   const holders = roles
     .filter(
       (r) =>
@@ -79,15 +103,7 @@ export function registryFacts(deed, roles) {
         String(a.entryDate).localeCompare(String(b.entryDate)) ||
         a.name.localeCompare(b.name),
     );
-  return {
-    uic: String(deed.eik),
-    name: deed.name ?? null,
-    legalForm: deed.legal_form ?? null,
-    seat: { settlement: deed.seat_settlement ?? '', entryDate: isoDay(deed.seat_entry_on) },
-    ownersEntryDate: isoDay(deed.owners_entry_on),
-    holders,
-    endedHolders,
-  };
+  return { holders, endedHolders };
 }
 
 /**

@@ -266,6 +266,9 @@ const HASHED_INPUTS = [
   'declaredEik',
   'firstDeclaredYear',
   'scope',
+  // What the declarations say about the company — a stake, a management or both — decides which rungs apply
+  // (tr-rules-10), so a link whose declarations change it is decided again.
+  'relation',
   'relativeNames',
 ];
 const REGISTRY_SIDE_INPUTS = new Set(['registry', 'outsideTr']);
