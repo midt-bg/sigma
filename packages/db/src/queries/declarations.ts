@@ -266,7 +266,7 @@ interface TiedCompany {
   names: string[];
   ownershipKind: string | null;
   legalForm: string | null;
-  links: { status: string; class: string; tier: string }[];
+  links: { status: string; class: string; tier: string; surfaced: number }[];
   roles: RegistryRoleKind[];
 }
 
@@ -280,7 +280,8 @@ async function tiedCompanies(db: D1Database, personId: string): Promise<TiedComp
     .prepare(
       `SELECT dc.declaration_id, dc.eik, b.name bidder, b.ownership_kind, rd.name registry_name, rd.legal_form,
       h.names_json history,
-      (SELECT json_group_array(json_object('status',il.status,'class',il.interest_class,'tier',il.publish_tier))
+      (SELECT json_group_array(json_object('status',il.status,'class',il.interest_class,'tier',il.publish_tier,
+          'surfaced',${SURFACED_OWNERSHIP}))
         FROM interest_links il WHERE il.person_id=d.person_id AND il.eik=dc.eik) links,
       (SELECT json_group_array(DISTINCT r.role) FROM person_entities e JOIN registry_roles r
         ON r.subject_id=e.registry_indent AND r.subject_kind='person' AND r.eik=dc.eik
@@ -332,7 +333,9 @@ async function tiedCompanies(db: D1Database, personId: string): Promise<TiedComp
 
 /**
  * An entry the declaration states about a company with procurement, shown although it is not counted among
- * the related persons — with what Sigma established about it, and nothing more. Null leaves the entry as it was:
+ * the related persons — with what Sigma established about it, and nothing more. An entry whose company has a
+ * counted tie the name match above did not reach (a spelling the name key does not fold — a dash, a quote) is
+ * counted, and says so: no status. Null leaves the entry as it was:
  *   - it names none, or more than one, of the companies tied to its filing (no spelling of a name, no ЕИК);
  *   - a link to the company was taken down on an objection;
  *   - the seat is the person's office — in a public enterprise, or in the organization they file for as a
@@ -353,6 +356,22 @@ function declaredEntry(
   if (new Set(named.map((c) => c.eik)).size !== 1) return null;
   const c = named[0]!;
   if (c.links.some((l) => l.status === 'suppressed')) return null;
+  const counted = c.links.filter((l) => l.surfaced);
+  if (counted.length) {
+    const scopes = new Set(counted.map((l) => l.class));
+    return {
+      company: i.entity_raw,
+      kind: i.kind,
+      timing: i.timing,
+      eik: c.eik,
+      scope:
+        scopes.size === 1
+          ? scopes.has('family_ownership')
+            ? 'family'
+            : 'self'
+          : ('unknown' as const),
+    };
+  }
   if (
     c.links.some((l) => l.class === 'ex_officio_board') ||
     (i.kind === 'management' && (c.ownershipKind != null || offices.has(c.eik)))

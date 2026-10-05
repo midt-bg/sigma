@@ -374,3 +374,35 @@ it('shows a declared entry it does not count, with what Sigma established — an
     db.close();
   }
 });
+
+it('counts an entry whose company has a published tie, though the name is spelt with another dash', async () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
+      CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
+      CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+      CREATE TABLE person_registry_links(person_id,registry_indent);
+      CREATE TABLE person_entities(id,registry_indent);
+      CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on,removed_on,uncertain_after,entry_number);
+      CREATE TABLE registry_deeds(eik,name,legal_form);
+      CREATE TABLE registry_company_history(eik,names_json);
+      CREATE TABLE bidders(id,name,ownership_kind);
+      CREATE TABLE declaration_companies(declaration_id,eik,match_method);
+      CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id,publish_tier);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+      INSERT INTO declarations VALUES('i24','p','2024','interests','','Община Тест','Съветник','https://example.test/i24');
+      INSERT INTO bidders VALUES('eik:777777777','ТЕСТ - ТРАНСПОРТ АД',NULL);
+      INSERT INTO registry_deeds VALUES('777777777','ТЕСТ - ТРАНСПОРТ','AD');
+      INSERT INTO declared_interests VALUES('i24','ТЕСТ – ТРАНСПОРТ АД','„ТЕСТ – ТРАНСПОРТ“ АД','management','current');
+      INSERT INTO declaration_companies VALUES('i24','777777777','name_stem');
+      INSERT INTO interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,publish_tier)
+        VALUES('p','ТЕСТ - ТРАНСПОРТ АД','777777777','published','private_ownership','l7','name_stem','document');
+      INSERT INTO interest_link_evidence VALUES('l7','document');`);
+    const [doc] = await getPersonDeclarations(d1FromSqlite(db), 'p');
+    const entry = doc!.interests!.find((i) => i.company === '„ТЕСТ – ТРАНСПОРТ“ АД')!;
+    expect(entry).toMatchObject({ eik: '777777777', scope: 'self' });
+    expect(entry.status).toBeUndefined();
+  } finally {
+    db.close();
+  }
+});
