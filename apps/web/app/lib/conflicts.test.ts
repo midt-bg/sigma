@@ -749,6 +749,36 @@ describe('applyRoleScope', () => {
     expect(scoped[1]).toMatchObject({ ...direct, companies: [company('2', 'manager')] });
     expect(applyRoleScope([declared, seat, both], 'all')).toEqual([declared, seat, both]);
   });
+
+  it('lists a declared seat on a board only with the seats, as a registered one', () => {
+    const declaredCompany = (eik: string, board: number) => ({
+      company: eik,
+      eik,
+      self: 0,
+      family: 0,
+      manages: 1,
+      board,
+    });
+    const seatOnly = {
+      ...base,
+      stakeKind: 'self' as const,
+      officialSlug: 'ds',
+      companies: [declaredCompany('4', 1)],
+      direct: null,
+    };
+    const stakeAndSeat = {
+      ...base,
+      stakeKind: 'self' as const,
+      officialSlug: 'dm',
+      companies: [{ ...declaredCompany('5', 0), self: 1, manages: 0 }, declaredCompany('6', 1)],
+      direct,
+    };
+    const scoped = applyRoleScope([seatOnly, stakeAndSeat], 'direct');
+    expect(scoped.map((r) => r.officialSlug)).toEqual(['dm']);
+    expect(scoped[0]!.companies!.map((c) => c.eik)).toEqual(['5']);
+    expect(scoped[0]).toMatchObject(direct);
+    expect(applyRoleScope([seatOnly, stakeAndSeat], 'all')).toHaveLength(2);
+  });
 });
 
 describe('declarantsChip — the company header claims no more than its links', () => {

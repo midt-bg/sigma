@@ -1,3 +1,4 @@
+import { officeOrganizationSql } from '@sigma/shared';
 import { declaredOfficeYear, officeBounds, withinOffice } from './declaration-source';
 import { filingsByYear, historyNames, registryOmission } from './registry-omissions';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
@@ -7,8 +8,15 @@ import { PAID_BY_AUTHORITY } from './authority-payees';
 // Canonical identity precedes grouping. Source person ids remain distinct unless the
 // declaration-to-registry bridge proves their public Indent; names are never a join key.
 
+// A declared management the register records only as a seat on a collegial body — not as the manager, not as
+// an owner — or does not record at all: like the register's own board seats, it is listed only when the seats
+// are asked for (ADR-0047 §4, 30.09). A declared stake and a registered manager are listed by default.
+const BOARD_SEAT = `(il.relation='manages' AND NOT EXISTS (SELECT 1 FROM interest_link_evidence be
+    WHERE be.link_key=il.link_key AND (be.matched_fact LIKE 'role:owner:%'
+      OR be.matched_fact IN ('role:manager:00070','role:manager:00071'))))`;
+
 const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
-  SELECT il.*, COALESCE(pl.registry_indent,il.person_id) identity, p.name
+  SELECT il.*, COALESCE(pl.registry_indent,il.person_id) identity, p.name, ${BOARD_SEAT} board
   FROM interest_links il JOIN persons p ON p.id=il.person_id
   LEFT JOIN person_registry_links pl ON pl.person_id=il.person_id
   WHERE ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
@@ -31,7 +39,7 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   WHERE b.eik_normalized IN (SELECT eik FROM links)
 ), person_contracts AS (
   -- BOTH, at the moment of signing: the declared interest covers the date AND the person was in office.
-  SELECT l.identity,c.id,c.eik,c.amount_eur,
+  SELECT l.identity,c.id,c.eik,c.amount_eur,MAX(NOT l.board) direct,
     MAX(oy.identity IS NOT NULL AND ${withinOffice('ob', 'c.signed_at')}
       AND strftime('%Y',c.signed_at) BETWEEN l.first_declared_year AND l.last_declared_year) in_window
   FROM links l JOIN company_contracts c ON c.eik=l.eik
@@ -40,7 +48,12 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   GROUP BY l.identity,c.id
 ), totals AS (
   SELECT identity,COUNT(*) contract_count,COUNT(DISTINCT eik) company_count,SUM(amount_eur) total_eur,
-    SUM(CASE WHEN in_window THEN amount_eur END) window_eur,MAX(in_window) has_window
+    SUM(CASE WHEN in_window THEN amount_eur END) window_eur,MAX(in_window) has_window,
+    COUNT(DISTINCT CASE WHEN NOT direct THEN eik END) board_company_count,
+    SUM(direct) d_contract_count, COUNT(DISTINCT CASE WHEN direct THEN eik END) d_company_count,
+    SUM(CASE WHEN direct THEN amount_eur END) d_total_eur,
+    SUM(CASE WHEN direct AND in_window THEN amount_eur END) d_window_eur,
+    MAX(direct AND in_window) d_has_window
   FROM person_contracts GROUP BY identity
 ), representatives AS (
   SELECT *,ROW_NUMBER() OVER (PARTITION BY identity ORDER BY (own_institution='exact') DESC,
@@ -57,10 +70,10 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       // Each row's companies and offices, gathered once per identity: as subqueries per row they read the
       // whole `links` list again for every person in the list.
       `${CTE}, identity_companies AS MATERIALIZED (
-      SELECT identity,json_group_array(json_object('eik',eik,'company',company,'self',self,'family',family,'manages',manages)) companies
+      SELECT identity,json_group_array(json_object('eik',eik,'company',company,'self',self,'family',family,'manages',manages,'board',board)) companies
       FROM (
         SELECT l.identity,l.eik,COALESCE(b.name,l.eik) company,MAX(l.relation IN ('owns','owns+manages')) self,
-          MAX(l.interest_class='family_ownership') family,MAX(l.relation='manages') manages
+          MAX(l.interest_class='family_ownership') family,MAX(l.relation='manages') manages,MIN(l.board) board
         FROM links l JOIN bidders b ON b.eik_normalized=l.eik GROUP BY l.identity,l.eik ORDER BY l.identity,b.name
       ) GROUP BY identity
     ), identity_offices AS MATERIALIZED (
@@ -96,6 +109,12 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       family_stake: number;
       offices: string;
       companies: string;
+      board_company_count: number;
+      d_contract_count: number;
+      d_company_count: number;
+      d_total_eur: number | null;
+      d_window_eur: number | null;
+      d_has_window: number;
     }>();
   return result.results.map((r) => ({
     official: r.name,
@@ -110,6 +129,7 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       self: number;
       family: number;
       manages: number;
+      board: number;
     }[],
     soleCompany: r.company_count === 1 ? { company: r.company, eik: r.eik } : null,
     contractCount: r.contract_count,
@@ -119,6 +139,21 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       'mixed' | 'self' | 'family',
     ownInstitution: !!r.own_institution,
     hasContemporaneous: !!r.has_window,
+    // Only a person with a declared seat on a collegial body carries figures without it; the others are listed
+    // whole in either view.
+    ...(r.board_company_count
+      ? {
+          direct: r.d_company_count
+            ? {
+                companyCount: r.d_company_count,
+                contractCount: r.d_contract_count,
+                contractValueEur: r.d_total_eur,
+                contemporaneousValueEur: r.d_window_eur,
+                hasContemporaneous: !!r.d_has_window,
+              }
+            : null,
+        }
+      : {}),
     declaredOffices: JSON.parse(r.offices) as {
       institution: string | null;
       position: string | null;
@@ -165,11 +200,14 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
     JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
     WHERE (?1 IS NULL OR r.eik IN (SELECT eik FROM paid))
-      -- A company the person's declarations tie to at all — published, held, withdrawn, suppressed or barred
-      -- (a joint-stock company is never shown) — is not one the declarations leave out, and this group says
-      -- they do. The pair goes; a person with no pair left is not in the group.
+      -- The person's own office is not a company of theirs: besides a public enterprise (above), a company
+      -- their declarations make an office, and the organization they file declarations for as a member of its
+      -- bodies. A tie taken down on an objection stays down. Every other company the register records them in
+      -- stays, and the row says what their declarations say about it.
       AND NOT EXISTS (SELECT 1 FROM interest_links il LEFT JOIN person_registry_links lp ON lp.person_id=il.person_id
-        WHERE il.eik=r.eik AND (il.person_id=pe.person_id OR lp.registry_indent=pe.identity))
+        WHERE il.eik=r.eik AND (il.person_id=pe.person_id OR lp.registry_indent=pe.identity)
+          AND (il.interest_class='ex_officio_board' OR il.status='suppressed'))
+      AND NOT ${officeOrganizationSql('SELECT lp2.person_id FROM person_registry_links lp2 WHERE lp2.registry_indent=pe.identity', 'r.eik')}
     GROUP BY pe.person_id, r.eik
   ), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM roles)')}
   ), company_contracts AS MATERIALIZED (
@@ -211,9 +249,17 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   )
   SELECT pe.person_id, pe.identity, pe.name, t.*,
     (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1,
-      'registryRole',co.registry_role,'years',json(co.years),'names',json(co.names))) FROM (
+      'registryRole',co.registry_role,'declared',co.declared,'years',json(co.years),'names',json(co.names))) FROM (
       SELECT ro.eik, COALESCE(b.name, ro.eik) company,
         CASE WHEN ro.owner THEN 'owner' WHEN ro.direct THEN 'manager' ELSE 'board' END registry_role,
+        -- What the person's declarations say about the company, where they name it: a declared tie Sigma does
+        -- not count (a stake, a management, a relative's stake), or an entry naming it.
+        COALESCE((SELECT CASE WHEN MAX(il.relation IN ('owns','owns+manages')) THEN 'stake'
+            WHEN MAX(il.relation='manages') THEN 'manages' WHEN MAX(il.relation='related') THEN 'family' END
+          FROM interest_links il LEFT JOIN person_registry_links lp ON lp.person_id=il.person_id
+          WHERE il.eik=ro.eik AND (il.person_id=pe.person_id OR lp.registry_indent=pe.identity)),
+          CASE WHEN EXISTS (SELECT 1 FROM declaration_companies dc JOIN declarations dd ON dd.id=dc.declaration_id
+            WHERE dc.eik=ro.eik AND dd.person_id=pe.person_id) THEN 'named' END) declared,
         -- The years with an annual declaration at whose end the register records the ownership; whether the
         -- year's filings name the company is decided below, over all of them (registryOmission).
         (SELECT json_group_array(DISTINCT d.declared_year) FROM declarations d
@@ -278,6 +324,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
           family: number;
           registry: number;
           registryRole: 'owner' | 'manager' | 'board';
+          declared: 'stake' | 'manages' | 'family' | 'named' | null;
           years: (string | null)[];
           names: [string | null, string | null];
         }[]

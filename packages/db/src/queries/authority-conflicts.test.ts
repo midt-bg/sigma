@@ -11,11 +11,11 @@ it("counts the winners the list it links to shows, a winner first paid since the
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE interest_links(link_key,person_id,eik,status,interest_class,own_institution,first_declared_year,last_declared_year,relation);
-      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind,matched_fact TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
       CREATE TABLE interest_link_authorities(link_key,authority_id,own);
       CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
       CREATE TABLE person_registry_links(person_id,registry_indent);
-      CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year,category TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
       CREATE TABLE IF NOT EXISTS declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
       CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
       CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
