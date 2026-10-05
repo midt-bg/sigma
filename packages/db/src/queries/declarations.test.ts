@@ -406,3 +406,44 @@ it('counts an entry whose company has a published tie, though the name is spelt 
     db.close();
   }
 });
+
+it('says whose an entry is from its ties, and fails loudly on a table it cannot read', async () => {
+  const db = new DatabaseSync(':memory:');
+  const schema = `CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
+    CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
+    CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+    CREATE TABLE person_registry_links(person_id,registry_indent);
+    CREATE TABLE person_entities(id,registry_indent);
+    CREATE TABLE registry_deeds(eik,name,legal_form);
+    CREATE TABLE registry_company_history(eik,names_json);
+    CREATE TABLE bidders(id,name,ownership_kind);
+    CREATE TABLE declaration_companies(declaration_id,eik,match_method);
+    CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id,publish_tier);
+    CREATE TABLE interest_link_evidence(link_key,evidence_kind);`;
+  try {
+    db.exec(`${schema}
+      CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on,removed_on,uncertain_after,entry_number);
+      INSERT INTO declarations VALUES('a24','p','2024','assets','','Община Тест','Съветник','https://example.test/a24');
+      INSERT INTO bidders VALUES('eik:111','АЛФА ТЕСТ ООД',NULL),('eik:222','БЕТА ТЕСТ ООД',NULL),('eik:333','ГАМА ТЕСТ ООД',NULL);
+      INSERT INTO declared_interests VALUES('a24','x1','АЛФА–ТЕСТ ООД','shares','annual'),
+        ('a24','x2','БЕТА–ТЕСТ ООД','shares','annual'),('a24','x3','ГАМА–ТЕСТ ООД','shares','annual');
+      INSERT INTO declaration_companies VALUES('a24','111','name_stem'),('a24','222','name_stem'),('a24','333','name_stem');
+      INSERT INTO interest_links(person_id,entity_key,eik,status,interest_class,link_key,publish_tier) VALUES
+        ('p','k1','111','published','family_ownership','f1','confirmed'),
+        ('p','k2','222','published','family_ownership','f2','confirmed'),
+        ('p','k2','222','published','private_ownership','s2','document'),
+        ('p','k3','333','held','family_ownership','f3','unknown');
+      INSERT INTO interest_link_evidence VALUES('f1','confirmed'),('f2','confirmed'),('s2','document');`);
+    const [doc] = await getPersonDeclarations(d1FromSqlite(db), 'p');
+    const entry = (c: string) => doc!.interests!.find((i) => i.company === c)!;
+    // A relative's counted stake; an own and a relative's stake in one company; a relative's held stake.
+    expect(entry('АЛФА–ТЕСТ ООД')).toMatchObject({ eik: '111', scope: 'family' });
+    expect(entry('БЕТА–ТЕСТ ООД')).toMatchObject({ eik: '222', scope: 'unknown' });
+    expect(entry('ГАМА–ТЕСТ ООД')).toMatchObject({ scope: 'family', status: 'unconfirmed' });
+    // A registry table it cannot read for another reason is an error, not an empty answer.
+    db.exec('DROP TABLE registry_roles; CREATE TABLE registry_roles(subject_id,subject_kind,eik);');
+    await expect(getPersonDeclarations(d1FromSqlite(db), 'p')).rejects.toThrow(/role/);
+  } finally {
+    db.close();
+  }
+});
