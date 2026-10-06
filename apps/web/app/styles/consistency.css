@@ -380,10 +380,14 @@ td .chip {
   box-sizing: border-box;
   border: 1.5px solid currentColor;
   background: var(--paper, #faf8f2);
+  height: 7px;
+}
+/* Taller than the solid bar so the outline reads as one; centred on the same line. */
+.time-role.time-role-office {
+  top: 14px;
 }
 .time-symbol.role-office {
   width: 24px;
-  height: 6px;
 }
 .time-contract-bin {
   position: absolute;
