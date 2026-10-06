@@ -357,6 +357,90 @@ it('puts offices and public enterprises under „Заемани длъжност
   }
 });
 
+// A held seat is the office itself: its registered period stays on the axis, drawn in outline, and nothing
+// marks it as coinciding with the office years. A private company's rows keep their band.
+it('draws a held seat in outline and without the overlap band', () => {
+  const role = (eik: string, name: string, office?: true) => ({
+    company: { eik, name, href: `/companies/${eik}`, ...(office ? { office } : {}) },
+    role: 'governing_body' as const,
+    share: null,
+    sharePct: null,
+    addedOn: '2018-06-25',
+    removedOn: null,
+    entryNumber: 'e',
+    fetchedAt: '2026-09-01',
+  });
+  const p = {
+    person: {
+      slug: 'b'.repeat(64),
+      name: 'ПЕТЪР ТЕСТОВ',
+      roles: [role('888888888', 'СДРУЖЕНИЕ ТЕСТ', true), role('222222222', 'ЧАСТНО ООД')],
+      companies: 2,
+      wonEur: 0,
+      asOf: '2026-09-01',
+      network: { center: null, nodes: [], edges: [], omitted: 0 },
+    },
+    name: 'ПЕТЪР ТЕСТОВ',
+    links: [],
+    declarations: [],
+    timeline: {
+      reads: [
+        { eik: '888888888', asOf: '2026-09-01' },
+        { eik: '222222222', asOf: '2026-09-01' },
+      ],
+      buyers: [],
+      institutionProfiles: [],
+      observations: [],
+      contracts: [],
+    },
+    activity: emptyActivity,
+    totals: { companies: 2, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    // The intervals carry a band for both: the seat's overlaps the office years as any role would.
+    timelineIntervals: {
+      ...emptyIntervals,
+      bands: {
+        '888888888': [['2018-06-25', '2025-12-31']],
+        '222222222': [['2018-06-25', '2025-12-31']],
+      },
+    },
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as LoadedPersonProfile;
+  const companies = timelineCompanies(p);
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={companies} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub />));
+    const seat = el.querySelector('#company-888888888')!;
+    const own = el.querySelector('#company-222222222')!;
+    expect(seat.querySelectorAll('.time-band')).toHaveLength(0);
+    expect(own.querySelectorAll('.time-band')).toHaveLength(1);
+    const seatRole = seat.querySelector('.time-role')!;
+    expect(seatRole.classList.contains('time-role-office')).toBe(true);
+    expect(seatRole.getAttribute('aria-label')).toContain('заемана длъжност');
+    expect(own.querySelector('.time-role')!.classList.contains('time-role-office')).toBe(false);
+    expect(el.querySelector('.person-time-legend')!.textContent).toContain(
+      'вписана роля, която е заемана длъжност',
+    );
+    expect(el.querySelector('.person-time-note')!.textContent).toContain('Отсечките с контур');
+    act(() => {
+      seatRole.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
+    expect(el.querySelector('.time-tip')!.textContent).toContain(
+      'Заемана длъжност, не частен интерес',
+    );
+  } finally {
+    act(() => root.unmount());
+    el.remove();
+  }
+});
+
 it('renders nothing when there are no dated facts or companies', () => {
   const p = {
     person: null,
