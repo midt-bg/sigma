@@ -53,6 +53,43 @@ it('returns every source and its own role/dates, including a filing with no comp
   }
 });
 
+// Presentation only: a filing for a seat in an organization's bodies is shown under the organization, and the
+// workplace the document names is carried beside it, verbatim.
+it('shows a filing for a seat in an organization’s bodies under the organization, its own workplace beside it', async () => {
+  const [ORG] = OFFICE_ORGANIZATIONS;
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
+   CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+   CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
+   CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+   CREATE TABLE person_registry_links(person_id,registry_indent);
+   CREATE TABLE bidders(id,name);
+   CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id);
+   CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+   INSERT INTO declarations VALUES
+     ('c','p','2021','assets','Членовете на ръководните и на контролните ${ORG!.categoryIncludes}','ПУ „Тестов“','Член на НС','https://example.test/c'),
+     ('w','p','2022','assets','Ежегодни декларации','НС на БЧК','Член на НС на БЧК','https://example.test/w'),
+     ('o','p','2023','assets','Ежегодни декларации','Община Тест','Съветник','https://example.test/o');`);
+    const docs = await getPersonDeclarations(d1FromSqlite(db), 'p');
+    const of = (id: string) => docs.find((d) => d.id === id)!;
+    expect(of('c')).toMatchObject({
+      institution: ORG!.name,
+      position: 'Член на НС',
+      office: { basis: 'category', work: 'ПУ „Тестов“' },
+    });
+    expect(of('w')).toMatchObject({
+      institution: ORG!.name,
+      office: { basis: 'workplace', work: 'НС на БЧК' },
+    });
+    // The person's other office stays as filed.
+    expect(of('o').institution).toBe('Община Тест');
+    expect('office' in of('o')).toBe(false);
+  } finally {
+    db.close();
+  }
+});
+
 it('uses resolved EIKs for all sources and never borrows a same-named company or an unsealed claim', async () => {
   const db = new DatabaseSync(':memory:');
   try {

@@ -2,6 +2,7 @@ import type { DeclaredEntryStatus, PersonDeclaration, RegistryRoleKind } from '@
 import {
   companyNamesAlike,
   declaredTextHasEik,
+  officeInstitution,
   officeOrganizationEik,
   registryCompanyName,
 } from '@sigma/shared';
@@ -126,16 +127,29 @@ export async function getPersonDeclarations(
   const offices = new Set(
     rows.results.map((d) => officeOrganizationEik(d.category as string | null)).filter(Boolean),
   );
+  // A filing for a seat in an organization's bodies is shown under the organization; its own „Месторабота" goes
+  // beside it, verbatim (officeInstitution). The stored declaration is not touched.
+  const categories = rows.results.map((d) => d.category as string | null);
   return rows.results
-    .map((r) => ({
+    .map((r) => {
+      const office = officeInstitution(
+        { category: r.category as string | null, institution: r.institution as string | null },
+        categories,
+      );
+      return { r, office };
+    })
+    .map(({ r, office }) => ({
       id: String(r.id),
       year: r.declared_year as string | null,
       template: String(r.template),
       type: r.declaration_type as string | null,
       declaredOn: r.declared_on as string | null,
       submittedOn: r.submitted_on as string | null,
-      institution: r.institution as string | null,
+      institution: office ? office.name : (r.institution as string | null),
       position: r.position as string | null,
+      ...(office
+        ? { office: { basis: office.basis, work: (r.institution as string | null) || null } }
+        : {}),
       url: String(r.source_url),
       interests: interests.results
         .filter((i) => i.declaration_id === r.id)

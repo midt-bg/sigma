@@ -110,6 +110,12 @@ const columns: Column<PersonDeclaration>[] = [
       <>
         {d.institution || 'Неустановена институция'}
         {d.position && <div className="small muted">{d.position}</div>}
+        {d.office?.basis === 'category' && (
+          <div className="small muted">Институция по категорията на декларацията</div>
+        )}
+        {d.office?.work && (
+          <div className="small muted">Месторабота според декларацията: „{d.office.work}“</div>
+        )}
       </>
     ),
   },

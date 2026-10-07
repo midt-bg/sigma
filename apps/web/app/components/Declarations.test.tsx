@@ -211,6 +211,34 @@ describe('Declarations', () => {
     );
   });
 
+  it('shows a seat in an organization’s bodies under the organization, with the workplace as written', () => {
+    const c = render(
+      <Declarations
+        declarations={[
+          declaration({
+            id: 'c',
+            institution: 'Сдружение Тест',
+            position: 'Член на съвета',
+            office: { basis: 'category', work: 'ТЕСТ ГРУП ЕООД' },
+          }),
+          declaration({
+            id: 'w',
+            institution: 'Сдружение Тест',
+            position: 'Член на съвета',
+            office: { basis: 'workplace', work: 'СТ' },
+          }),
+        ]}
+      />,
+    );
+    const [byCategory, byWorkplace] = [...c.querySelectorAll('tbody tr')].map(
+      (row) => cell(row, 'Институция и длъжност').textContent,
+    );
+    expect(byCategory).toBe(
+      'Сдружение ТестЧлен на съветаИнституция по категорията на декларациятаМесторабота според декларацията: „ТЕСТ ГРУП ЕООД“',
+    );
+    expect(byWorkplace).toBe('Сдружение ТестЧлен на съветаМесторабота според декларацията: „СТ“');
+  });
+
   it('notes an entry or exit declaration whose year differs from its document date', () => {
     const note = 'Посочената година се различава от датата на документа.';
     const c = render(

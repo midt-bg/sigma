@@ -137,6 +137,12 @@ it('a seat in the organization the person files for as a member of its bodies br
   `);
   const member = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
   expect(member.contracts.some((r) => r.id === 'org')).toBe(false);
+  // The timeline names the seat after the organization, not after the workplace the filing gives.
+  const timeline = await getPersonTimeline(d1, 'person', ['official']);
+  expect(timeline.institutionProfiles).toEqual([
+    { institution: 'Община', authorityId: 'auth:1' },
+    { institution: ORG!.name, authorityId: null },
+  ]);
   // Filed under any other category, the organization is like any other company the person has a role in.
   db.exec("UPDATE declarations SET category='Кметове и общински съветници' WHERE id='org'");
   const other = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());

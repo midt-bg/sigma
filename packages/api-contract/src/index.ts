@@ -970,6 +970,11 @@ export interface PersonDeclaration {
   submittedOn: string | null;
   institution: string | null;
   position: string | null;
+  /** Set when the declaration is filed for a seat in the bodies of an organization (ADR-0047 §2):
+   *  `institution` is then that organization — named by the declaration's category (`category`), or by
+   *  the „Месторабота" of a copy in a folder of declaration types (`workplace`) — and `work` is the
+   *  document's own „Месторабота", verbatim. Presentation only; the declaration is stored as filed. */
+  office?: { basis: 'category' | 'workplace'; work: string | null };
   url: string;
   companyEiks: string[];
   /** Business interests in this document only; unresolved entities have no profile link. */
