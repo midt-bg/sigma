@@ -114,7 +114,9 @@ const columns: Column<PersonDeclaration>[] = [
           <div className="small muted">Институция по категорията на декларацията</div>
         )}
         {d.office?.work && (
-          <div className="small muted">Месторабота според декларацията: „{d.office.work}“</div>
+          <div className="small muted">
+            Месторабота според декларацията: <span className="verbatim">„{d.office.work}“</span>
+          </div>
         )}
       </>
     ),

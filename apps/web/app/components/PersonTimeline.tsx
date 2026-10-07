@@ -439,7 +439,8 @@ export function PersonTimeline({
                 )}
                 {works.length > 0 && (
                   <small>
-                    Месторабота според декларацията: {works.map((w) => `„${w}“`).join('; ')}
+                    Месторабота според декларацията:{' '}
+                    <span className="verbatim">{works.map((w) => `„${w}“`).join('; ')}</span>
                   </small>
                 )}
               </>,
@@ -775,7 +776,11 @@ function declarationTip(d: PersonDeclaration, context: string | undefined, dispu
           {d.position ? ` · ${d.position}` : ''}
         </span>
       )}
-      {d.office?.work && <span>Месторабота според декларацията: „{d.office.work}“</span>}
+      {d.office?.work && (
+        <span>
+          Месторабота според декларацията: <span className="verbatim">„{d.office.work}“</span>
+        </span>
+      )}
       {context && <span>{context}</span>}
       {d.declaredOn && <span>Дата на документа {date(d.declaredOn)}</span>}
       {d.submittedOn && d.submittedOn !== d.declaredOn && (

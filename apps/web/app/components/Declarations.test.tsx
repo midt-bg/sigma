@@ -237,6 +237,8 @@ describe('Declarations', () => {
       'Сдружение ТестЧлен на съветаИнституция по категорията на декларациятаМесторабота според декларацията: „ТЕСТ ГРУП ЕООД“',
     );
     expect(byWorkplace).toBe('Сдружение ТестЧлен на съветаМесторабота според декларацията: „СТ“');
+    // The quoted workplace keeps its own letters: the table's small caps do not reach it.
+    expect(c.querySelector('tbody tr .verbatim')!.textContent).toBe('„ТЕСТ ГРУП ЕООД“');
   });
 
   it('notes an entry or exit declaration whose year differs from its document date', () => {
