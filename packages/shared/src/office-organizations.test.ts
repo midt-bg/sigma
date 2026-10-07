@@ -67,6 +67,12 @@ describe('the institution a declaration is shown under', () => {
     expect(
       officeInstitution({ category: 'Кметове и общински съветници', institution: 'БЧК' }, person),
     ).toBeNull();
+    // A filing that gives no category or no workplace, among categories that may be missing.
+    expect(officeInstitution({ institution: 'БЧК' }, [null, undefined, CATEGORY])).toEqual({
+      name: ORG!.name,
+      basis: 'workplace',
+    });
+    expect(officeInstitution({ category: 'Ежегодни декларации' }, person)).toBeNull();
     // Somebody who does not file in the organization's category.
     expect(
       officeInstitution({ category: 'Ежегодни декларации', institution: 'БЧК' }, [
