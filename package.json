@@ -32,9 +32,9 @@
     "@cloudflare/workers-types": "^4.20260702.1",
     "@vitest/coverage-v8": "^4.1.11",
     "@types/node": "catalog:",
-    "fast-xml-parser": "5.11.1",
+    "fast-xml-parser": "5.11.2",
     "prettier": "^3.9.9",
-    "turbo": "^2.11.4",
+    "turbo": "^2.11.7",
     "typescript": "catalog:",
     "vitest": "^4.1.11",
     "wrangler": "catalog:"
