@@ -53,6 +53,11 @@ overrides:
   #                 Worker. The range (^4.24.0) already admitted the fix; the lockfile had not moved,
   #                 so the audit gate went red on main (2026-09-02). The pin is the floor.
   browserslist: '^4.28.7'
+  #   source-map-js <1.2.2 — one HIGH advisory (GHSA-68fv-2mgg-jv7q, CVSS 8.7), via postcss, css-tree,
+  #                 magicast and @tailwindcss/node → build-time only, never ships to the Worker. Every
+  #                 range already admitted 1.2.2; the lockfile had not moved, so the audit gate went red
+  #                 on main. The pin is the floor.
+  source-map-js: '^1.2.2'
 # One version for the deps declared in more than one workspace. Referenced as "catalog:" from each
 # package.json, so a workspace cannot drift from the others without editing THIS file (review ydimitrof,
 # #339 series): before this, typescript 5.9/6.0, @types/node 22/25 and wrangler 4.75/4.93 coexisted.
