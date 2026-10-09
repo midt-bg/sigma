@@ -4,7 +4,7 @@ import { sharedCoverage } from '../../vitest.shared';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['app/**/*.test.ts', 'app/**/*.test.tsx', 'workers/**/*.test.ts'],
+    include: ['app/**/*.test.ts', 'app/**/*.test.tsx', 'workers/**/*.test.ts', 'test/**/*.test.ts'],
     coverage: sharedCoverage(['app/**', 'workers/**']),
   },
 });
