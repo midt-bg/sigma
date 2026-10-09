@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeD1, throwingD1 } from '@sigma/test-support';
 import {
   ASSISTANT_TOOLS,
@@ -8,6 +8,7 @@ import {
   runTool,
   type ToolContext,
 } from './tools';
+import { EMBED_DIM, MIN_ENTITY_SCORE } from './rag';
 
 function ctx(
   rows: Record<string, string | number | null>[] = [],
@@ -109,6 +110,68 @@ describe('semantic_search', () => {
       query: async () => ({ matches: [] }),
     } as unknown as NonNullable<ToolContext['vectorize']>;
     expect(await runTool('semantic_search', { query: 'x' }, c)).toMatch(/не е налично/);
+  });
+
+  // Through the TOOL door (runTool), not semanticSearch directly: the call site is where a
+  // positional/option mix-up or a forgotten redaction needle hides from every rag.test.ts case.
+  const QUERY = 'детски градини в община Пловдив';
+  const vec = () => Array.from({ length: EMBED_DIM }, () => 0.1);
+  function wired(matches: Array<{ id: string; score: number; metadata: Record<string, string> }>) {
+    const c = ctx();
+    c.ai = {
+      run: vi.fn(async (_m: string, inputs: { text: string[] }) => ({
+        data: inputs.text.map(vec),
+      })),
+    };
+    c.vectorize = {
+      upsert: vi.fn(async () => undefined),
+      query: vi.fn(async () => ({ matches })),
+      getByIds: vi.fn(async () => []),
+    };
+    return c;
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('renders the above-floor hits and emits the counts-only stats line (never the query)', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const c = wired([
+      {
+        id: 'e1',
+        score: MIN_ENTITY_SCORE + 0.05,
+        metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' },
+      },
+      {
+        id: 'e2',
+        score: MIN_ENTITY_SCORE - 0.05,
+        metadata: { kind: 'company', ref: 'eik:2', title: 'Друга' },
+      },
+    ]);
+    const out = await runTool('semantic_search', { query: QUERY }, c);
+    expect(out).toBe(`company eik:1 — Фирма (${(MIN_ENTITY_SCORE + 0.05).toFixed(3)})`);
+    // The options reached semanticSearch as OPTIONS (namespace + topK default), not as misplaced positionals.
+    expect(c.vectorize?.query).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ topK: 8, namespace: 'entity-v1', returnMetadata: 'all' }),
+    );
+    const lines = log.mock.calls.map((x) => String(x[0]));
+    expect(lines).toEqual([JSON.stringify({ evt: 'assistant.semantic', matched: 2, kept: 1 })]);
+    for (const l of lines) expect(l).not.toContain('Пловдив');
+  });
+
+  it('redacts the query when the embedding provider echoes it (tool-site needle)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const c = wired([]);
+    c.ai = {
+      run: async (_m: string, inputs: { text: string[] }) => {
+        throw new Error(`3010: invalid input — ${inputs.text[0]}`);
+      },
+    };
+    expect(await runTool('semantic_search', { query: QUERY }, c)).toMatch(/не е налично/);
+    const line = String(error.mock.calls[0]?.[0]);
+    expect(line).toContain('semantic_search failed');
+    expect(line).toContain('«редактирано»');
+    expect(line).not.toContain('Пловдив');
   });
 });
 
