@@ -105,3 +105,63 @@ export function companyNamesAlike(a: string, b: string): boolean {
   if (!x || !y) return false;
   return x === y || editDistance(x, y) <= Math.floor((Math.max(x.length, y.length) + 4) / 12);
 }
+
+const GLUED_FORM = /(?<=[А-Я]{3})(?:ЕООД|ООД|ЕАД)$/;
+
+/** A declared entry's stem without what declarants add around a фирма: a note in brackets and a legal
+ *  form typed onto the last word („…АРТЕООД"). */
+function declaredNameStem(raw: string): string {
+  return companyNameStem(raw.replace(/\(.*?\)/g, ' '))
+    .split(' ')
+    .map((w) => w.replace(GLUED_FORM, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Whether a declared entry may be the company — the test behind „СИГМА не откри дружеството в
+ * декларациите". It errs the other way from `companyNamesAlike`: besides a typo, one name contained
+ * whole in the other („Х" in „Медицински център Х", „Х" in „Х 97") counts, because the note may only
+ * stand where nothing in the filings resembles the company. A missed note costs a signal; a wrong one
+ * tells a named official he left out a company he declared.
+ */
+export function declaredNameMatches(declared: string, company: string): boolean {
+  const x = declaredNameStem(declared);
+  const y = declaredNameStem(company);
+  if (!x || !y) return false;
+  if (x === y || companyNamesAlike(x, y)) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 4 && ` ${long} `.includes(` ${short} `);
+}
+
+/** The ЕИК written into a declared entry, not as a part of a longer number. */
+export function declaredTextHasEik(declared: string, eik: string): boolean {
+  if (!/^\d+$/.test(eik)) return false;
+  return new RegExp(`(?<!\\d)${eik}(?!\\d)`).test(declared.replace(/\s+/g, ''));
+}
+
+/** What a person's filings for one period say: the ЕИК the resolver tied to them and every declared
+ *  entry's text. */
+export interface DeclaredFilings {
+  eiks: readonly string[];
+  named: readonly string[];
+}
+
+/** A company by its ЕИК and every name it has carried. */
+export interface DeclaredCompany {
+  eik: string;
+  names: readonly (string | null | undefined)[];
+}
+
+/** The filings name the company: by a resolved ЕИК, by the ЕИК written in an entry, or by one of its
+ *  names under any spelling `declaredNameMatches` accepts. */
+export function filingsNameCompany(filings: DeclaredFilings, company: DeclaredCompany): boolean {
+  if (filings.eiks.includes(company.eik)) return true;
+  const names = company.names.filter((n): n is string => !!n?.trim());
+  return filings.named.some(
+    (text) =>
+      declaredTextHasEik(text, company.eik) ||
+      names.some((name) => declaredNameMatches(text, name)),
+  );
+}

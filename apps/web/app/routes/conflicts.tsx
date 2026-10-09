@@ -198,7 +198,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
                   </Chip>
                   {c.missingYears?.length ? (
                     <div className="small muted">
-                      не е посочено в годишната декларация за {c.missingYears.join(', ')} г.
+                      СИГМА не го откри в годишната декларация за {c.missingYears.join(', ')} г.
                     </div>
                   ) : null}
                 </div>
@@ -246,7 +246,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
             </Chip>
           ),
           r.stakeKind === 'registry' && <Chip key="registry">само по Търговския регистър</Chip>,
-          disputed && <Chip key="disputed">не е посочено в декларация</Chip>,
+          disputed && <Chip key="disputed">не е открито в декларация</Chip>,
         ].filter(Boolean);
         return chips.length ? (
           <span className="signal-chips">{chips}</span>

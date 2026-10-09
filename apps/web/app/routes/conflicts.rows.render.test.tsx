@@ -126,7 +126,7 @@ describe('/conflicts — the second page', () => {
 });
 
 describe('/conflicts — the registry group', () => {
-  it('says which annual declarations do not name the registered company, and nothing when all do', async () => {
+  it('says in which annual declarations SIGMA did not find the registered company, and nothing when it found it in all', async () => {
     await mount([
       row({
         officialSlug: 'gap',
@@ -159,7 +159,11 @@ describe('/conflicts — the registry group', () => {
     ]);
     const [gap, named] = bodyRows().map((tr) => cell(tr, 'Дружества').textContent);
     expect(gap).toContain('дял по Търговския регистър');
-    expect(gap).toContain('не е посочено в годишната декларация за 2019, 2020 г.');
-    expect(named).not.toContain('не е посочено');
+    expect(gap).toContain('СИГМА не го откри в годишната декларация за 2019, 2020 г.');
+    expect(gap).not.toContain('не е посочено');
+    expect(named).not.toContain('не го откри');
+    const [gapSignals, namedSignals] = bodyRows().map((tr) => cell(tr, 'Признаци').textContent);
+    expect(gapSignals).toContain('не е открито в декларация');
+    expect(namedSignals).not.toContain('не е открито в декларация');
   });
 });

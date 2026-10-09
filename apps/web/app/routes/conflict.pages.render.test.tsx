@@ -230,9 +230,52 @@ describe('/persons/:id — render', () => {
     expect(note.textContent).toContain('Регистър срещу декларация за 2021 г.');
     expect(note.textContent).toContain('едноличен собственик на капитала');
     expect(note.textContent).toContain('ГАМА ЕООД');
-    expect(note.textContent).toContain('Възможни причини');
-    expect(note.textContent).not.toContain('нарушение');
+    // What the comparison found, not a hypothesis about the declarant: no „пропуск", no „не е посочено".
+    expect(note.textContent).toContain(
+      'СИГМА не откри дружеството в декларациите на лицето за 2021 г.',
+    );
+    expect(note.textContent).toContain('Сравнението е автоматично');
+    expect(note.textContent).toContain('Това не е установено нарушение.');
+    expect(note.textContent).not.toContain('пропуск');
+    expect(note.textContent).not.toContain('не е посочено');
     expect(note.querySelector('a[href="/companies/222"]')).not.toBeNull();
+  });
+
+  it('says in which earlier year the declarant named the company the register still records', async () => {
+    await mount(Person as never, {
+      official: 'Иван Петров',
+      links: [link()],
+      declarations: [
+        {
+          id: '2023',
+          year: '2023',
+          institution: 'Община Тест',
+          position: 'Кмет',
+          template: 'assets',
+          type: 'Annualy',
+          declaredOn: null,
+          submittedOn: null,
+          url: 'https://example.test/2023',
+          companyEiks: [],
+          registryOmissions: [
+            {
+              eik: '222',
+              company: 'ГАМА ЕООД',
+              role: 'sole_owner',
+              entryNumber: 'e2',
+              addedOn: '2021-03-01',
+              earlierYear: '2021',
+            },
+          ],
+        },
+      ],
+    });
+    const note = container.querySelector('.declaration-discrepancy')!;
+    expect(note.textContent).toContain(
+      'Дружеството е посочено в декларацията за 2021 г.; в документите за 2023 г. СИГМА не го откри.',
+    );
+    expect(note.textContent).not.toContain('СИГМА не откри дружеството');
+    expect(note.textContent).toContain('Това не е установено нарушение.');
   });
 
   it('names a relative the register confirms, linking only one with a page, and the reverse mention', async () => {
