@@ -447,9 +447,87 @@ export function applyRoleScope<T extends ConflictPersonRow>(
   });
 }
 
+type RowFigures = Pick<
+  ConflictPersonRow,
+  | 'companyCount'
+  | 'contractCount'
+  | 'contractValueEur'
+  | 'contemporaneousValueEur'
+  | 'hasContemporaneous'
+>;
+const sumNullable = (a: number | null, b: number | null) => (a == null ? b : b == null ? a : a + b);
+function addFigures(a: RowFigures | null, b: RowFigures | null): RowFigures | null {
+  if (!a || !b) return a ?? b;
+  return {
+    companyCount: a.companyCount + b.companyCount,
+    contractCount: a.contractCount + b.contractCount,
+    contractValueEur: sumNullable(a.contractValueEur, b.contractValueEur),
+    contemporaneousValueEur: sumNullable(a.contemporaneousValueEur, b.contemporaneousValueEur),
+    hasContemporaneous: a.hasContemporaneous || b.hasContemporaneous,
+  };
+}
+const offices = (list: DeclaredInstitution[] = []) =>
+  list.flatMap((i) => [
+    { institution: i.institution, position: null, year: null },
+    ...i.positions.map((position) => ({ institution: i.institution, position, year: null })),
+    ...i.years.map((year) => ({ institution: i.institution, position: null, year })),
+  ]);
+
+/**
+ * One row per person. A person with a declared tie and companies the register alone records in arrives as
+ * two parts: the declared row, and the registry row with only the companies the declared one does not hold
+ * (`getRegistryRolePersonRows`). They leave as one row — the declared part leads, every company once, and the
+ * figures of all of them. Without this the declared tie hid the rest: a person who declared one company lost
+ * from the list every other company the register records them in.
+ *
+ * The parts are disjoint by company, so their figures add up. Run it after the role scope and the stake
+ * filter, which choose between the parts, and before the other filters, which ask about the person.
+ */
+export function mergePersonParts<T extends ConflictPersonRow>(rows: T[]): T[] {
+  const people = new Map<string, T>();
+  for (const row of rows) {
+    const key = row.personIdentity ?? row.officialSlug;
+    const prev = people.get(key);
+    if (!prev) {
+      people.set(key, row);
+      continue;
+    }
+    const [lead, rest] =
+      prev.stakeKind === 'registry' && row.stakeKind !== 'registry' ? [row, prev] : [prev, row];
+    const whole = (r: T): RowFigures => ({
+      companyCount: r.companyCount,
+      contractCount: r.contractCount,
+      contractValueEur: r.contractValueEur,
+      contemporaneousValueEur: r.contemporaneousValueEur,
+      hasContemporaneous: r.hasContemporaneous,
+    });
+    people.set(key, {
+      ...lead,
+      ...addFigures(whole(lead), whole(rest)),
+      companies: [...(lead.companies ?? []), ...(rest.companies ?? [])],
+      soleCompany: null,
+      ownInstitution: lead.ownInstitution || rest.ownInstitution,
+      declaredInstitutions: groupDeclaredInstitutions([
+        ...offices(lead.declaredInstitutions),
+        ...offices(rest.declaredInstitutions),
+      ]),
+      // A part without seats on a collegial body is whole in either view.
+      ...(lead.direct === undefined && rest.direct === undefined
+        ? {}
+        : {
+            direct: addFigures(
+              lead.direct === undefined ? whole(lead) : lead.direct,
+              rest.direct === undefined ? whole(rest) : rest.direct,
+            ),
+          }),
+    });
+  }
+  return [...people.values()];
+}
+
 /** The rows the filters keep. A person with both an own and a relative's stake ('mixed') answers both the
  *  'self' and the 'family' filter — but NOT 'registry': 'mixed' is only ever produced by two DECLARED
- *  stakes, while a registry row is by construction someone with no published declared interest at all.
+ *  stakes, while a registry row holds by construction only companies with no published declared interest.
  *  Letting 'mixed' through made the list longer than the facet count promised (19 shown against 16 counted)
  *  and put declared stakes under „роля по Търговския регистър". Every chosen signal must hold; the search
  *  matches the name, position or institution. */

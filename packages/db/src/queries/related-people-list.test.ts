@@ -147,12 +147,14 @@ it('lists people the register records as owners of a winner without a declared s
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
-      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
+      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation TEXT GENERATED ALWAYS AS (NULL) VIRTUAL,
+        link_key TEXT GENERATED ALWAYS AS (person_id || ':' || eik) VIRTUAL);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       -- An open role counts only up to the last successful read of the partida.
       CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
       INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01','ИЗПЪЛНИТЕЛ'),('222222222','ok','2026-09-01',NULL),
-        ('333333333','ok','2026-09-01',NULL);
+        ('333333333','ok','2026-09-01',NULL),('999999999','ok','2026-09-01',NULL);
       CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
       CREATE TABLE declarations(id,person_id,institution,position,declared_year,category TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
       CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
@@ -165,12 +167,14 @@ it('lists people the register records as owners of a winner without a declared s
       INSERT INTO persons VALUES('p','Лице Роля'),('q','Лице Дял'),('r','Лице Без');
       INSERT INTO person_registry_links VALUES('p','${H}'),('q','${'q'.repeat(64)}');
       INSERT INTO interest_links VALUES('q','published','private_ownership','999999999');
+      INSERT INTO interest_link_evidence VALUES('q:999999999','document');
       -- The partner role at 111111111 ENDS at the start of 2021, so the 2022 contract falls outside it —
       -- even though 2022 is one of this person's office years. „Стойност в периода" must ask about the
       -- company, not about whether the person held some office that year.
       INSERT INTO registry_roles(subject_id,subject_kind,role,eik,removed_on) VALUES('${H}','person','partner','111111111','2021-01-01');
       INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','manager','222222222'),
-        ('${'q'.repeat(64)}','person','partner','111111111'),('${'r'.repeat(64)}','person','partner','111111111');
+        ('${'q'.repeat(64)}','person','partner','111111111'),('${'q'.repeat(64)}','person','partner','999999999'),
+        ('${'r'.repeat(64)}','person','partner','111111111');
       INSERT INTO declarations VALUES('d20','p','Община','Кмет','2020'),('d21','p','Община','','2021'),
         ('d22','p','Община','','2022'),('d18','p','Община','','2018'),('e20','p','Община','Кмет','2020'),
         ('d19','p','','','2019');
@@ -181,14 +185,22 @@ it('lists people the register records as owners of a winner without a declared s
       INSERT INTO declared_interests VALUES('d21','„Изпълнител“ ЕООД'),('d19','Друга Фирма ЕООД');
       INSERT INTO declaration_companies VALUES('d22','111111111');
       INSERT INTO bidders VALUES('b1','111111111','Изпълнител',NULL),('b2','222222222','Държавно','state'),
-        ('b3','333333333','Частно',NULL);
-      INSERT INTO company_totals VALUES('b1',2),('b2',1),('b3',1);
+        ('b3','333333333','Частно',NULL),('b9','999999999','Декларирано',NULL);
+      INSERT INTO company_totals VALUES('b1',2),('b2',1),('b3',1),('b9',1);
       INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','manager','333333333');
       INSERT INTO tenders VALUES('t','a'),('t2','other');
       INSERT INTO contracts VALUES('c1','b1','t','2020-05-01',100),('c2','b1','t2','2022-05-01',50),('c3','b2','t','2020-01-01',999),
-        ('c4','b3','t','2019-01-01',7);`);
+        ('c4','b3','t','2019-01-01',7),('c9','b9','t','2020-01-01',1000);`);
     const rows = await getRegistryRolePersonRows(d1FromSqlite(db));
-    expect(rows).toHaveLength(1); // q has a declared stake, r is not a declarant the register identifies
+    // r is not a declarant the register identifies. q declared a stake in 999999999: that company is in q's
+    // declared row, and q is here only with the company the register alone records.
+    expect(rows.map((r) => r.official)).toEqual(['Лице Роля', 'Лице Дял']);
+    expect(rows[1]).toMatchObject({
+      stakeKind: 'registry',
+      companyCount: 1,
+      contractValueEur: 150,
+      companies: [{ eik: '111111111', registryRole: 'owner' }],
+    });
     expect(rows[0]).toMatchObject({
       official: 'Лице Роля',
       personIdentity: H,
@@ -222,7 +234,7 @@ it('lists people the register records as owners of a winner without a declared s
         },
       ],
     });
-    expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'other')).toHaveLength(1);
+    expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'other')).toHaveLength(2);
     expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'nobody')).toEqual([]);
   } finally {
     db.close();
@@ -235,7 +247,9 @@ it('finds a registered company in any filing of the year — another document, a
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
-      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation);
+      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation,
+        link_key TEXT GENERATED ALWAYS AS (person_id || ':' || eik) VIRTUAL);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
       CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
@@ -380,7 +394,9 @@ it('counts the governing body of a private winner, not the seats that only overs
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
-      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
+      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation TEXT GENERATED ALWAYS AS (NULL) VIRTUAL,
+        link_key TEXT GENERATED ALWAYS AS (person_id || ':' || eik) VIRTUAL);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       -- An open role counts only up to the last successful read of the partida.
       CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
@@ -502,7 +518,9 @@ it('leaves out the organization a person files declarations for as a member of i
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
-      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation);
+      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation,
+        link_key TEXT GENERATED ALWAYS AS (person_id || ':' || eik) VIRTUAL);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
       CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);

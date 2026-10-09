@@ -11,6 +11,7 @@ import {
   groupByPerson,
   groupDeclaredInstitutions,
   institutionOptions,
+  mergePersonParts,
   officialHref,
   officialRole,
   sortConflictRows,
@@ -778,6 +779,124 @@ describe('applyRoleScope', () => {
     expect(scoped[0]!.companies!.map((c) => c.eik)).toEqual(['5']);
     expect(scoped[0]).toMatchObject(direct);
     expect(applyRoleScope([seatOnly, stakeAndSeat], 'all')).toHaveLength(2);
+  });
+});
+
+// A person with a declared tie and companies the register alone records in is one row: the declared part
+// leads, every company once, and the figures of both parts — which hold different companies — add up.
+describe('mergePersonParts', () => {
+  const part = (over: Partial<ConflictPersonRow>): ConflictPersonRow => ({
+    official: 'Иван Минев',
+    officialSlug: 'iv',
+    personIdentity: 'id-iv',
+    institution: null,
+    position: null,
+    companyCount: 1,
+    soleCompany: { company: 'Едно', eik: '1' },
+    contractCount: 2,
+    contractValueEur: 100,
+    contemporaneousValueEur: 60,
+    stakeKind: 'self',
+    ownInstitution: false,
+    hasContemporaneous: true,
+    companies: [{ company: 'Едно', eik: '1', self: 1, family: 0 }],
+    declaredInstitutions: [{ institution: 'Община Тест', positions: ['Кмет'], years: ['2020'] }],
+    ...over,
+  });
+  const registry = part({
+    officialSlug: 'iv-registry',
+    stakeKind: 'registry',
+    companyCount: 2,
+    soleCompany: null,
+    contractCount: 3,
+    contractValueEur: 900,
+    contemporaneousValueEur: null,
+    hasContemporaneous: false,
+    ownInstitution: true,
+    companies: [
+      { company: 'Две', eik: '2', self: 0, family: 0, registry: 1, registryRole: 'owner' },
+      { company: 'Три', eik: '3', self: 0, family: 0, registry: 1, registryRole: 'manager' },
+    ],
+    declaredInstitutions: [
+      { institution: 'ОБЩИНА ТЕСТ', positions: ['Кмет', 'Съветник'], years: ['2020', '2021'] },
+    ],
+    direct: {
+      companyCount: 1,
+      contractCount: 1,
+      contractValueEur: 40,
+      contemporaneousValueEur: null,
+      hasContemporaneous: false,
+    },
+  });
+
+  it('joins the declared part and the registry part of one person, the declared part leading', () => {
+    for (const rows of [
+      [part({}), registry],
+      [registry, part({})],
+    ]) {
+      const [row, ...rest] = mergePersonParts(rows);
+      expect(rest).toEqual([]);
+      expect(row).toMatchObject({
+        officialSlug: 'iv',
+        stakeKind: 'self',
+        companyCount: 3,
+        soleCompany: null,
+        contractCount: 5,
+        contractValueEur: 1000,
+        contemporaneousValueEur: 60,
+        hasContemporaneous: true,
+        ownInstitution: true,
+        declaredInstitutions: [
+          { institution: 'Община Тест', positions: ['Кмет', 'Съветник'], years: ['2020', '2021'] },
+        ],
+      });
+      expect(row!.companies!.map((c) => [c.eik, c.self, c.registry ?? 0])).toEqual([
+        ['1', 1, 0],
+        ['2', 0, 1],
+        ['3', 0, 1],
+      ]);
+      // The declared part has no seat on a collegial body, so it counts whole beside the registry's figures.
+      expect(row!.direct).toEqual({
+        companyCount: 2,
+        contractCount: 3,
+        contractValueEur: 140,
+        contemporaneousValueEur: 60,
+        hasContemporaneous: true,
+      });
+    }
+  });
+
+  it('keeps a person with one part as it is, and people apart', () => {
+    const other = part({ officialSlug: 'p2', personIdentity: undefined });
+    expect(mergePersonParts([part({}), other])).toEqual([part({}), other]);
+  });
+
+  it('carries no figures without the seats when neither part has a seat, and none when both are only seats', () => {
+    expect('direct' in mergePersonParts([part({}), { ...registry, direct: undefined }])[0]!).toBe(
+      false,
+    );
+    expect(
+      mergePersonParts([part({ direct: null }), { ...registry, direct: null }])[0]!.direct,
+    ).toBeNull();
+    expect(mergePersonParts([part({ direct: null }), registry])[0]!.direct).toMatchObject({
+      companyCount: 1,
+      contractValueEur: 40,
+    });
+  });
+
+  it('adds unknown amounts as unknown, not as zero', () => {
+    const row = mergePersonParts([
+      part({ contractValueEur: null, contemporaneousValueEur: null }),
+      { ...registry, contractValueEur: null },
+    ])[0]!;
+    expect(row.contractValueEur).toBeNull();
+    expect(row.contemporaneousValueEur).toBeNull();
+    expect(
+      mergePersonParts([
+        part({ companies: undefined, declaredInstitutions: undefined }),
+        registry,
+      ])[0]!.companies!.map((c) => c.eik),
+    ).toEqual(['2', '3']);
   });
 });
 

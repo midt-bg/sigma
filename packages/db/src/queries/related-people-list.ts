@@ -163,8 +163,11 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
 }
 
 /** People with declarations whom the register records as an owner — partner, sole owner or sole trader — or
- *  on the GOVERNING BODY of a private procurement winner, and who have no published declared interest: the
- *  same row shape as the declared list, so the two read as one.
+ *  on the GOVERNING BODY of a private procurement winner: the same row shape as the declared list, so the two
+ *  read as one. Only the companies the person's declared row does not already hold: a person with no published
+ *  declared interest is listed by these alone, and one with it gets them beside the declared ones in a single
+ *  row (`mergePersonParts`, apps/web conflicts.ts) — each company once, under the declared tie when there is
+ *  one.
  *
  *  „Governing body" is the legal organ, not one legal form's word for it (ADR-0047 §3 decided management of a
  *  private company shows beside a stake; `manager` alone implemented only the ООД's управител). A company
@@ -187,8 +190,6 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
       `WITH ${PAID_BY_AUTHORITY}, people AS MATERIALIZED (
     SELECT pl.person_id, pl.registry_indent identity, p.name
     FROM person_registry_links pl JOIN persons p ON p.id=pl.person_id
-    WHERE NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=pl.person_id AND il.status='published'
-        AND il.interest_class IN ('private_ownership','family_ownership'))
   ), roles AS MATERIALIZED (
     SELECT pe.person_id, pe.identity, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner,
       MAX(r.role IN ('sole_owner','partner','trader','manager')) direct
@@ -202,11 +203,12 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     WHERE (?1 IS NULL OR r.eik IN (SELECT eik FROM paid))
       -- The person's own office is not a company of theirs: besides a public enterprise (above), a company
       -- their declarations make an office, and the organization they file declarations for as a member of its
-      -- bodies. A tie taken down on an objection stays down. Every other company the register records them in
-      -- stays, and the row says what their declarations say about it.
+      -- bodies. A tie taken down on an objection stays down. A company their declared row holds is there, once.
+      -- Every other company the register records them in stays, and the row says what their declarations say
+      -- about it.
       AND NOT EXISTS (SELECT 1 FROM interest_links il LEFT JOIN person_registry_links lp ON lp.person_id=il.person_id
         WHERE il.eik=r.eik AND (il.person_id=pe.person_id OR lp.registry_indent=pe.identity)
-          AND (il.interest_class='ex_officio_board' OR il.status='suppressed'))
+          AND (il.interest_class='ex_officio_board' OR il.status='suppressed' OR (${SURFACED_OWNERSHIP})))
       AND NOT ${officeOrganizationSql('SELECT lp2.person_id FROM person_registry_links lp2 WHERE lp2.registry_indent=pe.identity', 'r.eik')}
     GROUP BY pe.person_id, r.eik
   ), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM roles)')}

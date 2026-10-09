@@ -25,6 +25,7 @@ import {
   filterConflictRows,
   groupDeclaredInstitutions,
   institutionOptions,
+  mergePersonParts,
   officialHref,
   officialRole,
   sortConflictRows,
@@ -94,7 +95,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     }));
   // Ownership and sole management by default; the seats on collegial bodies only when asked (`?role=all`).
   const scoped = applyRoleScope(everyone, filters.role);
-  const persons = sortConflictRows(filterConflictRows(scoped, filters), filters.sort);
+  // One row per person. The stake filter chooses between a person's declared part and registry part first, so
+  // „роля по Търговския регистър" lists the companies the register alone records; the other filters ask about
+  // the person, so they read the joined row.
+  const people = mergePersonParts(scoped);
+  const persons = sortConflictRows(
+    filterConflictRows(
+      mergePersonParts(
+        filterConflictRows(scoped, { ...filters, signals: [], institutions: [], q: null }),
+      ),
+      { ...filters, stake: null },
+    ),
+    filters.sort,
+  );
   const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
   const asked = Number(sp.get('page') || 1);
   const page = Math.min(pageCount, Number.isSafeInteger(asked) && asked > 0 ? asked : 1);
@@ -102,10 +115,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     self: scoped.filter((r) => r.stakeKind === 'self' || r.stakeKind === 'mixed').length,
     family: scoped.filter((r) => r.stakeKind === 'family' || r.stakeKind === 'mixed').length,
     registry: scoped.filter((r) => r.stakeKind === 'registry').length,
-    own: scoped.filter((r) => r.ownInstitution).length,
-    window: scoped.filter((r) => r.hasContemporaneous).length,
-    institutions: institutionOptions(scoped, filters.institutions),
-    role: { direct: applyRoleScope(everyone, 'direct').length, all: everyone.length },
+    own: people.filter((r) => r.ownInstitution).length,
+    window: people.filter((r) => r.hasContemporaneous).length,
+    institutions: institutionOptions(people, filters.institutions),
+    role: {
+      direct: mergePersonParts(applyRoleScope(everyone, 'direct')).length,
+      all: mergePersonParts(everyone).length,
+    },
   };
   return data(
     {
