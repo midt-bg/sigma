@@ -6,6 +6,7 @@ import type { UIMessage } from 'ai';
 import { getDb } from '@sigma/db';
 import type { Route } from './+types/assistant.chat';
 import { runAssistant, type AgentEnv } from '../lib/assistant/agent';
+import { embeddingRunnerFor } from '../lib/assistant/bindings';
 import {
   retrieveSchemaContext,
   type EmbeddingRunner,
@@ -87,8 +88,14 @@ export async function action({ request, context }: Route.ActionArgs) {
     console.error('[assistant] BGGPT_API_KEY is not set — endpoint not provisioned');
     return Response.json({ error: 'Асистентът все още не е конфигуриран.' }, { status: 503 });
   }
-  const ai = env.AI as unknown as EmbeddingRunner | undefined;
-  const vectorize = env.VECTORIZE as unknown as VectorIndex | undefined;
+  // Both bindings are typed, not blind-cast (issue #316). VECTORIZE satisfies the narrowed
+  // VectorIndex structurally — this assignment is the compile-time proof, so a drift between
+  // rag.ts and worker-configuration.d.ts fails `tsc`, not production. AI cannot satisfy
+  // EmbeddingRunner structurally (its run() is generic per-model and returns an output UNION), so
+  // it goes through the one sanctioned bridge, embeddingRunnerFor (bindings.ts) — also
+  // compiler-checked, model literal forwarded end-to-end.
+  const vectorize: VectorIndex | undefined = env.VECTORIZE;
+  const ai: EmbeddingRunner | undefined = env.AI ? embeddingRunnerFor(env.AI) : undefined;
   // The latest user message text — used both to RAG-ground the prompt and as the server-authoritative
   // report question, so the model's echo can never smuggle an unbound number into the question slot
   // (review #80).
