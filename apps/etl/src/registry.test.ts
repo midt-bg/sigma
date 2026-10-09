@@ -343,6 +343,18 @@ it('queued winners do not starve new winners; XML Retry-After pauses all reads',
   expect(await nextQueued(db, 10, '2026-09-13T00:10:00Z')).toHaveLength(2);
 });
 
+// A partida read before the name history was, and no longer requested, is read again for its history: without
+// it a declaration naming the company by a former name reads as one that does not name it.
+it('queues a partida already read whose name history is missing, wherever it came from', async () => {
+  const { db, sqlite } = served();
+  sqlite.exec(`INSERT INTO registry_deeds (eik,name,legal_form,outcome,fetched_at)
+    VALUES ('777777777','НЕПОИСКАНО ТЕСТ','OOD','ok','2026-09-14T00:00:00Z')`);
+  await queueNewWinners(db, '2026-09-20T00:00:00Z', 10);
+  expect(sqlite.prepare("SELECT reason FROM registry_queue WHERE eik='777777777'").get()).toEqual({
+    reason: 'new',
+  });
+});
+
 it('queues declared companies without contracts and stores per-entry identity evidence atomically', async () => {
   const { db, sqlite } = served();
   sqlite.exec(
