@@ -59,12 +59,16 @@ async function leaseHolder(db: D1Database): Promise<string | null> {
 const queued = async (db: D1Database) =>
   (await db.prepare('SELECT COUNT(*) AS n FROM registry_queue').first<{ n: number }>())?.n ?? 0;
 
-/** Every company in scope: winners with a partida ЕИК and a contract, plus the explicitly requested. */
+/** Every company in scope: winners with a partida ЕИК and a contract, plus the explicitly requested — and every
+ *  partida already read, so its name history is read too. A partida read before the history was, and no longer
+ *  requested, kept its roles but never its former names; a declaration naming the company as it was called then
+ *  read as one that does not name it. */
 const REQUESTED_COMPANIES = `(
          SELECT DISTINCT b.eik_normalized AS eik FROM bidders b
          WHERE b.eik_valid=1 AND length(b.eik_normalized)=9
            AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id=b.id)
          UNION SELECT eik FROM registry_requested_companies WHERE length(eik)=9
+         UNION SELECT eik FROM registry_deeds WHERE outcome='ok' AND length(eik)=9
        ) requested`;
 
 /** Queue the winners never read: companies with a partida ЕИК and at least one contract. */
