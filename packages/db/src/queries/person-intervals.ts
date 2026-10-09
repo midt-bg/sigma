@@ -128,9 +128,11 @@ export async function getTimelineIntervals(
   db: D1Database,
   indent: string | null,
   personIds: string[],
+  heldSeats: string[] = [],
 ): Promise<TimelineIntervals> {
   const ids = [...new Set(personIds)];
-  const { cte, params } = personActivityScope(indent, ids);
+  const { cte, params } = personActivityScope(indent, ids, heldSeats);
+  const seatsJson = JSON.stringify(heldSeats);
   const idsJson = JSON.stringify(ids);
   const gate = `${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY} AND il.person_id IN (SELECT value FROM json_each(?1))`;
   const [procurements, officeYears, bounds, roles, declared] = await Promise.all([
@@ -164,9 +166,11 @@ export async function getTimelineIntervals(
           (SELECT MAX(date(rd.fetched_at)) FROM registry_deeds rd WHERE rd.eik = r.eik AND rd.outcome = 'ok')
             AS observedOn
         FROM registry_roles r
-        WHERE r.subject_id = ?1 AND r.subject_kind = 'person' AND ${publicRole('r')} AND r.added_on <> ''`,
+        WHERE r.subject_id = ?1 AND r.subject_kind = 'person' AND ${publicRole('r')} AND r.added_on <> ''
+          -- A held seat in a company with a public stake marks no overlap: the seat is the office.
+          AND r.eik NOT IN (SELECT value FROM json_each(?2))`,
       )
-      .bind(indent ?? '')
+      .bind(indent ?? '', seatsJson)
       .all<RoleRow>(),
     db
       .prepare(
@@ -179,9 +183,10 @@ export async function getTimelineIntervals(
         FROM interest_links il JOIN y
           ON CAST(y.year AS TEXT) BETWEEN il.first_declared_year AND il.last_declared_year
         WHERE ${gate} AND ${declarationWindow('il', "(y.year || '-07-01')")}
+          AND NOT (il.relation IS 'manages' AND il.eik IN (SELECT value FROM json_each(?2)))
         ORDER BY il.eik, scope, year`,
       )
-      .bind(idsJson)
+      .bind(idsJson, seatsJson)
       .all<TimelineIntervals['declared'][number]>(),
   ]);
   return {

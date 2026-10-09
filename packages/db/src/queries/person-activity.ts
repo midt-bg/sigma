@@ -76,9 +76,19 @@ export async function getRegistryOfficials(db: D1Database, indent: string): Prom
   }
 }
 
-export function personActivityScope(indent: string | null, ids: string[]) {
-  const params: (string | number)[] = [indent ?? '', ...ids];
+/**
+ * `heldSeats`: the companies with a public stake, however small, in which the person holds a seat and no share
+ * (timeline `heldSeat`). A seat there is a held position, as at a public enterprise: neither the registered role
+ * nor a declared management brings the company's contracts to the person.
+ */
+export function personActivityScope(
+  indent: string | null,
+  ids: string[],
+  heldSeats: string[] = [],
+) {
+  const params: (string | number)[] = [indent ?? '', ...ids, JSON.stringify(heldSeats)];
   const placeholders = ids.map((_, i) => `?${i + 2}`).join(',') || "''";
+  const seats = `(SELECT value FROM json_each(?${ids.length + 2}))`;
   const gate = `${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY} AND il.person_id IN (${placeholders})`;
   const cte = `WITH scoped AS (
     SELECT DISTINCT r.eik FROM registry_roles r WHERE r.subject_id=?1 AND r.subject_kind='person' AND ${publicRole('r')}
@@ -86,7 +96,9 @@ export function personActivityScope(indent: string | null, ids: string[]) {
       AND NOT EXISTS (SELECT 1 FROM bidders pb WHERE pb.id='eik:' || r.eik AND pb.ownership_kind IS NOT NULL)
       -- So is a seat in the organization the person files declarations for as a member of its bodies.
       AND NOT ${officeOrganizationSql(placeholders, 'r.eik')}
+      AND r.eik NOT IN ${seats}
     UNION SELECT il.eik FROM interest_links il WHERE ${gate}
+      AND NOT (il.relation IS 'manages' AND il.eik IN ${seats})
   ), office_years AS (
     SELECT DISTINCT d.declared_year year FROM declarations d
     WHERE d.person_id IN (${placeholders}) AND ${declaredOfficeYear()}
@@ -142,6 +154,7 @@ export async function getPersonActivity(
     | 'context'
     | 'tied'
     | 'untied' = 'all',
+  heldSeats: string[] = [],
 ): Promise<PersonActivity> {
   const ids = [...new Set(personIds)];
   const requestedBasis = search.get('basis');
@@ -157,7 +170,7 @@ export async function getPersonActivity(
     ].includes(requestedBasis ?? '')
   )
     basis = requestedBasis as typeof basis;
-  const scope = personActivityScope(indent, ids);
+  const scope = personActivityScope(indent, ids, heldSeats);
   const filters = {
     company: /^\d{9}(?:\d{4})?$/.test(search.get('company') ?? '') ? search.get('company')! : '',
     authority: (search.get('authority') ?? '').slice(0, 100),

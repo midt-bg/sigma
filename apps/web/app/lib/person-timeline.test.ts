@@ -8,6 +8,7 @@ import type { InterestObservation, TimelineContracts } from '@sigma/db';
 import type { LoadedPersonProfile } from './person-profile.server';
 import { emptyActivity, emptyIntervals } from './person-profile.test-support';
 import {
+  heldSeatEiks,
   insideSpans,
   officeSpans,
   packLanes,
@@ -76,6 +77,7 @@ function profile(over: {
   observations?: InterestObservation[];
   reads?: { eik: string; asOf: string }[];
   declarations?: PersonDeclaration[];
+  publicStakes?: LoadedPersonProfile['publicStakes'];
 }): LoadedPersonProfile {
   return {
     person: over.roles
@@ -102,12 +104,70 @@ function profile(over: {
     activity: emptyActivity,
     totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
     timelineIntervals: emptyIntervals,
+    publicStakes: over.publicStakes ?? {},
     tieLayout: null,
     aliases: [],
     relatives: [],
     namedBy: [],
   };
 }
+
+// A seat in a company with an established public stake, however small, stands with the offices; a share in
+// one does not, whoever else owns it.
+describe('a seat in a company with a public stake', () => {
+  const minority = {
+    listed: null,
+    derived: null,
+    direct: [{ name: 'Тест Банка', kind: 'bnb' as const, pct: 25 }],
+    indirect: [],
+  };
+  const q = profile({
+    links: [
+      { eik: '601', company: 'СЪВЕТ АД', relation: 'manages' } as ConflictLink,
+      { eik: '602', company: 'ДЯЛ АД', relation: 'owns' } as ConflictLink,
+    ],
+    roles: [
+      role('601', 'СЪВЕТ АД', { role: 'board_of_directors' }),
+      role('603', 'СЪДРУЖНИК ООД', { role: 'partner' }),
+      role('604', 'ЧАСТНО ООД'),
+    ],
+    publicStakes: { '601': minority, '602': minority, '603': minority },
+  });
+  const held = Object.fromEntries(timelineCompanies(q).map((c) => [c.eik, c.heldSeat]));
+
+  it('puts a seat with the offices, and a share with the companies', () => {
+    expect(held).toEqual({ '601': true, '602': false, '603': false, '604': false });
+    expect(timelineCompanies(q)[0]!.eik).toBe('601');
+    expect(timelineCompanies(q)[0]!.publicStake).toEqual(minority);
+  });
+});
+
+describe('heldSeatEiks', () => {
+  const stake = {
+    listed: null,
+    derived: null,
+    direct: [{ name: 'О', kind: 'municipal' as const, pct: 25 }],
+    indirect: [],
+  };
+  it('names the companies with a public stake in which the person holds a seat and no share', () => {
+    expect(
+      heldSeatEiks(
+        [
+          role('701', 'СЪВЕТ АД', { role: 'board_of_directors' }),
+          role('702', 'ДЯЛ ООД', { role: 'partner' }),
+          role('702', 'ДЯЛ ООД', { role: 'manager' }),
+          role('704', 'ЧАСТНО ООД'),
+        ],
+        [
+          { eik: '701', relation: 'manages' } as ConflictLink,
+          { eik: '703', relation: 'owns' } as ConflictLink,
+        ],
+        { '701': stake, '702': stake, '703': stake, '705': { ...stake, direct: [] } },
+      ),
+    ).toEqual(['701']);
+    expect(heldSeatEiks([], [], undefined)).toEqual([]);
+  });
+});
 
 describe('timelineCompanies', () => {
   const p = profile({

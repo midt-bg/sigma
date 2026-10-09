@@ -29,6 +29,7 @@ import {
   norm,
   authOwn,
   OWN_RANK,
+  interestClassOf,
 } from './classify.mjs';
 import {
   openCache,
@@ -313,6 +314,30 @@ const bidders = db
     'SELECT id, name, eik_normalized eik, eik_valid valid, settlement, ownership_kind FROM bidders',
   )
   .all();
+// Companies with an established public stake, however small (publicStakeSql): running one is a held position.
+// Without the ownership tables — a build from the declarations alone — only the documented stakes are known.
+const publicStakeEik = await (async () => {
+  const { publicStakeSql, DOCUMENTED_PUBLIC_STAKES } =
+    await import('../../packages/shared/src/public-stakes.ts');
+  const tables = [
+    'registry_roles',
+    'state_owned_eik',
+    'public_owned_eik',
+    'authorities',
+    'registry_deeds',
+  ];
+  if (!tables.every((t) => db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(t)))
+    return new Set(DOCUMENTED_PUBLIC_STAKES.map((s) => s.eik));
+  return new Set(
+    db
+      .prepare(
+        `SELECT DISTINCT eik_normalized eik FROM bidders
+        WHERE eik_normalized IS NOT NULL AND ${publicStakeSql('eik_normalized')}`,
+      )
+      .all()
+      .map((r) => String(r.eik)),
+  );
+})();
 const byKey = new Map();
 const bidderByEik = new Map(); // valid winners, for declared-ЕИК-in-text matching
 for (const b of bidders) {
@@ -1041,15 +1066,20 @@ const trLookupFallback = (() => {
 // the organization whose bodies the declarant files for. A family-scope link is its own class (relative's
 // declared stake).
 function interestClass(rec, relation) {
-  if (rec.scope === 'family') return 'family_ownership';
+  // The office this person's own declarations name — a public enterprise or the organization they file for.
   if (
+    rec.scope !== 'family' &&
     relation === 'manages' &&
-    (rec.bidder.ownership_kind ||
-      publicEnterpriseOffices.get(rec.pid)?.has(rec.eik) ||
+    (publicEnterpriseOffices.get(rec.pid)?.has(rec.eik) ||
       organizationOffices.get(rec.pid)?.has(rec.eik))
   )
     return 'ex_officio_board';
-  return 'private_ownership';
+  return interestClassOf({
+    scope: rec.scope,
+    relation,
+    ownershipKind: rec.bidder.ownership_kind,
+    publicStake: publicStakeEik.has(String(rec.bidder.eik)),
+  });
 }
 const heldOwnershipOpen = new Set(); // ЕИК whose management link the open ownership holds back
 db.exec('BEGIN');

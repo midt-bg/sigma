@@ -567,3 +567,50 @@ it('leaves out the organization a person files declarations for as a member of i
     db.close();
   }
 });
+
+// A seat in a company with a public stake, however small, is a held position, as at a public enterprise: the
+// company is not listed for the person. A share in it is, whoever else owns it.
+it('leaves out a seat in a company with a public stake, and keeps a share in it', async () => {
+  const db = new DatabaseSync(':memory:');
+  const seat = 's'.repeat(64);
+  const share = 'o'.repeat(64);
+  try {
+    db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+      CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
+      CREATE TABLE interest_links(person_id,status,interest_class,eik,relation,
+        link_key TEXT GENERATED ALWAYS AS (person_id || ':' || eik) VIRTUAL);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+      CREATE TABLE registry_roles(subject_id,subject_kind,subject_name,role,eik,share,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
+      CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
+      CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
+      CREATE TABLE state_owned_eik(eik,ownership_kind,canonical_name);
+      CREATE TABLE public_owned_eik(eik,ownership_kind);
+      CREATE TABLE authorities(id,type_group);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year,category);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+      CREATE TABLE declared_interests(declaration_id,entity_raw);
+      CREATE TABLE declaration_companies(declaration_id,eik);
+      CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name,ownership_kind);
+      CREATE TABLE company_totals(bidder_id,contracts);
+      CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
+      CREATE TABLE tenders(id PRIMARY KEY,authority_id);
+      INSERT INTO registry_deeds VALUES('333333333','ok','2026-09-01','СМЕСЕНО');
+      INSERT INTO persons VALUES('ps','Седящ Тестов'),('po','Съдружник Тестов');
+      INSERT INTO person_registry_links VALUES('ps','${seat}'),('po','${share}');
+      INSERT INTO declarations VALUES('d1','ps','Община','Кмет','2020',''),('d2','po','Община','Кмет','2020','');
+      INSERT INTO bidders VALUES('b3','333333333','Смесено',NULL);
+      INSERT INTO company_totals VALUES('b3',1);
+      INSERT INTO tenders VALUES('t','a');
+      INSERT INTO contracts VALUES('c1','b3','t','2020-01-01',7);
+      -- A municipality owns a quarter of the company; a private company the rest.
+      INSERT INTO registry_roles(subject_id,subject_kind,subject_name,role,eik,share) VALUES
+        ('900000001','entity','ОБЩИНА ТЕСТОВО','partner','333333333','25'),
+        ('800000001','entity','ЧАСТНА ТЕСТ ООД','partner','333333333','75'),
+        ('${seat}','person','СЕДЯЩ ТЕСТОВ','board_of_directors','333333333',NULL),
+        ('${share}','person','СЪДРУЖНИК ТЕСТОВ','partner','333333333','1');`);
+    const rows = await getRegistryRolePersonRows(d1FromSqlite(db));
+    expect(rows.map((r) => r.official)).toEqual(['Съдружник Тестов']);
+  } finally {
+    db.close();
+  }
+});

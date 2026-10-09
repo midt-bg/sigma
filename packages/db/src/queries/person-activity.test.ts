@@ -594,3 +594,25 @@ it('opens the office with its year and closes it on the day of the exit filing',
       ('v20','Vacate','2020-04-01','2020-04-02');`);
   expect(await ids('tied')).toEqual([]);
 });
+
+// A seat in a company with a public stake, however small, is a held position: neither the registered role nor a
+// declared management brings the company's contracts to the person. A declared stake in it stays the person's.
+it('leaves out the contracts of a company in which the person holds a seat with a public stake', async () => {
+  const d1 = fixture();
+  const all = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(all.total).toBeGreaterThan(0);
+  db.exec("UPDATE interest_links SET relation='manages'");
+  const seat = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams(), 'all', [
+    '111111111',
+  ]);
+  expect(seat.total).toBe(0);
+  const timeline = await getPersonTimeline(d1, 'person', ['official'], ['111111111']);
+  expect(timeline.contracts).toEqual([]);
+  expect(timeline.observations).toEqual([]);
+  // A share in the same company is the person's, whoever else owns it.
+  db.exec("UPDATE interest_links SET relation='owns'");
+  const stake = await getPersonActivity(d1, null, ['official'], new URLSearchParams(), 'all', [
+    '111111111',
+  ]);
+  expect(stake.total).toBe(all.total);
+});

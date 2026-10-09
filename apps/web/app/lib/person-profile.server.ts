@@ -10,8 +10,10 @@ import {
   getPersonActivity,
   getPersonScope,
   getRegistryPerson,
+  getPublicStakes,
 } from '@sigma/db';
 import { layoutTies } from './tie-layout.server';
+import { heldSeatEiks } from './person-timeline';
 import type { PersonDeclaration } from '@sigma/api-contract';
 import { personNameKey } from '@sigma/shared';
 
@@ -45,16 +47,37 @@ export async function loadPersonProfile(
   // them. Before, a person with neither a Trade Register entry nor a published company link fell to a
   // bare list of documents — 34,086 of the 34,947 people on the site, or 97.5% of them.
   if (!person && !cases.length && !declarations.length) return null;
-  const activity = await getPersonActivity(db, indent ?? null, officialIds, search, 'all');
+  // The public stake of each company the person is tied to. A seat — not a share — in one with a public stake,
+  // however small, is a held position, as at a public enterprise: its contracts are not the person's.
+  const publicStakes = await getPublicStakes(db, [
+    ...(person?.roles ?? []).map((r) => r.company.eik),
+    ...links.map((l) => l.eik),
+  ]);
+  const heldSeats = heldSeatEiks(person?.roles ?? [], links, publicStakes);
+  const activity = await getPersonActivity(
+    db,
+    indent ?? null,
+    officialIds,
+    search,
+    'all',
+    heldSeats,
+  );
   // The company facet includes the full eligible set, even when filters match no contracts.
   const companyEiks = new Set(activity.companies.map((c) => c.eik));
   // The timeline as year bins, and as intervals: the overlap band and each procurement as a span.
   const [timeline, timelineIntervals] = await Promise.all([
-    getPersonTimeline(db, indent ?? null, officialIds),
-    getTimelineIntervals(db, indent ?? null, officialIds),
+    getPersonTimeline(db, indent ?? null, officialIds, heldSeats),
+    getTimelineIntervals(db, indent ?? null, officialIds, heldSeats),
   ]);
   const declaredActivity = officialIds.length
-    ? await getPersonActivity(db, indent ?? null, officialIds, new URLSearchParams(), 'declaration')
+    ? await getPersonActivity(
+        db,
+        indent ?? null,
+        officialIds,
+        new URLSearchParams(),
+        'declaration',
+        heldSeats,
+      )
     : null;
   const name =
     person?.name ??
@@ -80,6 +103,7 @@ export async function loadPersonProfile(
       observations: timeline.observations.filter((o) => companyEiks.has(o.eik)),
     },
     timelineIntervals,
+    ...(Object.keys(publicStakes).length ? { publicStakes } : {}),
     declarations: declarations.map((d): PersonDeclaration => ({
       ...d,
       companyEiks: d.companyEiks.filter((eik) => companyEiks.has(eik)),

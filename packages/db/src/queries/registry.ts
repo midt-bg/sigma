@@ -15,7 +15,8 @@ import type {
   RegistryRoleKind,
   RoleHolder,
 } from '@sigma/api-contract';
-import { cleanName, officeOrganizationSql, registryCompanyName } from '@sigma/shared';
+import { cleanName, officeOrganizationSql, OWNER_ROLES, registryCompanyName } from '@sigma/shared';
+import { publicStakeEiks } from './public-stakes';
 import { companySlug, registryPersonSlug } from './identity';
 import { companyNode, personNode } from './tie-node';
 
@@ -338,8 +339,18 @@ export async function getRegistryPerson(
     // ones. A seat on the board of a public enterprise is a held position (ADR-0047 §2): the enterprise's
     // contracts are not the person's, not even through the registry role, so it is neither drawn nor counted.
     // The roles table above keeps the seat, marked by its ownership, and the timeline shows it as a position.
-    // So does the seat in the organization the person files declarations for as a member of its bodies.
-    const privateRows = rows.results.filter((r) => !r.ownership_kind && !r.office);
+    // So does the seat in the organization the person files declarations for as a member of its bodies, and a
+    // seat — not a share — in a company with a public stake, however small.
+    const stakes = await publicStakeEiks(
+      db,
+      rows.results.map((r) => r.eik),
+    );
+    const privateRows = rows.results.filter(
+      (r) =>
+        !r.ownership_kind &&
+        !r.office &&
+        !(stakes.has(r.eik) && !OWNER_ROLES.includes(r.role as never)),
+    );
     const centre = personNode(indent, person.name, 0);
     const at = new Map<
       string,

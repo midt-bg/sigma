@@ -11,6 +11,7 @@ const q = vi.hoisted(() => ({
   getPersonActivity: vi.fn(),
   getPersonTimeline: vi.fn(),
   getTimelineIntervals: vi.fn(async () => ({ bands: {}, declared: [], procurements: [] })),
+  getPublicStakes: vi.fn(async () => ({})),
   getPersonDestinations: vi.fn(),
   getPersonSourceArchive: vi.fn(),
   getOfficialConflicts: vi.fn(),
@@ -164,6 +165,7 @@ describe('person loader', () => {
       ['person:id-1'],
       expect.any(URLSearchParams),
       'all',
+      [],
     );
   });
 

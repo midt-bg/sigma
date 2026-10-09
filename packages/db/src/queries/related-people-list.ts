@@ -4,6 +4,7 @@ import { filingsByYear, historyNames, registryOmission } from './registry-omissi
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
 import { PAID_BY_AUTHORITY } from './authority-payees';
+import { publicStakeEiks } from './public-stakes';
 
 // Canonical identity precedes grouping. Source person ids remain distinct unless the
 // declaration-to-registry bridge proves their public Indent; names are never a join key.
@@ -185,6 +186,20 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
  *  board member's name read as money that reached him. `direct` is null for a person the register
  *  records only on such a body. */
 export async function getRegistryRolePersonRows(db: D1Database, authorityId?: string) {
+  // A seat — not a share — in a company with a public stake, however small, is a held position, as at a public
+  // enterprise: the company is not the person's.
+  const seats = await publicStakeEiks(
+    db,
+    (
+      await db
+        .prepare(
+          `SELECT DISTINCT r.eik FROM registry_roles r JOIN person_registry_links pl ON pl.registry_indent = r.subject_id
+          WHERE r.subject_kind = 'person'
+            AND r.role IN ('manager','board_of_directors','management_board','governing_body')`,
+        )
+        .all<{ eik: string }>()
+    ).results.map((r) => r.eik),
+  );
   const result = await db
     .prepare(
       `WITH ${PAID_BY_AUTHORITY}, people AS MATERIALIZED (
@@ -210,6 +225,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
         WHERE il.eik=r.eik AND (il.person_id=pe.person_id OR lp.registry_indent=pe.identity)
           AND (il.interest_class='ex_officio_board' OR il.status='suppressed' OR (${SURFACED_OWNERSHIP})))
       AND NOT ${officeOrganizationSql('SELECT lp2.person_id FROM person_registry_links lp2 WHERE lp2.registry_indent=pe.identity', 'r.eik')}
+      AND NOT (r.role NOT IN ('sole_owner','partner','trader') AND r.eik IN (SELECT value FROM json_each(?2)))
     GROUP BY pe.person_id, r.eik
   ), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM roles)')}
   ), company_contracts AS MATERIALIZED (
@@ -288,7 +304,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   FROM people pe JOIN totals t ON t.person_id=pe.person_id
   ORDER BY t.has_window DESC, t.total_eur DESC, pe.identity`,
     )
-    .bind(authorityId ?? null)
+    .bind(authorityId ?? null, JSON.stringify([...seats]))
     .all<{
       person_id: string;
       identity: string;
