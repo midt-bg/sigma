@@ -177,6 +177,8 @@ export async function checkCurrentAmountParity(runner) {
     await scalar(
       runner,
       "SELECT COUNT(*) AS n FROM contracts WHERE value_flag = 'ok' AND current_value IS NOT NULL " +
+        // A framework agreement's own record has no amount_eur by design (framework-ceilings-unsummed).
+        'AND framework IS NOT 2 ' +
         'AND (amount_eur IS NULL OR current_value_eur IS NULL OR ABS(amount_eur - current_value_eur) > 0.01)',
       'n',
     ),
@@ -470,11 +472,38 @@ export async function checkAmendmentTwins(runner) {
   };
 }
 
+// 2b) A framework agreement's own record carries its CEILING — the most its buyers may order under it,
+//     not money spent; the orders placed under it are separate contracts and carry the money. Every sum
+//     on the site reads amount_eur IS NOT NULL, so a ceiling with an amount_eur would be counted twice
+//     (once as the agreement, again through its orders) and would rank its parties as a winner.
+export async function checkFrameworkCeilingsUnsummed(runner) {
+  const name = 'framework-ceilings-unsummed';
+  if (!(await tableExists(runner, 'contracts')))
+    return { name, ok: true, skipped: true, detail: 'contracts table absent' };
+  const n = num(
+    await scalar(
+      runner,
+      'SELECT COUNT(*) AS n FROM contracts WHERE framework = 2 AND amount_eur IS NOT NULL',
+      'n',
+    ),
+  );
+  return {
+    name,
+    ok: n === 0,
+    skipped: false,
+    detail:
+      n === 0
+        ? 'no framework-agreement ceiling enters a money total'
+        : `${n} framework-agreement record(s) carry an amount_eur and are summed as spending`,
+  };
+}
+
 export const CHECKS = [
   checkNonEmptyCorpus,
   checkRollupReconciliation,
   checkCurrentAmountParity,
   checkAnnexTotalSuspectBasis,
+  checkFrameworkCeilingsUnsummed,
   checkNoNegativeValues,
   checkEikValidity,
   checkDateSanity,

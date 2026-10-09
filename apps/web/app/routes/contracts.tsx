@@ -20,7 +20,7 @@ import {
 import { cached } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { UNVERIFIED_HINT } from '../lib/contractValue';
+import { FRAMEWORK_HINT, UNVERIFIED_HINT } from '../lib/contractValue';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -234,6 +234,9 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           <span className="unp">
                             УНП {c.unp}
                             {c.isConsortium ? ' · обединение' : ''}
+                            {c.bidderKind === 'framework_parties'
+                              ? ' · страни по рамково споразумение'
+                              : ''}
                           </span>
                         </td>
                         <td className="parties" data-label="Възложител · Изпълнител">
@@ -252,7 +255,15 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           {date(c.signedAt)}
                         </td>
                         <td className="money" data-label="Стойност (€)">
-                          {c.valueEur == null ? (
+                          {c.frameworkAgreement ? (
+                            <span className="muted" title={FRAMEWORK_HINT}>
+                              таван
+                              {c.frameworkCeilingEur != null && (
+                                <> {moneyBare(c.frameworkCeilingEur)}</>
+                              )}
+                              <span className="sr-only"> — {FRAMEWORK_HINT}</span>
+                            </span>
+                          ) : c.valueEur == null ? (
                             <span className="suspect">данните се проверяват</span>
                           ) : c.valueUnverified ? (
                             <span className="money-unverified" title={UNVERIFIED_HINT}>

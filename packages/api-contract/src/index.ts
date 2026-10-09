@@ -4,7 +4,9 @@
 // UI renders „—" or a „данните се проверяват" note), never a fabricated value.
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-export type EntityKind = 'company' | 'consortium';
+/** `framework_parties` — the suppliers a framework agreement was concluded with, named together in one
+ *  contractor field. They are not a joint bidder: each order under the agreement is its own contract. */
+export type EntityKind = 'company' | 'consortium' | 'framework_parties';
 export type OwnershipKind = 'state' | 'municipal' | 'mixed';
 
 /** One keyset page. Total is from a rollup or a cached COUNT; cursors drive Prev/Next (no deep
@@ -132,6 +134,10 @@ export interface CompanyDetail {
   periodFirst: string | null;
   periodLast: string | null;
   suspect: number; // own contracts excluded from sums (suspect value)
+  /** Framework agreements this contractor is a party to, and their combined ceiling — the most the
+   *  buyers may order under them. Never in the sums above: the orders are separate contracts. */
+  frameworkAgreements: number;
+  frameworkCeilingEur: number;
   topAuthorities: AuthorityShare[];
   moreAuthorities: number;
   procedureMix: ProcedureSlice[];
@@ -197,6 +203,10 @@ export interface AuthorityDetail {
   periodFirst: string | null;
   periodLast: string | null;
   suspect: number;
+  /** Framework agreements this authority concluded, and their combined ceiling. Never in the spend
+   *  above: what the buyers ordered under them are separate contracts. */
+  frameworkAgreements: number;
+  frameworkCeilingEur: number;
   topContractors: CompanyShare[];
   moreContractors: number;
   sectors: SectorSpend[];
@@ -230,6 +240,10 @@ export interface ContractListItem {
   /** The value is present and summed, but the source figure looks wrong (`value_flag = 'value_low'`).
    *  Lists must mark it: unmarked, 92 € reads exactly like a genuine 92 € contract. */
   valueUnverified: boolean;
+  /** The record of a framework agreement itself: `valueEur` is null on purpose and the row shows the
+   *  agreement's ceiling instead, which is not money spent. */
+  frameworkAgreement: boolean;
+  frameworkCeilingEur: number | null;
 }
 
 export interface ContractParty {
@@ -342,6 +356,9 @@ export interface ContractDetail {
    *  contracts under the parent tender. Null for a normal single/per-lot award. The procedure-level
    *  estimate then represents the whole framework ceiling, not this individual call-off. */
   frameworkAwards: number | null;
+  /** The record of a framework agreement itself (ЦАИС ЕОП: „поръчка за рамково споразумение"): its
+   *  value is the agreement's ceiling, never summed; the orders placed under it are separate contracts. */
+  frameworkAgreement: boolean;
   authority: ContractParty;
   bidder: ContractParty;
   lots: ContractLots | null;

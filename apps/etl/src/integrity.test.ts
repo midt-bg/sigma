@@ -72,6 +72,8 @@ function servedD1(seed: Seed = {}): D1Database {
     { when: 'signed_at', all: [{ n: seed.badDates ?? 0 }] },
     // current-amount-parity (#261): clean by default — no detail/rollup disagreement.
     { when: 'current_value_eur', all: [{ n: 0 }] },
+    // framework-ceilings-unsummed: no agreement record carries an amount.
+    { when: 'framework = 2', all: [{ n: 0 }] },
     { when: ['FROM contracts', 'COUNT(*) AS n'], all: [{ n: seed.contracts ?? 5 }] },
     { when: 'neg_ok', all: [{ neg_ok: seed.negOk ?? 0, neg_other: 0 }] },
     { when: 'eik_valid = 1', all: [{ n: 0 }] },

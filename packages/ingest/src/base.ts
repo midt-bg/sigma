@@ -4,7 +4,15 @@ import { amendmentValueTreatment } from './amendment-total.ts';
 
 export type BaseCategory = 'contracts' | 'tenders' | 'annexes';
 export type BaseCoercionKind =
-  'text' | 'int' | 'real' | 'bool' | 'date' | 'real_signed' | 'secured_inverse' | 'variants_enum';
+  | 'text'
+  | 'int'
+  | 'real'
+  | 'bool'
+  | 'date'
+  | 'real_signed'
+  | 'secured_inverse'
+  | 'variants_enum'
+  | 'present_flag';
 export type BaseStagingValue = string | number | null;
 export type BaseStagingRow = Record<string, BaseStagingValue>;
 
@@ -129,6 +137,15 @@ function toVariants(v: unknown): number | null {
   return null;
 }
 
+// frameworkAgreementContract is not a yes/no in ЦАИС ЕОП: it names the kind of order placed under a
+// framework agreement („Вътрешен конкурентен избор по РС", „Договор по РС с един изпълнител") and is
+// empty otherwise. Read as a boolean it was always NULL, so no call-off was ever recognised as one.
+export function toPresentFlag(v: unknown): number | null {
+  const s = clean(v);
+  if (s === null) return null;
+  return toBool(s) ?? 1;
+}
+
 export function coerce(kind: BaseCoercionKind, v: unknown): BaseStagingValue {
   if (kind === 'int') return toInt(v);
   if (kind === 'real') return toReal(v);
@@ -137,6 +154,7 @@ export function coerce(kind: BaseCoercionKind, v: unknown): BaseStagingValue {
   if (kind === 'date') return toISODate(v);
   if (kind === 'secured_inverse') return toSecuredFinancing(v);
   if (kind === 'variants_enum') return toVariants(v);
+  if (kind === 'present_flag') return toPresentFlag(v);
   return clean(v);
 }
 
@@ -198,7 +216,7 @@ export const BASE_CATEGORIES: Record<BaseCategory, BaseCategoryConfig> = {
       field('eu_funded', 'isEuFunded', 'bool'),
       field('eu_programme', 'europeanProgram', 'text'),
       field('framework_notice', 'isFrameworkAgreement', 'bool'),
-      field('framework_contract', 'frameworkAgreementContract', 'bool'),
+      field('framework_contract', 'frameworkAgreementContract', 'present_flag'),
       field('related_to', 'linkedTenders', 'text'),
       field('dps_contract', 'contractUnderQs', 'bool'),
       field('accelerated', 'isAcceleratedProcedure', 'bool'),
@@ -463,7 +481,17 @@ export function baseSqlLiteral(
 ): string {
   if (value === null || value === undefined) return 'NULL';
   const kind = baseColumnKind(cat, column);
-  if (['int', 'real', 'real_signed', 'bool', 'secured_inverse', 'variants_enum'].includes(kind)) {
+  if (
+    [
+      'int',
+      'real',
+      'real_signed',
+      'bool',
+      'secured_inverse',
+      'variants_enum',
+      'present_flag',
+    ].includes(kind)
+  ) {
     return String(value);
   }
   return escapeSqlText(String(value));

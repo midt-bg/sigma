@@ -2,11 +2,12 @@
 // page of 15); its headline comes from contract_rollup where the filters allow; facet counts are grouped
 // or read from facet_counts; CSV is streamed.
 
-import type { ContractListItem, FacetCount, Page } from '@sigma/api-contract';
+import type { ContractListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
+import { FRAMEWORK_AGREEMENT } from './framework';
 import {
   authoritySlug,
   bareContractId,
@@ -99,19 +100,22 @@ interface ContractRow {
   authority_name: string;
   bidder_id: string;
   bidder_name: string;
-  bidder_kind: 'company' | 'consortium';
+  bidder_kind: EntityKind;
   procedure_type: string;
   signed_at: string | null;
   bids_received: number | null;
   amount_eur: number | null;
   value_flag: string;
+  framework: number | null;
+  signing_value_eur: number | null;
 }
 
 const SELECT = `
   SELECT c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title) AS subject, t.source_id AS unp,
          t.cpv_code, c.eu_funded, t.authority_id, a.name AS authority_name,
          c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind,
-         t.procedure_type, c.signed_at, c.bids_received, c.amount_eur, c.value_flag`;
+         t.procedure_type, c.signed_at, c.bids_received, c.amount_eur, c.value_flag,
+         c.framework, c.signing_value_eur`;
 const JOINS = `
   JOIN tenders t ON t.id = c.tender_id
   JOIN authorities a ON a.id = t.authority_id
@@ -467,6 +471,8 @@ function toItem(r: ContractRow): ContractListItem {
     // silent about which ones. The other verdicts either blank the value (handled by valueEur === null)
     // or are repaired upstream, so this single boolean covers what the list can usefully say.
     valueUnverified: r.value_flag === 'value_low',
+    frameworkAgreement: r.framework === FRAMEWORK_AGREEMENT,
+    frameworkCeilingEur: r.framework === FRAMEWORK_AGREEMENT ? r.signing_value_eur : null,
   };
 }
 
@@ -580,11 +586,13 @@ async function liveSummary(db: D1Database, p: ContractListParams): Promise<Contr
   const filters = buildFilters(p);
   // The money sum follows the site-wide value base: every non-NULL amount_eur, regardless of flag.
   // The badge is a separate data-quality metric: NULL values plus value_low rows, which are summed
-  // when amount_eur is populated but remain labelled „непотвърдена стойност".
+  // when amount_eur is populated but remain labelled „непотвърдена стойност". A framework agreement's
+  // own record is NULL on purpose (its ceiling is not spending), not unconfirmed.
   const row = await db
     .prepare(
       `SELECT COUNT(*) AS total, COALESCE(SUM(c.amount_eur), 0) AS eur,
-              SUM(CASE WHEN c.amount_eur IS NULL OR c.value_flag = 'value_low' THEN 1 ELSE 0 END) AS suspect ${FROM}${filters.sql}`,
+              SUM(CASE WHEN (c.amount_eur IS NULL AND c.framework IS NOT ${FRAMEWORK_AGREEMENT})
+                        OR c.value_flag = 'value_low' THEN 1 ELSE 0 END) AS suspect ${FROM}${filters.sql}`,
     )
     .bind(...filters.params)
     .first<{ total: number; eur: number; suspect: number }>();
@@ -698,6 +706,8 @@ const CSV_COLUMNS = [
   'value_eur',
   'eu_funded',
   'bids_received',
+  // The record of a framework agreement has an empty value_eur on purpose: this is its ceiling instead.
+  'framework_ceiling_eur',
 ] as const;
 
 interface CsvRow extends ContractRow {
@@ -743,6 +753,7 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       r.amount_eur,
       r.eu_funded === 1 ? '1' : '0',
       r.bids_received,
+      r.framework === FRAMEWORK_AGREEMENT ? r.signing_value_eur : null,
     ],
     'sigma-contracts.csv',
   );

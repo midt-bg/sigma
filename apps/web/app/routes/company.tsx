@@ -199,9 +199,14 @@ export default function Company({ loaderData }: Route.ComponentProps) {
   const c = loaderData.company;
   const { trend, ties, people, tieLayout, declarants, jointContracts } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
-  const noEikCompany = !c.isConsortium && !c.hasEik;
-  const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
-  const wonVerb = c.isConsortium ? 'спечелило' : 'спечелила';
+  const frameworkParties = c.kind === 'framework_parties';
+  const noEikCompany = !c.isConsortium && !frameworkParties && !c.hasEik;
+  const subjectPhrase = frameworkParties
+    ? 'тези доставчици'
+    : c.isConsortium
+      ? 'това обединение'
+      : 'тази компания';
+  const wonVerb = frameworkParties ? 'спечелили' : c.isConsortium ? 'спечелило' : 'спечелила';
   const hasDeclarants = (declarants?.length ?? 0) > 0;
   return (
     <>
@@ -216,7 +221,13 @@ export default function Company({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker={
             <>
-              {c.isConsortium ? 'Група изпълнители' : noEikCompany ? 'Участник' : 'Компания'}
+              {frameworkParties
+                ? 'Страни по рамково споразумение'
+                : c.isConsortium
+                  ? 'Група изпълнители'
+                  : noEikCompany
+                    ? 'Участник'
+                    : 'Компания'}
               {noEikCompany && (
                 <>
                   {' '}
@@ -284,22 +295,31 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             },
             {
               term: 'Вид субект',
-              value: c.isConsortium
-                ? 'група изпълнители'
-                : noEikCompany
-                  ? 'участник без потвърден идентификатор'
-                  : 'дружество',
-              sub: c.isConsortium
-                ? 'съвместно посочени изпълнители в източника'
-                : noEikCompany
-                  ? 'без ЕИК в източника'
-                  : undefined,
+              value: frameworkParties
+                ? 'страни по рамково споразумение'
+                : c.isConsortium
+                  ? 'група изпълнители'
+                  : noEikCompany
+                    ? 'участник без потвърден идентификатор'
+                    : 'дружество',
+              sub: frameworkParties
+                ? 'доставчиците, с които е сключено споразумението; не са обединение'
+                : c.isConsortium
+                  ? 'съвместно посочени изпълнители в източника'
+                  : noEikCompany
+                    ? 'без ЕИК в източника'
+                    : undefined,
             },
             c.settlement && { term: 'Седалище', value: c.settlement, sub: c.region ?? undefined },
             c.suspect > 0 && {
               term: 'Непотвърдена стойност',
               value: `${count(c.suspect)} ${plural(c.suspect, 'договор', 'договора')}`,
               sub: 'в броя и в сумите, с прогнозната стойност вместо подадената',
+            },
+            c.frameworkAgreements > 0 && {
+              term: 'Рамкови споразумения',
+              value: `${count(c.frameworkAgreements)} · таван ${money(c.frameworkCeilingEur)}`,
+              sub: 'таван, а не изразходвана сума — не влиза в сумите; броят се поръчките по тях',
             },
           ]}
         />

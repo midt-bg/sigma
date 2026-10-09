@@ -65,7 +65,9 @@ export const TABLES: TableDoc[] = [
   {
     name: 'bidders',
     grain: 'един изпълнител',
-    columns: "id, name, kind ('company'|'consortium'), eik_normalized, eik_valid",
+    columns:
+      "id, name, kind ('company'|'consortium'|'framework_parties' — страните по рамково споразумение, " +
+      'не обединение), eik_normalized, eik_valid',
   },
   {
     name: 'contracts',
@@ -73,7 +75,9 @@ export const TABLES: TableDoc[] = [
     columns:
       'id, tender_id→tenders, bidder_id→bidders, amount (display, в `currency`), currency, ' +
       'amount_eur (КАНОНИЧЕН EUR, SAFE TO SUM; сумирай с amount_eur IS NOT NULL), value_flag, date_flag, ' +
-      'fx_converted, fx_rate, signed_at, bids_received, eu_funded',
+      'fx_converted, fx_rate, signed_at, bids_received, eu_funded, ' +
+      'framework (1 = поръчка по рамково споразумение; 2 = самото споразумение — таванът му е в ' +
+      'signing_value_eur, а amount_eur е NULL: НИКОГА не го сумирай)',
   },
   { name: 'amendments', grain: 'един анекс', columns: 'id, contract_id→contracts, …' },
   { name: 'parties', grain: 'роля по OCDS преписка', columns: 'ocid (≠ УНП!), role, …' },

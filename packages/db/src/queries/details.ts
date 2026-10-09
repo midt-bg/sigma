@@ -14,6 +14,7 @@ import type {
   ContractParty,
   ContractRecord,
   ContractValueTimeline,
+  EntityKind,
   OwnershipKind,
   ProcedureSlice,
   SectorSpend,
@@ -22,6 +23,7 @@ import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
 import { contractCohort, getCpvCohortStats } from './cohort';
 import { listContracts } from './contracts';
+import { FRAMEWORK_AGREEMENT } from './framework';
 import { authoritySlug, companySlug, contractSlug } from './identity';
 import { typeLabel } from './rows';
 import { sectorRef } from './sectors';
@@ -158,10 +160,16 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
         )
         .bind(bidderId)
         .first<{ one: number; two: number; three: number; four_plus: number; unknown: number }>(),
+      // Rows with no summed value: unconfirmed ones, and framework agreements, whose ceiling is not spending.
       db
-        .prepare(`SELECT COUNT(*) AS n FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`)
+        .prepare(
+          `SELECT SUM(amount_eur IS NULL AND framework IS NOT ${FRAMEWORK_AGREEMENT}) AS n,
+                SUM(framework = ${FRAMEWORK_AGREEMENT}) AS agreements,
+                SUM(CASE WHEN framework = ${FRAMEWORK_AGREEMENT} THEN signing_value_eur END) AS ceiling_eur
+         FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`,
+        )
         .bind(bidderId)
-        .first<{ n: number }>(),
+        .first<{ n: number | null; agreements: number | null; ceiling_eur: number | null }>(),
       listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }),
       listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }),
     ]);
@@ -215,6 +223,8 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     periodFirst: row.first_date,
     periodLast: row.last_date,
     suspect: suspectRow?.n ?? 0,
+    frameworkAgreements: suspectRow?.agreements ?? 0,
+    frameworkCeilingEur: suspectRow?.ceiling_eur ?? 0,
     topAuthorities,
     moreAuthorities: Math.max(0, row.authorities - topAuthorities.length),
     procedureMix: toProcedureMix(procRows.results),
@@ -317,13 +327,17 @@ export async function getAuthority(
       )
       .bind(authorityId)
       .first<{ avg_bids: number | null }>(),
+    // Rows with no summed value: unconfirmed ones, and framework agreements, whose ceiling is not spending.
     db
       .prepare(
-        `SELECT COUNT(*) AS n FROM contracts c JOIN tenders t ON t.id = c.tender_id
+        `SELECT SUM(c.framework IS NOT ${FRAMEWORK_AGREEMENT}) AS n,
+                SUM(c.framework = ${FRAMEWORK_AGREEMENT}) AS agreements,
+                SUM(CASE WHEN c.framework = ${FRAMEWORK_AGREEMENT} THEN c.signing_value_eur END) AS ceiling_eur
+         FROM contracts c JOIN tenders t ON t.id = c.tender_id
          WHERE t.authority_id = ? AND c.amount_eur IS NULL`,
       )
       .bind(authorityId)
-      .first<{ n: number }>(),
+      .first<{ n: number | null; agreements: number | null; ceiling_eur: number | null }>(),
     listContracts(db, { authority: authoritySlug(authorityId), sort: 'date-desc', pageSize: 6 }),
     listContracts(db, { authority: authoritySlug(authorityId), sort: 'value-desc', pageSize: 6 }),
   ]);
@@ -384,6 +398,8 @@ export async function getAuthority(
     periodFirst: row.first_date,
     periodLast: row.last_date,
     suspect: suspectRow?.n ?? 0,
+    frameworkAgreements: suspectRow?.agreements ?? 0,
+    frameworkCeilingEur: suspectRow?.ceiling_eur ?? 0,
     topContractors,
     moreContractors: Math.max(0, row.suppliers - topContractors.length),
     sectors,
@@ -419,6 +435,7 @@ interface ContractDetailRow {
   current_value_eur: number | null;
   value_flag: string;
   date_flag: string;
+  framework: number | null;
   bids_received: number | null;
   bids_rejected: number | null;
   bids_sme: number | null;
@@ -452,7 +469,7 @@ interface ContractDetailRow {
   bidder_id: string;
   bidder_name: string;
   bidder_legal_form: string | null;
-  bidder_kind: 'company' | 'consortium';
+  bidder_kind: EntityKind;
   bidder_eik: string | null;
   bidder_settlement: string | null;
 }
@@ -505,7 +522,7 @@ export async function getContract(
       `SELECT c.id, c.tender_id, c.contract_subject, c.contract_number, c.document_number, c.lot_id,
               c.signed_at, c.published_at, c.contract_kind, c.eu_funded, c.eu_programme, c.duration_days,
               c.amount_eur, c.signing_value, c.current_value, c.fx_rate,
-              c.signing_value_eur, c.current_value_eur, c.value_flag, c.date_flag,
+              c.signing_value_eur, c.current_value_eur, c.value_flag, c.date_flag, c.framework,
               c.bids_received, c.bids_rejected, c.bids_sme, c.bids_non_eea,
               c.subcontractor_eik, c.subcontractor_name, c.subcontract_value, c.currency AS contract_currency,
               c.ordering_unit_name AS source_authority_name,
@@ -567,7 +584,7 @@ export async function getContract(
         signing_value_eur: number | null;
         estimated_fx_rate: number | null;
         bidder_name: string | null;
-        bidder_kind: 'company' | 'consortium' | null;
+        bidder_kind: EntityKind | null;
         bidder_id: string | null;
       }>(),
     cohortDivision ? getCpvCohortStats(db, cohortDivision) : Promise.resolve(null),
@@ -768,6 +785,7 @@ export async function getContract(
     durationDays: r.duration_days,
     value,
     frameworkAwards,
+    frameworkAgreement: r.framework === FRAMEWORK_AGREEMENT,
     authority,
     bidder,
     lots,

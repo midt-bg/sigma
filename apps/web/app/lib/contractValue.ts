@@ -19,6 +19,11 @@ import { money, pct } from '@sigma/shared';
  *  in every list so the mark means one thing across the site. */
 export const UNVERIFIED_HINT = 'стойността в източника изглежда грешна';
 
+/** List-row copy for the record of a framework agreement: the figure shown is its ceiling, the most that
+ *  may be ordered under it, and no sum on the site includes it. */
+export const FRAMEWORK_HINT =
+  'рамково споразумение: таван, а не изразходвана сума; не влиза в сумите';
+
 export interface UnverifiedValueNote {
   /** Heading for the explanation block. Varies with the verdict: most cases are a source defect, but
    *  the catch-all ones are honestly ours („does not pass our checks"), so the title must not claim
