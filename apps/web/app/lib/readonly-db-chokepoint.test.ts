@@ -16,8 +16,24 @@ function stripComments(src: string): string {
 }
 
 // [path, comment-stripped code] for every non-test web source file (build output excluded).
+// `test/integration/setup.ts` is exempted: it bootstraps the local wrangler proxy and applies the
+// D1 migrations (`proxy.env.DB.exec(...)`) — schema admin, not application data access. Production
+// runtime still goes through getDb; this file runs only inside `vitest run --config
+// vitest.integration.config.ts` (never in the deployed Worker).
+//
+// The exemption uses an EXACT repo-relative path (relative to `apps/web/app/lib/`, where the
+// glob `../../**/*.{ts,tsx}` is rooted). A wider `endsWith('/test/integration/setup.ts')` match
+// would silently let any other file with that suffix (e.g. a future
+// `packages/other/test/integration/setup.ts` if the scope of the chokepoint scan ever expanded)
+// slip past — the prefix match is too permissive for a security-relevant guard (ydimitrof
+// review 2026-08-31, thread on readonly-db-chokepoint.test.ts:28).
 const CODE: ReadonlyArray<readonly [string, string]> = Object.entries(SOURCES)
-  .filter(([path]) => !path.includes('.test.') && !path.includes('/build/'))
+  .filter(
+    ([path]) =>
+      !path.includes('.test.') &&
+      !path.includes('/build/') &&
+      path !== '../../test/integration/setup.ts',
+  )
   .map(([path, src]) => [path, stripComments(src)] as const);
 
 const offenders = (re: RegExp): string[] =>
