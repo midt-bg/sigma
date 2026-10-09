@@ -43,6 +43,7 @@ import { TR_DB } from '../tr/paths.mjs';
 // reads what they decided.
 import { isSealedFact, RULES_VERSION } from '../tr/evidence.mjs';
 import { resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
+import { PUBLIC_OWNER_UNSETTLED_SQL } from '../../apps/etl/src/public-ownership.ts';
 import {
   fingerprint,
   loadCorrections,
@@ -450,6 +451,36 @@ const privateCompanyKeys = new Set();
   for (const a of db.prepare('SELECT name FROM authorities').all())
     privateCompanyKeys.delete(companyNameKey(a.name));
 }
+// Companies whose ownership the register leaves open (ADR-0047): not public, yet a public owner stands beside a
+// company whose partida is not read, or beside a share the register does not record. Running one of them may
+// be an office or a private interest, and nothing here can tell which — so such a management link is held, not
+// published, and the owners whose partida would settle it are requested from the registry run.
+const ownershipUnsettled = new Set();
+{
+  const columns = (t) =>
+    new Set(
+      db
+        .prepare('SELECT name FROM pragma_table_info(?)')
+        .all(t)
+        .map((c) => c.name),
+    );
+  const ready =
+    ['registry_roles', 'registry_deeds', 'state_owned_eik', 'public_owned_eik'].every(
+      (t) => columns(t).size > 0,
+    ) && ['type', 'type_group'].every((c) => columns('authorities').has(c));
+  if (ready) {
+    const owners = db.prepare(PUBLIC_OWNER_UNSETTLED_SQL).all();
+    for (const o of owners) ownershipUnsettled.add(String(o.eik));
+    if (columns('registry_requested_companies').size > 0) {
+      const request = db.prepare(
+        'INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)',
+      );
+      for (const o of owners)
+        if (o.unread === 1 && /^\d{9}$/.test(String(o.owner)))
+          request.run(String(o.owner), `ownership:${o.eik}`, String(o.name ?? ''));
+    }
+  }
+}
 const rawInstitution = declarationInstitution;
 const offices = resolveOffices(filings, {
   institutionOf: rawInstitution,
@@ -472,6 +503,21 @@ const identity = rebuildPersonEntities(
 );
 console.log(`Person identity: ${JSON.stringify(identity.stats)}`);
 const personOf = (rec) => identity.assignments.get(declarationSourceId(rec)) ?? sourcePersonOf(rec);
+// The categories the register files the management of a public enterprise under: the boards of state and
+// municipal enterprises, the state's and the municipalities' representatives on the bodies of companies they
+// hold shares in, the state enterprises created by law and the subsidiaries of the state energy holding.
+const PUBLIC_ENTERPRISE_CATEGORY =
+  /ОП или ДП|държавно или общинско участие|държавните предприятия|Държавно предприятие|дъщерни дружества/u;
+// A declarant who files in one of them and names a company as the office is that company's office-holder: running
+// it is the office itself (ADR-0047 §2), whatever the ownership columns say today. Person → companies so named.
+const publicEnterpriseOffices = new Map();
+for (const f of filings) {
+  if (!PUBLIC_ENTERPRISE_CATEGORY.test(f.category ?? '')) continue;
+  const office = resolveEntity(officeInstitution(f));
+  if (!office?.eik) continue;
+  const pid = personOf(f);
+  publicEnterpriseOffices.set(pid, (publicEnterpriseOffices.get(pid) ?? new Set()).add(office.eik));
+}
 // The id the same record carried before ADR-0040 — the listing's institution, abbreviations folded and
 // nothing else. Kept only to carry the monotonicity snapshot across the
 // change of grain; nothing is keyed on it.
@@ -974,9 +1020,14 @@ const trLookupFallback = (() => {
 // link is its own class (relative's declared stake).
 function interestClass(rec, relation) {
   if (rec.scope === 'family') return 'family_ownership';
-  if (relation === 'manages' && rec.bidder.ownership_kind) return 'ex_officio_board';
+  if (
+    relation === 'manages' &&
+    (rec.bidder.ownership_kind || publicEnterpriseOffices.get(rec.pid)?.has(rec.eik))
+  )
+    return 'ex_officio_board';
   return 'private_ownership';
 }
+const heldOwnershipOpen = new Set(); // ЕИК whose management link the open ownership holds back
 db.exec('BEGIN');
 for (const rec of agg.values()) {
   // Immaterial self record (listed securities / АД-form, no management role): recorded in
@@ -1133,16 +1184,23 @@ for (const rec of agg.values()) {
   // Order matters and differs from the old ladder: `internal` is now decided BEFORE `published`, so a
   // non-surfaced class (ex-officio board, management-only, zero-contract) can never land in `held`.
   // `held` is the REVIEW QUEUE, and its population is exactly the evidence rungs that withhold —
-  // bar_joint_stock, unknown and outside_tr.
+  // bar_joint_stock, unknown and outside_tr — plus the management of a company whose ownership is open:
+  // running it may be an office rather than an interest, so it waits until the register settles it. A stake
+  // is a private interest whoever the co-owners are, so only management waits.
+  const ownershipOpen =
+    relation === 'manages' && iClass === 'private_ownership' && ownershipUnsettled.has(rec.eik);
   const status = isSuppressed(linkKey)
     ? 'suppressed'
     : verdict.kind === 'refuted'
       ? 'withdrawn' // §5.4 — own stakes only; evidence.mjs refuses to refute a family stake
       : !surfaces
         ? 'internal'
-        : verdict.publishable
-          ? 'published'
-          : 'held';
+        : ownershipOpen
+          ? 'held'
+          : verdict.publishable
+            ? 'published'
+            : 'held';
+  if (ownershipOpen && surfaces && verdict.publishable) heldOwnershipOpen.add(rec.eik);
   const yrs = [...years];
   insLink.run(
     `il:${linkKey}`,
@@ -1209,6 +1267,12 @@ for (const rec of agg.values()) {
     insILA.run(linkKey, auth_id, a.name, a.count, a.value || null, a.own);
 }
 db.exec('COMMIT');
+// ЕИК only, as with the verdicts awaited above: the operator needs the companies, never the names.
+if (heldOwnershipOpen.size)
+  console.log(
+    `  held — ownership still open (a public owner beside an unread company or an unrecorded share): ` +
+      [...heldOwnershipOpen].sort().join(', '),
+  );
 
 // The monotonicity snapshot (§8). A prior key names the official by the id they carried when it was
 // published; across a change of identity grain (ADR-0040) it is carried to the id they carry now before
@@ -1302,6 +1366,8 @@ const S = {
   interest_links: links,
   published: pub,
   held_for_census: one("SELECT COUNT(*) n FROM interest_links WHERE status='held'").n,
+  // Companies whose management link the register would let publish, held while their ownership is open.
+  held_ownership_open_companies: heldOwnershipOpen.size,
   suppressed: one("SELECT COUNT(*) n FROM interest_links WHERE status='suppressed'").n,
   withdrawn_divested: one("SELECT COUNT(*) n FROM interest_links WHERE status='withdrawn'").n, // E11 expiry
   officials_linked: one('SELECT COUNT(DISTINCT person_id) n FROM interest_links').n,

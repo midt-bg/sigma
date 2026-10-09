@@ -60,7 +60,10 @@ import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
 // The seat and the name-distinctiveness gate are gone; a person matches at any time (standing, ended, or
 // of unclear end) and under a spelling variant of the name; a relative's stake is confirmed by the
 // register showing the relative the declaration names.
-export const RULES_VERSION = 'tr-rules-8';
+// r9 (ADR-0047): a company is public also when all its standing owners are public or together hold most of a
+// fully recorded capital; running a company filed under as the office in a public-enterprise category is the
+// office; running one whose ownership the register leaves open is held. Published links may leave the surface.
+export const RULES_VERSION = 'tr-rules-9';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;

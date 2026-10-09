@@ -487,7 +487,7 @@ async function main() {
 
   // 3. Public ownership, then the rollups and the entity search index.
   stage('precompute');
-  const { PUBLIC_OWNERSHIP_SQL } = await import('../apps/etl/src/registry.ts');
+  const { PUBLIC_OWNERSHIP_SQL } = await import('../apps/etl/src/public-ownership.ts');
   await sqlite(
     'precompute',
     db,
