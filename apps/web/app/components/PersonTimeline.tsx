@@ -77,6 +77,7 @@ export function PersonTimeline({
     return () => window.removeEventListener('scroll', hide);
   }, [tip]);
   if (!years.length && !companies.length) return null;
+  const heldSeats = companies.some((c) => c.publicEnterprise);
   const first = Date.UTC(years[0] ?? 1970, 0, 1),
     last = Date.UTC((years.at(-1) ?? 1970) + 1, 0, 1),
     span = last - first;
@@ -297,6 +298,12 @@ export function PersonTimeline({
           <i className="time-symbol role" /> вписана роля{' '}
           <Explanation text="Период по регистърните вписвания. Отделните отсечки пазят прекъсванията; отвореният край достига до последната успешна справка." />
         </span>
+        {heldSeats && (
+          <span>
+            <i className="time-symbol role-office" /> вписана роля, която е заемана длъжност{' '}
+            <Explanation text="Място в органите на публично предприятие или на организацията, за която лицето подава декларации като член на нейните органи. Периодът е по регистърните вписвания. Мястото е самата длъжност, а не частен интерес: затова под него няма съвпадение, а договорите на организацията не се отнасят към лицето." />
+          </span>
+        )}
         {hasDeclarations ? (
           <>
             <span>
@@ -441,7 +448,10 @@ export function PersonTimeline({
             );
             const disputed = c.observations.filter((o) => o.disputed || o.timing === 'not_listed');
             const undated = c.contracts.filter((r) => !r.year).reduce((n, r) => n + r.contracts, 0);
-            const under = intervals?.bands[c.eik];
+            // A held seat is the office itself: its overlap with the office years would mark the seat as
+            // coinciding with itself. Its contracts are not the person's either (person-activity.ts), so the
+            // band would have nothing to mark.
+            const under = c.publicEnterprise ? undefined : intervals?.bands[c.eik];
             const procurements = intervals?.procurements.filter((pr) => pr.eik === c.eik) ?? [];
 
             return (
@@ -569,7 +579,7 @@ export function PersonTimeline({
                             Number.isFinite(Date.parse(r.addedOn)) &&
                             Number.isFinite(Date.parse(end)) &&
                             r.addedOn <= end;
-                          const label = `${ROLE_LABEL[kind]} · ${date(r.addedOn)} — ${r.removedOn ? date(r.removedOn) : r.uncertainAfter ? `неустановено след ${date(r.uncertainAfter)}` : `вписана към ${date(c.asOf)}`}`;
+                          const label = `${ROLE_LABEL[kind]} · ${date(r.addedOn)} — ${r.removedOn ? date(r.removedOn) : r.uncertainAfter ? `неустановено след ${date(r.uncertainAfter)}` : `вписана към ${date(c.asOf)}`}${c.publicEnterprise ? ' · заемана длъжност' : ''}`;
                           return valid ? (
                             <a
                               key={i}
@@ -586,13 +596,13 @@ export function PersonTimeline({
                                 event.preventDefault();
                                 revealProfileTarget(roleRowId(r));
                               }}
-                              className={`time-role ${!r.removedOn && !r.uncertainAfter ? 'time-open' : ''}`}
+                              className={`time-role ${c.publicEnterprise ? 'time-role-office' : ''} ${!r.removedOn && !r.uncertainAfter ? 'time-open' : ''}`}
                               style={{
                                 left: `${x(r.addedOn)}%`,
                                 width: `${Math.max(0.15, x(end!) - x(r.addedOn))}%`,
                               }}
                               aria-label={label}
-                              {...tipProps(() => roleTip(r, c.name, c.asOf))}
+                              {...tipProps(() => roleTip(r, c.name, c.asOf, c.publicEnterprise))}
                             />
                           ) : (
                             <span key={i} className="small muted">
@@ -713,8 +723,10 @@ export function PersonTimeline({
         Числата са брой договори за годината. Червеното означава година с налична декларация за
         институция и длъжност на лицето, независимо от периода на участие в дружеството. Това не
         установява точните дати на мандата; липсата на декларация не доказва липса на длъжност.
-        Черните отсечки показват отделно вписаните роли в дружествата. При липсващи дати не
-        извеждаме период.
+        Черните отсечки показват отделно вписаните роли в дружествата.
+        {heldSeats &&
+          ' Отсечките с контур са вписани роли, които са заемана длъжност: под тях няма съвпадение, а договорите на организацията не се отнасят към лицето.'}{' '}
+        При липсващи дати не извеждаме период.
       </p>
     </Section>
   );
@@ -785,11 +797,12 @@ function officeTip(institution: string, positions: string[], o: OfficeSpan) {
   );
 }
 
-function roleTip(r: PersonRole, company: string, asOf: string | null) {
+function roleTip(r: PersonRole, company: string, asOf: string | null, held = false) {
   return (
     <>
       <strong className="time-tip-title">{ROLE_LABEL[r.role]}</strong>
       <span>{company}</span>
+      {held && <span>Заемана длъжност, не частен интерес</span>}
       <span>Вписана {date(r.addedOn)}</span>
       <span>
         {r.removedOn

@@ -373,6 +373,22 @@ td .chip {
   border-right: 1px solid currentColor;
   background: var(--paper, #faf8f2);
 }
+/* A held seat — a public enterprise, or the organization the person files declarations for as a member of its
+   bodies: the same registered period, drawn in outline, because the seat is the office, not a private tie. */
+.time-role.time-role-office,
+.time-symbol.role-office {
+  box-sizing: border-box;
+  border: 1.5px solid currentColor;
+  background: var(--paper, #faf8f2);
+  height: 7px;
+}
+/* Taller than the solid bar so the outline reads as one; centred on the same line. */
+.time-role.time-role-office {
+  top: 14px;
+}
+.time-symbol.role-office {
+  width: 24px;
+}
 .time-contract-bin {
   position: absolute;
   transform: translateX(-50%);
