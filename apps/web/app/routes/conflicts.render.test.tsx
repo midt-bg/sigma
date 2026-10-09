@@ -574,6 +574,40 @@ it('titles the list by what every row holds, and narrows the headings with the s
 
 // The registry-only group is the people whose declarations have no PUBLISHED link with the company — a
 // held or a joint-stock link included. The lede says exactly that, not that the declaration omits it.
+it('says what the declarations say about a registered company, and never that it was left out', async () => {
+  const row: ConflictPersonRow = {
+    official: 'ВЕРА ТЕСТОВА СЪВЕТОВА',
+    officialSlug: 'vera',
+    personIdentity: 'v'.repeat(64),
+    institution: null,
+    position: null,
+    companyCount: 1,
+    companies: [
+      {
+        company: 'ТЕСТ АД',
+        eik: '666',
+        self: 0,
+        family: 0,
+        registry: 1,
+        registryRole: 'board',
+        declared: 'manages',
+      },
+    ],
+    soleCompany: null,
+    contractCount: 1,
+    contractValueEur: 10,
+    contemporaneousValueEur: null,
+    stakeKind: 'registry',
+    ownInstitution: false,
+    hasContemporaneous: false,
+    direct: null,
+  };
+  await renderConflicts([], null, '/conflicts?stake=registry&role=all', [row]);
+  expect(text()).toContain('В декларацията: управление.');
+  expect(text()).not.toContain('само по Търговския регистър');
+  expect(text()).not.toMatch(/недеклар|не е декларира/);
+});
+
 it('says of the registry-only group only what the group proves', async () => {
   const owner: ConflictPersonRow = {
     official: 'Собственик Тестов',
@@ -598,7 +632,7 @@ it('says of the registry-only group only what the group proves', async () => {
   expect(heading).toContain('Търговския регистър');
   expect(heading).not.toContain('декларирали');
   expect(text()).toContain(
-    'на дружество, спечелило обществена поръчка. В декларациите им няма публикувана връзка с това дружество.',
+    'на дружество, спечелило обществена поръчка. СИГМА не е потвърдила декларирана връзка на лицето с това дружество; когато декларацията го посочва, това е отбелязано при него.',
   );
   expect(text()).not.toContain('без това дружество да е посочено');
   expect(text()).not.toContain('Самоличността е доказана');

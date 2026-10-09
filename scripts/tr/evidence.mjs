@@ -2,14 +2,22 @@
 // network.
 //
 // Six outcomes, FIRST MATCH WINS:
-//   1 bar_joint_stock  АД / ЕАД / КДА — never published, whatever follows
-//   2 document         the register shows the declarant in an ownership or manager role, now or before
+//   1 bar_joint_stock  a STAKE in an АД / ЕАД / КДА — never published, whatever follows; a stake in a company
+//                      whose legal form the register leaves unknown is held
+//   2 document         the register shows the declarant in an ownership or manager role, now or before; for a
+//                      declared management also on the body that runs the company (a board of directors, a
+//                      management board, a governing body)
 //   3 confirmed        the declarant wrote the ЕИК, or — for a relative's stake — the register shows a
 //                      holder the declaration names for that stake
 //   4 refuted          own stake only: registered in no role at any time, and the ownership record as it
 //                      stands predates the declared period — the register covers it and does not name them
 //   5 unknown          everything else — held
 //   6 outside_tr       not in the register at all (ДЗЗД, БУЛСТАТ associations) — held
+//
+// Rungs 1 and 4 are about a STAKE. The bar's reasons — the shareholder book is not public, and a parcel of
+// shares may be a minority or a listed one — say nothing about a seat on the board, which the register does
+// record; and the date of the ownership record says nothing about who manages. A declared management is
+// therefore read on the bodies that run the company and is never barred or refuted by the stake rules.
 //
 // WHAT THIS ESTABLISHES, precisely: the identity of the COMPANY — that the company behind the declared
 // name is the same legal entity as the winner we matched. It does NOT establish that the official owns
@@ -29,6 +37,7 @@ import {
   latestOwnershipEntryDate,
   OWNERSHIP_FIELDS,
   MANAGER_FIELD,
+  MANAGEMENT_BODY_FIELDS,
 } from './deed.mjs';
 import { declarantNameKey } from '../cacbg/source-identity.mjs';
 import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
@@ -63,7 +72,10 @@ import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
 // r9 (ADR-0047): a company is public also when all its standing owners are public or together hold most of a
 // fully recorded capital; running a company filed under as the office in a public-enterprise category is the
 // office; running one whose ownership the register leaves open is held. Published links may leave the surface.
-export const RULES_VERSION = 'tr-rules-9';
+// r10 (ADR-0047 §3): a declared management is judged as management — the joint-stock bar, the hold on an
+// unknown legal form and the refutation apply to a stake only, and „Документ" also reads the bodies that run a
+// company. Held management links may publish.
+export const RULES_VERSION = 'tr-rules-10';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
@@ -168,17 +180,30 @@ function findEverPerson(registry, name, fields, registryIndent) {
     : null;
 }
 
-/** Owner before manager, each standing before past. */
-function findRole(registry, name, registryIndent) {
-  const at = (fields) => findPerson(registry, name, fields, registryIndent);
-  const ever = (fields) => findEverPerson(registry, name, fields, registryIndent);
+/** The facts with the bodies that run the company standing beside its managers. */
+const withBodies = (registry) => ({
+  ...registry,
+  holders: [...(registry.holders ?? []), ...(registry.bodyHolders ?? [])],
+  endedHolders: [...(registry.endedHolders ?? []), ...(registry.endedBodyHolders ?? [])],
+});
+
+/**
+ * Owner before manager, each standing before past. With `bodies`, for a declared management, a seat on a body
+ * that runs the company is a manager's role too; the field it was found in travels on the matched fact. The
+ * name is then matched among the members of those bodies as well, so a namesake there designates nobody.
+ */
+function findRole(registry, name, registryIndent, { bodies = false } = {}) {
+  const facts = bodies ? withBodies(registry) : registry;
+  const managers = bodies ? [MANAGER_FIELD, ...MANAGEMENT_BODY_FIELDS] : [MANAGER_FIELD];
+  const at = (fields) => findPerson(facts, name, fields, registryIndent);
+  const ever = (fields) => findEverPerson(facts, name, fields, registryIndent);
   const owner = at(OWNERSHIP_FIELDS);
   if (owner) return { role: 'owner', ...owner, endedOn: null };
-  const manager = at([MANAGER_FIELD]);
+  const manager = at(managers);
   if (manager) return { role: 'manager', ...manager, endedOn: null };
   const pastOwner = ever(OWNERSHIP_FIELDS);
   if (pastOwner) return { role: 'owner', ...pastOwner };
-  const pastManager = ever([MANAGER_FIELD]);
+  const pastManager = ever(managers);
   return pastManager ? { role: 'manager', ...pastManager } : null;
 }
 
@@ -198,6 +223,8 @@ function findRole(registry, name, registryIndent) {
  * @param {boolean}     [input.declaredEik]     the declarant wrote the ЕИК in the declaration
  * @param {number|null} [input.firstDeclaredYear]
  * @param {'self'|'family'} [input.scope]
+ * @param {'owns'|'manages'|'owns+manages'|'related'} [input.relation]  what the declarations say: a stake,
+ *                                              a management, both, or a relative's stake
  * @param {string[]}    [input.relativeNames]   family only: the holders the declaration names for this
  *                                              stake. Internal — read to produce a boolean, never kept
  * @returns {{kind:string, publishable:boolean, registryRole:string|null, matchedFact:string|null,
@@ -213,8 +240,12 @@ export function evidenceVerdict(input) {
     declaredEik = false,
     firstDeclaredYear = null,
     scope = 'self',
+    relation = scope === 'family' ? 'related' : 'owns',
     relativeNames = [],
   } = input;
+  // A stake is any declared ownership, the official's or a relative's; only a bare management is not one.
+  const stake = relation !== 'manages';
+  const manages = relation === 'manages' || relation === 'owns+manages';
 
   const tokens = personTokens(declarantName);
   const telemetry = {
@@ -243,18 +274,19 @@ export function evidenceVerdict(input) {
   }
 
   // ── rung 1 ──────────────────────────────────────────────────────────────────
-  // A union of the register's code and the ЗТРРЮЛНЦ suffix; either saying joint-stock bars the link, and
-  // neither able to say means we withhold rather than guess.
+  // A union of the register's code and the ЗТРРЮЛНЦ suffix; either saying joint-stock bars a stake, and
+  // neither able to say means we withhold a stake rather than guess. A bare management is not a stake: the
+  // seat it claims is on the register, and rung 2 looks for it there.
   const form = registryLegalForm(registry);
-  if (form.verdict === 'joint_stock') return verdict('bar_joint_stock', false);
-  if (form.verdict === 'unknown') return verdict('unknown', false);
+  if (stake && form.verdict === 'joint_stock') return verdict('bar_joint_stock', false);
+  if (stake && form.verdict === 'unknown') return verdict('unknown', false);
 
   // ── rung 2 ──────────────────────────────────────────────────────────────────
   // The register shows the declarant in this partida, now or at any time: the company is theirs. Only a
   // full three-token name may assert. A Latin homoglyph makes the name a non-match rather than a false
   // match — company-name-key.ts's posture, applied to people.
   if (!telemetry.shortName && !telemetry.latinInName) {
-    const hit = findRole(registry, declarantName, registryIndent);
+    const hit = findRole(registry, declarantName, registryIndent, { bodies: manages });
     if (hit)
       return verdict('document', true, {
         registryRole: hit.role,
@@ -285,9 +317,10 @@ export function evidenceVerdict(input) {
 
   // ── rung 4 ──────────────────────────────────────────────────────────────────
   // OWN stakes only. For a family stake the registered owner is the relative, so absence of the OFFICIAL
-  // from the register is evidence of nothing. An early branch, not a caller convention.
-  if (scope === 'self' && firstDeclaredYear != null) {
-    const everPresent = findRole(registry, declarantName, registryIndent);
+  // from the register is evidence of nothing; and the date of the ownership record says nothing about who
+  // manages, so a bare management is never refuted by it. An early branch, not a caller convention.
+  if (scope === 'self' && stake && firstDeclaredYear != null) {
+    const everPresent = findRole(registry, declarantName, registryIndent, { bodies: manages });
     const latest = latestOwnershipEntryDate(registry);
     const inRereg =
       latest != null && latest >= REREGISTRATION_START && latest <= REREGISTRATION_END;

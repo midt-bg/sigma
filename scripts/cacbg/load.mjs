@@ -89,6 +89,7 @@ const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 const EMIT_CANDIDATES_ONLY = process.argv.includes('--emit-candidates');
 const { companyNameKey, isMatchableKey, registryCompanyName } =
   await import('../../packages/shared/src/company-name-key.ts');
+const { officeOrganizationEik } = await import('../../packages/shared/src/office-organizations.ts');
 
 const yr = (s) => {
   const m = String(s ?? '').match(/\b(20\d{2})\b/);
@@ -518,6 +519,17 @@ for (const f of filings) {
   const pid = personOf(f);
   publicEnterpriseOffices.set(pid, (publicEnterpriseOffices.get(pid) ?? new Set()).add(office.eik));
 }
+// An organization whose own bodies have a category of their own in the register (OFFICE_ORGANIZATIONS): a
+// declarant who files in it sits on those bodies as the office the declaration is filed for. For that declarant
+// running the organization is the office, as running a public enterprise is; for nobody else, and the
+// organization is not public property. Person → organizations so filed for.
+const organizationOffices = new Map();
+for (const f of filings) {
+  const eik = officeOrganizationEik(f.category);
+  if (!eik) continue;
+  const pid = personOf(f);
+  organizationOffices.set(pid, (organizationOffices.get(pid) ?? new Set()).add(eik));
+}
 // The id the same record carried before ADR-0040 — the listing's institution, abbreviations folded and
 // nothing else. Kept only to carry the monotonicity snapshot across the
 // change of grain; nothing is keyed on it.
@@ -923,6 +935,14 @@ const provenIdentities = new Map(
     .all()
     .map((r) => [r.id, r.registry_indent]),
 );
+// Family scope = the official's declaration discloses a related person's stake (relation 'related').
+// Self scope: owns / manages / owns+manages from material ownership + management roles. One definition: the
+// decision pass judges a stake and a management by different rungs (tr-rules-10), so it reads the same answer.
+function relationOf(rec) {
+  if (rec.scope === 'family') return 'related';
+  if (rec.kinds.has('management')) return rec.hasMaterialOwn ? 'owns+manages' : 'manages';
+  return 'owns'; // hasMaterialOwn is guaranteed here (immaterial self skipped)
+}
 function linkRecordFor(rec) {
   // The same skip the decision loop applies: an immaterial self record is census, not a link. Emitting
   // it would ask the decision pass a question no decision ever uses.
@@ -937,6 +957,7 @@ function linkRecordFor(rec) {
     declaredEik: rec.method === 'declared_eik',
     firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
     scope: rec.scope,
+    relation: relationOf(rec),
     relativeNames: [...rec.relativeNames].sort(),
   };
 }
@@ -1016,13 +1037,16 @@ const trLookupFallback = (() => {
 
 // Interpretation class (ADR-0047). A stake is a private interest. So is running a private company: its
 // manager is treated as its owner, the relation says which. Running a public enterprise — one the state or a
-// municipality controls (bidders.ownership_kind) — is a held position, never a private interest. A family-scope
-// link is its own class (relative's declared stake).
+// municipality controls (bidders.ownership_kind) — is a held position, never a private interest; so is running
+// the organization whose bodies the declarant files for. A family-scope link is its own class (relative's
+// declared stake).
 function interestClass(rec, relation) {
   if (rec.scope === 'family') return 'family_ownership';
   if (
     relation === 'manages' &&
-    (rec.bidder.ownership_kind || publicEnterpriseOffices.get(rec.pid)?.has(rec.eik))
+    (rec.bidder.ownership_kind ||
+      publicEnterpriseOffices.get(rec.pid)?.has(rec.eik) ||
+      organizationOffices.get(rec.pid)?.has(rec.eik))
   )
     return 'ex_officio_board';
   return 'private_ownership';
@@ -1116,16 +1140,7 @@ for (const rec of agg.values()) {
     a.own = authOwn(a.name, instNorms, instNormsLong, locTokens, instWords);
     if (OWN_RANK[a.own] > OWN_RANK[ownInst]) ownInst = a.own;
   }
-  // Family scope = the official's declaration discloses a related person's stake (relation 'related').
-  // Self scope: owns / manages / owns+manages from material ownership + management roles.
-  const relation =
-    rec.scope === 'family'
-      ? 'related'
-      : rec.kinds.has('management')
-        ? rec.hasMaterialOwn
-          ? 'owns+manages'
-          : 'manages'
-        : 'owns'; // hasMaterialOwn is guaranteed here (immaterial self skipped above)
+  const relation = relationOf(rec);
   const iClass = interestClass(rec, relation);
   // Self link_key stays `pid|eik` (preserves human-curated suppression keys); family is a distinct claim.
   const linkKey = rec.scope === 'family' ? `${rec.pid}|${rec.eik}|family` : `${rec.pid}|${rec.eik}`;

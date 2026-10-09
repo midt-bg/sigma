@@ -135,7 +135,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица, вписани в <em>Търговския регистър</em> при изпълнител
           </>
         ),
-        lede: `Длъжностни лица, които Търговският регистър вписва като собственик или управител${boards ? ' — или като член на съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка. В декларациите им няма публикувана връзка с това дружество.`,
+        lede: `Длъжностни лица, които Търговският регистър вписва като собственик или управител${boards ? ' — или като член на съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка. СИГМА не е потвърдила декларирана връзка на лицето с това дружество; когато декларацията го посочва, това е отбелязано при него.`,
         caption: 'Длъжностни лица с вписана роля в регистъра при дружества изпълнители',
       };
     case 'self':
@@ -237,7 +237,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
               )}
               {!c.self && !c.family && !!c.manages && (
                 <div>
-                  <Chip>декларирано управление</Chip>
+                  <Chip>{c.board ? 'декларирано членство в съвет' : 'декларирано управление'}</Chip>
                 </div>
               )}
               {c.registry && (
@@ -249,6 +249,17 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
                         ? 'управление по Търговския регистър'
                         : 'дял по Търговския регистър'}
                   </Chip>
+                  {c.declared ? (
+                    <div className="small muted">
+                      {c.declared === 'stake'
+                        ? 'В декларацията: собствен дял.'
+                        : c.declared === 'manages'
+                          ? 'В декларацията: управление.'
+                          : c.declared === 'family'
+                            ? 'В декларацията: дял на свързано лице.'
+                            : 'Посочено в декларацията.'}
+                    </div>
+                  ) : null}
                   {c.missingYears?.length ? (
                     <div className="small muted">
                       СИГМА не го откри в годишната декларация за {c.missingYears.join(', ')} г.
@@ -298,7 +309,9 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
               в декларирания период
             </Chip>
           ),
-          r.stakeKind === 'registry' && <Chip key="registry">само по Търговския регистър</Chip>,
+          r.stakeKind === 'registry' && !r.companies?.some((c) => c.declared) && (
+            <Chip key="registry">само по Търговския регистър</Chip>
+          ),
           disputed && <Chip key="disputed">не е открито в декларация</Chip>,
         ].filter(Boolean);
         return chips.length ? (

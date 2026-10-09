@@ -384,6 +384,18 @@ export const OWNERSHIP_FIELDS: readonly string[] = [
 ];
 /** The field that records its managers. */
 export const MANAGER_FIELD = '00070';
+/** The fields that record the other people who run it (ADR-0047 §3): the managers of a partnership, the board
+ *  of directors, the management board — of a company, of a cooperative, of a company with a supervisory board
+ *  — and the governing body of an association or a foundation. The supervisory and control bodies appoint and
+ *  check; they are not here. */
+export const MANAGEMENT_BODY_FIELDS: readonly string[] = [
+  '00071',
+  '00120',
+  '00125',
+  '00130',
+  '00131',
+  '00132',
+];
 /** The registered seat. */
 const SEAT_FIELD = '00050';
 

@@ -83,7 +83,11 @@ export async function loadPersonProfile(
     declarations: declarations.map((d): PersonDeclaration => ({
       ...d,
       companyEiks: d.companyEiks.filter((eik) => companyEiks.has(eik)),
-      interests: d.interests?.filter((i) => i.eik !== null && companyEiks.has(i.eik)),
+      // A counted entry shows where its company is among the person's; an entry that is declared but not
+      // counted shows with what Sigma established about it (`status`), wherever its company is.
+      interests: d.interests?.filter(
+        (i) => (i.eik !== null && companyEiks.has(i.eik)) || i.status !== undefined,
+      ),
       discrepancies: d.discrepancies?.filter((c) => companyEiks.has(c.eik)),
     })),
     activity,

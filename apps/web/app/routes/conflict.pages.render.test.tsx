@@ -448,9 +448,13 @@ describe('/conflicts/methodology — render', () => {
     // every rung of the ladder, by the name the seal and the card use
     for (const rung of ['Документ', 'Потвърдено', 'Оборена', 'Неизвестна'])
       expect(t).toContain(rung);
-    // rung 1 — the joint-stock bar and its reason (the „11 акции" trap)
-    expect(t).toContain('Акционерна форма');
+    // rung 1 — the joint-stock bar and its reason (the „11 акции" trap), for a stake only: a declared
+    // management is checked on the body that runs the company
+    expect(t).toContain('Дял в акционерно дружество');
     expect(t).toContain('не е публична');
+    expect(t).toContain('декларираното управление се проверява по органа на управление');
+    // the seat in the organization a person files for as a member of its bodies is an office
+    expect(t).toContain('подава декларация именно като член на тези органи');
     // rung 2 — all three names, one registered person, and the variants a name may take
     expect(t).toContain('и трите имена');
     expect(t).toContain('едно и също вписано лице');

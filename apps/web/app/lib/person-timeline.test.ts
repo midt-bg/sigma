@@ -136,6 +136,28 @@ describe('timelineCompanies', () => {
     expect(companies.map((c) => c.eik)).toEqual(['111', '444', '222', '555', '333']);
   });
 
+  it('puts the seat in the organization the person files for with the offices, as a public enterprise', () => {
+    const q = profile({
+      links: [],
+      roles: [
+        role('888', 'СДРУЖЕНИЕ ТЕСТ', {
+          role: 'governing_body',
+          company: { eik: '888', name: 'СДРУЖЕНИЕ ТЕСТ', href: null, office: true },
+        }),
+        role('111', 'ЯНТАР ООД'),
+      ],
+      contracts: [],
+      observations: [],
+      reads: [],
+      declarations: [],
+    });
+    const list = timelineCompanies(q);
+    expect(list.map((c) => [c.eik, c.publicEnterprise])).toEqual([
+      ['888', true],
+      ['111', false],
+    ]);
+  });
+
   it('keeps one entry per company, linked to its profile when it has one', () => {
     expect(byEik('111')).toMatchObject({ name: 'ЯНТАР ООД', href: '/companies/111' });
     expect(byEik('111').roles).toHaveLength(1);

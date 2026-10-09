@@ -1,8 +1,14 @@
-import type { PersonDeclaration, RegistryRoleKind } from '@sigma/api-contract';
-import { registryCompanyName } from '@sigma/shared';
+import type { DeclaredEntryStatus, PersonDeclaration, RegistryRoleKind } from '@sigma/api-contract';
+import {
+  companyNamesAlike,
+  declaredTextHasEik,
+  officeOrganizationEik,
+  registryCompanyName,
+} from '@sigma/shared';
 import { declarationMatchesLink, declarationYearDisputed } from './declaration-source';
 import { filingsByYear, historyNames, registryOmission } from './registry-omissions';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
+import { publicRole } from './registry';
 
 /** All available source documents for a surfaced declarant, including empty filings. */
 export async function getPersonDeclarations(
@@ -115,6 +121,11 @@ export async function getPersonDeclarations(
   const filings = omissions.length
     ? await omissionEvidence(db, personId, rows.results, interests.results, omissions)
     : null;
+  const tied = await tiedCompanies(db, personId);
+  // The organizations the person files declarations for as a member of their bodies: a seat there is an office.
+  const offices = new Set(
+    rows.results.map((d) => officeOrganizationEik(d.category as string | null)).filter(Boolean),
+  );
   return rows.results
     .map((r) => ({
       id: String(r.id),
@@ -132,13 +143,20 @@ export async function getPersonDeclarations(
           const matches = JSON.parse(i.matches) as { eik: string; scope: 'self' | 'family' }[];
           const eiks = new Set(matches.map((m) => m.eik));
           const scopes = new Set(matches.map((m) => m.scope));
-          return {
-            company: i.entity_raw,
-            kind: i.kind,
-            timing: i.timing,
-            eik: eiks.size === 1 ? matches[0]!.eik : null,
-            scope: scopes.size === 1 ? matches[0]!.scope : ('unknown' as const),
-          };
+          return (
+            (matches.length === 0 &&
+              declaredEntry(
+                i,
+                tied.filter((t) => t.declarationId === r.id),
+                offices,
+              )) || {
+              company: i.entity_raw,
+              kind: i.kind,
+              timing: i.timing,
+              eik: eiks.size === 1 ? matches[0]!.eik : null,
+              scope: scopes.size === 1 ? matches[0]!.scope : ('unknown' as const),
+            }
+          );
         }),
       discrepancies: comparisons.results
         .filter((c) => c.declaration_id === r.id)
@@ -238,5 +256,153 @@ async function omissionEvidence(
       })),
     ),
     history: new Map(history.map((h) => [h.eik, historyNames(h.names_json)])),
+  };
+}
+
+/** A company the resolver tied to one of the person's filings, and what Sigma established about it. */
+interface TiedCompany {
+  declarationId: string;
+  eik: string;
+  names: string[];
+  ownershipKind: string | null;
+  legalForm: string | null;
+  links: { status: string; class: string; tier: string; surfaced: number }[];
+  roles: RegistryRoleKind[];
+}
+
+/** The register's codes for a joint-stock company: it does not record the shareholders. */
+const JOINT_STOCK_FORMS = new Set(['AD', 'EAD', 'KDA', 'ADSITS']);
+
+/** Every company the resolver tied to one of the person's filings, with the person's links to it, their
+ *  roles in its partida as the register records them, its names and its legal form. */
+async function tiedCompanies(db: D1Database, personId: string): Promise<TiedCompany[]> {
+  const rows = await db
+    .prepare(
+      `SELECT dc.declaration_id, dc.eik, b.name bidder, b.ownership_kind, rd.name registry_name, rd.legal_form,
+      h.names_json history,
+      (SELECT json_group_array(json_object('status',il.status,'class',il.interest_class,'tier',il.publish_tier,
+          'surfaced',${SURFACED_OWNERSHIP}))
+        FROM interest_links il WHERE il.person_id=d.person_id AND il.eik=dc.eik) links,
+      (SELECT json_group_array(DISTINCT r.role) FROM person_entities e JOIN registry_roles r
+        ON r.subject_id=e.registry_indent AND r.subject_kind='person' AND r.eik=dc.eik
+        WHERE e.id=d.person_id AND e.registry_indent IS NOT NULL AND ${publicRole('r')}) roles
+    FROM declarations d JOIN declaration_companies dc ON dc.declaration_id=d.id
+    JOIN bidders b ON b.id='eik:'||dc.eik
+    LEFT JOIN registry_deeds rd ON rd.eik=dc.eik
+    LEFT JOIN registry_company_history h ON h.eik=dc.eik
+    WHERE d.person_id=?`,
+    )
+    .bind(personId)
+    .all<{
+      declaration_id: string;
+      eik: string;
+      bidder: string;
+      ownership_kind: string | null;
+      registry_name: string | null;
+      legal_form: string | null;
+      history: string | null;
+      links: string;
+      roles: string;
+    }>()
+    .then((q) => q.results)
+    .catch((e: unknown) => {
+      if (
+        /no such (table|column):?\s*(declaration_companies|registry_\w+|person_entities|\w*\.?(publish_tier|ownership_kind|names_json))/i.test(
+          String(e),
+        )
+      )
+        return [];
+      throw e;
+    });
+  return rows.map((t) => ({
+    declarationId: t.declaration_id,
+    eik: t.eik,
+    names: [
+      t.bidder,
+      t.registry_name ? registryCompanyName(t.registry_name, t.legal_form) : null,
+      ...historyNames(t.history),
+    ].filter((n): n is string => !!n),
+    ownershipKind: t.ownership_kind,
+    legalForm: t.legal_form,
+    links: JSON.parse(t.links) as TiedCompany['links'],
+    roles: (JSON.parse(t.roles) as (RegistryRoleKind | null)[]).filter(
+      (r): r is RegistryRoleKind => !!r,
+    ),
+  }));
+}
+
+/**
+ * An entry the declaration states about a company with procurement, shown although it is not counted among
+ * the related persons — with what Sigma established about it, and nothing more. An entry whose company has a
+ * counted tie the name match above did not reach (a spelling the name key does not fold — a dash, a quote) is
+ * counted, and says so: no status. Null leaves the entry as it was:
+ *   - it names none, or more than one, of the companies tied to its filing (no spelling of a name, no ЕИК);
+ *   - a link to the company was taken down on an objection;
+ *   - the seat is the person's office — in a public enterprise, or in the organization they file for as a
+ *     member of its bodies: it stands with the offices at the top, not again here.
+ * The company page is linked only where the register records the person in the company or the entry writes
+ * its ЕИК; otherwise the entry may name a namesake, and it is plain text.
+ */
+function declaredEntry(
+  i: { entity_raw: string; kind: string; timing: string },
+  candidates: TiedCompany[],
+  offices: ReadonlySet<string | null>,
+): NonNullable<PersonDeclaration['interests']>[number] | null {
+  const named = candidates.filter(
+    (c) =>
+      declaredTextHasEik(i.entity_raw, c.eik) ||
+      c.names.some((name) => companyNamesAlike(i.entity_raw, name)),
+  );
+  if (new Set(named.map((c) => c.eik)).size !== 1) return null;
+  const c = named[0]!;
+  if (c.links.some((l) => l.status === 'suppressed')) return null;
+  const counted = c.links.filter((l) => l.surfaced);
+  if (counted.length) {
+    const scopes = new Set(counted.map((l) => l.class));
+    return {
+      company: i.entity_raw,
+      kind: i.kind,
+      timing: i.timing,
+      eik: c.eik,
+      scope:
+        scopes.size === 1
+          ? scopes.has('family_ownership')
+            ? 'family'
+            : 'self'
+          : ('unknown' as const),
+    };
+  }
+  if (
+    c.links.some((l) => l.class === 'ex_officio_board') ||
+    (i.kind === 'management' && (c.ownershipKind != null || offices.has(c.eik)))
+  )
+    return null;
+  const stake = i.kind === 'shares' || i.kind === 'participation';
+  const status: DeclaredEntryStatus =
+    i.timing === 'unknown'
+      ? 'period'
+      : i.kind === 'securities' ||
+          (stake &&
+            ((c.legalForm != null && JOINT_STOCK_FORMS.has(c.legalForm.toUpperCase())) ||
+              c.links.some((l) => l.tier === 'bar_joint_stock')))
+        ? 'shares'
+        : c.roles.length === 0 &&
+            c.links.some((l) => ['unknown', 'outside_tr', 'refuted'].includes(l.tier))
+          ? 'unconfirmed'
+          : 'declared';
+  const classes = new Set(c.links.map((l) => l.class));
+  return {
+    company: i.entity_raw,
+    kind: i.kind,
+    timing: i.timing,
+    eik: c.roles.length > 0 || declaredTextHasEik(i.entity_raw, c.eik) ? c.eik : null,
+    scope:
+      classes.size === 1 && classes.has('family_ownership')
+        ? 'family'
+        : classes.size === 1 && classes.has('private_ownership')
+          ? 'self'
+          : 'unknown',
+    status,
+    ...(c.roles.length ? { registryRoles: c.roles } : {}),
   };
 }

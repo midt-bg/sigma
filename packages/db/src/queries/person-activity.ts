@@ -4,6 +4,7 @@ import {
   officeBounds,
   withinOffice,
 } from './declaration-source';
+import { officeOrganizationSql } from '@sigma/shared';
 import { publicRole } from './registry';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -83,6 +84,8 @@ export function personActivityScope(indent: string | null, ids: string[]) {
     SELECT DISTINCT r.eik FROM registry_roles r WHERE r.subject_id=?1 AND r.subject_kind='person' AND ${publicRole('r')}
       -- A role in a public enterprise is a held position; its contracts are not the person's (ADR-0047).
       AND NOT EXISTS (SELECT 1 FROM bidders pb WHERE pb.id='eik:' || r.eik AND pb.ownership_kind IS NOT NULL)
+      -- So is a seat in the organization the person files declarations for as a member of its bodies.
+      AND NOT ${officeOrganizationSql(placeholders, 'r.eik')}
     UNION SELECT il.eik FROM interest_links il WHERE ${gate}
   ), office_years AS (
     SELECT DISTINCT d.declared_year year FROM declarations d

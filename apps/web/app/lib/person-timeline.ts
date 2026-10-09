@@ -12,7 +12,8 @@ export interface TimelineCompany {
   contracts: TimelineContracts[];
   declarations: PersonDeclaration[];
   asOf: string | null;
-  /** A public enterprise: a role there is a held position, shown with the offices (ADR-0047). */
+  /** A held position, shown with the offices: a public enterprise (ADR-0047), or the organization the person
+   *  files declarations for as a member of its bodies. */
   publicEnterprise: boolean;
 }
 export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
@@ -43,7 +44,8 @@ export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
     c.observations = p.timeline.observations.filter((o) => o.eik === c.eik);
     c.declarations = p.declarations.filter((d) => d.companyEiks.includes(c.eik));
     c.asOf = p.timeline.reads.find((r) => r.eik === c.eik)?.asOf ?? null;
-    c.publicEnterprise = c.roles.some((r) => !!r.company.ownershipKind) && !c.links.length;
+    c.publicEnterprise =
+      c.roles.some((r) => !!r.company.ownershipKind || !!r.company.office) && !c.links.length;
     c.roles = [
       ...new Map(c.roles.map((r) => [`${r.role}|${r.addedOn}|${r.removedOn}`, r])).values(),
     ];

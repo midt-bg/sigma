@@ -125,6 +125,12 @@ export interface ConflictPersonRow {
     registryRole?: 'owner' | 'manager' | 'board';
     /** A declared management of the company, with no declared stake in it. */
     manages?: number;
+    /** A declared management the register records only as a seat on a collegial body (or not at all): listed
+     *  with the seats, under „всички роли“. */
+    board?: number;
+    /** Registry group: what the person's declarations say about the company, where they name it — a declared
+     *  tie Sigma does not count (a stake, a management, a relative's stake), or an entry naming it. */
+    declared?: 'stake' | 'manages' | 'family' | 'named' | null;
     /** Registry group: the years whose annual declaration does not name the registered company. */
     missingYears?: string[];
   }[];
@@ -149,8 +155,8 @@ export interface ConflictPersonRow {
   /** ≥1 contract is signed in an observed year with institution and position data for the person. */
   hasContemporaneous: boolean;
   declaredInstitutions?: DeclaredInstitution[];
-  /** Registry group: the row's figures without the seats on collegial bodies; null when the register
-   *  records the person only on such a body. Absent on declared rows, which it does not concern. */
+  /** The row's figures without the seats on collegial bodies — registered, or declared and confirmed only as
+   *  such a seat; null when the person has nothing else. Absent on a row with no such seat. */
   direct?: {
     companyCount: number;
     contractCount: number;
@@ -429,13 +435,13 @@ export function applyRoleScope<T extends ConflictPersonRow>(
 ): T[] {
   if (scope === 'all') return rows;
   return rows.flatMap((r) => {
-    if (r.stakeKind !== 'registry' || r.direct === undefined) return [r];
+    if (r.direct === undefined) return [r];
     if (!r.direct) return [];
     return [
       {
         ...r,
         ...r.direct,
-        companies: r.companies?.filter((c) => c.registryRole !== 'board'),
+        companies: r.companies?.filter((c) => c.registryRole !== 'board' && !c.board),
       },
     ];
   });
