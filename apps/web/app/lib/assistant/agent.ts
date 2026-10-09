@@ -5,6 +5,8 @@
 
 import { createOpenAI } from '@ai-sdk/openai';
 import {
+  APICallError,
+  RetryError,
   convertToModelMessages,
   jsonSchema,
   stepCountIs,
@@ -16,6 +18,7 @@ import {
 import { buildSystemPrompt } from './system-prompt';
 import { EMIT_REPORT_JSON_SCHEMA } from './emit-report-schema';
 import { ASSISTANT_TOOLS, finalizeReport, type ToolContext } from './tools';
+import { errorText } from './log-safety';
 
 export interface AgentEnv {
   BGGPT_API_KEY: string;
@@ -91,9 +94,60 @@ export interface RunAssistantOptions {
  * UI-message Response the chat route hands back to the dock. (Returns a `Response` rather than the
  * SDK result so no internal SDK type leaks across the module boundary.)
  */
+/**
+ * Identifier-only context for the stream log line — the SDK error class and the HTTP status it
+ * carries (through a RetryError wrapper too). Numbers and class names only, never body text: a 401
+ * (bad key) must stay distinguishable from a 429 (rate limit) and a 5xx (outage) in the tail log,
+ * which `.message` alone does not guarantee.
+ */
+function errorTag(error: unknown): string {
+  const api = APICallError.isInstance(error)
+    ? error
+    : RetryError.isInstance(error) && APICallError.isInstance(error.lastError)
+      ? error.lastError
+      : undefined;
+  if (!api) return RetryError.isInstance(error) ? ` [RetryError ${error.reason}]` : '';
+  const wrapper = RetryError.isInstance(error) ? `RetryError ${error.reason} → ` : '';
+  return ` [${wrapper}APICallError status=${api.statusCode ?? '?'} retryable=${api.isRetryable}]`;
+}
+
+/**
+ * One log line per stream error, deduped for the lifetime of ONE request.
+ *
+ * streamText's hook and the UI-stream hook see the SAME error object for a provider failure; the UI
+ * hook alone also sees a failure of the UI stream itself — so both must log, but a provider error
+ * must not be written twice. Objects dedup by IDENTITY (two distinct errors that happen to render
+ * the same text each deserve their own line); a primitive throw has no identity, so it dedups by
+ * its rendered text — without that branch the same thrown string is logged twice (review f/u,
+ * ydimitrof). Exported so the dedup is testable without driving a real stream.
+ */
+export function makeStreamErrorLogger(redact: readonly string[]): (error: unknown) => void {
+  const loggedObjects = new WeakSet<object>();
+  const loggedPrimitives = new Set<string>();
+  return (error: unknown): void => {
+    const text = errorText(error, redact);
+    if (typeof error === 'object' && error !== null) {
+      if (loggedObjects.has(error)) return;
+      loggedObjects.add(error);
+    } else {
+      if (loggedPrimitives.has(text)) return;
+      loggedPrimitives.add(text);
+    }
+    console.error(`[assistant] stream error: ${text}${errorTag(error)}`);
+  };
+}
+
+const STREAM_ERROR_USER_TEXT = 'Асистентът временно не е достъпен. Опитай отново след малко.';
+
 export async function runAssistant(opts: RunAssistantOptions): Promise<Response> {
   const maxSteps = resolveMaxSteps(opts.env.MAX_STEPS);
   const messages = await convertToModelMessages(opts.messages);
+  // Captured by the error hooks below: a short string, not `opts` (which would pin the whole
+  // UIMessage history for the stream's lifetime). The question is passed for redaction: a BgGPT
+  // error body can quote the prompt back, and that echo sits in the message — dropping the stack
+  // would not touch it (log-safety.ts).
+  const redact = [opts.ctx.userQuestion ?? ''];
+  const logStreamError = makeStreamErrorLogger(redact);
   const result = streamText({
     model: buildModel(opts.env),
     system: buildSystemPrompt({ schemaContext: opts.schemaContext, freshness: opts.freshness }),
@@ -106,6 +160,11 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     abortSignal: opts.abortSignal,
     maxRetries: 1,
     maxOutputTokens: 4096,
+    // streamText's DEFAULT onError is `console.error(error)` — the RAW APICallError, whose own
+    // enumerable properties carry `requestBodyValues` (the system prompt + the user's messages) and
+    // `responseBody`. Overriding it HERE is what keeps the prompt out of the tail log; the hook on
+    // toUIMessageStreamResponse below only decides what the client sees.
+    onError: ({ error }) => logStreamError(error),
   });
   return result.toUIMessageStreamResponse({
     // Graceful degradation (§7): a BgGPT outage / rate-limit / timeout surfaces mid-stream as a
@@ -113,8 +172,8 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     // "An error occurred." to avoid leaking server details — we log it server-side (Workers tail)
     // and show our own message. A full rate-limit + circuit-breaker is the launch gate (README).
     onError: (error) => {
-      console.error('[assistant] stream error', error);
-      return 'Асистентът временно не е достъпен. Опитай отново след малко.';
+      logStreamError(error);
+      return STREAM_ERROR_USER_TEXT;
     },
   });
 }

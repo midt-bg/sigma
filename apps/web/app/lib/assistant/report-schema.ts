@@ -8,7 +8,10 @@
 // HTML — closes the stored-XSS vector on the public /reports/:id, spec §7) and must not carry
 // material numbers.
 //
-// This module is pure (no deps, no bindings) so it is unit-testable and deploy-independent.
+// This module is pure (no bindings; its one dependency, `entities`, is a pure HTML-entity decoder) so it
+// is unit-testable and deploy-independent.
+
+import { decodeHTMLStrict } from 'entities';
 
 export type CellFormat = 'money' | 'number' | 'percent' | 'date' | 'text';
 export type EntityKind = 'company' | 'authority' | 'contract';
@@ -56,6 +59,22 @@ export interface EmitTableColumn {
   format: CellFormat;
   link?: { kind: EntityKind; idCol: string }; // renderer builds the canonical /companies/:eik etc.
 }
+// Compile-time pin for the explicit column rebuild in bindReport (case 'table'): every key of
+// EmitTableColumn — and of its `link` — must be listed here, so a field added to the type without a
+// line in the rebuild is a tsc error (a missing property below), not a silent drop on the way to the
+// renderer (review f/u, ydimitrof). report-schema.test.ts pins the runtime side: the rebuild emits
+// exactly these keys.
+export const REBUILT_COLUMN_KEYS: Record<keyof EmitTableColumn, true> = {
+  key: true,
+  header: true,
+  align: true,
+  format: true,
+  link: true,
+};
+export const REBUILT_LINK_KEYS: Record<keyof NonNullable<EmitTableColumn['link']>, true> = {
+  kind: true,
+  idCol: true,
+};
 export interface EmitTable {
   type: 'table';
   resultId: string; // rows come wholesale from this result — the model cannot inject fabricated rows
@@ -185,9 +204,10 @@ function stripTags(s: string): string {
 // Until the Phase-2 markdown renderer (no raw-HTML passthrough) lands, this strip is the SOLE barrier
 // against markup in the public report (spec §7/§9), so it must hold on its own.
 export function sanitizeProse(md: string): string {
-  // Decode numeric HTML entities first so an entity-encoded tag or scheme (`&#60;script&#62;`,
-  // `javascript&#58;…`) is seen by the tag strip and the scheme defang below (review #80, ydimitrof).
-  let out = stripTags(decodeNumericEntities(md));
+  // Decode HTML entities first so an entity-encoded tag or scheme (`&#60;script&#62;`, `&lt;script&gt;`,
+  // `javascript&#58;…`, `javascript&colon;…`) is seen by the tag strip and the scheme defang below
+  // (review #80, ydimitrof; named entities review f/u on #321).
+  let out = stripTags(decodeEntities(md));
   // Defang dangerous URL schemes a markdown link/image target could carry — `[t](javascript:…)` is NOT
   // inside <…>, so the tag strip misses it, and a markdown renderer would emit an executable href
   // (review #80). javascript:/vbscript: are never legitimate prose (and could autolink), so defang them
@@ -225,16 +245,45 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // 40 chars of the unit, so no legitimate amount is missed.
   /(?:€|eur)\s*\d[\d.,\s]{0,40}/giu, // €1234, EUR 1 234 (currency-first)
   /\d[\d.,\s]{0,40}(?:€|лв\.?|eur|евро|лева)/giu, // 1 234 лв, 1234 евро
-  /\d[\d.,\s]{0,40}(?:млн|млрд|хил)\.?/giu, // 12 млрд, 1,2 млн
+  /\d[\d.,\s]{0,40}(?:трлн|млрд|млн|хил)\.?/giu, // 12 млрд, 1,2 млн, 12 трлн
   /\d{1,3}(?:[.,\s'’٫٬]\d{3})+/gu, // grouped: 1 234, 1,234,567, 12'000'000, 2٬500٬000 (Arabic sep)
   /\d(?:[.,]\d+)?[eE][+-]?\d+/gu, // scientific notation: 1.2e10, 12E9
   /\d{5,}/gu, // 10000+ (years are ≤4 digits)
   // Spelled-out magnitudes / percentages / ratios bypassed the digit-only patterns above — a model could
-  // write "12 милиарда", "два милиарда", "5 милиона", "95%", "деветдесет процента", "12 на сто",
-  // "3,5 пъти" and land an unbound quantity on the public report (review #80). Flag the unit words too.
-  // NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches after a
-  // space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
-  /милиард|милион|хиляд/giu, // spelled magnitudes (incl. word-only "два милиарда", "триста хиляди")
+  // write "12 милиарда", "два милиарда", "5 милиона", "три трилиона", "95%", "деветдесет процента",
+  // "12 на сто", "3,5 пъти" and land an unbound quantity on the public report (review #80). Flag the unit
+  // words too. NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches
+  // after a space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
+  // The magnitude family shares two suffixes: -ИЛИОН (милион, билион, трилион, квадрилион, квинтилион,
+  // секстилион, … — note "мил-ион" ⊃ "илион") and -ИЛИАРД (милиард; "мил-иард" ⊃ "илиард").
+  // Matching the SUFFIXES — not an explicit list — closes the row upward for good: an earlier list stopped
+  // at квадрилион and let "3 квинтилиона лева" slip (the currency pattern can't bridge the digit to "лева"
+  // across the word), the exact "12 млрд." defamation vector some orders up (review #80 + f/u, ydimitrof).
+  // The suffixes are ANCHORED to the numeral prefixes (м-, б-, тр-, квадр-, квинт-, секст-, септ-,
+  // окт-, нон-, дец-: every Bulgarian magnitude through 10^33) rather than matched bare: the bare
+  // suffix also matched "павилион(и)" — kiosks/bus-stop shelters, a ROUTINE tender subject — and
+  // rejected a legitimate title as an unbound number the model cannot rewrite (review f/u). A
+  // `\p{L}` lookaround cannot separate "пав-илион" from "секст-илион" (both start at a word edge),
+  // so the prefix list is the right tool; it stays closed upward for any real-world magnitude.
+  // Inflections (милиона/милиарди/милионен) and "милионер" still match — over-flagging toward an
+  // unbound figure is the safe direction; "Илион" (Troy) and "билярд" (the game) no longer do.
+  // Digit forms are already caught by `\d{5,}` above.
+  // млрд/млн/трлн flag when ANY word precedes them, not only a listed numeral: "дванадесет млрд." has
+  // neither a digit (the \d…млрд pattern above needs one) nor a full-word suffix (review f/u,
+  // ydimitrof), and a CLOSED numeral list proved leaky — "два и половина млрд." (the word before the
+  // unit is "половина"), "двайсет млн.", "стотина млн.", "четвърт млрд." all passed it (review f/u on
+  // #321). Bare, the abbreviation is a UNIT — "Стойност (млн. €)" is the site's own column-header
+  // style and carries no number — so it must not flag when only punctuation, a line start or a unit
+  // PREPOSITION ("в млн. лв.", "изразени във млрд.") precedes it. A noun directly before it
+  // ("Стойност млн. €") IS flagged: without a complete numeral dictionary it is indistinguishable from
+  // "стотина млн.", and over-flagging toward an unbound figure is the safe direction (the model is
+  // asked to parenthesise the unit). `трлн` rides this branch AND the digit branch above: "три трлн
+  // лева" / "12 трлн. лева" have no `-илион` stem and no млн/млрд (review f/u, ydimitrof). Only the
+  // abbreviations Bulgarian financial writing actually uses are listed — an invented "квдрлн" would
+  // be a pattern nobody writes, and the full word (квадрилион) is already caught by the stem above.
+  // The digit-less "хил." residue stays accepted: thousands are not the defamation-scale vector.
+  /(?:м|б|тр|квадр|квинт|секст|септ|окт|нон|дец)ил(?:ион|иард)|хиляд/giu, // spelled magnitudes
+  /(?<!\p{L})(?!(?:в|във|на|по|от|до|за|към|при|с|със|и|или)(?!\p{L}))\p{L}+[\s\u00a0]+(?:трлн|млрд|млн)(?!\p{L})/giu, // word (numeral, fraction, approximation…) + трлн/млрд/млн
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
@@ -243,26 +292,28 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   /(?:\$|usd)\s*\d[\d.,\s]{0,40}/giu, // $1234, USD 1 234 (currency-first)
 ];
 
-const codePoint = (n: number, fallback: string): string =>
-  Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : fallback;
-
-// Decode numeric HTML entities (`&#58;` / `&#x3a;` / `&#X3A;`) to their character. A markdown renderer
-// decodes these, so the sanitizer must see through them before stripping tags / defanging schemes —
-// otherwise an entity-encoded tag or scheme (`&#60;script&#62;`, `javascript&#58;…`) survives
-// sanitizeProse, the SOLE pre-renderer barrier — and the number gate must decode them before scanning
-// (review #80, ydimitrof). The hex form accepts BOTH `&#x..;` and `&#X..;`: HTML5 numeric references are
-// case-insensitive on the `x`, so an uppercase `&#X31;` is decoded by renderers too and a case-sensitive
-// `x`-only match let it bypass both the number gate and the tag strip (review #80, follow-up).
-function decodeNumericEntities(s: string): string {
+// Decode HTML character references — numeric (`&#58;` / `&#x3a;` / `&#X3A;`) AND every HTML5 named one
+// (`&colon;`, `&nbsp;`, `&shy;`, `&euro;`, `&lt;`, …) — to their characters. A markdown renderer decodes
+// these, so the sanitizer must see through them before stripping tags / defanging schemes — otherwise an
+// entity-encoded tag or scheme (`&#60;script&#62;`, `javascript&colon;…`) survives sanitizeProse, the
+// SOLE pre-renderer barrier — and the number gate must decode them before scanning (review #80,
+// ydimitrof). Numeric-only decoding let `12&nbsp;млн`, `3 т&shy;рлн`, `12 &euro;` and
+// `javascript&colon;` through (review f/u on #321); the named table is the complete HTML5 set, from
+// `entities` (the decoder parse5/jsdom use). STRICT mode — only `;`-terminated references — because
+// that is what a CommonMark renderer decodes: the browser's legacy no-semicolon forms (`&copy=2` in a
+// URL query) stay literal on the page, so decoding them here would make the gate and the page disagree.
+// One value differs from micromark: a numeric reference to a C0/C1 control or a noncharacter follows
+// HTML5 (`&#128;` → "€") where micromark emits U+FFFD — but sanitizeProse decodes BEFORE the renderer,
+// so the page shows the same character the gate scans, and none of these can form or hide a digit.
+function decodeEntities(s: string): string {
   // Decode to a FIXPOINT, not a single pass: a double-encoded entity (`1&#38;#50;000` → `1&#50;000` →
   // `12000`) survives one pass — it passes the number gate as `1&#50;000` while a renderer decodes it the
-  // rest of the way to a fabricated `12000` (review #80, ydimitrof). Each pass turns an entity into one
-  // char so the string strictly shrinks and converges; the iteration bound is a cheap pathology backstop.
+  // rest of the way to a fabricated `12000` (review #80, ydimitrof). Each pass turns every reference into
+  // fewer chars than it spelled, so the string strictly shrinks and converges; the iteration bound is a
+  // cheap pathology backstop.
   let prev = s;
   for (let i = 0; i < 8; i++) {
-    const next = prev
-      .replace(/&#(\d{1,7});/g, (m, d) => codePoint(Number(d), m))
-      .replace(/&#[xX]([0-9a-fA-F]{1,6});/g, (m, h) => codePoint(parseInt(h, 16), m));
+    const next = decodeHTMLStrict(prev);
     if (next === prev) break;
     prev = next;
   }
@@ -290,24 +341,117 @@ function foldDigits(text: string): string {
 
 // Normalise prose to what a reader/renderer actually sees, so the number gate is not blinded by markup.
 // Markdown can split a number from its magnitude word (`**12** **млрд.**` → "12 млрд."); a renderer
-// collapses zero-width separators (`1​234​567` → "1234567") and decodes numeric HTML entities
-// (`12&#48;&#48;&#48;` → "12000"). Decode/strip those, drop emphasis, collapse whitespace (review #80).
+// shows no invisible format character — zero-width space/joiners, BOM, soft hyphen, word joiner, bidi
+// marks, every \p{Cf} (`1​234​567` → "1234567", `тр\u00adлн` → "трлн"; the class was only the first
+// four until review f/u on #321) — and decodes HTML entities (`12&#48;&#48;&#48;` → "12000",
+// `12&nbsp;млн` → "12 млн").
+// Decode/strip those, drop emphasis, collapse whitespace (review #80).
 // NB: stripTags here mirrors the display path (sanitizeProse → stripTags). Without it a model can split a
 // number with inert tags (`12<x>345<y>678`): the digit run never forms for the patterns above, the gate
 // passes, yet sanitizeProse removes the tags and re-joins it to a fabricated "12345678" on the page — the
 // §9.1 vector. Decode entities → strip tags → fold digits, so the gate scans the displayed string (#80 f/u).
 function deMarkdown(text: string): string {
-  return foldDigits(stripTags(decodeNumericEntities(text)))
-    .replace(/[\u200b-\u200d\ufeff]/g, '') // zero-width space / non-joiner / joiner / BOM
+  return foldDigits(stripTags(decodeEntities(text)))
+    .replace(/\p{Cf}/gu, '') // invisible format characters (zero-width, soft hyphen, word joiner, …)
     .replace(/[*_`~\\]/g, '')
     .replace(/\s+/g, ' ');
+}
+
+// Every unit pattern above is spelled in ONE script, so a single look-alike letter from another script
+// broke the match while the page still reads the unit: Latin t in "tрлн", Latin o in "милиoна", Greek
+// τρ in "τρлн", Cyrillic Е in "ЕUR", Cyrillic е in "1.2е10" (review f/u on #321). findProseNumbers
+// therefore also scans copies with the look-alikes folded into the script the patterns use. The italic
+// map adds the twins a renderer shows for `*…*` — italic т reads as m, и as u, п as n, д as g — so it
+// is a separate copy (m cannot fold to both м and т at once). Folding only ADDS scans, so it can never
+// remove a hit; and Latin text cannot fold into a false Cyrillic unit, because almost every unit has a
+// letter with no Latin twin (л, ц, ъ, я) — only an all-caps "EBPO" after a digit or "HA CTO" could.
+const TO_CYRILLIC: Readonly<Record<string, string>> = {
+  a: 'а',
+  c: 'с',
+  e: 'е',
+  k: 'к',
+  m: 'м',
+  o: 'о',
+  p: 'р',
+  t: 'т',
+  x: 'х',
+  y: 'у',
+  A: 'А',
+  B: 'В',
+  C: 'С',
+  E: 'Е',
+  H: 'Н',
+  K: 'К',
+  M: 'М',
+  O: 'О',
+  P: 'Р',
+  T: 'Т',
+  X: 'Х',
+  Y: 'У',
+  α: 'а',
+  κ: 'к',
+  ο: 'о',
+  ρ: 'р',
+  τ: 'т',
+  χ: 'х',
+  Α: 'А',
+  Β: 'В',
+  Ε: 'Е',
+  Η: 'Н',
+  Κ: 'К',
+  Μ: 'М',
+  Ο: 'О',
+  Ρ: 'Р',
+  Τ: 'Т',
+  Υ: 'У',
+  Χ: 'Х',
+};
+const TO_CYRILLIC_ITALIC: Readonly<Record<string, string>> = {
+  ...TO_CYRILLIC,
+  g: 'д',
+  m: 'т',
+  n: 'п',
+  u: 'и',
+};
+// Only the letters of the Latin-script units (eur, usd, the `e` of scientific notation) need a fold. A
+// Cyrillic е between digits ("5е-3") now reads as scientific notation — the over-flag the Latin form
+// always had, and the safe direction.
+const TO_LATIN: Readonly<Record<string, string>> = {
+  е: 'e',
+  Е: 'E',
+  ѕ: 's',
+  Ѕ: 'S',
+  ԁ: 'd',
+  Ε: 'E',
+  υ: 'u',
+};
+
+const CONFUSABLE_FOLDS = [TO_CYRILLIC, TO_CYRILLIC_ITALIC, TO_LATIN].map((map) => ({
+  re: new RegExp(`[${Object.keys(map).join('')}]`, 'gu'),
+  map,
+}));
+
+function foldConfusables(text: string): string[] {
+  return CONFUSABLE_FOLDS.map(({ re, map }) => text.replace(re, (ch) => map[ch]!));
+}
+
+// A reader looks straight through a combining mark: "мл\u0301н" and "e\u0301ur" still read as
+// "млн"/"eur" (review f/u on #321). NFD detaches an accent from its base letter so it can go; that
+// also turns й into и, which no unit pattern contains, so the copy only ever gains hits.
+function stripMarks(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '');
 }
 
 /** Return the material-number tokens found in prose (empty ⇒ clean). Used to gate text/callout. */
 export function findProseNumbers(text: string): string[] {
   const hits: string[] = [];
-  // Scan the raw text AND a markdown-stripped copy so neither plain nor markup-split numbers slip.
-  for (const scan of [text, deMarkdown(text)]) {
+  // Scan the raw text AND a markdown-stripped copy so neither plain nor markup-split numbers slip, plus
+  // that displayed copy with its combining marks dropped and its look-alike letters folded (stripMarks,
+  // foldConfusables). Folding the mark-free copy covers the marked one too: dropping a mark never
+  // removes a letter a pattern needs. A copy identical to another is scanned once.
+  const displayed = deMarkdown(text);
+  const plain = stripMarks(displayed);
+  for (const scan of new Set([text, displayed, plain, ...foldConfusables(plain)])) {
     for (const re of PROSE_NUMBER_PATTERNS) {
       for (const m of scan.matchAll(re)) hits.push(m[0].trim());
     }
@@ -322,10 +466,19 @@ const MAX_PROSE_LEN = 2000;
 
 // THE single material-number gate for every model-authored prose slot (folds the previously open-coded
 // copies — a new slot can no longer forget it, review #80). `label` is the slot-specific error prefix.
+// Bidi controls (LRM/RLM/ALM, embeddings, overrides, isolates) change the ORDER a reader sees letters
+// in: "\u202eнлм\u202c" is stored as "нлм" but displays as "млн", so no scan of the stored string can
+// catch it. No prose here needs one, so every prose slot refuses them outright — checked after numeric
+// entities are decoded, since the display path decodes `&#x202e;` too (review f/u on #321).
+const BIDI_CONTROL = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+
 function gateProse(value: string, label: string, errors: string[]): void {
   if (value.length > MAX_PROSE_LEN) {
     errors.push(`${label}: too long (${value.length} chars); keep prose concise`);
     return; // do NOT scan an over-long string (ReDoS guard)
+  }
+  if (BIDI_CONTROL.test(decodeEntities(value))) {
+    errors.push(`${label}: bidi control characters are not allowed`);
   }
   const nums = findProseNumbers(value);
   if (nums.length) errors.push(`${label} (${nums.join(', ')})`);
@@ -467,7 +620,20 @@ export function bindReport(
         if (r) {
           for (const col of b.columns)
             gateProse(col.header, `${at}: material number in column header "${col.key}"`, errors);
-          const columns = b.columns.map((c) => ({ ...c, header: sanitizeProse(c.header) }));
+          // Build each resolved column EXPLICITLY (not `{ ...c }`) so only the known fields reach the
+          // renderer — a spread would carry any extra model-supplied property (validateEmitShape does
+          // not reject unknown keys) straight through. The same goes one level DOWN: `link` is rebuilt
+          // from its two known fields, not copied by reference, or an extra key inside it (an `href`)
+          // would ride into the frozen report. `align`/`link` are enum-validated upstream; a `null`
+          // (accepted there as "not given") folds to absent here. REBUILT_COLUMN_KEYS/REBUILT_LINK_KEYS
+          // (top of file) pin this field list to the type, so it cannot fall behind a type change.
+          const columns: EmitTableColumn[] = b.columns.map((c) => ({
+            key: c.key,
+            header: sanitizeProse(c.header),
+            ...(c.align != null ? { align: c.align } : {}),
+            format: c.format,
+            ...(c.link != null ? { link: { kind: c.link.kind, idCol: c.link.idCol } } : {}),
+          }));
           if (r.rows.length === 0) {
             // An empty (0-row) result carries no column metadata, so requireCols would reject every
             // reference and force the model to retry on dangling errors — render an empty table instead
