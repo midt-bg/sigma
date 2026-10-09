@@ -233,6 +233,48 @@ it('notes ownership the register holds at the end of a reporting year that the a
   }
 });
 
+// A company renamed after the filing is declared under its former name. Until the register history gives that
+// name the site cannot tell an omission from a rename, so there is no note; once it does, the former name finds
+// the company and there is still none. A company named under no name it ever had is noted.
+it('notes no company whose former names the register history has not given', async () => {
+  const db = new DatabaseSync(':memory:');
+  const H = 'h'.repeat(64);
+  try {
+    db.exec(`CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
+   CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+   CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
+   CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+   CREATE TABLE person_registry_links(person_id,registry_indent);
+   CREATE TABLE bidders(id,name);
+   CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id);
+   CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+   CREATE TABLE declaration_companies(declaration_id,eik,match_method);
+   CREATE TABLE person_entities(id,registry_indent,created_at);
+   CREATE TABLE registry_deeds(eik,name,legal_form);
+   CREATE TABLE registry_roles(eik,subject_id,subject_kind,role,entry_number,added_on,removed_on,uncertain_after);
+   CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
+   INSERT INTO declarations VALUES('a19','p','2019','assets','','Община Тест','Кмет','u/1');
+   INSERT INTO declaration_metadata VALUES('a19','Annualy',NULL,NULL);
+   -- The 2019 filing names the company as it was called then.
+   INSERT INTO declared_interests VALUES('a19','x','Старо Тестово ООД','shares','annual');
+   INSERT INTO person_entities VALUES('p','${H}','2026-01-01');
+   INSERT INTO registry_deeds VALUES('555555555','НОВО ТЕСТОВО','OOD'),('666666666','ОМЕГА ТЕСТОВО','OOD');
+   INSERT INTO registry_roles VALUES
+     ('555555555','${H}','person','partner','e5','2018-01-01',NULL,NULL),
+     ('666666666','${H}','person','partner','e6','2018-01-01',NULL,NULL);
+   -- The register history has read the other company, but not the renamed one.
+   INSERT INTO registry_company_history VALUES('666666666','[{"name":"ОМЕГА ТЕСТОВО","legalForm":"ООД"}]','h','2026-09-01');`);
+    const notes = async () =>
+      (await getPersonDeclarations(d1FromSqlite(db), 'p'))[0]!.registryOmissions!.map((o) => o.eik);
+    expect(await notes()).toEqual(['666666666']);
+    db.exec(`INSERT INTO registry_company_history VALUES('555555555',
+      '[{"name":"НОВО ТЕСТОВО","legalForm":"ООД"},{"name":"СТАРО ТЕСТОВО","legalForm":"ООД"}]','h','2026-10-09');`);
+    expect(await notes()).toEqual(['666666666']);
+  } finally {
+    db.close();
+  }
+});
+
 it('looks for the company in every filing of the year, by its ЕИК and by any name the register gives it', async () => {
   const db = new DatabaseSync(':memory:');
   const H = 'h'.repeat(64);
@@ -263,6 +305,8 @@ it('looks for the company in every filing of the year, by its ЕИК and by any 
    INSERT INTO person_entities VALUES('p','${H}','2026-01-01');
    INSERT INTO registry_deeds VALUES('111111111','РОТА','OOD'),('222222222','СИГНА','OOD'),('333333333','КАППА','EAD');
    INSERT INTO registry_company_history VALUES('222222222','[{"name":"СТАРО ИМЕ","legalForm":"ООД"},{"name":"СИГНА","legalForm":"ООД"}]','h','2026-09-01');
+   INSERT INTO registry_company_history VALUES('111111111','[{"name":"РОТА","legalForm":"ООД"}]','h','2026-09-01'),
+     ('333333333','[{"name":"КАППА","legalForm":"ЕАД"}]','h','2026-09-01');
    INSERT INTO registry_roles VALUES
      ('111111111','${H}','person','partner','e1','2020-01-01',NULL,NULL),
      ('222222222','${H}','person','partner','e2','2020-01-01',NULL,NULL),

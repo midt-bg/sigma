@@ -199,9 +199,12 @@ export async function getPersonDeclarations(
       // spelling — is named; a year of which nothing was read gives no note at all.
       registryOmissions: omissions.flatMap((o) => {
         if (o.declaration_id !== r.id || !filings) return [];
+        // A company whose names the register history has not given is no finding: it may be declared under a
+        // former name the site does not know.
+        if (filings.history && !filings.history.has(o.eik)) return [];
         const omission = registryOmission(filings.byYear, String(r.declared_year), {
           eik: o.eik,
-          names: [o.company, ...(filings.history.get(o.eik) ?? [])],
+          names: [o.company, ...(filings.history?.get(o.eik) ?? [])],
         });
         if (!omission) return [];
         return [
@@ -234,12 +237,13 @@ async function omissionEvidence(
   interests: { declaration_id: string; entity_raw: string }[],
   omissions: { eik: string }[],
 ) {
+  // A missing table is null — the comparison then rests on the entries' text alone — not an empty list.
   const optional = <T>(query: Promise<{ results: T[] }>) =>
     query
-      .then((q) => q.results)
+      .then((q): T[] | null => q.results)
       .catch((e: unknown) => {
         if (/no such table:?\s*(declaration_companies|registry_company_history)/i.test(String(e)))
-          return [] as T[];
+          return null;
         throw e;
       });
   const [resolved, history] = await Promise.all([
@@ -265,11 +269,12 @@ async function omissionEvidence(
     byYear: filingsByYear(
       declarations.map((d) => ({
         year: (d.declared_year as string | null) ?? null,
-        eiks: resolved.filter((c) => c.declaration_id === d.id).map((c) => c.eik),
+        eiks: (resolved ?? []).filter((c) => c.declaration_id === d.id).map((c) => c.eik),
         named: interests.filter((i) => i.declaration_id === d.id).map((i) => i.entity_raw),
       })),
     ),
-    history: new Map(history.map((h) => [h.eik, historyNames(h.names_json)])),
+    // Null without the table; otherwise each company the register history has read, by its names.
+    history: history && new Map(history.map((h) => [h.eik, historyNames(h.names_json)])),
   };
 }
 

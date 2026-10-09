@@ -156,6 +156,8 @@ it('lists people the register records as owners of a winner without a declared s
       INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01','ИЗПЪЛНИТЕЛ'),('222222222','ok','2026-09-01',NULL),
         ('333333333','ok','2026-09-01',NULL),('999999999','ok','2026-09-01',NULL);
       CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
+      INSERT INTO registry_company_history VALUES('111111111','[{"name":"ИЗПЪЛНИТЕЛ","legalForm":"ООД"}]','h','2026-09-01'),
+        ('333333333','[{"name":"ЧАСТНО","legalForm":"ООД"}]','h','2026-09-01');
       CREATE TABLE declarations(id,person_id,institution,position,declared_year,category TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
       CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
       CREATE TABLE declared_interests(declaration_id,entity_raw);
@@ -268,7 +270,10 @@ it('finds a registered company in any filing of the year — another document, a
         ('${H}','person','partner','444444444');
       INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01','ПЪРВА'),('222222222','ok','2026-09-01','НОВА МАРКА'),
         ('333333333','ok','2026-09-01','ТРЕТА'),('444444444','ok','2026-09-01','ЧЕТВЪРТА');
-      INSERT INTO registry_company_history VALUES('222222222','[{"name":"СТАРА МАРКА","legalForm":"ООД"}]','h','2026-09-01');
+      INSERT INTO registry_company_history VALUES('222222222','[{"name":"СТАРА МАРКА","legalForm":"ООД"}]','h','2026-09-01'),
+        ('111111111','[{"name":"ПЪРВА","legalForm":"ООД"}]','h','2026-09-01'),
+        ('333333333','[{"name":"ТРЕТА","legalForm":"ООД"}]','h','2026-09-01'),
+        ('444444444','[{"name":"ЧЕТВЪРТА","legalForm":"ООД"}]','h','2026-09-01');
       INSERT INTO declarations VALUES('d19','p','','','2019'),('e19','p','','','2019');
       INSERT INTO declaration_metadata(declaration_id,declaration_type) VALUES('d19','Annualy'),('e19','Entry');
       INSERT INTO declared_interests VALUES('d19','Стара марка ООД'),('d19','дружество с ЕИК 333333333'),
@@ -288,6 +293,14 @@ it('finds a registered company in any filing of the year — another document, a
       '333333333': [],
       '444444444': ['2019'],
     });
+    // Without the register history of the company its former names are unknown: no finding.
+    db.exec("UPDATE registry_company_history SET eik='x444444444' WHERE eik='444444444'");
+    expect(
+      (await getRegistryRolePersonRows(d1FromSqlite(db)))[0]!.companies.find(
+        (c) => c.eik === '444444444',
+      )!.missingYears,
+    ).toEqual([]);
+    db.exec("UPDATE registry_company_history SET eik='444444444' WHERE eik='x444444444'");
 
     // A company the declarations tie to stays in the group — the register records the person there — and the
     // row says what the declarations say about it, instead of dropping it as if it were left out.

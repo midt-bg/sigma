@@ -334,11 +334,14 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
         ...c,
         // The same comparison as the person's profile: any filing of the year naming the company — by ЕИК
         // or under any of its names — names it, and a year of which nothing was read is no finding.
+        // A company whose names the register history has not given is no finding: it may be declared under
+        // a former name the site does not know.
         missingYears: [
           ...new Set(
             years.filter(
               (year): year is string =>
                 !!year &&
+                history !== null &&
                 !!registryOmission(byYear, year, {
                   eik: c.eik,
                   names: [c.company, current, ...historyNames(history)],
