@@ -36,6 +36,26 @@ describe('unverifiedValueNote', () => {
     const note = unverifiedValueNote(v({ suspect: true, flag: 'value_low', estimatedEur: null }))!;
     expect(note.headline).toContain('несъразмерно ниска');
     expect(note.headline).not.toContain('%');
+    // and does not compare with a forecast the page cannot show
+    expect(note.headline).not.toContain('прогнозн');
+  });
+
+  it('puts a zero CURRENT value on the current figure, not on a normal signing price', () => {
+    // Signed at the forecast; an amendment restated the value as 0 — the flag fires on the current value.
+    const note = unverifiedValueNote(
+      v({
+        suspect: true,
+        flag: 'value_low',
+        estimatedEur: 82000,
+        signingEur: 82000,
+        currentEur: 0,
+      }),
+    )!;
+    expect(note.scope).toBe('current');
+    expect(note.title).toContain('Текущата стойност');
+    expect(note.headline).toContain(money(0));
+    expect(note.headline).toContain(money(82000));
+    expect(note.headline).not.toContain('несъразмерно ниска');
   });
 
   it('reports a non-positive published value as such, not as a percentage', () => {

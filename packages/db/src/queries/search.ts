@@ -39,7 +39,7 @@ const GROUPS: {
   {
     kind: 'authority',
     label: 'Институции',
-    amountLabel: 'общо похарчено',
+    amountLabel: 'възложено общо',
     limit: 6,
     path: '/authorities',
   },

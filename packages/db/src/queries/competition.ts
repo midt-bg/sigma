@@ -16,6 +16,7 @@ import type {
 } from '@sigma/api-contract';
 import {
   CLASSIFIED_PROCEDURE_TYPES,
+  COMPETITION_MIN_CONTRACTS,
   NON_COMPETITIVE_PROCEDURE_TYPES,
   PROCEDURE_UNKNOWN_KEY,
   procedureGroup,
@@ -36,7 +37,7 @@ export interface CompetitionParams {
 
 const DEFAULT_TOP = 20;
 const MAX_TOP = 50;
-const DEFAULT_MIN_CONTRACTS = 20;
+const DEFAULT_MIN_CONTRACTS = COMPETITION_MIN_CONTRACTS;
 
 // Shared contract-scope filter, identical across panels: sector via the parent tender's CPV division,
 // year via signed_at, EU funding via eu_funded. Every contract has a parent tender (synthetic when the

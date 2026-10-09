@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { COMPETITION_MIN_CONTRACTS } from '@sigma/config';
 import { count, date, money, pct } from '@sigma/shared';
 import { getMethodologyStats, getDb } from '@sigma/db';
 import type { Route } from './+types/methodology';
@@ -130,7 +131,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
               </p>
               <ul>
                 <li>
-                  <strong>Институции</strong> — възложителите. Кой колко харчи, на какво.
+                  <strong>Институции</strong> — възложителите. Кой какви договори е възложил и за
+                  колко.
                 </li>
                 <li>
                   <strong>Компании</strong> — изпълнителите, ключът е ЕИК. Колко е спечелила всяка,
@@ -410,7 +412,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     използва два от тях само като <strong>външен ориентир</strong>: дял с една
                     оферта — целево ≤ 10%, високо ≥ 20%; дял пряко възлагане — целево ≤ 5%, високо ≥
                     10%. Това е сравнение спрямо обща рамка, а не оценка на конкретна процедура или
-                    възложител.
+                    възложител. Сравнение се прави само при поне {COMPETITION_MIN_CONTRACTS}{' '}
+                    договора зад дела (с известен брой оферти, съответно с класифицирана процедура)
+                    — същият праг, по който се подреждат възложителите на страницата „Конкуренция";
+                    при по-малко делът се показва без оценка.
                   </p>
                   <span className="src">
                     →{' '}
@@ -524,9 +529,12 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 </table>
               </div>
               <p className="small muted mt-s3">
-                <strong>Място на изпълнение</strong>, <strong>собственици и свързани лица</strong> и{' '}
-                <strong>рискови сигнали</strong> са в процес на разработка за следваща версия —
-                изискват пълно сливане с допълнителни източници и отделен аналитичен слой.
+                <strong>Свързаните лица</strong> имат собствена{' '}
+                <Link to="/conflicts/methodology">методология</Link>;{' '}
+                <strong>собствениците и управителите</strong> по Търговския регистър се показват на
+                страницата на всяко дружество; <strong>рисковите сигнали</strong> са описани в{' '}
+                <a href="#flagged">раздел 10</a>. <strong>Мястото на изпълнение</strong> на договора
+                все още не се извлича — картата разпределя договорите по областта на институцията.
               </p>
             </section>
 

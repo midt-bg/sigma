@@ -48,7 +48,9 @@ export function FilterRail({
 }) {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const preservedScope = ['authority', 'bidder'].flatMap((key) =>
+  // Filters that have no control in the rail but narrow the list: the no-JS submit must carry them, or
+  // „само една оферта" (/contracts?bids=1) silently became the whole list.
+  const preservedScope = ['authority', 'bidder', 'bids'].flatMap((key) =>
     sp.getAll(key).map((value) => ({ key, value })),
   );
   const groupKeys = groups.map((g) => g.key);

@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
-import { EU_SCOREBOARD, type IndicatorRating, rateLowerIsBetter } from '@sigma/config';
+import { EU_SCOREBOARD, type IndicatorRating } from '@sigma/config';
+import { euRating, SMALL_SAMPLE_LABEL } from '../lib/eu-rating';
 import {
   count,
   money,
@@ -87,15 +88,15 @@ const RATING_LABEL: Record<IndicatorRating, string> = {
   mid: 'над целевата стойност на ЕС',
   bad: 'над прага на ЕС',
 };
-
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
   const { trend, ties, tieLayout, competition, procedure, conflicts } = loaderData;
   const ct = competition;
   // Both verdicts use the COUNT share - the basis the EU Scoreboard thresholds are defined on.
-  const singleOfferRating = rateLowerIsBetter(ct.singleOfferShare, EU_SCOREBOARD.singleBidder);
-  const directAwardRating = rateLowerIsBetter(
+  const singleOfferRating = euRating(ct.singleOfferShare, ct.contracts, EU_SCOREBOARD.singleBidder);
+  const directAwardRating = euRating(
     procedure.nonCompetitiveShare,
+    procedure.classifiedContracts,
     EU_SCOREBOARD.directAward,
   );
   const range = coverageRange(loaderData.coverage.coverageEndYear);
@@ -127,7 +128,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </>
           }
           title={a.name}
-          lede={`Колко публични средства е похарчила институцията за обществени поръчки през ${range} г. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
+          lede={`Стойността на договорите, които институцията е възложила през ${range} г. Това са стойности на договорите, а не извършени плащания. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
         >
           {/* Only a trader has a partida in the Търговски регистър; a municipality or a school is registered
               in БУЛСТАТ alone, and the register would open an empty report for it. */}
@@ -142,7 +143,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             { term: 'Период', value: periodRange(a.periodFirst, a.periodLast) },
             { term: 'Изпълнители', value: count(a.suppliers) },
             conflicts.companies > 0 && {
-              term: 'С деклариран дял на длъжностно лице',
+              // The count includes management-only links (ADR-0047 private_ownership) — not a stake.
+              term: 'С деклариран дял или управление на длъжностно лице',
               value: (
                 <Link to={`/conflicts?authority=${a.eik}`}>
                   {count(conflicts.companies)}{' '}
@@ -184,13 +186,13 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           <Section
             id="trend"
             title="Тренд"
-            hint={`Разходите на ${a.name} във времето. Договорите без валидна дата не влизат в графиката.`}
+            hint={`Стойността на договорите на ${a.name} във времето. Договорите без валидна дата не влизат в графиката.`}
           >
             <TrendBlock
               points={trend.points}
               years={trend.years}
               granularity={trend.granularity}
-              caption="Разходи по години"
+              caption="Стойност на договорите по години"
             />
           </Section>
 
@@ -207,7 +209,9 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                 good={EU_SCOREBOARD.singleBidder.good}
                 bad={EU_SCOREBOARD.singleBidder.bad}
                 rating={singleOfferRating}
-                ratingLabel={RATING_LABEL[singleOfferRating]}
+                ratingLabel={
+                  singleOfferRating ? RATING_LABEL[singleOfferRating] : SMALL_SAMPLE_LABEL
+                }
                 detail={`${count(ct.singleOffer)} от ${count(ct.contracts)} договора · ${money(ct.singleOfferValueEur)} от ${money(ct.valueEur)} по стойност (${pct(ct.singleOfferValueShare)})`}
               />
             ) : (
@@ -221,7 +225,9 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                 good={EU_SCOREBOARD.directAward.good}
                 bad={EU_SCOREBOARD.directAward.bad}
                 rating={directAwardRating}
-                ratingLabel={RATING_LABEL[directAwardRating]}
+                ratingLabel={
+                  directAwardRating ? RATING_LABEL[directAwardRating] : SMALL_SAMPLE_LABEL
+                }
                 detail={`${count(procedure.nonCompetitiveContracts)} от ${count(procedure.classifiedContracts)} класифицирани договора`}
               />
             ) : (
@@ -285,10 +291,10 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           title="Най-големи изпълнители и връзките между тях"
           hint={
             <span>
-              Изпълнителите с най-много получени средства от институцията, и кои от тях са свързани
-              помежду си: съвместно участие в обединение, подизпълнителство, деклариран интерес на
-              едно и също длъжностно лице, или общо лице или собственик по Търговския регистър.{' '}
-              <Link to={`/network?center=a:${a.eik}`}>Виж паричната мрежа →</Link>
+              Изпълнителите с най-голяма стойност на договорите с институцията, и кои от тях са
+              свързани помежду си: съвместно участие в обединение, подизпълнителство, деклариран
+              интерес на едно и също длъжностно лице, или общо лице или собственик по Търговския
+              регистър. <Link to={`/network?center=a:${a.eik}`}>Виж паричната мрежа →</Link>
             </span>
           }
         >

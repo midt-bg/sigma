@@ -378,6 +378,11 @@ export const EU_SCOREBOARD: {
   directAward: { good: 0.05, bad: 0.1 },
 };
 
+/** The fewest contracts behind a share before it is ranked (/competition) or rated against the EU
+ *  thresholds (an authority's page): below it one or two contracts decide the share, and a verdict
+ *  would be noise about a named body. One number for both surfaces so they never disagree. */
+export const COMPETITION_MIN_CONTRACTS = 20;
+
 /** Rate a share (0..1) where lower is better against a good/bad band. Deterministic; values strictly
  *  inside the band are 'mid'. */
 export function rateLowerIsBetter(value: number, t: IndicatorThresholds): IndicatorRating {
