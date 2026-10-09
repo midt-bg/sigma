@@ -5,12 +5,17 @@ import {
   buildSectorGroup,
   companyListFilters,
   contractListFilters,
+  cpvGroupSelection,
   getMulti,
   leaderboardRankOffset,
+  MAX_CPV_GROUP_SELECTION,
   MAX_MULTI_VALUES,
   pageNav,
   PARAM_ORDER,
   searchHref,
+  trendAngle,
+  trendSort,
+  trendStep,
   singleSelectFilters,
   sortHref,
   withParams,
@@ -122,6 +127,70 @@ describe('getMulti', () => {
   });
 });
 
+describe('cpvGroupSelection', () => {
+  it('parses repeatable and CSV ?cpv values into a deduped, canonically sorted set', () => {
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=33600'))).toEqual(['33600', '45233']);
+    expect(cpvGroupSelection(sp('cpv=45233,33600'))).toEqual(['33600', '45233']);
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=45233&cpv=33600'))).toEqual(['33600', '45233']);
+    expect(cpvGroupSelection(sp(''))).toEqual([]);
+  });
+
+  it('returns an identical sorted array regardless of ?cpv arrival order (edge-cache key stability)', () => {
+    expect(cpvGroupSelection(sp('cpv=33600&cpv=45233'))).toEqual(
+      cpvGroupSelection(sp('cpv=45233&cpv=33600')),
+    );
+    expect(cpvGroupSelection(sp('cpv=33600&cpv=45233'))).toEqual(['33600', '45233']);
+  });
+
+  it('drops anything that is not exactly a 5-digit group code (CWE-349 key hygiene)', () => {
+    expect(
+      cpvGroupSelection(sp('cpv=4523&cpv=452333&cpv=abcde&cpv=45 33&cpv= 45233 &cpv=%27--')),
+    ).toEqual(['45233']);
+  });
+
+  it('caps the selection at MAX_CPV_GROUP_SELECTION so hostile spam stays bounded', () => {
+    const q = Array.from({ length: 40 }, (_, i) => `cpv=${10000 + i}`).join('&');
+    const out = cpvGroupSelection(sp(q));
+    expect(out).toHaveLength(MAX_CPV_GROUP_SELECTION);
+    expect(out[0]).toBe('10000');
+    expect(out.at(-1)).toBe(String(10000 + MAX_CPV_GROUP_SELECTION - 1));
+  });
+});
+
+describe('trend param validation (angle/step/sort)', () => {
+  it('trendAngle passes through known values and falls back to "time" otherwise', () => {
+    expect(trendAngle(sp('angle=cpv'))).toBe('cpv');
+    expect(trendAngle(sp('angle=cross'))).toBe('cross');
+    expect(trendAngle(sp('angle=time'))).toBe('time');
+    expect(trendAngle(sp(''))).toBe('time');
+    expect(trendAngle(sp("angle='--drop table"))).toBe('time');
+    expect(trendAngle(sp('angle=CPV'))).toBe('time');
+  });
+
+  it('trendStep passes through known values and falls back to "q" otherwise', () => {
+    expect(trendStep(sp('step=m'))).toBe('m');
+    expect(trendStep(sp('step=y'))).toBe('y');
+    expect(trendStep(sp('step=q'))).toBe('q');
+    expect(trendStep(sp(''))).toBe('q');
+    expect(trendStep(sp('step=bogus'))).toBe('q');
+  });
+
+  it('trendStep falls back to the retired `g` param when `step` is absent, but `step` wins when both are present (#197 back-compat)', () => {
+    expect(trendStep(sp('g=year'))).toBe('y');
+    expect(trendStep(sp('g=quarter'))).toBe('q');
+    expect(trendStep(sp('g=month'))).toBe('m');
+    expect(trendStep(sp('g=bogus'))).toBe('q');
+    expect(trendStep(sp('g=year&step=m'))).toBe('m');
+  });
+
+  it('trendSort passes through known values and falls back to "date" otherwise', () => {
+    expect(trendSort(sp('sort=value'))).toBe('value');
+    expect(trendSort(sp('sort=date'))).toBe('date');
+    expect(trendSort(sp(''))).toBe('date');
+    expect(trendSort(sp('sort=name'))).toBe('date');
+  });
+});
+
 describe('searchHref', () => {
   it('sets q and resets cursor/page while preserving filters and sort', () => {
     const sp = new URLSearchParams('sort=name&year=2024&cursor=abc&page=3&sector=45');
@@ -156,6 +225,12 @@ describe('searchHref', () => {
     sp.set('sector', '45');
 
     expect(new URLSearchParams(searchHref(sp, 'q')).getAll('year')).toEqual(['2024', '2023']);
+  });
+
+  it('keeps a bookmarked /trends ?g=year through link generation, right after step (#197 back-compat)', () => {
+    const href = withParams(new URLSearchParams('g=year&angle=time'), { cpv: ['45100'] });
+    expect(href).toBe('?cpv=45100&angle=time&g=year');
+    expect(trendStep(new URLSearchParams(href))).toBe('y');
   });
 
   it('preserves unknown keys not in PARAM_ORDER (e.g. contracts bids)', () => {
