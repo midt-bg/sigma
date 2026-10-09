@@ -10,6 +10,8 @@ function csp(scriptSrc: string[]): string {
     // `script-src` is enforced. All static inline styles have been migrated to classes in app.css,
     // shrinking this to a handful of injection-free numeric/colour values; with no HTML-injection
     // sink today, this stays defense-in-depth.
+    // <Links nonce=""> in root.tsx relies on `style-src` retaining 'self' without a nonce source,
+    // so its empty link nonce remains inert.
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
     "img-src 'self' data:",
