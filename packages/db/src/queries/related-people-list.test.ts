@@ -146,7 +146,7 @@ it('lists people the register records as owners of a winner without a declared s
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
-      CREATE TABLE interest_links(person_id,status,interest_class);
+      CREATE TABLE interest_links(person_id,status,interest_class,eik);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       -- An open role counts only up to the last successful read of the partida.
       CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
@@ -163,7 +163,7 @@ it('lists people the register records as owners of a winner without a declared s
       CREATE TABLE tenders(id PRIMARY KEY,authority_id);
       INSERT INTO persons VALUES('p','Лице Роля'),('q','Лице Дял'),('r','Лице Без');
       INSERT INTO person_registry_links VALUES('p','${H}'),('q','${'q'.repeat(64)}');
-      INSERT INTO interest_links VALUES('q','published','private_ownership');
+      INSERT INTO interest_links VALUES('q','published','private_ownership','999999999');
       -- The partner role at 111111111 ENDS at the start of 2021, so the 2022 contract falls outside it —
       -- even though 2022 is one of this person's office years. „Стойност в периода" must ask about the
       -- company, not about whether the person held some office that year.
@@ -234,7 +234,7 @@ it('finds a registered company in any filing of the year — another document, a
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
-      CREATE TABLE interest_links(person_id,status,interest_class);
+      CREATE TABLE interest_links(person_id,status,interest_class,eik);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
       CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
@@ -273,6 +273,30 @@ it('finds a registered company in any filing of the year — another document, a
       '333333333': [],
       '444444444': ['2019'],
     });
+
+    // A link the declarations hold to a company — even one never shown, like a joint-stock company's — means
+    // the declarations do not leave that company out: the pair leaves the group, whatever the link's status.
+    db.exec(`INSERT INTO interest_links VALUES('p','held','private_ownership','444444444'),
+      ('p','barred','private_ownership','333333333');`);
+    const withLinks = await getRegistryRolePersonRows(d1FromSqlite(db));
+    expect(withLinks[0]!.companies.map((c) => c.eik).sort()).toEqual(['111111111', '222222222']);
+    // The same through another declarant record of the same register identity.
+    db.exec(`INSERT INTO persons VALUES('p2','Лице Тестово');
+      INSERT INTO person_registry_links VALUES('p2','${H}');
+      INSERT INTO interest_links VALUES('p2','withdrawn','private_ownership','222222222');`);
+    const viaIdentity = await getRegistryRolePersonRows(d1FromSqlite(db));
+    expect(
+      viaIdentity
+        .find((r) => r.officialSlug === withLinks[0]!.officialSlug)!
+        .companies.map((c) => c.eik),
+    ).toEqual(['111111111']);
+    // With every pair gone, the person is not in the group at all.
+    db.exec(`INSERT INTO interest_links VALUES('p','suppressed','family_ownership','111111111');`);
+    expect(
+      (await getRegistryRolePersonRows(d1FromSqlite(db))).filter(
+        (r) => r.officialSlug === withLinks[0]!.officialSlug,
+      ),
+    ).toEqual([]);
   } finally {
     db.close();
   }
@@ -353,7 +377,7 @@ it('counts the governing body of a private winner, not the seats that only overs
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
-      CREATE TABLE interest_links(person_id,status,interest_class);
+      CREATE TABLE interest_links(person_id,status,interest_class,eik);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       -- An open role counts only up to the last successful read of the partida.
       CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);

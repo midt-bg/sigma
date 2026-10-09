@@ -5,6 +5,7 @@ import {
   applyRoleScope,
   conflictListFilters,
   contractHref,
+  declarantsChip,
   declaredStakeNoun,
   filterConflictRows,
   groupByPerson,
@@ -747,5 +748,31 @@ describe('applyRoleScope', () => {
     expect(scoped.map((r) => r.officialSlug)).toEqual(['d', 'b']);
     expect(scoped[1]).toMatchObject({ ...direct, companies: [company('2', 'manager')] });
     expect(applyRoleScope([declared, seat, both], 'all')).toEqual([declared, seat, both]);
+  });
+});
+
+describe('declarantsChip — the company header claims no more than its links', () => {
+  it('names management as management, never as a stake', () => {
+    expect(declarantsChip(['manages'])).toBe('декларирано управление от длъжностно лице');
+    expect(declarantsChip(['manages', 'manages'])).toBe(
+      'декларирано управление от длъжностно лице',
+    );
+  });
+
+  it('keeps a relative-only stake and an own stake as they were', () => {
+    expect(declarantsChip(['related'])).toBe('дял на свързано лице');
+    expect(declarantsChip(['owns', 'related'])).toBe('деклариран дял на длъжностно лице');
+  });
+
+  it('says „дял или управление" when management stands beside a stake', () => {
+    expect(declarantsChip(['owns', 'manages'])).toBe(
+      'деклариран дял или управление на длъжностно лице',
+    );
+    expect(declarantsChip(['owns+manages'])).toBe(
+      'деклариран дял или управление на длъжностно лице',
+    );
+    expect(declarantsChip(['related', 'manages'])).toBe(
+      'деклариран дял или управление на длъжностно лице',
+    );
   });
 });

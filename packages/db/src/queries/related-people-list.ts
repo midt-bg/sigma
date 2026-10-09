@@ -164,7 +164,12 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
                      'board_of_directors','management_board','governing_body')
     JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
     JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
-    WHERE ?1 IS NULL OR r.eik IN (SELECT eik FROM paid)
+    WHERE (?1 IS NULL OR r.eik IN (SELECT eik FROM paid))
+      -- A company the person's declarations tie to at all — published, held, withdrawn, suppressed or barred
+      -- (a joint-stock company is never shown) — is not one the declarations leave out, and this group says
+      -- they do. The pair goes; a person with no pair left is not in the group.
+      AND NOT EXISTS (SELECT 1 FROM interest_links il LEFT JOIN person_registry_links lp ON lp.person_id=il.person_id
+        WHERE il.eik=r.eik AND (il.person_id=pe.person_id OR lp.registry_indent=pe.identity))
     GROUP BY pe.person_id, r.eik
   ), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM roles)')}
   ), company_contracts AS MATERIALIZED (

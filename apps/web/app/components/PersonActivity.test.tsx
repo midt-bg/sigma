@@ -108,6 +108,11 @@ it('reveals filters from the timeline, but applies manual changes and resets wit
       select('basis').dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(router.state.location.search).toContain('basis=tied');
+    // The overlap is counted by the declaration year; the option does not claim office on the day.
+    expect(select('basis').selectedOptions[0]!.textContent).toMatch(
+      /^В година с декларация и свързан с дружеството/,
+    );
+    expect(container.textContent).toContain('за годината да има декларация за публична длъжност');
     expect(router.state.location.search).toContain('company=123456789');
     expect(router.state.location.search).toContain('year=2024');
     expect(router.state.location.hash).toBe('');

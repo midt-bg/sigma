@@ -34,6 +34,7 @@ import { ContractMiniTable } from '../components/ContractMiniTable';
 import { CompanyRolesTables, RegistrySource } from '../components/RegistryRoles';
 import { ShareBar, Chip, OwnershipChip, Section, RegistryCta } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { declarantsChip } from '../lib/conflicts';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
@@ -245,9 +246,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   {' · '}
                   <a href="#declared-people">
                     <Chip tone="window" explain={false}>
-                      {declarants.every((l) => l.relation === 'related')
-                        ? 'дял на свързано лице'
-                        : 'деклариран дял на длъжностно лице'}
+                      {declarantsChip(declarants.map((l) => l.relation))}
                     </Chip>
                   </a>
                 </>

@@ -489,4 +489,14 @@ describe('/conflicts/methodology — render', () => {
     // the contest/correction anchor the leaderboard links to
     expect(container.querySelector('#contest, #shown')).not.toBeNull();
   });
+
+  it('names the identifiers it never shows instead of claiming to show no personal data', async () => {
+    await mount(ConflictMethodology as never, {});
+    const t = text();
+    expect(t).toContain('Не показваме адреси, ЕГН, номера на документи и банкови сметки');
+    expect(t).not.toContain('Не показваме лични данни');
+    // The register-versus-declaration note: what SIGMA did not find, over the whole year, never a breach.
+    expect(t).toContain('СИГМА не открива в нито един от документите му за същата година');
+    expect(t).not.toContain('или пропуск');
+  });
 });

@@ -500,6 +500,10 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     expect(eligible.textContent).toBe('1');
     expect(eligible.getAttribute('href')).toContain('basis=tied');
     expect(eligible.getAttribute('href')).toContain('view=profile');
+    // One contract is „1 договор"; the office is known by the declaration year, not by the day of signing.
+    const label = eligible.getAttribute('aria-label')!;
+    expect(label).toMatch(/: 1 договор, подписани в година с декларация за длъжността/);
+    expect(label).not.toContain('на длъжност,');
     expect(el.querySelector('.time-contract.context')).toBeNull();
 
     scrollWidth = 200;
@@ -719,9 +723,19 @@ it('draws the overlap band, the office and each procurement from announcement to
     expect(hover(el.querySelector('.time-contract.eligible')!)).toMatch(
       /2022 · 1 договор в съвпадение.*Всички за годината: 3 договора/,
     );
-    expect(hover(el.querySelector('.person-time-company .time-band')!)).toContain(
-      '01.01.2021 – 31.12.2022',
+    expect(hover(el.querySelector('.time-contract.eligible')!)).toContain(
+      'Подписани в година с декларация за длъжността, докато лицето е свързано с дружеството',
     );
+    expect(hover(el.querySelector('.time-contract.context')!)).not.toContain('на длъжност');
+    expect(el.querySelector('.time-contract.context')!.getAttribute('aria-label')).toMatch(
+      /: 2 договора извън съвпадението/,
+    );
+    const band = hover(el.querySelector('.person-time-company .time-band')!);
+    expect(band).toContain('01.01.2021 – 31.12.2022');
+    expect(band).toContain(
+      'Години с декларация за длъжността, докато лицето е свързано с дружеството.',
+    );
+    expect(band).not.toContain('Лицето е на длъжност');
     expect(el.querySelector('.time-tip')).toBeNull();
   } finally {
     act(() => root.unmount());
