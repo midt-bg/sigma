@@ -13,13 +13,13 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.119",
+    "@ai-sdk/openai": "^3.0.124",
     "@dagrejs/dagre": "1.1.8",
     "@sigma/api-contract": "workspace:*",
     "@sigma/config": "workspace:*",
     "@sigma/db": "workspace:*",
     "@sigma/shared": "workspace:*",
-    "ai": "^6.0.293",
+    "ai": "^6.0.300",
     "isbot": "^5.2.2",
     "node-sql-parser": "^5.4.0",
     "react": "^19.3.0",
@@ -27,7 +27,7 @@
     "react-router": "7.18.4"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.61.0",
+    "@cloudflare/vite-plugin": "^1.62.5",
     "@react-router/dev": "7.18.4",
     "@sigma/test-support": "workspace:*",
     "@tailwindcss/vite": "^4.3.3",
@@ -37,7 +37,7 @@
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "catalog:",
-    "vite": "^8.3.1",
+    "vite": "^8.3.2",
     "wrangler": "catalog:"
   }
 }
