@@ -75,7 +75,9 @@ import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
 // r10 (ADR-0047 §3): a declared management is judged as management — the joint-stock bar, the hold on an
 // unknown legal form and the refutation apply to a stake only, and „Документ" also reads the bodies that run a
 // company. Held management links may publish.
-export const RULES_VERSION = 'tr-rules-10';
+// r11 (ADR-0047 §2): a seat in a company with any established public stake, a minority one included, is an office,
+// as at a public enterprise. Published links may leave the surface.
+export const RULES_VERSION = 'tr-rules-11';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
