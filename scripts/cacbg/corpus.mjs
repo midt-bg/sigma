@@ -44,7 +44,12 @@ export function safeKey(key) {
   return key;
 }
 
-export function corpusStore(rawDir, endpoint = process.env.CACBG_CORPUS_URL, http = fetch) {
+export function corpusStore(
+  rawDir,
+  endpoint = process.env.CACBG_CORPUS_URL,
+  http = fetch,
+  pause = sleep,
+) {
   if (!endpoint)
     return {
       remote: false,
@@ -72,7 +77,9 @@ export function corpusStore(rawDir, endpoint = process.env.CACBG_CORPUS_URL, htt
     };
   // Native Container outbound interception, never a public raw-data endpoint.
   if (endpoint !== 'http://declarations.r2') throw Error('Invalid private corpus endpoint');
-  async function request(key, options = {}) {
+  // `read` is part of the attempt: a response can arrive with its headers and be cut off mid-body („other side
+  // closed“), the same passing network weather as a refused connection. Only the last attempt's failure is thrown.
+  async function request(key, options = {}, read = (res) => res) {
     for (let attempt = 0; ; attempt++) {
       let res;
       try {
@@ -84,23 +91,32 @@ export function corpusStore(rawDir, endpoint = process.env.CACBG_CORPUS_URL, htt
       } catch (error) {
         if (attempt === 4) throw error;
       }
-      if (res && (res.ok || res.status === 404)) return res;
-      if (res && res.status !== 429 && res.status < 500)
-        throw Error(`Corpus ${options.method ?? 'GET'} failed: ${res.status}`);
-      if (attempt === 4) throw Error(`Corpus request failed: ${res?.status ?? 'network'}`);
-      await res?.body?.cancel();
-      await sleep(500 * 2 ** attempt);
+      if (res && (res.ok || res.status === 404)) {
+        try {
+          return await read(res);
+        } catch (error) {
+          if (attempt === 4) throw error;
+        }
+      } else {
+        if (res && res.status !== 429 && res.status < 500)
+          throw Error(`Corpus ${options.method ?? 'GET'} failed: ${res.status}`);
+        if (attempt === 4) throw Error(`Corpus request failed: ${res?.status ?? 'network'}`);
+        await res?.body?.cancel();
+      }
+      await pause(500 * 2 ** attempt);
     }
   }
   return {
     remote: true,
     async get(key) {
-      const res = await request(encodeURI(safeKey(key)));
-      if (res.status === 404) return null;
-      const body = Buffer.from(await res.arrayBuffer());
-      if (res.headers.get('x-corpus-sha256') !== digest(body))
-        throw Error(`Corpus checksum mismatch: ${key}`);
-      return body;
+      return request(encodeURI(safeKey(key)), {}, async (res) => {
+        if (res.status === 404) return null;
+        const body = Buffer.from(await res.arrayBuffer());
+        // A body cut short can also end cleanly, so a mismatch is read again too.
+        if (res.headers.get('x-corpus-sha256') !== digest(body))
+          throw Error(`Corpus checksum mismatch: ${key}`);
+        return body;
+      });
     },
     async put(key, body) {
       const res = await request(encodeURI(safeKey(key)), {
