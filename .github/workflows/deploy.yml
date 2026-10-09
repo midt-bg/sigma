@@ -404,6 +404,17 @@ jobs:
           ensure_column contract_number_raw "contract_number_raw TEXT"
           ensure_column link_method         "link_method TEXT"
 
+      # The one-time currency backfill above once mapped annex_total_suspect to the doubled current value
+      # (fixed in backfill-current-value-currency.sql); rows the refresh has not re-valued since still sum
+      # it. The repair writes their signing-based amount and queues them in the refresh's touched sets, so
+      # the next refresh rebuilds every rollup they feed; a second run changes nothing. Staging only:
+      # production never ran that backfill, and the integrity gate now asserts the rule everywhere.
+      - name: Repair amounts of doubled annex totals (staging)
+        if: steps.guard.outputs.ok == 'true' && needs.detect.outputs.env != 'production'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../scripts/repair-annex-total-suspect.sql
+
       # The curated list of state public enterprises (scripts/seed-state-owned.sql, ADR-0047) is data that
       # ships with the code, yet only a full import or a slot rebuild ever applied it — a served database kept
       # the list it was built with. The file replaces the list whole (DELETE + INSERT, one import). The next

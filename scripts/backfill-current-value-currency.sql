@@ -22,14 +22,21 @@ WITH paired AS (
 ), selected AS (
   SELECT
     p.*,
+    -- annex_total_suspect falls back to signing exactly like annex_suspect — the doubled annex total is the
+    -- suspect part (#305). Mapping it to the current value doubled 252 contracts on staging once.
     CASE p.value_flag
       WHEN 'value_suspect' THEN NULL
       WHEN 'annex_suspect' THEN COALESCE(p.signing_value, p.current_value)
+      WHEN 'annex_total_suspect' THEN COALESCE(p.signing_value, p.current_value)
       ELSE COALESCE(p.current_value, p.signing_value)
     END AS trusted_native,
     CASE p.value_flag
       WHEN 'value_suspect' THEN NULL
       WHEN 'annex_suspect' THEN CASE
+        WHEN p.signing_value IS NOT NULL THEN COALESCE(NULLIF(p.currency, ''), 'BGN')
+        ELSE p.derived_current_currency
+      END
+      WHEN 'annex_total_suspect' THEN CASE
         WHEN p.signing_value IS NOT NULL THEN COALESCE(NULLIF(p.currency, ''), 'BGN')
         ELSE p.derived_current_currency
       END
@@ -44,6 +51,8 @@ WITH paired AS (
     id,
     derived_current_currency,
     CASE
+      -- A framework agreement's own record (framework = 2) carries its ceiling, never summed.
+      WHEN framework = 2 THEN NULL
       -- value_suspect is repaired from the procedure estimate upstream; do not replace that repair.
       WHEN value_flag = 'value_suspect' THEN amount_eur
       WHEN trusted_native IS NULL THEN NULL
@@ -53,7 +62,7 @@ WITH paired AS (
       ELSE NULL
     END AS repaired_amount_eur,
     CASE
-      WHEN value_flag IN ('value_suspect', 'annex_suspect') OR current_value IS NULL THEN NULL
+      WHEN value_flag IN ('value_suspect', 'annex_suspect', 'annex_total_suspect') OR current_value IS NULL THEN NULL
       WHEN derived_current_currency = 'EUR' THEN current_value
       WHEN derived_current_currency = 'BGN' THEN current_value / 1.95583
       WHEN fx_rate IS NOT NULL THEN current_value * fx_rate

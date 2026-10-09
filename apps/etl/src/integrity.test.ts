@@ -31,10 +31,17 @@ interface Seed {
   badDates?: number; // signed_at out of range — a WARN, never a failure
   rollups?: boolean; // home_totals present (precompute ran) → rollup-reconciliation RUNS, not skips
   homeDrift?: number; // home_totals.value_eur − SUM(amount_eur); non-zero → a caught hard failure
+  annexWrong?: number; // annex_total_suspect rows summed at a value other than signing — a hard failure
 }
 function servedD1(seed: Seed = {}): D1Database {
   const clean = 1_000_000;
   return fakeD1([
+    // annex-total-suspect-basis: the 0002 column is present on a served D1; clean by default.
+    { when: "pragma_table_info('contracts')", all: [{ n: 1 }] },
+    {
+      when: 'annex_total_suspect',
+      all: [{ flagged: 4, wrong: seed.annexWrong ?? 0, excess: (seed.annexWrong ?? 0) * 1_000 }],
+    },
     // contracts + bidders always exist; home_totals only once precompute has written the rollups.
     { when: ['sqlite_master', "'home_totals'"], all: seed.rollups ? [{ name: 'x' }] : [] },
     {
@@ -119,6 +126,17 @@ describe('runServedIntegrityGate', () => {
     // With home_totals present, two fewer checks self-skip than on the bare work DB —
     // rollup-reconciliation and current-amount-parity (#261) both move from skipped to run.
     expect(await skippedFor({ rollups: true })).toBe((await skippedFor({})) - 2);
+  });
+
+  it('throws when a doubled annex total is summed (annex-total-suspect-basis)', async () => {
+    const log = fakeLog();
+    await expect(runServedIntegrityGate(servedD1({ annexWrong: 2 }), log)).rejects.toThrow(
+      /annex-total-suspect-basis — 2 of 4 annex_total_suspect contract\(s\) carry an amount_eur other than their signing value \(Σ excess 2000\.00 €\)/,
+    );
+    const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
+    expect(violation?.event.checks).toEqual([
+      expect.objectContaining({ name: 'annex-total-suspect-basis' }),
+    ]);
   });
 
   it('throws when a rollup no longer reconciles with SUM(amount_eur) over the live D1', async () => {
