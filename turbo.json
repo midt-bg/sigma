@@ -1,6 +1,10 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "stream",
+  // By default turbo writes its own block into the root AGENTS.md before any repository-scoped run it
+  // thinks an agent started, and writes it again if removed: every CI-order run left an uncommitted
+  // AGENTS.md behind. The repo's conventions in AGENTS.md are written by hand; turbo does not add to them.
+  "agentGuidance": false,
   // Turbo 2 runs tasks in strict env mode: only the variables listed here reach a task. `deploy` needs
   // the Cloudflare credentials, and so does the opt-in assistant dev mode (SIGMA_DEV_REMOTE_BINDINGS=1,
   // see apps/web/vite.config.ts). Passing them through does NOT by itself make dev talk to Cloudflare —
