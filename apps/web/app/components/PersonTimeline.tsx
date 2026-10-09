@@ -411,6 +411,16 @@ export function PersonTimeline({
             const docs = p.declarations.filter(
               (d) => institutionKey(d.institution) === institutionKey(institution.institution),
             );
+            // A seat in an organization's bodies is shown under the organization; what the person wrote as
+            // their workplace stays beside it, verbatim, earliest first.
+            const works = [
+              ...new Set(
+                [...docs]
+                  .sort((a, b) => (a.year ?? '').localeCompare(b.year ?? ''))
+                  .map((d) => d.office?.work)
+                  .filter((w): w is string => !!w),
+              ),
+            ];
             return row(
               `office-${i}`,
               <>
@@ -424,6 +434,15 @@ export function PersonTimeline({
                   )}
                 </strong>
                 <small>{institution.positions.join('; ')}</small>
+                {docs.some((d) => d.office?.basis === 'category') && (
+                  <small>Институция по категорията на декларацията</small>
+                )}
+                {works.length > 0 && (
+                  <small>
+                    Месторабота според декларацията:{' '}
+                    <span className="verbatim">{works.map((w) => `„${w}“`).join('; ')}</span>
+                  </small>
+                )}
               </>,
               intervals ? (
                 <>
@@ -755,6 +774,11 @@ function declarationTip(d: PersonDeclaration, context: string | undefined, dispu
         <span>
           {d.institution}
           {d.position ? ` · ${d.position}` : ''}
+        </span>
+      )}
+      {d.office?.work && (
+        <span>
+          Месторабота според декларацията: <span className="verbatim">„{d.office.work}“</span>
         </span>
       )}
       {context && <span>{context}</span>}

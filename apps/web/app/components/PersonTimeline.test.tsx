@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createRoutesStub } from 'react-router';
 import { expect, it, vi } from 'vitest';
-import type { ConflictLink } from '@sigma/api-contract';
+import type { ConflictLink, PersonDeclaration } from '@sigma/api-contract';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { emptyActivity, emptyIntervals } from '../lib/person-profile.test-support';
 import { timelineCompanies, type TimelineCompany } from '../lib/person-timeline';
@@ -12,6 +12,7 @@ import { PersonTimeline } from './PersonTimeline';
 import { PersonRolesTables } from './RegistryRoles';
 import { roleRowId } from '../lib/profile-navigation';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+type PersonDeclarationOffice = NonNullable<PersonDeclaration['office']>;
 
 it('shows one company for multiple source identities, sequential sections and historical facts without invented role bars', () => {
   const link: ConflictLink = {
@@ -434,6 +435,67 @@ it('draws a held seat in outline and without the overlap band', () => {
     });
     expect(el.querySelector('.time-tip')!.textContent).toContain(
       'Заемана длъжност, не частен интерес',
+    );
+  } finally {
+    act(() => root.unmount());
+    el.remove();
+  }
+});
+
+// A seat in an organization's bodies is one office, under the organization: what the person wrote as the
+// workplace, year by year, stays beside it as written — in the row and in each document's tooltip.
+it('shows a seat in an organization’s bodies under the organization, with the workplaces as written', () => {
+  const declaration = (id: string, year: string, office: PersonDeclarationOffice) => ({
+    id,
+    year,
+    template: 'assets',
+    type: 'Annualy',
+    declaredOn: `${year}-05-10`,
+    submittedOn: null,
+    institution: 'Сдружение Тест',
+    position: 'Член на съвета',
+    office,
+    url: `https://register.cacbg.bg/${id}.xml`,
+    companyEiks: [],
+  });
+  const p = {
+    person: null,
+    name: 'ПЕТЪР ТЕСТОВ',
+    links: [],
+    declarations: [
+      declaration('d21', '2021', { basis: 'workplace', work: 'СТ' }),
+      declaration('d20', '2020', { basis: 'category', work: 'ТЕСТ ГРУП ЕООД' }),
+      declaration('d22', '2022', { basis: 'category', work: 'ТЕСТ ГРУП ЕООД' }),
+    ],
+    timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
+    activity: emptyActivity,
+    totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as unknown as LoadedPersonProfile;
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={[]} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub />));
+    const rows = el.querySelectorAll('.time-institution');
+    expect(rows).toHaveLength(1);
+    const label = rows[0]!.querySelector('.person-time-label')!.textContent;
+    expect(label).toContain('Сдружение Тест');
+    expect(label).toContain('Институция по категорията на декларацията');
+    expect(label).toContain('Месторабота според декларацията: „ТЕСТ ГРУП ЕООД“; „СТ“');
+    const mark = rows[0]!.querySelector('a.time-observation[href="#declaration-d21"]')!;
+    act(() => {
+      mark.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
+    expect(el.querySelector('.time-tip')!.textContent).toContain(
+      'Месторабота според декларацията: „СТ“',
     );
   } finally {
     act(() => root.unmount());

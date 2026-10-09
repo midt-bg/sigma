@@ -1,5 +1,5 @@
 import { declarationYearDisputed } from './declaration-source';
-import { cleanName } from '@sigma/shared';
+import { cleanName, officeInstitution } from '@sigma/shared';
 import { personActivityScope } from './person-activity';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -84,10 +84,10 @@ export async function getPersonTimeline(
       }>(),
     db
       .prepare(
-        `SELECT DISTINCT institution FROM declarations WHERE person_id IN (SELECT value FROM json_each(?)) AND institution IS NOT NULL`,
+        `SELECT DISTINCT institution, category FROM declarations WHERE person_id IN (SELECT value FROM json_each(?)) AND institution IS NOT NULL`,
       )
       .bind(JSON.stringify(ids))
-      .all<{ institution: string }>(),
+      .all<{ institution: string; category: string | null }>(),
     // Every authority's name, only to match the declared institutions below: a person known only from
     // the register (no declaration ids) has none, and those are most of the profiles.
     ids.length
@@ -106,7 +106,13 @@ export async function getPersonTimeline(
       .replace(/[„“”"«»]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
-  const institutionProfiles = offices.results.map(({ institution }) => {
+  // The institutions as the profile shows them: a seat in an organization's bodies under the organization, not
+  // under the workplace the filing names (officeInstitution).
+  const categories = offices.results.map((o) => o.category);
+  const shown = [
+    ...new Set(offices.results.map((o) => officeInstitution(o, categories)?.name ?? o.institution)),
+  ];
+  const institutionProfiles = shown.map((institution) => {
     const matches = authorities.results.filter((a) => key(a.name) === key(institution));
     return { institution, authorityId: matches.length === 1 ? matches[0]!.id : null };
   });
