@@ -1,5 +1,5 @@
-import { companyNamesAlike } from '@sigma/shared';
 import { declaredOfficeYear, officeBounds, withinOffice } from './declaration-source';
+import { filingsByYear, historyNames, registryOmission } from './registry-omissions';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
 import { PAID_BY_AUTHORITY } from './authority-payees';
@@ -206,24 +206,30 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   )
   SELECT pe.person_id, pe.identity, pe.name, t.*,
     (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1,
-      'registryRole',co.registry_role,'annual',json(co.annual))) FROM (
+      'registryRole',co.registry_role,'years',json(co.years),'names',json(co.names))) FROM (
       SELECT ro.eik, COALESCE(b.name, ro.eik) company,
         CASE WHEN ro.owner THEN 'owner' WHEN ro.direct THEN 'manager' ELSE 'board' END registry_role,
-        -- The annual declarations for a year the register records the ownership that do not tie to this ЕИК,
-        -- with what each names; the name comparison is made below.
-        (SELECT json_group_array(json_object('year',d.declared_year,'named',json((SELECT json_group_array(di.entity_raw)
-          FROM declared_interests di WHERE di.declaration_id=d.id)))) FROM declarations d
+        -- The years with an annual declaration at whose end the register records the ownership; whether the
+        -- year's filings name the company is decided below, over all of them (registryOmission).
+        (SELECT json_group_array(DISTINCT d.declared_year) FROM declarations d
           JOIN declaration_metadata m ON m.declaration_id=d.id AND lower(m.declaration_type) IN ('annualy','annual','yearly')
           WHERE d.person_id=pe.person_id AND d.declared_year IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM declaration_companies dc WHERE dc.declaration_id=d.id AND dc.eik=ro.eik)
             AND EXISTS (SELECT 1 FROM registry_roles r WHERE r.subject_id=pe.identity AND r.subject_kind='person'
               AND r.eik=ro.eik AND r.role IN ('sole_owner','partner','trader') AND r.added_on<>''
               AND date(r.added_on)<=date(d.declared_year||'-12-31')
               AND (r.removed_on IS NULL OR date(r.removed_on)>date(d.declared_year||'-12-31'))
-              AND (r.uncertain_after IS NULL OR date(r.uncertain_after)>date(d.declared_year||'-12-31')))) annual
+              AND (r.uncertain_after IS NULL OR date(r.uncertain_after)>date(d.declared_year||'-12-31')))) years,
+        -- Every name the register gives the company: the current one and the former ones.
+        json_array((SELECT rd.name FROM registry_deeds rd WHERE rd.eik=ro.eik),
+          (SELECT h.names_json FROM registry_company_history h WHERE h.eik=ro.eik)) names
       FROM roles ro
       LEFT JOIN bidders b ON b.eik_normalized=ro.eik WHERE ro.person_id=pe.person_id GROUP BY ro.eik ORDER BY b.name
     ) co) companies,
+    -- What each of the person's filings says: the ЕИК the resolver tied to it and every entry's text.
+    (SELECT json_group_array(json_object('year',d.declared_year,
+        'eiks',json((SELECT json_group_array(dc.eik) FROM declaration_companies dc WHERE dc.declaration_id=d.id)),
+        'named',json((SELECT json_group_array(di.entity_raw) FROM declared_interests di WHERE di.declaration_id=d.id))))
+      FROM declarations d WHERE d.person_id=pe.person_id AND d.declared_year IS NOT NULL) filings,
     (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year))
       FROM declarations d WHERE d.person_id=pe.person_id) offices
   FROM people pe JOIN totals t ON t.person_id=pe.person_id
@@ -245,58 +251,71 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
       d_window_eur: number | null;
       d_has_window: number;
       companies: string;
+      filings: string;
       offices: string;
     }>();
-  return result.results.map((r) => ({
-    official: r.name,
-    officialSlug: personSlug(r.person_id),
-    personIdentity: r.identity,
-    institution: null,
-    position: null,
-    companyCount: r.company_count,
-    companies: (
-      JSON.parse(r.companies) as {
-        company: string;
-        eik: string;
-        self: number;
-        family: number;
-        registry: number;
-        registryRole: 'owner' | 'manager' | 'board';
-        annual: { year: string; named: string[] }[];
-      }[]
-    ).map(({ annual, ...c }) => ({
-      ...c,
-      // A document naming the company under any spelling names it; a blank one names nothing.
-      missingYears: [
-        ...new Set(
-          annual
-            .filter((d) => !d.named.some((n) => companyNamesAlike(n, c.company)))
-            .map((d) => d.year),
-        ),
-      ].sort(),
-    })),
-    soleCompany: null,
-    contractCount: r.contract_count,
-    contractValueEur: r.total_eur,
-    contemporaneousValueEur: r.window_eur,
-    stakeKind: 'registry' as const,
-    ownInstitution: false,
-    hasContemporaneous: !!r.has_window,
-    direct: r.d_company_count
-      ? {
-          companyCount: r.d_company_count,
-          contractCount: r.d_contract_count,
-          contractValueEur: r.d_total_eur,
-          contemporaneousValueEur: r.d_window_eur,
-          hasContemporaneous: !!r.d_has_window,
-        }
-      : null,
-    declaredOffices: JSON.parse(r.offices) as {
-      institution: string | null;
-      position: string | null;
-      year: string | null;
-    }[],
-  }));
+  return result.results.map((r) => {
+    const byYear = filingsByYear(
+      JSON.parse(r.filings) as { year: string; eiks: string[]; named: string[] }[],
+    );
+    return {
+      official: r.name,
+      officialSlug: personSlug(r.person_id),
+      personIdentity: r.identity,
+      institution: null,
+      position: null,
+      companyCount: r.company_count,
+      companies: (
+        JSON.parse(r.companies) as {
+          company: string;
+          eik: string;
+          self: number;
+          family: number;
+          registry: number;
+          registryRole: 'owner' | 'manager' | 'board';
+          years: (string | null)[];
+          names: [string | null, string | null];
+        }[]
+      ).map(({ years, names: [current, history], ...c }) => ({
+        ...c,
+        // The same comparison as the person's profile: any filing of the year naming the company — by ЕИК
+        // or under any of its names — names it, and a year of which nothing was read is no finding.
+        missingYears: [
+          ...new Set(
+            years.filter(
+              (year): year is string =>
+                !!year &&
+                !!registryOmission(byYear, year, {
+                  eik: c.eik,
+                  names: [c.company, current, ...historyNames(history)],
+                }),
+            ),
+          ),
+        ].sort(),
+      })),
+      soleCompany: null,
+      contractCount: r.contract_count,
+      contractValueEur: r.total_eur,
+      contemporaneousValueEur: r.window_eur,
+      stakeKind: 'registry' as const,
+      ownInstitution: false,
+      hasContemporaneous: !!r.has_window,
+      direct: r.d_company_count
+        ? {
+            companyCount: r.d_company_count,
+            contractCount: r.d_contract_count,
+            contractValueEur: r.d_total_eur,
+            contemporaneousValueEur: r.d_window_eur,
+            hasContemporaneous: !!r.d_has_window,
+          }
+        : null,
+      declaredOffices: JSON.parse(r.offices) as {
+        institution: string | null;
+        position: string | null;
+        year: string | null;
+      }[],
+    };
+  });
 }
 
 /** Counts canonical person–company pairs. Each contract contributes once, even across people. */

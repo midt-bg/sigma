@@ -934,13 +934,16 @@ export interface CompanyConflicts {
 /** A source document, with dates kept distinct from the reporting year. */
 export interface PersonDeclaration {
   /** Ownership the Trade Register recorded for the declarant at the end of the reporting year, in a
-   *  company this document does not name. Only partidas the site has read; never a finding by itself. */
+   *  company none of the person's filings for that year names. Only partidas the site has read, and only
+   *  years of which at least one entry was read; never a finding by itself. */
   registryOmissions?: {
     eik: string;
     company: string;
     role: RegistryRoleKind;
     entryNumber: string;
     addedOn: string;
+    /** The latest earlier year whose filings name the company. */
+    earlierYear?: string;
   }[];
   /** Comparison notes, separate from interests actually declared in this document. */
   discrepancies?: {

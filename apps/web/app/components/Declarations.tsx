@@ -141,9 +141,12 @@ const columns: Column<PersonDeclaration>[] = [
           <p className="small declaration-discrepancy" key={`registry-${o.eik}-${o.role}`}>
             <strong>Регистър срещу декларация за {d.year} г.</strong> Към 31.12.{d.year} лицето е
             вписано в Търговския регистър като {ROLE_LABEL[o.role]} в{' '}
-            <Link to={`/companies/${o.eik}`}>{o.company}</Link> (вписване от {date(o.addedOn)}), а
-            дружеството не е посочено в тази декларация. Възможни причини: разлика в изписването на
-            дружеството, отчетен период, който не съвпада с вписването, или пропуск в декларацията.{' '}
+            <Link to={`/companies/${o.eik}`}>{o.company}</Link> (вписване от {date(o.addedOn)}).{' '}
+            {o.earlierYear
+              ? `Дружеството е посочено в декларацията за ${o.earlierYear} г.; в документите за ${d.year} г. СИГМА не го откри.`
+              : `СИГМА не откри дружеството в декларациите на лицето за ${d.year} г.`}{' '}
+            Сравнението е автоматично — възможно е различно изписване или различен отчетен период.
+            Това не е установено нарушение.{' '}
             <Link to="/conflicts/methodology#contest">Възражение</Link>
           </p>
         ))}

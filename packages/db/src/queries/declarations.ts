@@ -1,6 +1,7 @@
 import type { PersonDeclaration, RegistryRoleKind } from '@sigma/api-contract';
-import { companyNamesAlike, registryCompanyName } from '@sigma/shared';
+import { registryCompanyName } from '@sigma/shared';
 import { declarationMatchesLink, declarationYearDisputed } from './declaration-source';
+import { filingsByYear, historyNames, registryOmission } from './registry-omissions';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
 /** All available source documents for a surfaced declarant, including empty filings. */
@@ -72,9 +73,10 @@ export async function getPersonDeclarations(
       timing: string;
       scope: 'self' | 'family';
     }>();
-  // Ownership the register recorded for the declarant at the end of a reporting year: the annual
-  // declaration for that year should name the company. Ownership only — a board seat is often held by
-  // appointment — and only where the site has read the partida.
+  // Ownership the register recorded for the declarant at the end of a reporting year: the person's filings
+  // for that year should name the company. Ownership only — a board seat is often held by appointment — and
+  // only where the site has read the partida. Whether they name it is decided below, over every filing of
+  // the year (`registryOmission`).
   const omissions = metadata
     ? await db
         .prepare(
@@ -89,7 +91,6 @@ export async function getPersonDeclarations(
       AND (r.uncertain_after IS NULL OR date(r.uncertain_after)>date(d.declared_year||'-12-31'))
     LEFT JOIN registry_deeds rd ON rd.eik=r.eik
     WHERE d.person_id=? AND d.declared_year IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM declaration_companies dc WHERE dc.declaration_id=d.id AND dc.eik=r.eik)
     ORDER BY d.id, r.eik, r.role`,
         )
         .bind(personId)
@@ -111,6 +112,9 @@ export async function getPersonDeclarations(
           throw e;
         })
     : [];
+  const filings = omissions.length
+    ? await omissionEvidence(db, personId, rows.results, interests.results, omissions)
+    : null;
   return rows.results
     .map((r) => ({
       id: String(r.id),
@@ -159,26 +163,26 @@ export async function getPersonDeclarations(
           ],
         })),
       companyEiks: JSON.parse(String(r.companies ?? '[]')) as string[],
-      // A company the document names under any spelling — with its legal form, a typo, a Latin letter —
-      // is named; the resolver ties only winners to an ЕИК. A blank filing names nothing.
-      registryOmissions: omissions
-        .filter(
-          (o) =>
-            o.declaration_id === r.id &&
-            !interests.results.some(
-              (i) =>
-                i.declaration_id === r.id &&
-                !!o.company &&
-                companyNamesAlike(i.entity_raw, o.company),
-            ),
-        )
-        .map(({ eik, company, legal_form, role, entry_number, added_on }) => ({
-          eik,
-          company: company ? registryCompanyName(company, legal_form) : eik,
-          role,
-          entryNumber: entry_number,
-          addedOn: added_on,
-        })),
+      // A company any filing of the year names — by ЕИК, under its current or a former name, in any
+      // spelling — is named; a year of which nothing was read gives no note at all.
+      registryOmissions: omissions.flatMap((o) => {
+        if (o.declaration_id !== r.id || !filings) return [];
+        const omission = registryOmission(filings.byYear, String(r.declared_year), {
+          eik: o.eik,
+          names: [o.company, ...(filings.history.get(o.eik) ?? [])],
+        });
+        if (!omission) return [];
+        return [
+          {
+            eik: o.eik,
+            company: o.company ? registryCompanyName(o.company, o.legal_form) : o.eik,
+            role: o.role,
+            entryNumber: o.entry_number,
+            addedOn: o.added_on,
+            ...(omission.earlierYear ? { earlierYear: omission.earlierYear } : {}),
+          },
+        ];
+      }),
     }))
     .sort(
       (a, b) =>
@@ -186,4 +190,53 @@ export async function getPersonDeclarations(
         (b.submittedOn ?? b.declaredOn ?? '').localeCompare(a.submittedOn ?? a.declaredOn ?? '') ||
         a.id.localeCompare(b.id),
     );
+}
+
+/** What every filing of the person says, pooled by year, and the register's former names of the companies
+ *  a note might be about. The resolver's ЕИК and the register history are optional tables: without them the
+ *  comparison rests on the entries' text alone. */
+async function omissionEvidence(
+  db: D1Database,
+  personId: string,
+  declarations: Record<string, unknown>[],
+  interests: { declaration_id: string; entity_raw: string }[],
+  omissions: { eik: string }[],
+) {
+  const optional = <T>(query: Promise<{ results: T[] }>) =>
+    query
+      .then((q) => q.results)
+      .catch((e: unknown) => {
+        if (/no such table:?\s*(declaration_companies|registry_company_history)/i.test(String(e)))
+          return [] as T[];
+        throw e;
+      });
+  const [resolved, history] = await Promise.all([
+    optional(
+      db
+        .prepare(
+          `SELECT dc.declaration_id, dc.eik FROM declaration_companies dc
+          JOIN declarations d ON d.id=dc.declaration_id WHERE d.person_id=?`,
+        )
+        .bind(personId)
+        .all<{ declaration_id: string; eik: string }>(),
+    ),
+    optional(
+      db
+        .prepare(
+          `SELECT eik, names_json FROM registry_company_history WHERE eik IN (SELECT value FROM json_each(?))`,
+        )
+        .bind(JSON.stringify([...new Set(omissions.map((o) => o.eik))]))
+        .all<{ eik: string; names_json: string }>(),
+    ),
+  ]);
+  return {
+    byYear: filingsByYear(
+      declarations.map((d) => ({
+        year: (d.declared_year as string | null) ?? null,
+        eiks: resolved.filter((c) => c.declaration_id === d.id).map((c) => c.eik),
+        named: interests.filter((i) => i.declaration_id === d.id).map((i) => i.entity_raw),
+      })),
+    ),
+    history: new Map(history.map((h) => [h.eik, historyNames(h.names_json)])),
+  };
 }

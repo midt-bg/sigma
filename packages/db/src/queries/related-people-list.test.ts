@@ -149,9 +149,10 @@ it('lists people the register records as owners of a winner without a declared s
       CREATE TABLE interest_links(person_id,status,interest_class);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       -- An open role counts only up to the last successful read of the partida.
-      CREATE TABLE registry_deeds(eik,outcome,fetched_at);
-      INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01'),('222222222','ok','2026-09-01'),
-        ('333333333','ok','2026-09-01');
+      CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
+      INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01','ИЗПЪЛНИТЕЛ'),('222222222','ok','2026-09-01',NULL),
+        ('333333333','ok','2026-09-01',NULL);
+      CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
       CREATE TABLE declarations(id,person_id,institution,position,declared_year);
       CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
       CREATE TABLE declared_interests(declaration_id,entity_raw);
@@ -170,11 +171,13 @@ it('lists people the register records as owners of a winner without a declared s
       INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','manager','222222222'),
         ('${'q'.repeat(64)}','person','partner','111111111'),('${'r'.repeat(64)}','person','partner','111111111');
       INSERT INTO declarations VALUES('d20','p','Община','Кмет','2020'),('d21','p','Община','','2021'),
-        ('d22','p','Община','','2022'),('d18','p','Община','','2018'),('e20','p','Община','Кмет','2020');
-      -- 2020 is blank, 2021 names the company in its own spelling, 2022 is tied to the ЕИК, 2018 precedes
-      -- the ownership, and e20 is not an annual declaration.
-      INSERT INTO declaration_metadata(declaration_id,declaration_type) VALUES('d20','Annualy'),('d21','Annualy'),('d22','Annualy'),('d18','Annualy'),('e20','Entry');
-      INSERT INTO declared_interests VALUES('d21','„Изпълнител“ ЕООД');
+        ('d22','p','Община','','2022'),('d18','p','Община','','2018'),('e20','p','Община','Кмет','2020'),
+        ('d19','p','','','2019');
+      -- 2019 names another company only; 2020 is blank in both its filings, so nothing of that year was
+      -- read and it is no finding; 2021 names the company in its own spelling, 2022 is tied to the ЕИК,
+      -- 2018 precedes the ownership, and e20 is not an annual declaration.
+      INSERT INTO declaration_metadata(declaration_id,declaration_type) VALUES('d20','Annualy'),('d21','Annualy'),('d22','Annualy'),('d18','Annualy'),('e20','Entry'),('d19','Annualy');
+      INSERT INTO declared_interests VALUES('d21','„Изпълнител“ ЕООД'),('d19','Друга Фирма ЕООД');
       INSERT INTO declaration_companies VALUES('d22','111111111');
       INSERT INTO bidders VALUES('b1','111111111','Изпълнител',NULL),('b2','222222222','Държавно','state'),
         ('b3','333333333','Частно',NULL);
@@ -205,7 +208,7 @@ it('lists people the register records as owners of a winner without a declared s
           family: 0,
           registry: 1,
           registryRole: 'owner',
-          missingYears: ['2020'],
+          missingYears: ['2019'],
         },
         {
           eik: '333333333',
@@ -220,6 +223,56 @@ it('lists people the register records as owners of a winner without a declared s
     });
     expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'other')).toHaveLength(1);
     expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'nobody')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
+it('finds a registered company in any filing of the year — another document, a former name, its ЕИК in the text', async () => {
+  const db = new DatabaseSync(':memory:');
+  const H = 'h'.repeat(64);
+  try {
+    db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+      CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
+      CREATE TABLE interest_links(person_id,status,interest_class);
+      CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
+      CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
+      CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+      CREATE TABLE declared_interests(declaration_id,entity_raw);
+      CREATE TABLE declaration_companies(declaration_id,eik);
+      CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name,ownership_kind);
+      CREATE TABLE company_totals(bidder_id,contracts);
+      CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
+      CREATE TABLE tenders(id PRIMARY KEY,authority_id);
+      INSERT INTO persons VALUES('p','Лице Тестово');
+      INSERT INTO person_registry_links VALUES('p','${H}');
+      INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','partner','111111111'),
+        ('${H}','person','partner','222222222'),('${H}','person','partner','333333333'),
+        ('${H}','person','partner','444444444');
+      INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01','ПЪРВА'),('222222222','ok','2026-09-01','НОВА МАРКА'),
+        ('333333333','ok','2026-09-01','ТРЕТА'),('444444444','ok','2026-09-01','ЧЕТВЪРТА');
+      INSERT INTO registry_company_history VALUES('222222222','[{"name":"СТАРА МАРКА","legalForm":"ООД"}]','h','2026-09-01');
+      INSERT INTO declarations VALUES('d19','p','','','2019'),('e19','p','','','2019');
+      INSERT INTO declaration_metadata(declaration_id,declaration_type) VALUES('d19','Annualy'),('e19','Entry');
+      INSERT INTO declared_interests VALUES('d19','Стара марка ООД'),('d19','дружество с ЕИК 333333333'),
+        ('d19','Нещо Друго ЕООД'),('e19','ПЪРВА ЕООД');
+      INSERT INTO bidders VALUES('b1','111111111','Първа',NULL),('b2','222222222','Нова Марка',NULL),
+        ('b3','333333333','Трета',NULL),('b4','444444444','Четвърта',NULL);
+      INSERT INTO company_totals VALUES('b1',1),('b2',1),('b3',1),('b4',1);
+      INSERT INTO tenders VALUES('t','a');
+      INSERT INTO contracts VALUES('c1','b1','t','2020-01-01',1),('c2','b2','t','2020-01-01',1),
+        ('c3','b3','t','2020-01-01',1),('c4','b4','t','2020-01-01',1);`);
+    const rows = await getRegistryRolePersonRows(d1FromSqlite(db));
+    // The entry declaration of the same year names ПЪРВА, the annual one names НОВА МАРКА by its former
+    // name and ТРЕТА by its ЕИК; only ЧЕТВЪРТА is nowhere in the year's filings.
+    expect(Object.fromEntries(rows[0]!.companies.map((c) => [c.eik, c.missingYears]))).toEqual({
+      '111111111': [],
+      '222222222': [],
+      '333333333': [],
+      '444444444': ['2019'],
+    });
   } finally {
     db.close();
   }
@@ -303,9 +356,10 @@ it('counts the governing body of a private winner, not the seats that only overs
       CREATE TABLE interest_links(person_id,status,interest_class);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
       -- An open role counts only up to the last successful read of the partida.
-      CREATE TABLE registry_deeds(eik,outcome,fetched_at);
-      INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01'),('222222222','ok','2026-09-01'),
-        ('333333333','ok','2026-09-01');
+      CREATE TABLE registry_deeds(eik,outcome,fetched_at,name);
+      INSERT INTO registry_deeds VALUES('111111111','ok','2026-09-01',NULL),('222222222','ok','2026-09-01',NULL),
+        ('333333333','ok','2026-09-01',NULL);
+      CREATE TABLE registry_company_history(eik,names_json,source_hash,fetched_at);
       CREATE TABLE declarations(id,person_id,institution,position,declared_year);
       CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
       CREATE TABLE declared_interests(declaration_id,entity_raw);
@@ -340,7 +394,7 @@ it('counts the governing body of a private winner, not the seats that only overs
     // Ownership in one company and a seat in another: the figures without the seats keep the first only.
     db.exec(`INSERT INTO bidders VALUES('b4','444444444','Собствено',NULL);
       INSERT INTO company_totals VALUES('b4',1);
-      INSERT INTO registry_deeds VALUES('444444444','ok','2026-09-01');
+      INSERT INTO registry_deeds VALUES('444444444','ok','2026-09-01',NULL);
       INSERT INTO contracts VALUES('c5','b4','t','2020-03-01',40);`);
     const mixed = await (async () => {
       db.exec(`DELETE FROM registry_roles;
