@@ -80,6 +80,7 @@ const richCompany: CompanyDetail = {
       contracts: 8,
       valueEur: 320_000,
       sharePct: 1,
+      contractSharePct: 1,
     },
   ],
   bids: { one: 1, two: 2, three: 3, fourPlus: 1, unknown: 1 },
@@ -254,7 +255,7 @@ describe('/companies/:eik — procurement profile', () => {
     expect(container.querySelector('.kicker')?.textContent).toContain('Група изпълнители');
     expect(container.querySelector('.kicker')?.textContent).toContain('дял на свързано лице');
     expect(container.textContent).toContain('Общо спечелено');
-    expect(container.textContent).toContain('Непотвърдена стойност');
+    expect(container.textContent).toContain('Вероятно грешна или липсваща стойност');
     expect(section('joint-contracts')?.textContent).toContain('Съвместна тестова доставка');
 
     const participants = section('participants')!;

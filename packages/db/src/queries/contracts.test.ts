@@ -205,12 +205,15 @@ describe('buildFilters (via listContracts)', () => {
         framework: 2,
         signing_value_eur: 1_000_000,
         bidder_kind: 'framework_parties',
+        // a ceiling flagged too low is still a ceiling, never an unverified value
+        value_flag: 'value_low',
       },
       { ...contractRow, id: 'c:order', framework: 1, signing_value_eur: 1000 },
     ]).db;
     const [agreement, order] = (await listContracts(db, {})).items;
     expect(agreement).toMatchObject({
       valueEur: null,
+      valueUnverified: false,
       frameworkAgreement: true,
       frameworkCeilingEur: 1_000_000,
       bidderKind: 'framework_parties',

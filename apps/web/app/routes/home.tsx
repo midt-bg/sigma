@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, date, moneyBare } from '@sigma/shared';
-import { getHomeData, getDb } from '@sigma/db';
+import { getHomeData, getDb, getPartialStartYear } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
 import type { Route } from './+types/home';
 import { PageHeader } from '../components/PageHeader';
@@ -28,7 +28,9 @@ export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   // Identical for every visitor between refreshes — the `Cache-Control` above (publicCache(3600))
   // memoises this response at the edge; no separate data cache.
-  return getHomeData(getDb(env));
+  const db = getDb(env);
+  const [home, partialStartYear] = await Promise.all([getHomeData(db), getPartialStartYear(db)]);
+  return { ...home, partialStartYear };
 }
 
 function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHref: string }) {
@@ -86,6 +88,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     recentSingleOffer,
     topSingleOffer,
     singleOffer,
+    partialStartYear,
   } = loaderData;
   const endYear = coverageEndYear(totals.asOf);
   const range = coverageRange(endYear);
@@ -123,7 +126,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         ]}
       />
       <p className="small muted coverage-note">
-        Обхват: {coveragePartialNote(endYear)}
+        Обхват: {coveragePartialNote(endYear, partialStartYear)}
         {totals.asOf ? `, последен договор ${date(totals.asOf)}` : ''}.
       </p>
 
@@ -231,8 +234,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         </p>
         <SingleOfferPortion
           valueEur={singleOffer.valueEur}
-          totalEur={totals.valueEur}
-          scopeLabel="на всички поръчки"
+          totalEur={singleOffer.baseValueEur}
+          singleOffer={singleOffer.contracts}
+          contracts={singleOffer.baseContracts}
+          scopeLabel="на договорите с известен брой оферти"
         />
         <div
           className="tabset"

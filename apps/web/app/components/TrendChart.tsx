@@ -28,12 +28,24 @@ export function TrendChart({
   const partialIdx = points.findIndex((p) => p.partial);
   const hasPartial = partialIdx > 0;
   const solidEnd = hasPartial ? partialIdx - 1 : n - 1;
-  const line = points
-    .slice(0, solidEnd + 1)
-    .map((p, i) => `${i ? 'L' : 'M'}${xy(i)}`)
-    .join('');
-  const area = `${line}L${x(solidEnd).toFixed(1)},${H - PAD_B}L0,${H - PAD_B}Z`;
-  const dashed = hasPartial ? `M${xy(solidEnd)}L${xy(partialIdx)}` : '';
+  // The periods of the first year, while the source was being taken up, are partial too: the line runs
+  // dashed from them into the first full period, so their low level is not read as a real rise after.
+  let headEnd = -1;
+  while (headEnd + 1 < n && points[headEnd + 1]!.partialStart) headEnd += 1;
+  const hasHead = headEnd >= 0 && headEnd < n - 1;
+  const solidStart = hasHead ? headEnd + 1 : 0;
+  const path = (from: number, to: number) =>
+    points
+      .slice(from, to + 1)
+      .map((_, i) => `${i ? 'L' : 'M'}${xy(from + i)}`)
+      .join('');
+  const hasSolid = solidEnd >= solidStart;
+  const line = hasSolid ? path(solidStart, solidEnd) : '';
+  const area = hasSolid
+    ? `${line}L${x(solidEnd).toFixed(1)},${H - PAD_B}L${solidStart ? x(solidStart).toFixed(1) : 0},${H - PAD_B}Z`
+    : '';
+  const dashed = hasPartial ? `M${xy(Math.max(solidEnd, 0))}L${xy(partialIdx)}` : '';
+  const headDashed = hasHead ? path(0, solidStart) : '';
   // x-axis ticks at the first month of each year (month granularity) or at every point (year).
   const ticks = points
     .map((p, i) => ({ i, year: p.period.slice(0, 4) }))
@@ -51,8 +63,22 @@ export function TrendChart({
       {ticks.map((t) => (
         <line key={`g${t.i}`} x1={x(t.i)} y1={PAD_T} x2={x(t.i)} y2={H - PAD_B} className="grid" />
       ))}
-      <path className="area" d={area} />
-      <path className="line" d={line} />
+      {hasSolid && <path className="area" d={area} />}
+      {hasSolid && <path className="line" d={line} />}
+      {hasHead && (
+        <>
+          <path className="line-partial" d={headDashed} />
+          <circle className="dot-partial" cx={x(0)} cy={y(points[0]!.valueEur)} r={3} />
+          <text
+            className="label-partial"
+            x={x(0)}
+            y={y(points[0]!.valueEur) - 7}
+            textAnchor="start"
+          >
+            частично
+          </text>
+        </>
+      )}
       {hasPartial && (
         <>
           <path className="line-partial" d={dashed} />

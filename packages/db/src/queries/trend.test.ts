@@ -18,11 +18,16 @@ const COVERAGE = { dated: 80, total: 100 };
 const scopedBy = <T>(binds: unknown[], authority: T, bidder: T, national: T): T =>
   binds.includes('auth:111') ? authority : binds.includes('eik:222') ? bidder : national;
 
-function fake(asOf: string | null = null): FakeD1 {
+function fake(
+  asOf: string | null = null,
+  yearFacet: { key: string; contracts: number }[] = [],
+): FakeD1 {
   return fakeD1([
     { when: 'GROUP BY period', all: SERIES },
     { when: 'COUNT(*) AS total', first: COVERAGE },
     { when: 'SELECT as_of FROM home_totals', first: { as_of: asOf } },
+    // The national year counts that decide whether the first year is partial (partial-years.ts).
+    { when: "facet = 'year'", all: yearFacet },
     // getSpendingTrend also fills the sector-filter dropdown; no test here asserts on it.
     { when: 'FROM sector_totals', all: [] },
   ]);
@@ -47,6 +52,7 @@ function scopedFake(): FakeD1 {
   return fakeD1([
     { when: 'FROM sector_totals', all: [{ division: '45' }] },
     { when: 'SELECT as_of FROM home_totals', first: { as_of: null } },
+    { when: "facet = 'year'", all: [] },
     {
       when: 'GROUP BY period',
       all: (call) =>
@@ -89,6 +95,38 @@ describe('getSpendingTrend', () => {
     const y2023 = years.find((y) => y.year === '2023')!;
     expect(y2023).toMatchObject({ partial: true, yoyPct: null });
     expect(years.find((y) => y.year === '2022')!.partial).toBe(false);
+  });
+
+  it('marks a ramp-up first year partial and shows no change against it', async () => {
+    // Nationally the first year holds a fraction of the next one: the source was still being taken up.
+    const ramp = [
+      { key: '2022', contracts: 40 },
+      { key: '2023', contracts: 500 },
+    ];
+    const { points, years } = await getSpendingTrend(fake(null, ramp).db, {});
+    expect(years).toEqual([
+      { year: '2022', valueEur: 4000, contracts: 40, yoyPct: null, partial: true },
+      // (5000 - 4000) / 4000 would read as +25 % over a year still filling: suppressed.
+      { year: '2023', valueEur: 5000, contracts: 50, yoyPct: null, partial: false },
+    ]);
+    // Every period of the partial year, the zero-filled months included (2022-01 … 2022-12).
+    expect(points.filter((p) => p.partialStart).map((p) => p.period)).toEqual(
+      Array.from({ length: 12 }, (_, m) => `2022-${String(m + 1).padStart(2, '0')}`),
+    );
+    expect(points.find((p) => p.period === '2023-01')).not.toHaveProperty('partialStart');
+  });
+
+  it('keeps a full first year as it was', async () => {
+    const level = [
+      { key: '2022', contracts: 400 },
+      { key: '2023', contracts: 500 },
+    ];
+    const { points, years } = await getSpendingTrend(fake(null, level).db, {});
+    expect(years.map((y) => [y.year, y.partial, y.yoyPct])).toEqual([
+      ['2022', false, null],
+      ['2023', false, 0.25],
+    ]);
+    expect(points.some((p) => p.partialStart)).toBe(false);
   });
 
   it('reports coverage of contracts with a usable signing date', async () => {
@@ -173,6 +211,7 @@ describe('getSpendingTrend — zero-spend prior year and empty coverage', () => 
       },
       { when: 'COUNT(*) AS total', first: { dated: 0, total: 0 } },
       { when: 'SELECT as_of FROM home_totals', first: { as_of: null } },
+      { when: "facet = 'year'", all: [] },
       { when: 'FROM sector_totals', all: [] },
     ]);
     const { years, coverage } = await getSpendingTrend(custom.db, {});
@@ -214,6 +253,7 @@ describe('getSpendingTrend — funding scope, sectors toggle, empty inputs', () 
       { when: 'GROUP BY period', all: [] }, // no series rows → the points loop is skipped
       { when: 'COUNT(*) AS total', first: null }, // coverageRow null → dated/total fall back to 0
       { when: 'SELECT as_of FROM home_totals', first: { as_of: null } },
+      { when: "facet = 'year'", all: [] },
       { when: 'FROM sector_totals', all: [] },
     ]);
     const data = await getSpendingTrend(empty.db, {});

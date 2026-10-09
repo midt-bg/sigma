@@ -556,7 +556,10 @@ function companyDb(
     { when: 'FROM bidders WHERE id=?', first: null },
     { when: 'nuts_regions', first: { legal_form: 'ООД', region: 'София' } },
     { when: 'AS primary_eur', first: extra },
-    { when: 'four_plus', first: { one: 1, two: 2, three: 0, four_plus: 1, unknown: 0 } },
+    {
+      when: 'four_plus',
+      first: { one: 1, two: 2, three: 0, four_plus: 1, unknown: 0, value_low: 4 },
+    },
     {
       when: ['AS agreements', 'amount_eur IS NULL'],
       first: { n: 3, agreements: 1, ceiling_eur: 500_000 },
@@ -592,7 +595,8 @@ describe('getCompany', () => {
     expect(d.euSharePct).toBeCloseTo(0.25); // 25000 / 100000
     expect(d.sectorSharePct).toBeCloseTo(0.6); // primary_eur 60000 / 100000
     expect(d.avgBids).toBe(2.3); // 2.34 rounded to 1dp
-    expect(d.suspect).toBe(3);
+    // the list's badge for the company: 4 value_low rows (summed) + 3 with no usable value
+    expect(d.suspect).toBe(7);
     // A framework agreement is disclosed apart, with its ceiling — not as an unconfirmed value.
     expect(d.frameworkAgreements).toBe(1);
     expect(d.frameworkCeilingEur).toBe(500_000);
@@ -697,10 +701,13 @@ const authorityRow = {
 function authorityDb(
   row: typeof authorityRow | null,
   sectorRows: { division: string; eur: number }[] = [{ division: '45', eur: 120000 }],
+  procRows: { procedure_type: string; n: number; eur: number | null }[] = [
+    { procedure_type: 'Пряко договаряне', n: 4, eur: 60000 },
+  ],
 ): D1Database {
   return fakeD1([
     { when: 'FROM authority_totals', first: row },
-    { when: 'AVG(c.bids_received)', first: { avg_bids: 3.16 } },
+    { when: 'AVG(c.bids_received)', first: { avg_bids: 3.16, value_low: 5 } },
     {
       when: ['AS agreements', 'amount_eur IS NULL'],
       first: { n: 2, agreements: 2, ceiling_eur: 1_000_000 },
@@ -713,10 +720,7 @@ function authorityDb(
       ],
     },
     { when: 'GROUP BY division', all: sectorRows },
-    {
-      when: 'GROUP BY t.procedure_type',
-      all: [{ procedure_type: 'Пряко договаряне', n: 4, eur: 60000 }],
-    },
+    { when: 'GROUP BY t.procedure_type', all: procRows },
     // Both detail pages render a contracts panel through listContracts: its page read and the
     // COUNT/SUM aggregate that accompanies it. Empty here; nothing in this file asserts on them.
     { when: 'COALESCE(NULLIF(c.contract_subject', all: [] },
@@ -735,7 +739,7 @@ describe('getAuthority', () => {
     expect(d.spentEur).toBe(200000);
     expect(d.euSharePct).toBeCloseTo(0.25);
     expect(d.avgBids).toBe(3.2); // 3.16 → 3.2
-    expect(d.suspect).toBe(2);
+    expect(d.suspect).toBe(7); // 5 value_low + 2 with no usable value
     expect(d.frameworkAgreements).toBe(2);
     expect(d.frameworkCeilingEur).toBe(1_000_000);
     expect(d.topContractors[0]).toMatchObject({ slug: '1', wonEur: 120000, contracts: 8 });
@@ -745,7 +749,46 @@ describe('getAuthority', () => {
     expect(d.sectorsOther).toBeNull(); // only one sector, no tail
     // Single procedure group (n:4, eur:60000, total 60000) → sharePct = 60000/60000. Shape assertion
     // guards toProcedureMix's contracts/valueEur/sharePct against a coverage-only mutation.
-    expect(d.procedureMix[0]).toMatchObject({ contracts: 4, valueEur: 60000, sharePct: 1 });
+    expect(d.procedureMix[0]).toMatchObject({
+      contracts: 4,
+      valueEur: 60000,
+      sharePct: 1,
+      contractSharePct: 1,
+    });
+  });
+
+  it('counts the procedure mix over every contract, with or without an amount', async () => {
+    const f = fakeD1([
+      { when: 'FROM authority_totals', first: authorityRow },
+      { when: 'AVG(c.bids_received)', first: { avg_bids: null } },
+      { when: ['AS agreements', 'amount_eur IS NULL'], first: null },
+      { when: 'ORDER BY won DESC', all: [] },
+      { when: 'GROUP BY division', all: [] },
+      {
+        when: 'GROUP BY t.procedure_type',
+        all: [
+          { procedure_type: 'Открита процедура', n: 6, eur: 90000 },
+          { procedure_type: 'Пряко договаряне', n: 2, eur: 10000 },
+          // the synthetic tenders' contracts: no amount, still contracts of the authority
+          { procedure_type: 'неизвестна', n: 2, eur: null },
+        ],
+      },
+      { when: 'COALESCE(NULLIF(c.contract_subject', all: [] },
+      { when: 'COUNT(*) AS total', first: { total: 0, eur: 0, suspect: 0 } },
+    ]);
+    const d = (await getAuthority(f.db, 'auth:123456789'))!;
+
+    // The same set as the direct-award share beside the bar (procedureCompetition): no amount filter.
+    const mixSql = f.sql.find((q) => q.includes('GROUP BY t.procedure_type'))!;
+    expect(mixSql).not.toContain('amount_eur IS NOT NULL');
+    expect(d.procedureMix.map((s) => [s.key, s.contracts, s.contractSharePct])).toEqual([
+      ['open', 6, 0.6],
+      ['direct', 2, 0.2],
+      ['unknown', 2, 0.2],
+    ]);
+    // the value share is unchanged: 10 000 of 100 000, and nothing for the unpriced group
+    expect(d.procedureMix.find((s) => s.key === 'direct')!.sharePct).toBeCloseTo(0.1);
+    expect(d.procedureMix.find((s) => s.key === 'unknown')!.sharePct).toBe(0);
   });
 
   it('rolls sectors beyond the top 6 into a „… още" tail bucket', async () => {

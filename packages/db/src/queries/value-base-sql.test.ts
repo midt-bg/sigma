@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
 import { listAuthorities } from './authorities';
 import { listCompanies } from './companies';
+import { competitionTotals } from './competition';
 import { contractsSummary, listSingleOfferContracts } from './contracts';
 import { getCompany } from './details';
 import { getHomeData } from './home';
@@ -100,16 +101,31 @@ describe('canonical contract value base', () => {
     }
   });
 
-  it('uses the same non-NULL base for both homepage single-offer queries', async () => {
+  it('gives the home page the national single-offer share /competition gives, on its base', async () => {
     const { db } = realDb();
 
-    const [home, contracts] = await Promise.all([
+    const [home, national, contracts] = await Promise.all([
       getHomeData(db),
+      competitionTotals(db, {}),
       listSingleOfferContracts(db, 'value', 10),
     ]);
 
     expect(home.totals.valueEur).toBe(1060);
-    expect(home.singleOffer).toEqual({ valueEur: 1060, contracts: 5 });
+    // Contracts with a known number of offers — all six here, the one without a usable value too —
+    // valued on positive amounts, so the negative value_low row cannot push the share outside [0, 1].
+    expect(home.singleOffer).toEqual({
+      valueEur: 1100,
+      contracts: 6,
+      baseValueEur: 1100,
+      baseContracts: 6,
+    });
+    expect(national).toMatchObject({
+      contracts: home.singleOffer.baseContracts,
+      singleOffer: home.singleOffer.contracts,
+      valueEur: home.singleOffer.baseValueEur,
+      singleOfferValueEur: home.singleOffer.valueEur,
+    });
+    // The list beside the share shows every priced single-offer contract as it is.
     expect(contracts.map((contract) => contract.valueEur)).toEqual([500, 300, 200, 100, -40]);
   });
 });
@@ -138,5 +154,22 @@ describe('a company whose negative rows outweigh the rest', () => {
     expect(company.procedureMix).toEqual([
       expect.objectContaining({ key: 'open', contracts: 1, valueEur: 100, sharePct: 0 }),
     ]);
+  });
+});
+
+describe('the home companies figure', () => {
+  it('counts the companies the list shows, not the bucket of winners with no identity', async () => {
+    const { sqlite, db } = realDb();
+    sqlite.exec(`
+      INSERT INTO bidders (id, name, kind) VALUES ('unknown:1', 'Неустановен изпълнител', 'unknown');
+      INSERT INTO contracts
+        (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur)
+      VALUES ('c:unknown', 't:A45', 'unknown:1', 10, 'EUR', '2024-03-01', 2, 'ok', 10);
+    `);
+    sqlite.exec(precompute);
+
+    const [home, list] = await Promise.all([getHomeData(db), listCompanies(db, {})]);
+    expect(home.totals.bidders).toBe(2);
+    expect(home.totals.bidders).toBe(list.total);
   });
 });

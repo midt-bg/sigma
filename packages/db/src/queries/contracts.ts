@@ -470,7 +470,7 @@ function toItem(r: ContractRow): ContractListItem {
     // trustworthy figure — the headline counts them („N с непотвърдена стойност") while the rows stay
     // silent about which ones. The other verdicts either blank the value (handled by valueEur === null)
     // or are repaired upstream, so this single boolean covers what the list can usefully say.
-    valueUnverified: r.value_flag === 'value_low',
+    valueUnverified: r.value_flag === 'value_low' && r.framework !== FRAMEWORK_AGREEMENT,
     frameworkAgreement: r.framework === FRAMEWORK_AGREEMENT,
     frameworkCeilingEur: r.framework === FRAMEWORK_AGREEMENT ? r.signing_value_eur : null,
   };
@@ -585,14 +585,14 @@ export async function contractsSummary(
 async function liveSummary(db: D1Database, p: ContractListParams): Promise<ContractsSummary> {
   const filters = buildFilters(p);
   // The money sum follows the site-wide value base: every non-NULL amount_eur, regardless of flag.
-  // The badge is a separate data-quality metric: NULL values plus value_low rows, which are summed
-  // when amount_eur is populated but remain labelled „непотвърдена стойност". A framework agreement's
-  // own record is NULL on purpose (its ceiling is not spending), not unconfirmed.
+  // The badge is a separate data-quality metric, „вероятно грешна или липсваща стойност": value_low rows
+  // (summed as published, but marked) and rows with no usable value (not summed). A framework agreement's
+  // own record is neither, whatever its verdict: its figure is a ceiling, not spending (the rollup's rule).
   const row = await db
     .prepare(
       `SELECT COUNT(*) AS total, COALESCE(SUM(c.amount_eur), 0) AS eur,
-              SUM(CASE WHEN (c.amount_eur IS NULL AND c.framework IS NOT ${FRAMEWORK_AGREEMENT})
-                        OR c.value_flag = 'value_low' THEN 1 ELSE 0 END) AS suspect ${FROM}${filters.sql}`,
+              SUM(CASE WHEN c.framework IS NOT ${FRAMEWORK_AGREEMENT}
+                        AND (c.amount_eur IS NULL OR c.value_flag = 'value_low') THEN 1 ELSE 0 END) AS suspect ${FROM}${filters.sql}`,
     )
     .bind(...filters.params)
     .first<{ total: number; eur: number; suspect: number }>();

@@ -15,6 +15,7 @@ export * from './flows';
 export * from './network';
 export * from './company-ties';
 export * from './trend';
+export * from './partial-years';
 export * from './regions';
 export * from './cohort';
 export * from './competition';

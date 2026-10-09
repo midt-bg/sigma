@@ -62,22 +62,35 @@ const totalsRow = {
   refreshed_at: '2024-06-02T10:00:00Z',
 };
 
+interface LiveSingleOffer {
+  one_contracts: number;
+  one_value: number;
+  known_contracts: number;
+  known_value: number;
+}
+
 function fake(
   totals: typeof totalsRow | null,
-  singleOffer: { value_eur: number; contracts: number } | null = { value_eur: 50000, contracts: 1 },
-  // The precomputed single-offer row in facet_counts; null is a database the refresh has not filled yet.
-  storedSingleOffer: { value_eur: number; contracts: number } | null = null,
+  // The live count of a database the refresh has not filled yet: one-offer contracts and their base.
+  singleOffer: LiveSingleOffer | null = {
+    one_contracts: 1,
+    one_value: 50000,
+    known_contracts: 4,
+    known_value: 200000,
+  },
+  // The precomputed rows in facet_counts (single_offer/one and /known); empty before the refresh.
+  storedSingleOffer: { key: string; value_eur: number; contracts: number }[] = [],
 ): FakeD1 {
   return fakeD1([
     { when: 'home_totals', first: totals },
-    { when: "facet = 'single_offer'", first: storedSingleOffer },
+    { when: "facet = 'single_offer'", all: storedSingleOffer },
     { when: 'company_totals', all: [companyRow] },
     { when: "type_group = 'община'", all: [authorityRow] },
     { when: 'type_group IN', all: [authorityRow] },
     // listSingleOfferContracts (two calls: 'recent' by date, 'value' by amount)
     { when: ['bids_received = 1', 'JOIN'], all: [contractRow] },
-    // the single-offer aggregate, which reads the same table without a join
-    { when: 'COALESCE(SUM(amount_eur)', first: singleOffer },
+    // the live single-offer count, which reads the same table without a join
+    { when: 'AS known_value', first: singleOffer },
   ]);
 }
 
@@ -128,30 +141,48 @@ describe('getHomeData', () => {
     expect(Array.isArray(data.topSingleOffer)).toBe(true);
   });
 
-  it('includes single-offer aggregate stats', async () => {
+  it('includes the single-offer share against contracts with a known number of offers', async () => {
     const data = await getHomeData(fake(totalsRow).db);
 
-    expect(data.singleOffer.contracts).toBe(1);
-    expect(data.singleOffer.valueEur).toBe(50000);
+    expect(data.singleOffer).toEqual({
+      valueEur: 50000,
+      contracts: 1,
+      // the base is not the whole corpus (totals.valueEur 1 000 000) but the contracts whose number of
+      // offers is known — the base /analytics and /competition use
+      baseValueEur: 200000,
+      baseContracts: 4,
+    });
   });
 
-  it('falls back to zero single-offer aggregate when the scan returns no row', async () => {
+  it('falls back to a zero share when the live count returns no row', async () => {
     const data = await getHomeData(fake(totalsRow, null).db);
 
-    expect(data.singleOffer).toEqual({ valueEur: 0, contracts: 0 });
+    expect(data.singleOffer).toEqual({
+      valueEur: 0,
+      contracts: 0,
+      baseValueEur: 0,
+      baseContracts: 0,
+    });
   });
 
-  it('reads the precomputed single-offer totals instead of scanning the contracts', async () => {
-    const calls = fake(
-      totalsRow,
-      { value_eur: 1, contracts: 1 },
-      { value_eur: 70000, contracts: 3 },
-    );
+  it('reads the precomputed single-offer rows instead of scanning the contracts', async () => {
+    const calls = fake(totalsRow, null, [
+      { key: 'one', value_eur: 70000, contracts: 3 },
+      { key: 'known', value_eur: 140000, contracts: 9 },
+    ]);
     const data = await getHomeData(calls.db);
 
-    expect(data.singleOffer).toEqual({ valueEur: 70000, contracts: 3 });
-    expect(
-      calls.sql.some((query) => query.includes('FROM contracts WHERE bids_received = 1')),
-    ).toBe(false);
+    expect(data.singleOffer).toEqual({
+      valueEur: 70000,
+      contracts: 3,
+      baseValueEur: 140000,
+      baseContracts: 9,
+    });
+    expect(calls.sql.some((query) => query.includes('AS known_value'))).toBe(false);
+  });
+
+  it('counts live while only one of the two rows exists', async () => {
+    const calls = fake(totalsRow, undefined, [{ key: 'one', value_eur: 70000, contracts: 3 }]);
+    expect((await getHomeData(calls.db)).singleOffer.baseValueEur).toBe(200000);
   });
 });

@@ -247,6 +247,12 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
         )}
 
         <TotalsStrip totals={totals} label="Обобщение на конкуренцията" />
+        <p className="small muted">
+          Делът с една оферта — по брой и по стойност — е от договорите с известен брой оферти (
+          {count(data.totals.contracts)} договора за {money(data.totals.valueEur)}); стойността е
+          сумата на положителните суми. Без филтри това е същото число като на началната страница и
+          в „Анализи“.
+        </p>
 
         <Section
           id="single-offer"

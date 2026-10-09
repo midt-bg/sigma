@@ -116,6 +116,44 @@ export function unverifiedValueNote(v: ContractValueTimeline): UnverifiedValueNo
     };
   }
 
+  // The verdicts that are ours rather than a demonstrable source defect: each says what the check found and
+  // what the sums do with the contract, so no two of them share a label (methodology §2 lists all of them).
+  if (v.flag === 'value_suspect') {
+    return {
+      title: 'Стойността е заменена с прогнозната',
+      badge: 'заменена с прогнозната',
+      scope: 'both',
+      headline: `Подадената стойност е неправдоподобно висока спрямо прогнозата на процедурата — над 2 млрд. €, над 200 пъти прогнозата или почти точно 100 пъти (пропусната десетична запетая). ${
+        v.procedureEstimatedEur != null
+          ? 'В сумите на СИГМА договорът влиза с прогнозната стойност на процедурата вместо с подадената.'
+          : 'Процедурата няма прогнозна стойност, с която да я заменим, затова договорът не влиза в сумите.'
+      }`,
+      detail: SOURCE,
+    };
+  }
+
+  if (v.flag === 'annex_suspect') {
+    return {
+      title: 'Анекс с неправдоподобна стойност',
+      badge: 'съмнителен анекс',
+      scope: 'current',
+      headline:
+        'Анекс е вдигнал текущата стойност неправдоподобно — до отрицателна, над 100 пъти подписаната или с една стъпка поне 10 пъти. В сумите на СИГМА договорът влиза със стойността при сключване.',
+      detail: SOURCE,
+    };
+  }
+
+  if (v.flag === 'review') {
+    return {
+      title: 'Стойността е далеч над прогнозата',
+      badge: 'за проверка',
+      scope: 'both',
+      headline:
+        'Стойността е поне 10 пъти над прогнозата на процедурата. Може да е вярна, затова влиза в сумите така, както е подадена, но я отбелязваме.',
+      detail: SOURCE,
+    };
+  }
+
   return {
     title: 'Стойността не е потвърдена',
     badge: 'непотвърдена стойност',

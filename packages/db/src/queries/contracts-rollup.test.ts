@@ -102,8 +102,8 @@ function corpus(sqlite: DatabaseSync): void {
       pick(PROCEDURES),
     );
   const contract = sqlite.prepare(
-    `INSERT INTO contracts (id, tender_id, bidder_id, amount, signed_at, eu_funded, bids_received, amount_eur, value_flag)
-     VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+    `INSERT INTO contracts (id, tender_id, bidder_id, amount, signed_at, eu_funded, bids_received, amount_eur, value_flag, framework)
+     VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
   );
   for (let i = 0; i < 6000; i++) {
     const amount = next() < 0.8 ? pick(AMOUNTS) : Math.round(next() * 2e8 * 100) / 100;
@@ -116,6 +116,9 @@ function corpus(sqlite: DatabaseSync): void {
       pick([1, 2, 3, null]),
       amount,
       pick(['ok', 'ok', 'ok', 'value_low', 'value_suspect', 'review']),
+      // a framework agreement's own record (2) is never in the unverified count, whatever its verdict;
+      // from the index, not the generator, so the rest of the corpus stays as it was
+      i % 5 === 0 ? 2 : i % 5 === 1 ? 1 : null,
     );
   }
 }
@@ -197,7 +200,7 @@ describe('contract_rollup against the live count', () => {
     const listed = rollup.sqlite
       .prepare(
         `SELECT COUNT(*) AS contracts, COALESCE(SUM(c.amount_eur), 0) AS value_eur,
-                SUM(c.amount_eur IS NULL OR c.value_flag = 'value_low') AS unverified
+                SUM(c.framework IS NOT 2 AND (c.amount_eur IS NULL OR c.value_flag = 'value_low')) AS unverified
          FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
          JOIN bidders b ON b.id = c.bidder_id`,
       )

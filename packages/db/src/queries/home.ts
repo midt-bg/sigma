@@ -44,27 +44,46 @@ export function toHomeTotals(totalsRow: HomeTotalsRow | null): HomeTotals {
 // общини, болници и образование — those live in the full list).
 const STATE_TYPES = ['министерство', 'агенция', 'държавна компания', 'друго'];
 
+interface SingleOfferPart {
+  value_eur: number;
+  contracts: number;
+}
+
 /**
- * Money portion of single-offer contracts vs the whole corpus (totals.valueEur is the denominator): the
- * metric's bids = 1 filter, on the same canonical value base as every rollup — all known amount_eur values,
- * regardless of value_flag. Precomputed with the other corpus-wide totals (facet_counts, where `contracts` is
- * the priced count); a database the refresh has not filled yet counts live, as before.
+ * The national single-offer share, on the one base /analytics and /competition use too (methodology §5):
+ * contracts with a known number of offers (bids_received >= 1) and a tender, and their one-offer subset —
+ * counted, and valued on positive amounts (competitionTotals, #153). Precomputed with the other corpus-wide
+ * totals (facet_counts); a database the refresh has not filled yet counts live.
  */
 async function singleOfferTotals(
   db: D1Database,
-): Promise<{ value_eur: number; contracts: number } | null> {
+): Promise<{ one: SingleOfferPart; known: SingleOfferPart }> {
   const stored = await db
     .prepare(
-      `SELECT value_eur, contracts FROM facet_counts WHERE facet = 'single_offer' AND key = 'priced'`,
+      `SELECT key, value_eur, contracts FROM facet_counts WHERE facet = 'single_offer' AND key IN ('one', 'known')`,
     )
-    .first<{ value_eur: number; contracts: number }>();
-  if (stored) return stored;
-  return db
+    .all<SingleOfferPart & { key: string }>();
+  const one = stored.results?.find((r) => r.key === 'one');
+  const known = stored.results?.find((r) => r.key === 'known');
+  if (one && known) return { one, known };
+  const live = await db
     .prepare(
-      `SELECT COALESCE(SUM(amount_eur), 0) AS value_eur, COUNT(*) AS contracts
-         FROM contracts WHERE bids_received = 1 AND amount_eur IS NOT NULL`,
+      `SELECT SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS one_contracts,
+              COALESCE(SUM(CASE WHEN c.bids_received = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS one_value,
+              COUNT(*) AS known_contracts,
+              COALESCE(SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS known_value
+         FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.bids_received >= 1`,
     )
-    .first<{ value_eur: number; contracts: number }>();
+    .first<{
+      one_contracts: number | null;
+      one_value: number;
+      known_contracts: number;
+      known_value: number;
+    }>();
+  return {
+    one: { value_eur: live?.one_value ?? 0, contracts: live?.one_contracts ?? 0 },
+    known: { value_eur: live?.known_value ?? 0, contracts: live?.known_contracts ?? 0 },
+  };
 }
 
 /** Home page: the KPI strip (from home_totals), top-10 companies, and the ministries/общини slices. */
@@ -109,8 +128,10 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
     recentSingleOffer,
     topSingleOffer,
     singleOffer: {
-      valueEur: singleOfferRow?.value_eur ?? 0,
-      contracts: singleOfferRow?.contracts ?? 0,
+      valueEur: singleOfferRow.one.value_eur,
+      contracts: singleOfferRow.one.contracts,
+      baseValueEur: singleOfferRow.known.value_eur,
+      baseContracts: singleOfferRow.known.contracts,
     },
   };
 }

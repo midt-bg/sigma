@@ -127,6 +127,9 @@ SELECT
   CASE WHEN substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]' THEN substr(c.signed_at, 1, 4) ELSE 'unknown' END AS year,
   CASE WHEN c.id LIKE 'c:e:%' THEN 'eop' WHEN c.id LIKE 'c:o:%' THEN 'ocds' ELSE 'other' END AS src,
   CASE WHEN c.bids_received = 1 THEN '1' ELSE '0' END AS one_offer,
+  -- A known number of offers: at least one. 0 is not a real count (an award needs an offer) and NULL is
+  -- unknown. The base of the single-offer share (methodology §5), the rule competitionTotals applies.
+  CASE WHEN c.bids_received >= 1 THEN 1 ELSE 0 END AS bids_known,
   -- The list's value buckets (VALUE_BUCKETS in contracts.ts), each [lower, upper).
   CASE
     WHEN c.amount_eur >= 100000000 THEN 'gt100m'
@@ -139,17 +142,21 @@ SELECT
   COUNT(*) AS contracts,
   COUNT(c.amount_eur) AS priced,
   COALESCE(SUM(c.amount_eur), 0) AS value_eur,
+  -- The single-offer value share sums positive amounts only, so a negative value_low row cannot push it
+  -- outside [0, 1] (competition.ts, #153).
+  COALESCE(SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_pos,
   SUM(c.value_flag = 'value_suspect') AS suspect,
-  -- The list's „unconfirmed value" badge: no amount, or one flagged as too low to trust. A framework
-  -- agreement's own record has no amount on purpose (its ceiling is not spending) and is not unconfirmed.
-  SUM((c.amount_eur IS NULL AND c.framework IS NOT 2) OR c.value_flag = 'value_low') AS unverified,
+  -- The list's headline count of values that are probably wrong at the source (value_low, summed as
+  -- published) or missing (no usable EUR figure, not summed). A framework agreement's own record is
+  -- neither: its figure is a ceiling, not spending, whatever its verdict.
+  SUM(c.framework IS NOT 2 AND (c.amount_eur IS NULL OR c.value_flag = 'value_low')) AS unverified,
   MAX(CASE WHEN c.signed_at <= date('now') THEN c.signed_at END) AS max_signed
 FROM contracts c
 LEFT JOIN tenders t ON t.id = c.tender_id
 LEFT JOIN authorities a ON a.id = t.authority_id
 LEFT JOIN bidders b ON b.id = c.bidder_id
--- By position: the dimensions are the first nine result columns, and an alias must not meet a column name.
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9;
+-- By position: the dimensions are the first ten result columns, and an alias must not meet a column name.
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
 
 -- home_totals uses the browsable leaderboard grains for authority/bidder counts, and the same
 -- freshness definition as refresh-slice.sql: latest in-corpus signed contract date.
@@ -158,7 +165,9 @@ SELECT 1,
   (SELECT COALESCE(SUM(contracts), 0) FROM contract_cube),
   (SELECT COALESCE(SUM(value_eur), 0) FROM contract_cube),
   (SELECT COUNT(*) FROM authority_totals),
-  (SELECT COUNT(*) FROM company_totals),
+  -- The companies the list and the search show (companies.ts): the bucket of winners with no identity is
+  -- not a company.
+  (SELECT COUNT(*) FROM company_totals WHERE kind <> 'unknown'),
   (SELECT COALESCE(SUM(suspect), 0) FROM contract_cube),
   (SELECT MIN(signed_at) FROM contracts WHERE signed_at >= '2020-01-01' AND signed_at <= date('now')),
   (SELECT MAX(signed_at) FROM contracts WHERE signed_at <= date('now')),
@@ -197,11 +206,16 @@ SELECT 'sector', sector, SUM(contracts), SUM(value_eur)
 FROM contract_cube WHERE has_tender = 1 GROUP BY sector;
 INSERT INTO facet_counts (facet, key, contracts, value_eur)
 SELECT 'year', year, SUM(contracts), SUM(value_eur) FROM contract_cube GROUP BY year;
--- The single-offer share on the home page (home.ts): priced contracts with one offer — `contracts` here is
--- that priced count — and their value. All contracts, as the home page counts them, not only listed ones.
+-- The national single-offer share, one base for the home page, /analytics and /competition (home.ts,
+-- competition.ts): contracts with a known number of offers, and their one-offer subset — counted, and
+-- valued on positive amounts. With a tender, as competitionTotals' live count joins it, so the national
+-- figure is the sum of the per-sector ones.
 INSERT INTO facet_counts (facet, key, contracts, value_eur)
-SELECT 'single_offer', 'priced', COALESCE(SUM(priced), 0), COALESCE(SUM(value_eur), 0)
-FROM contract_cube WHERE one_offer = '1';
+SELECT 'single_offer', 'known', COALESCE(SUM(contracts), 0), COALESCE(SUM(value_pos), 0)
+FROM contract_cube WHERE bids_known = 1 AND has_tender = 1;
+INSERT INTO facet_counts (facet, key, contracts, value_eur)
+SELECT 'single_offer', 'one', COALESCE(SUM(contracts), 0), COALESCE(SUM(value_pos), 0)
+FROM contract_cube WHERE one_offer = '1' AND has_tender = 1;
 
 -- ── 4b′) contract_rollup ────────────────────────────────────────────────────────────────────────────
 -- The contracts list's headline for every combination of its filters (migration 0024): each of the six

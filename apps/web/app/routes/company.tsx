@@ -312,9 +312,9 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             },
             c.settlement && { term: 'Седалище', value: c.settlement, sub: c.region ?? undefined },
             c.suspect > 0 && {
-              term: 'Непотвърдена стойност',
+              term: 'Вероятно грешна или липсваща стойност',
               value: `${count(c.suspect)} ${plural(c.suspect, 'договор', 'договора')}`,
-              sub: 'в броя и в сумите, с прогнозната стойност вместо подадената',
+              sub: 'грешните са в сумите, както са подадени; липсващите не са',
             },
             c.frameworkAgreements > 0 && {
               term: 'Рамкови споразумения',

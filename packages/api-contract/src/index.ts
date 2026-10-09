@@ -34,6 +34,7 @@ export interface ProcedureSlice {
   contracts: number;
   valueEur: number;
   sharePct: number; // 0–1 share of the entity's value
+  contractSharePct: number; // 0–1 share of the contracts the mix counts (all of them on the authority page)
 }
 
 /** A facet option (filter checkbox) with its result count. */
@@ -63,8 +64,9 @@ export interface HomeData {
   /** Single-offer (bids_received = 1) contracts for the homepage section. */
   recentSingleOffer: ContractListItem[];
   topSingleOffer: ContractListItem[];
-  /** Aggregate value/count of single-offer contracts — for the homepage portion bar. */
-  singleOffer: { valueEur: number; contracts: number };
+  /** Single-offer contracts against their base — contracts with a known number of offers, the base
+   *  /analytics and /competition use too — for the homepage portion bar. Values sum positive amounts. */
+  singleOffer: { valueEur: number; contracts: number; baseValueEur: number; baseContracts: number };
 }
 
 // ── Companies ─────────────────────────────────────────────────────────────────────────────────
@@ -133,7 +135,9 @@ export interface CompanyDetail {
   avgBids: number | null;
   periodFirst: string | null;
   periodLast: string | null;
-  suspect: number; // own contracts excluded from sums (suspect value)
+  /** Own contracts whose value is probably wrong at the source (value_low, summed as published) or missing
+   *  (not summed) — the contracts list's badge for this company. Framework agreements are never in it. */
+  suspect: number;
   /** Framework agreements this contractor is a party to, and their combined ceiling — the most the
    *  buyers may order under them. Never in the sums above: the orders are separate contracts. */
   frameworkAgreements: number;
@@ -202,6 +206,7 @@ export interface AuthorityDetail {
   avgBids: number | null;
   periodFirst: string | null;
   periodLast: string | null;
+  /** As CompanyDetail.suspect: the contracts list's „вероятно грешна или липсваща стойност" count. */
   suspect: number;
   /** Framework agreements this authority concluded, and their combined ceiling. Never in the spend
    *  above: what the buyers ordered under them are separate contracts. */
@@ -639,14 +644,15 @@ export interface TrendPoint {
   valueEur: number;
   contracts: number;
   partial: boolean; // the final period (the as_of period) is still being filled; rendered dashed
+  partialStart?: boolean; // a period of the first year, while the source was being taken up; rendered dashed
 }
 
 export interface TrendYear {
   year: string;
   valueEur: number;
   contracts: number;
-  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year, a zero previous year, or the partial final year
-  partial: boolean; // the as_of year, still incomplete; YoY is suppressed and it is marked in the UI
+  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year, a zero previous year, a partial year or the year after a partial one
+  partial: boolean; // incomplete: the as_of year, or the first year while the source was taken up; marked in the UI
 }
 
 export interface TrendData {
