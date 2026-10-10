@@ -45,7 +45,11 @@ const editedInit =
       '  bidder_id        TEXT NOT NULL REFERENCES bidders(id),\n',
       '  bidder_id        TEXT NOT NULL REFERENCES bidders(id),\n  ordering_unit_name TEXT,\n',
     ) + named('0025_joint_procurement_and_ordering_unit.sql').replace(/^ALTER TABLE .*$/gm, '');
-const stageShape = () => shaped(editedInit, ...migrations.slice(1, -1).map((m) => m.sql));
+// What Stage holds: the edited 0000 and the files before 0025; anything after 0025 is new to it.
+const JOINT = '0025_joint_procurement_and_ordering_unit.sql';
+const beforeJoint = migrations.filter((m) => m.name !== '0000_init.sql' && m.name < JOINT);
+const newToStage = names.filter((n) => n > JOINT);
+const stageShape = () => shaped(editedInit, ...beforeJoint.map((m) => m.sql));
 
 test('a database as production holds it: 0000 recorded, every later migration applied', () => {
   const plan = planSchema({
@@ -66,10 +70,10 @@ test('a database as Stage holds it: every migration marked, the data-only one ap
   const plan = planSchema({ migrations, rows: stageShape(), ledger: [] });
   assert.equal(plan.ok, true, formatPlan(plan));
   const result = actions(plan);
-  assert.deepEqual(result.apply, ['0019_registry_scoped_birthdates.sql']);
+  assert.deepEqual(result.apply, ['0019_registry_scoped_birthdates.sql', ...newToStage]);
   assert.deepEqual(
     result.mark,
-    names.filter((n) => !n.startsWith('0019_')),
+    names.filter((n) => !n.startsWith('0019_') && !newToStage.includes(n)),
   );
   assert.equal(
     plan.steps.find((s) => s.action === 'apply').dataOnly,
@@ -230,10 +234,14 @@ test('apply on a database as production holds it: restore point, then the migrat
 
 test('apply on a database as Stage holds it: the marks first, then the one data-only file', () => {
   const ledger = [];
-  const t = fakeTarget([editedInit, ...migrations.slice(1, -1).map((m) => m.sql)], ledger);
+  const t = fakeTarget([editedInit, ...beforeJoint.map((m) => m.sql)], ledger);
   const result = runApply({ migrations, target: t.target, log: quiet });
-  assert.deepEqual(t.calls, ['restorePoint', `mark ${names.length - 1}`, 'apply']);
-  assert.deepEqual(result.applies, ['0019_registry_scoped_birthdates.sql']);
+  assert.deepEqual(t.calls, [
+    'restorePoint',
+    `mark ${names.length - 1 - newToStage.length}`,
+    'apply',
+  ]);
+  assert.deepEqual(result.applies, ['0019_registry_scoped_birthdates.sql', ...newToStage]);
   assert.deepEqual(ledger.slice().sort(), names);
 });
 
@@ -263,7 +271,10 @@ test('a false error from migrations apply is answered by the ledger, not by a bl
   const lines = [];
   runApply({ migrations, target: t.target, log: (l) => lines.push(l) });
   assert.deepEqual(t.calls, ['restorePoint', 'apply', 'apply']);
-  assert.match(lines.join('\n'), /migrations apply failed \(attempt 1\/3\), 24 left/);
+  assert.match(
+    lines.join('\n'),
+    new RegExp(`migrations apply failed \\(attempt 1/3\\), ${names.length - 2} left`),
+  );
   assert.match(lines.at(-1), /ledger complete, parity OK/);
 });
 
