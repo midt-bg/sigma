@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  CLEAR_ROWS,
+  clearFiles,
   dataVersionSql,
+  fillSlot,
   emptySlot,
   ifNotExists,
   ownershipStatements,
@@ -294,4 +297,72 @@ test('an empty slot sends nothing', () => {
     () => [],
   );
   assert.deepEqual(sent, []);
+});
+
+test('a filled slot is emptied in bounded files, children first, without breaking a foreign key', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`PRAGMA foreign_keys=ON;
+    CREATE TABLE parent (id INTEGER PRIMARY KEY);
+    CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id));
+    CREATE TABLE rollup (a TEXT, b TEXT, n INTEGER, PRIMARY KEY (a, b)) WITHOUT ROWID;
+    INSERT INTO parent VALUES (1), (2), (3);
+    WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM k WHERE i < 45001)
+      INSERT INTO child SELECT i, 1 + i % 3 FROM k;`);
+  db.exec("INSERT INTO rollup VALUES ('x', 'y', 1), ('x', 'z', 2)");
+  const files = clearFiles(
+    'ship',
+    ['parent', 'child', 'rollup'],
+    { parent: 3, child: 45001, rollup: 2 },
+    {
+      rollup: ['a', 'b'],
+    },
+  );
+  assert.deepEqual(
+    files.map(([label]) => label),
+    [
+      'ship-clear-rollup-0',
+      'ship-clear-child-0',
+      'ship-clear-child-1',
+      'ship-clear-child-2',
+      'ship-clear-parent-0',
+    ],
+  );
+  assert.equal(Math.ceil(45001 / CLEAR_ROWS), 3);
+  for (const [, sql] of files) db.exec(`BEGIN; ${sql} COMMIT;`);
+  for (const t of ['parent', 'child', 'rollup'])
+    assert.equal(db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n, 0, t);
+  assert.deepEqual(
+    clearFiles('ship', ['parent'], { parent: 0 }),
+    [],
+    'an empty table sends nothing',
+  );
+});
+
+test('the finished build clears what the slot holds before it ships, by the slot’s own counts', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-fill-'));
+  try {
+    const snapshot = join(dir, 'snap.sqlite');
+    const db = new DatabaseSync(snapshot);
+    db.exec(`CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id));
+      INSERT INTO parent VALUES (1); INSERT INTO child VALUES (1, 1), (2, 1);`);
+    db.close();
+    const sent = [];
+    const result = fillSlot('sigma-test', snapshot, dir, {
+      label: 'ship',
+      apply: (label) => sent.push(label),
+      read: () => [{ parent: 1, child: 25000 }],
+    });
+    assert.deepEqual(sent, [
+      'ship-schema',
+      'ship-clear-child-0',
+      'ship-clear-child-1',
+      'ship-clear-parent-0',
+      'ship-parent-000',
+      'ship-child-000',
+    ]);
+    assert.deepEqual(result.counts, { parent: 1, child: 2 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

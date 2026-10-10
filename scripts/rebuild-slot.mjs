@@ -224,10 +224,36 @@ export function emptySlot(name, apply, read = d1Json) {
   if (drops.length) apply('wipe', `PRAGMA defer_foreign_keys=ON;\n${drops.join('\n')}\n`);
 }
 
+/** Rows one clearing file deletes. */
+export const CLEAR_ROWS = 20_000;
+
+/**
+ * The files that empty the slot's copies of `tables` (parents first, as given) — children first, table by
+ * table, at most CLEAR_ROWS rows a file. One file that deleted every row of a filled slot exceeded D1's CPU
+ * time limit and reset the database on every attempt (measured on Dev2, 10.10.2026, after the slot held the
+ * procurement corpus and the register). `rows[t]` is how many rows the slot holds; `keys[t]` the primary key
+ * of a table WITHOUT ROWID, which has no rowid to page by. A repeated file deletes what is left, or nothing.
+ */
+export function clearFiles(label, tables, rows, keys = {}) {
+  const files = [];
+  for (const t of [...tables].reverse()) {
+    const pages = Math.ceil((rows[t] ?? 0) / CLEAR_ROWS);
+    const key = keys[t]?.length ? keys[t].map(sqlIdent).join(', ') : 'rowid';
+    const match = keys[t]?.length > 1 ? `(${key})` : key;
+    for (let page = 0; page < pages; page++)
+      files.push([
+        `${label}-clear-${t}-${page}`,
+        `PRAGMA defer_foreign_keys=ON;\nDELETE FROM ${sqlIdent(t)} WHERE ${match} IN ` +
+          `(SELECT ${key} FROM ${sqlIdent(t)} LIMIT ${CLEAR_ROWS});\n`,
+      ]);
+  }
+  return files;
+}
+
 /** Put a whole local snapshot into the slot: the snapshot's own DDL where the migrations left a gap,
  * then every table emptied children-first and filled parents-first, in chunks of twenty thousand rows.
  * Used twice — once after a long stage, so its hours are durable, and once for the finished build. */
-export function fillSlot(name, snapshotPath, work, { label, apply }) {
+export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json }) {
   const snap = new DatabaseSync(snapshotPath, { readOnly: true });
   try {
     const master = snap
@@ -257,15 +283,35 @@ export function fillSlot(name, snapshotPath, work, { label, apply }) {
     const ordered = parentsFirst(tables, foreignKeys);
     // The internal related-persons table never leaves the build (ADR-0032).
     const withRows = ordered.filter((t) => t !== 'related_persons_internal');
-    apply(
-      `${label}-clear`,
-      `PRAGMA defer_foreign_keys=ON;\n` +
-        [...withRows]
-          .reverse()
-          .map((t) => `DELETE FROM ${sqlIdent(t)};`)
-          .join('\n') +
-        '\n',
+    // What the slot already holds — nothing on a fresh slot, the corpus and the register once an earlier
+    // stage made its hours durable — is deleted in bounded files, children first.
+    const held = {};
+    for (let i = 0; i < withRows.length; i += 20) {
+      const chunk = withRows.slice(i, i + 20);
+      Object.assign(
+        held,
+        read(
+          name,
+          `SELECT ${chunk.map((t) => `(SELECT COUNT(*) FROM ${sqlIdent(t)}) AS ${sqlIdent(t)}`).join(', ')}`,
+        )[0] ?? {},
+      );
+    }
+    const keys = Object.fromEntries(
+      master
+        .filter(
+          (m) => m.type === 'table' && /WITHOUT\s+ROWID/i.test(m.sql) && withRows.includes(m.name),
+        )
+        .map((m) => [
+          m.name,
+          snap
+            .prepare(`PRAGMA table_info(${sqlIdent(m.name)})`)
+            .all()
+            .filter((c) => c.pk > 0)
+            .sort((a, b) => a.pk - b.pk)
+            .map((c) => c.name),
+        ]),
     );
+    for (const [file, sql] of clearFiles(label, withRows, held, keys)) apply(file, sql);
     const counts = {};
     let shipped = 0;
     for (const table of withRows) {
