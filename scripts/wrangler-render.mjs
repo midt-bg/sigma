@@ -94,6 +94,7 @@ if (ext === '.json' || ext === '.jsonc') {
     declarationsBucket: process.env.SIGMA_DECLARATIONS_BUCKET || '',
     shipEnv: process.env.SIGMA_SHIP_ENV || '',
     d1Name: process.env.SIGMA_D1_NAME || '',
+    etlParked: etlSchedule(process.env.SIGMA_ETL_SCHEDULE) === 'off',
   };
   // Every name that renderToml can substitute has to open the gate. Listing only the older four made
   // this fail OPEN: a config that sets just the newer ones skipped the rendering without a word, and the
@@ -212,10 +213,25 @@ function renderToml(text, names) {
         if (names.declarationsBucket)
           line = replaceTomlStringValue(line, 'DECLARATIONS_BUCKET', names.declarationsBucket);
       }
+      if (section === '[triggers]' && names.etlParked)
+        line = line.replace(/^(\s*crons\s*=\s*).*$/, '$1[]');
       if (names.d1Name) line = replaceTomlStringValue(line, 'database_name', names.d1Name);
       return line;
     })
     .join('\n');
+}
+
+/**
+ * SIGMA_ETL_SCHEDULE: `on` (or unset) keeps the committed crons; `off` deploys the ETL Worker with
+ * `crons = []`, which removes its Cron Triggers — the ETL is parked, its Workflows still answer a manual
+ * trigger. Rolling a release back parks the new ETL this way (docs/runbooks/release-rollback.md). Anything
+ * else is refused: a typo must not decide whether production keeps refreshing.
+ */
+function etlSchedule(value) {
+  const schedule = value || 'on';
+  if (schedule !== 'on' && schedule !== 'off')
+    throw new Error(`SIGMA_ETL_SCHEDULE must be on or off, got ${JSON.stringify(value)}`);
+  return schedule;
 }
 
 function replaceTomlStringValue(line, key, value) {
