@@ -145,6 +145,17 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         run: pnpm typecheck
 
+      # Before anything is written: the environment's settings and the slot they name (scripts/deploy-preflight.mjs,
+      # docs/deploy.md „Проверка преди запис“). The database name and id must resolve to each other and name
+      # one of the environment's slots; production also needs the takedown salt and a slot whose rows were
+      # built by this code's rules (packages/db/data-version.json) — rows built by other rules are rebuilt
+      # in the idle slot and switched to, never released over in place. Read only.
+      - name: Preflight — environment settings and target slot
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          node scripts/deploy-preflight.mjs "${{ needs.detect.outputs.env }}"
+
       # Schema before serving, through wrangler's migration ledger and nothing else (scripts/release-schema.mjs,
       # docs/deploy.md „Схемата“). The plan only reads: it compares the target's ledger and schema with the
       # migration chain, and refuses a half-applied file or a schema that differs from what the chain builds.
@@ -196,11 +207,13 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         run: |
           # LOG_IP_KEY is long-lived so IP HMAC tokens remain stable for same-client correlation.
+          # SIGMA_WEB_NAME is unset in production (the committed default `sigma`); a bare "$SIGMA_WEB_NAME"
+          # listed the secrets of no Worker, so production never received a key.
           # Never overwrite it; a new blue-green worker name starts without a key and correlation
           # resets at full infra cutover, which is acceptable. The deploy token already has
           # Workers Scripts:Edit, so no separate Cloudflare token is required.
-          if ! secrets_json="$(pnpm --filter @sigma/web exec wrangler secret list --name "$SIGMA_WEB_NAME" --format json)"; then
-            echo "Skipping LOG_IP_KEY initialization: failed to list secrets for $SIGMA_WEB_NAME."
+          if ! secrets_json="$(pnpm --filter @sigma/web exec wrangler secret list --name "${SIGMA_WEB_NAME:-sigma}" --format json)"; then
+            echo "Skipping LOG_IP_KEY initialization: failed to list secrets for ${SIGMA_WEB_NAME:-sigma}."
             exit 0
           fi
 
@@ -222,11 +235,11 @@ jobs:
           set -e
 
           if [ "$secret_status" = 0 ]; then
-            echo "LOG_IP_KEY already exists for $SIGMA_WEB_NAME; leaving it unchanged."
+            echo "LOG_IP_KEY already exists for ${SIGMA_WEB_NAME:-sigma}; leaving it unchanged."
             exit 0
           fi
           if [ "$secret_status" != 1 ]; then
-            echo "Skipping LOG_IP_KEY initialization: unexpected secret list output for $SIGMA_WEB_NAME."
+            echo "Skipping LOG_IP_KEY initialization: unexpected secret list output for ${SIGMA_WEB_NAME:-sigma}."
             exit 0
           fi
 
@@ -235,7 +248,7 @@ jobs:
           # accidental echo / set -x trace in a later edit can never leak it. Masking is not
           # retroactive within a line, hence add-mask on the line right after generation.
           echo "::add-mask::$key"
-          printf '%s' "$key" | pnpm --filter @sigma/web exec wrangler secret put LOG_IP_KEY --name "$SIGMA_WEB_NAME"
+          printf '%s' "$key" | pnpm --filter @sigma/web exec wrangler secret put LOG_IP_KEY --name "${SIGMA_WEB_NAME:-sigma}"
 
       - name: Deploy refresh Workflow (sigma-etl)
         if: steps.guard.outputs.ok == 'true'
