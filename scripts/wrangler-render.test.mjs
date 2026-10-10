@@ -174,3 +174,63 @@ test('the ETL keeps its crons unless parked', async () => {
 test('a schedule that is neither on nor off is refused', async () => {
   await assert.rejects(() => renderEtl('of'), /SIGMA_ETL_SCHEDULE must be on or off, got "of"/);
 });
+
+/** A `[[section]]` or `[section]` block of a TOML file, up to the next header. */
+const block = (text, header) => {
+  const start = text.indexOf(`${header}\n`);
+  if (start < 0) return null;
+  const rest = text.slice(start + header.length + 1);
+  const end = rest.search(/^\[/m);
+  return rest.slice(0, end < 0 ? undefined : end).trim();
+};
+
+test('the rebuild runner is the ETL’s code and container, with one Workflow, no schedule and no database', () => {
+  const runner = readFileSync('apps/etl/wrangler.rebuild-runner.toml', 'utf8');
+  const etl = readFileSync('apps/etl/wrangler.toml', 'utf8');
+  for (const key of ['main', 'compatibility_date', 'compatibility_flags'])
+    assert.equal(
+      runner.match(new RegExp(`^${key} = (.*)$`, 'm'))[1],
+      etl.match(new RegExp(`^${key} = (.*)$`, 'm'))[1],
+      key,
+    );
+  for (const header of ['[[containers]]', '[[durable_objects.bindings]]', '[[migrations]]'])
+    assert.equal(block(runner, header), block(etl, header), header);
+  assert.equal(runner.match(/^\[\[workflows\]\]$/gm).length, 1);
+  assert.equal(
+    block(runner, '[[workflows]]'),
+    'binding = "REBUILD_RUN"\nname = "sigma-rebuild-cutover"\nclass_name = "RebuildWorkflow"',
+  );
+  assert.equal(block(runner, '[triggers]'), null, 'no Cron Triggers');
+  assert.equal(block(runner, '[[d1_databases]]'), null, 'no database binding');
+});
+
+test('the rebuild runner renders with the environment’s names and the shipped commit', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-wrangler-render-'));
+  const config = join(dir, 'wrangler.rebuild-runner.toml');
+  writeFileSync(config, readFileSync('apps/etl/wrangler.rebuild-runner.toml', 'utf8'));
+  process.argv[2] = config;
+  const env = {
+    SIGMA_ETL_NAME: 'sigma-rebuild-runner-dev2',
+    SIGMA_REBUILD_WORKFLOW_NAME: 'sigma-rebuild-cutover-dev2',
+    SIGMA_DECLARATIONS_BUCKET: 'sigma-declarations-dev2',
+    SIGMA_D1_NAME: 'sigma-dev2-green',
+    SIGMA_SHIP_ENV: 'dev2',
+    SIGMA_SOURCE_COMMIT: 'abc1234',
+  };
+  Object.assign(process.env, env);
+  try {
+    await import(`./wrangler-render.mjs?test=${Date.now()}-runner`);
+  } finally {
+    for (const k of Object.keys(env)) delete process.env[k];
+  }
+  const rendered = readFileSync(join(dir, 'wrangler.deploy.rebuild-runner.toml'), 'utf8');
+  assert.match(rendered, /^name = "sigma-rebuild-runner-dev2"/m);
+  assert.match(rendered, /binding = "REBUILD_RUN"\nname = "sigma-rebuild-cutover-dev2"/);
+  assert.match(rendered, /bucket_name = "sigma-declarations-dev2"/);
+  assert.match(rendered, /SIGMA_D1_NAME = "sigma-dev2-green"/);
+  assert.match(rendered, /SIGMA_SOURCE_COMMIT = "abc1234"/);
+  assert.doesNotMatch(
+    rendered,
+    /"sigma-declarations"|"sigma-rebuild-cutover"|^name = "sigma-rebuild-runner"$/m,
+  );
+});
