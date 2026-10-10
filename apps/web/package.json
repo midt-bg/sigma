@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.124",
-    "@dagrejs/dagre": "1.1.8",
+    "@dagrejs/dagre": "3.1.1",
     "@sigma/api-contract": "workspace:*",
     "@sigma/config": "workspace:*",
     "@sigma/db": "workspace:*",
