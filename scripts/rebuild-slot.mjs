@@ -200,14 +200,26 @@ export function slotFlusher(name, snapshot, apply) {
   };
 }
 
-/** Empty the slot of everything but the full-text shadow tables, which SQLite owns. */
+/**
+ * Empty the slot of everything but the full-text shadow tables, which SQLite owns — children first. A parent
+ * dropped while its children still reference it makes D1 check every child, and in one import that does not
+ * finish: the Durable Object behind the database resets (`D1_RESET_DO`) on every attempt. Measured on a Dev2
+ * slot on 10.10.2026 — creation order fails, children-first passes; the ship drops its staged tables the same
+ * way for the same reason.
+ */
 export function emptySlot(name, apply, read = d1Json) {
-  const drops = read(
+  const rows = read(
     name,
-    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
-  )
-    .map((t) => t.name)
-    .filter((n) => !/^search_index_/.test(n))
+    `SELECT m.name AS name, f."table" AS parent FROM sqlite_master m
+       LEFT JOIN pragma_foreign_key_list(m.name) f
+     WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT LIKE '_cf_%'`,
+  );
+  const tables = [...new Set(rows.map((r) => r.name))].filter((n) => !/^search_index_/.test(n));
+  const foreignKeys = new Map(
+    tables.map((t) => [t, rows.filter((r) => r.name === t && r.parent).map((r) => r.parent)]),
+  );
+  const drops = parentsFirst(tables, foreignKeys)
+    .reverse()
     .map((n) => `DROP TABLE IF EXISTS ${sqlIdent(n)};`);
   if (drops.length) apply('wipe', `PRAGMA defer_foreign_keys=ON;\n${drops.join('\n')}\n`);
 }

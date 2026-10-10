@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   dataVersionSql,
+  emptySlot,
   ifNotExists,
   ownershipStatements,
   parentsFirst,
@@ -253,4 +254,44 @@ test('the data version is written only after every check of the slot', () => {
   assert.ok(written > 0, 'main writes the data version');
   assert.ok(main.indexOf('assertIntegrity(') < written, 'after the integrity gate');
   assert.ok(main.indexOf('Slot counts differ from the snapshot') < written, 'after the row counts');
+});
+
+test('the slot is emptied children first, without the full-text shadow tables', () => {
+  // As sqlite_master lists them — parents first, the order in which they were created.
+  const rows = [
+    { name: 'authorities', parent: null },
+    { name: 'tenders', parent: 'authorities' },
+    { name: 'contracts', parent: 'tenders' },
+    { name: 'contracts', parent: 'bidders' },
+    { name: 'bidders', parent: null },
+    { name: 'amendments', parent: null },
+    { name: 'search_index', parent: null },
+    { name: 'search_index_data', parent: null },
+    { name: 'persons', parent: 'persons' },
+  ];
+  const sent = [];
+  emptySlot(
+    'sigma-test',
+    (label, sql) => sent.push([label, sql]),
+    () => rows,
+  );
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0][0], 'wipe');
+  const order = [...sent[0][1].matchAll(/DROP TABLE IF EXISTS "([^"]+)"/g)].map((m) => m[1]);
+  const before = (a, b) => order.indexOf(a) < order.indexOf(b);
+  assert.ok(before('contracts', 'tenders') && before('tenders', 'authorities'));
+  assert.ok(before('contracts', 'bidders'));
+  assert.ok(order.includes('search_index') && !order.includes('search_index_data'));
+  assert.ok(order.includes('persons'), 'a table that references itself is dropped once');
+  assert.match(sent[0][1], /^PRAGMA defer_foreign_keys=ON;\n/);
+});
+
+test('an empty slot sends nothing', () => {
+  const sent = [];
+  emptySlot(
+    'sigma-test',
+    (...args) => sent.push(args),
+    () => [],
+  );
+  assert.deepEqual(sent, []);
 });
