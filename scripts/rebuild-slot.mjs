@@ -7,7 +7,7 @@
 //   SIGMA_D1_NAME/SIGMA_D1_ID           the idle slot, the only one written
 //   SIGMA_LIVE_D1_NAME/SIGMA_LIVE_D1_ID the live slot, read for the published-link gate
 import { execFileSync, spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -18,6 +18,7 @@ import {
   parseWranglerJson,
   sqlIdent,
   sqlLiteral,
+  wranglerFileSender,
 } from './ship-related-persons.mjs';
 import { importSql } from './cacbg/import-sql.mjs';
 
@@ -174,11 +175,11 @@ export function slotFlusher(name, snapshot, apply) {
   let since = null;
   const send =
     apply ??
-    ((label, sql) => {
-      const file = join(resolve(root, 'data/work/rebuild'), `${label}.sql`);
-      writeFileSync(file, sql);
-      wrangler(['d1', 'execute', name, '--remote', '--yes', '--file', file]);
-      rmSync(file, { force: true });
+    wranglerFileSender({
+      d1Name: name,
+      remote: true,
+      dir: resolve(root, 'data/work/rebuild'),
+      cwd: webDir,
     });
   return async (eiks) => {
     send('registry-batch', registryBatchSql(snapshot, eiks, tables, cursors, since));
@@ -422,12 +423,9 @@ async function main() {
   const db = join(work, 'slot.sqlite');
   const today = new Date().toISOString().slice(0, 10);
   const runId = process.env.SIGMA_RUN_ID ?? '';
-  const apply = (label, sql) => {
-    const file = join(work, `${label}.sql`);
-    writeFileSync(file, sql);
-    wrangler(['d1', 'execute', target.name, '--remote', '--yes', '--file', file]);
-    rmSync(file, { force: true });
-  };
+  // Every file into the slot carries its receipt: the rows of a chunk are not repeatable, and wrangler can
+  // report a failure for a file that landed (scripts/d1-retry.mjs).
+  const apply = wranglerFileSender({ d1Name: target.name, remote: true, dir: work, cwd: webDir });
   const record = (name, detail = null) =>
     apply(
       `state-${name}`,

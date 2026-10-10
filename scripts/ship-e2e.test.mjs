@@ -126,6 +126,9 @@ const EXPECTED_ROWS = {
  * SHIP_FAKE_NULLN — answer the read-back with a non-numeric count, to exercise the fail-closed guard.
  * SHIP_FAKE_NOISE — emit a `[WARNING]`-shaped line on stdout before the JSON.
  * SHIP_FAKE_READFAIL — make the read-back call itself fail, so the catch path is exercised.
+ * SHIP_FAKE_FALSEFAIL — apply one --file by name, then report wrangler's false „Not currently importing
+ *                       anything" for it once, as on Stage on 04.10.2026.
+ * SHIP_FAKE_FAILONCE — fail one --file by name once WITHOUT applying it, as a transient D1 fault does.
  */
 function fakeWrangler(dir) {
   const bin = join(dir, 'bin');
@@ -140,7 +143,7 @@ function fakeWrangler(dir) {
   writeFileSync(
     exe,
     `#!/usr/bin/env node
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 const argv = process.argv.slice(2);
 const at = (f) => (argv.indexOf(f) >= 0 ? argv[argv.indexOf(f) + 1] : null);
@@ -153,7 +156,22 @@ const run = (input) =>
 try {
   if (file) {
     const skip = process.env.SHIP_FAKE_SKIP;
+    const name = file.split('/').pop();
+    const once = (kind) => {
+      const marker = ${JSON.stringify(dir)} + '/once-' + kind + '-' + name;
+      if (existsSync(marker)) return false;
+      writeFileSync(marker, '');
+      return true;
+    };
+    if (name === process.env.SHIP_FAKE_FAILONCE && once('fail')) {
+      process.stderr.write('✘ [ERROR] D1_ERROR: 7009');
+      process.exit(1);
+    }
     if (!skip || !file.endsWith(skip)) run('.read ' + file);
+    if (name === process.env.SHIP_FAKE_FALSEFAIL && once('false')) {
+      process.stderr.write('✘ [ERROR] Not currently importing anything.');
+      process.exit(1);
+    }
   } else if (command) {
     if (process.env.SHIP_FAKE_READFAIL && /COUNT\\(\\*\\)/.test(command)) { process.stderr.write('read-back exploded'); process.exit(1); }
     const rows = JSON.parse(run('.mode json\\n' + command) || '[]');
@@ -221,6 +239,8 @@ function runShip(
       // tests. Whether the REQUEST SIZE is overridden matters: the defaults-constraining test leaves
       // it alone on purpose.
       '--pace-ms=0',
+      // Likewise the wait before a receipt is read after a failed request.
+      '--retry-ms=0',
       ...(forceChunks ? ['--max-statements-per-request=1'] : []),
     ],
     {
@@ -298,6 +318,58 @@ test('a real ship run leaves the target holding exactly what the work DB held', 
       `a read-back query counted ${terms} tables — over the ${READBACK_MAX_TABLES}-table cap`,
     );
   }
+});
+
+// Every shipped table serves exactly the rows the work DB holds — none missing, none twice.
+const servedAsBuilt = (dir, fake) => {
+  for (const table of TABLES)
+    assert.equal(
+      fake.count(table),
+      Number(sqlite(join(dir, 'work.sqlite'), `SELECT COUNT(*) FROM ${table};`)),
+      `${table} is not served as built`,
+    );
+};
+const receiptReads = (fake) =>
+  fake
+    .calls()
+    .filter((c) => c.argv.includes('--command'))
+    .map((c) => c.argv[c.argv.indexOf('--command') + 1])
+    .filter((q) => q.includes('rp_receipt'));
+
+test('a swap that landed but was reported as failed is not sent again, and the run completes', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-falseswap-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // Stage, 04.10.2026: the swap landed, wrangler said it had not, the swap went again and died on
+  // „no such table: rp_next_persons" — a published generation recorded as a failed run.
+  const { res, fake } = runShip(dir, { env: { SHIP_FAKE_FALSEFAIL: 'publish.sql' } });
+  assert.equal(res.status, 0, `ship failed:\n${res.stderr}`);
+  assert.doesNotMatch(res.stderr, /no such table: rp_next_/);
+  assert.match(res.stderr, /d1_file_landed_despite_error/);
+  assert.equal(fake.calls().filter((c) => c.file === 'publish.sql').length, 1);
+  assert.deepEqual(receiptReads(fake), ["SELECT token FROM rp_receipt WHERE label='publish'"]);
+  servedAsBuilt(dir, fake);
+});
+
+test('a chunk that landed but was reported as failed is not uploaded twice', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-falsechunk-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const { res, fake } = runShip(dir, { env: { SHIP_FAKE_FALSEFAIL: 'interest_links.1.sql' } });
+  assert.equal(res.status, 0, `ship failed:\n${res.stderr}`);
+  assert.equal(fake.calls().filter((c) => c.file === 'interest_links.1.sql').length, 1);
+  servedAsBuilt(dir, fake);
+});
+
+test('a chunk that did not land is sent again, once', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-failonce-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const { res, fake } = runShip(dir, { env: { SHIP_FAKE_FAILONCE: 'interest_links.1.sql' } });
+  assert.equal(res.status, 0, `ship failed:\n${res.stderr}`);
+  assert.match(res.stderr, /"receipt":"absent"/);
+  assert.equal(fake.calls().filter((c) => c.file === 'interest_links.1.sql').length, 2);
+  servedAsBuilt(dir, fake);
 });
 
 test('a request that never landed fails the run', (t) => {
