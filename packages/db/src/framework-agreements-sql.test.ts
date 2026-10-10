@@ -15,6 +15,7 @@ import { checkFrameworkCeilingsUnsummed } from '../../../scripts/integrity-check
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrations = [
   'packages/db/migrations/0000_init.sql',
+  'packages/db/migrations/0025_joint_procurement_and_ordering_unit.sql',
   'packages/db/migrations/0002_current_value_currency.sql',
   'packages/db/migrations/0003_related_persons_foundation.sql',
   'packages/db/migrations/0009_interest_link_evidence.sql',

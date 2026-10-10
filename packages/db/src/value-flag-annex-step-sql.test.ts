@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { BASE_SCHEMA } from './base-schema';
 
 // The mis-keyed annex rule (#248): annex_suspect used to need the aggregate current/signing ratio to
 // reach 100x, so a single annex with a mis-typed value that pushed a contract to, say, 30x its signed
@@ -23,7 +24,6 @@ import { describe, expect, it } from 'vitest';
 // INSERT copy is always superseded in-script and never observable in the end state.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // refresh-slice.sql's свързани-лица block reads interest_link_evidence (#279, ADR-0033), so the script
@@ -73,7 +73,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
   const dir = mkdtempSync(resolve(tmpdir(), `sigma-annexstep-${label}-`));
   const dbPath = resolve(dir, 'test.sqlite');
   try {
-    readScript(dbPath, schemaPath);
+    for (const file of BASE_SCHEMA) readScript(dbPath, file);
     readScript(dbPath, migration2Path);
     readScript(dbPath, migration3Path);
     readScript(dbPath, migration9Path);

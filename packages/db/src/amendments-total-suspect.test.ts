@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { BASE_SCHEMA } from './base-schema';
 
 // #305 single-annex value double-count: a driving annex whose value_after is >=2x its value_before is
 // a data defect — ЗОП чл.116 caps a single amendment at +50%, so one step cannot legally more than
@@ -18,7 +19,6 @@ import { describe, expect, it } from 'vitest';
 // REAL scripts in pipeline order on a real SQLite database. A copy left behind fails here.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
@@ -73,7 +73,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
   const dir = mkdtempSync(resolve(tmpdir(), `sigma-totalsuspect-${label}-`));
   const dbPath = resolve(dir, 'test.sqlite');
   try {
-    readScript(dbPath, schemaPath);
+    for (const file of BASE_SCHEMA) readScript(dbPath, file);
     readScript(dbPath, migration1Path);
     readScript(dbPath, migration2Path);
     readScript(dbPath, migration3Path);

@@ -15,6 +15,7 @@ import { checkAnnexTotalSuspectBasis } from '../../../scripts/integrity-checks.m
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrations = [
   'packages/db/migrations/0000_init.sql',
+  'packages/db/migrations/0025_joint_procurement_and_ordering_unit.sql',
   'packages/db/migrations/0001_flow_pairs_bidder_index.sql',
   'packages/db/migrations/0002_current_value_currency.sql',
 ].map((p) => resolve(root, p));
