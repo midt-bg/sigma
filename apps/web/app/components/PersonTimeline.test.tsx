@@ -503,6 +503,82 @@ it('shows a seat in an organization’s bodies under the organization, with the 
   }
 });
 
+// The public stake of a company the person holds a seat in stands under its name: whole or a share, and a seat
+// in a company with a minority public stake stands with the offices like one in a public enterprise.
+it('names the public stake under a company the person holds a seat in', () => {
+  const role = (eik: string, name: string, ownershipKind?: 'municipal') => ({
+    company: { eik, name, href: `/companies/${eik}`, ...(ownershipKind ? { ownershipKind } : {}) },
+    role: 'board_of_directors' as const,
+    share: null,
+    sharePct: null,
+    addedOn: '2020-01-01',
+    removedOn: null,
+    entryNumber: 'e',
+    fetchedAt: '2026-09-01',
+  });
+  const p = {
+    person: {
+      slug: 'c'.repeat(64),
+      name: 'ЕЛЕНА ТЕСТОВА',
+      roles: [
+        role('111111111', 'ОБЩИНСКО ЕООД', 'municipal'),
+        role('333333333', 'СМЕСЕНО АД'),
+        role('222222222', 'ЧАСТНО ООД'),
+      ],
+      companies: 3,
+      wonEur: 0,
+      asOf: '2026-09-01',
+      network: { center: null, nodes: [], edges: [], omitted: 0 },
+    },
+    name: 'ЕЛЕНА ТЕСТОВА',
+    links: [],
+    declarations: [],
+    timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
+    activity: emptyActivity,
+    totals: { companies: 3, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
+    publicStakes: {
+      '111111111': {
+        listed: null,
+        derived: 'municipal',
+        direct: [{ name: 'ОБЩИНА ТЕСТ', kind: 'municipal', pct: 100 }],
+        indirect: [],
+      },
+      '333333333': {
+        listed: null,
+        derived: null,
+        direct: [{ name: 'ТЕСТОВА БАНКА', kind: 'bnb', pct: 25 }],
+        indirect: [],
+      },
+    },
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as LoadedPersonProfile;
+  const companies = timelineCompanies(p);
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={companies} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub />));
+    const order = [...el.querySelectorAll('.person-time-section, .person-time-company')].map((n) =>
+      n.textContent!.slice(0, 40),
+    );
+    expect(order[0]).toBe('Заемани длъжности');
+    expect(order.slice(1, 3).join(' ')).toContain('ОБЩИНСКО ЕООДОбщинско дружество');
+    expect(order.slice(1, 3).join(' ')).toContain('СМЕСЕНО АД25% участие на БНБ');
+    expect(order[3]).toBe('Дружества');
+    expect(el.querySelector('#company-222222222 .time-public-stake')).toBeNull();
+  } finally {
+    act(() => root.unmount());
+    el.remove();
+  }
+});
+
 it('renders nothing when there are no dated facts or companies', () => {
   const p = {
     person: null,
@@ -565,6 +641,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     declarations: [],
     asOf: '2026-09-01',
     publicEnterprise: false,
+    heldSeat: false,
     roles: [
       { ...role, role: 'manager', addedOn: '2023-01-01' },
       { ...role, role: 'owner', addedOn: '2021-01-01', uncertainAfter: '2024-01-01' },

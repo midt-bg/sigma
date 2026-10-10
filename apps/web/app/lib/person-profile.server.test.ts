@@ -11,6 +11,7 @@ const q = vi.hoisted(() => ({
   getPersonActivity: vi.fn(),
   getPersonTimeline: vi.fn(),
   getTimelineIntervals: vi.fn(async () => ({ bands: {}, declared: [], procurements: [] })),
+  getPublicStakes: vi.fn(async () => ({})),
   getPersonSourceNames: vi.fn(async (): Promise<string[]> => []),
   getPersonRelatives: vi.fn(async () => []),
   getPersonNamedBy: vi.fn(async () => []),

@@ -27,6 +27,7 @@ import { declarationRowId, roleRowId, revealProfileTarget } from '../lib/profile
 import { declarationTypeLabel } from './Declarations';
 import { groupDeclaredInstitutions, institutionKey } from '../lib/conflicts';
 import { ROLE_LABEL } from '../lib/registry-roles';
+import { publicStakeLabels } from '../lib/public-stake';
 import { Section, Explanation } from './ui';
 
 function InstitutionSymbol() {
@@ -77,7 +78,7 @@ export function PersonTimeline({
     return () => window.removeEventListener('scroll', hide);
   }, [tip]);
   if (!years.length && !companies.length) return null;
-  const heldSeats = companies.some((c) => c.publicEnterprise);
+  const heldSeats = companies.some((c) => c.heldSeat);
   const first = Date.UTC(years[0] ?? 1970, 0, 1),
     last = Date.UTC((years.at(-1) ?? 1970) + 1, 0, 1),
     span = last - first;
@@ -301,7 +302,7 @@ export function PersonTimeline({
         {heldSeats && (
           <span>
             <i className="time-symbol role-office" /> вписана роля, която е заемана длъжност{' '}
-            <Explanation text="Място в органите на публично предприятие или на организацията, за която лицето подава декларации като член на нейните органи. Периодът е по регистърните вписвания. Мястото е самата длъжност, а не частен интерес: затова под него няма съвпадение, а договорите на организацията не се отнасят към лицето." />
+            <Explanation text="Място в органите на публично предприятие, на дружество с публично участие или на организацията, за която лицето подава декларации като член на нейните органи. Периодът е по регистърните вписвания. Мястото е самата длъжност, а не частен интерес: затова под него няма съвпадение, а договорите на организацията не се отнасят към лицето." />
           </span>
         )}
         {hasDeclarations ? (
@@ -401,7 +402,7 @@ export function PersonTimeline({
               )),
               'time-axis',
             )}
-          {(p.declarations.length > 0 || companies.some((c) => c.publicEnterprise)) && (
+          {(p.declarations.length > 0 || companies.some((c) => c.heldSeat)) && (
             <h3 className="person-time-section">Заемани длъжности</h3>
           )}
           {groupDeclaredInstitutions(p.declarations).map((institution, i) => {
@@ -457,7 +458,7 @@ export function PersonTimeline({
           })}
           {companies.map((c, i) => {
             const heading =
-              !c.publicEnterprise && (i === 0 || companies[i - 1]!.publicEnterprise) ? (
+              !c.heldSeat && (i === 0 || companies[i - 1]!.heldSeat) ? (
                 <h3 className="person-time-section">Дружества</h3>
               ) : null;
             const roleKinds = [...new Set(c.roles.map((r) => r.role))];
@@ -470,7 +471,7 @@ export function PersonTimeline({
             // A held seat is the office itself: its overlap with the office years would mark the seat as
             // coinciding with itself. Its contracts are not the person's either (person-activity.ts), so the
             // band would have nothing to mark.
-            const under = c.publicEnterprise ? undefined : intervals?.bands[c.eik];
+            const under = c.heldSeat ? undefined : intervals?.bands[c.eik];
             const procurements = intervals?.procurements.filter((pr) => pr.eik === c.eik) ?? [];
 
             return (
@@ -479,6 +480,11 @@ export function PersonTimeline({
                 <div className="person-time-company" id={`company-${c.eik}`}>
                   <div className="time-company-heading">
                     <strong>{c.href ? <Link to={c.href}>{c.name}</Link> : c.name}</strong>
+                    {c.heldSeat && publicStakeLabels(c.publicStake).length > 0 && (
+                      <div className="time-public-stake">
+                        {publicStakeLabels(c.publicStake).join(' · ')}
+                      </div>
+                    )}
                     <div className="person-time-notes">
                       {noRole && (
                         <p>
@@ -598,7 +604,7 @@ export function PersonTimeline({
                             Number.isFinite(Date.parse(r.addedOn)) &&
                             Number.isFinite(Date.parse(end)) &&
                             r.addedOn <= end;
-                          const label = `${ROLE_LABEL[kind]} · ${date(r.addedOn)} — ${r.removedOn ? date(r.removedOn) : r.uncertainAfter ? `неустановено след ${date(r.uncertainAfter)}` : `вписана към ${date(c.asOf)}`}${c.publicEnterprise ? ' · заемана длъжност' : ''}`;
+                          const label = `${ROLE_LABEL[kind]} · ${date(r.addedOn)} — ${r.removedOn ? date(r.removedOn) : r.uncertainAfter ? `неустановено след ${date(r.uncertainAfter)}` : `вписана към ${date(c.asOf)}`}${c.heldSeat ? ' · заемана длъжност' : ''}`;
                           return valid ? (
                             <a
                               key={i}
@@ -615,13 +621,13 @@ export function PersonTimeline({
                                 event.preventDefault();
                                 revealProfileTarget(roleRowId(r));
                               }}
-                              className={`time-role ${c.publicEnterprise ? 'time-role-office' : ''} ${!r.removedOn && !r.uncertainAfter ? 'time-open' : ''}`}
+                              className={`time-role ${c.heldSeat ? 'time-role-office' : ''} ${!r.removedOn && !r.uncertainAfter ? 'time-open' : ''}`}
                               style={{
                                 left: `${x(r.addedOn)}%`,
                                 width: `${Math.max(0.15, x(end!) - x(r.addedOn))}%`,
                               }}
                               aria-label={label}
-                              {...tipProps(() => roleTip(r, c.name, c.asOf, c.publicEnterprise))}
+                              {...tipProps(() => roleTip(r, c.name, c.asOf, c.heldSeat))}
                             />
                           ) : (
                             <span key={i} className="small muted">

@@ -201,3 +201,17 @@ export function authOwn(authorityName, instNorms, instNormsLong, locTokens, inst
   if (authLocality && instWords.has(authLocality)) return 'locality';
   return 'none';
 }
+
+/**
+ * The class of a declared link (ADR-0047). A stake is a private interest; so is running a private company — its
+ * manager is treated as its owner. Running a company with a public stake is a held position, never a private
+ * interest: a public enterprise (`ownershipKind`), or a company of which the state, a municipality or another
+ * public owner holds a part, however small (`publicStake`). Only running it — a share in it stays a share. A
+ * family-scope link is its own class.
+ * @param {{ scope: string, relation: string, ownershipKind?: string|null, publicStake?: boolean }} link
+ */
+export function interestClassOf({ scope, relation, ownershipKind, publicStake }) {
+  if (scope === 'family') return 'family_ownership';
+  if (relation === 'manages' && (ownershipKind || publicStake)) return 'ex_officio_board';
+  return 'private_ownership';
+}

@@ -1,9 +1,8 @@
-// Managing a company with a public owner, through the real loader (ADR-0047). The register can leave the
-// company's ownership open — a public owner beside a company whose partida is not read — and then running it
-// may be an office as well as a private interest: the link is held and the unread owner is requested. A
-// company whose ownership is settled and private publishes as before. A declarant who files in a
-// public-enterprise category and names the company as the office holds that office, whatever the ownership
-// columns say.
+// Managing a company with a public owner, through the real loader (ADR-0047). Running a company of which the
+// state, a municipality or another public owner holds a part, however small, is a held position, as at a public
+// enterprise: the link is the office, not a private interest. The unread owner beside a public one is still
+// requested, so the company's own ownership can be settled. A declarant who files in a public-enterprise
+// category and names the company as the office holds that office, whatever the ownership columns say.
 // Run: node --import ./scripts/cacbg/register-ts.mjs --test scripts/cacbg/load-public-enterprise.test.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -183,17 +182,12 @@ const link = (eik, person) => {
   }
 };
 
-test('a company whose ownership is open holds its manager’s link and requests the unread owner', () => {
+test('running a company with a public owner beside an unread one is the office; the unread owner is requested', () => {
   const anna = link('300000004', 'Анна Тестова Примерова');
   assert.equal(anna.relation, 'manages');
-  assert.equal(anna.interest_class, 'private_ownership');
-  assert.equal(
-    anna.publish_tier,
-    'document',
-    'the register names her a manager — the evidence allows it',
-  );
-  assert.equal(anna.status, 'held');
-  assert.match(output, /held — ownership still open .*: 300000004\b/);
+  assert.equal(anna.interest_class, 'ex_officio_board');
+  assert.equal(anna.status, 'internal');
+  assert.doesNotMatch(output, /held — ownership still open .*: 300000004\b/);
   const db = new DatabaseSync(DB, { readOnly: true });
   assert.deepEqual(
     db
@@ -207,10 +201,11 @@ test('a company whose ownership is open holds its manager’s link and requests 
   db.close();
 });
 
-test('a company with a settled, private ownership publishes its manager’s link', () => {
+test('running a company with a minority public owner is the office, as at a public enterprise', () => {
+  // A municipality holds 40% of it, a private person the rest.
   const boris = link('300000006', 'Борис Тестов Примеров');
-  assert.equal(boris.interest_class, 'private_ownership');
-  assert.equal(boris.status, 'published');
+  assert.equal(boris.interest_class, 'ex_officio_board');
+  assert.equal(boris.status, 'internal');
 });
 
 test('the manager who files the company as the office in a public-enterprise category holds the office', () => {

@@ -347,6 +347,29 @@ describe('getRegistryPerson', () => {
     expect(p.wonEur).toBe(before.wonEur - 900000);
   });
 
+  // A seat in a company with a public stake, however small, is held like one at a public enterprise: in the
+  // roles table, but not drawn around the person.
+  it('keeps a seat in a company with a minority public stake out of the graph', async () => {
+    const db = served();
+    open!.exec(`
+      CREATE TABLE IF NOT EXISTS state_owned_eik (eik TEXT PRIMARY KEY, ownership_kind TEXT, canonical_name TEXT);
+      CREATE TABLE IF NOT EXISTS public_owned_eik (eik TEXT PRIMARY KEY, ownership_kind TEXT);
+      INSERT INTO bidders (id,name,bulstat,eik_normalized,eik_valid,kind) VALUES
+        ('eik:966666666','СМЕСЕНО ТЕСТ АД','966666666','966666666',1,'company');
+      INSERT INTO company_totals (bidder_id,name,kind,won_eur,contracts,authorities) VALUES
+        ('eik:966666666','СМЕСЕНО ТЕСТ АД','company',1000,2,1);
+      INSERT INTO registry_deeds (eik,name,legal_form,outcome,fetched_at) VALUES
+        ('966666666','СМЕСЕНО ТЕСТ','OOD','ok','2026-09-10T03:00:00Z');
+      INSERT INTO registry_roles (eik,sub_uic,field_ident,role,subject_kind,subject_id,subject_name,share,entry_number,added_on,removed_on)
+        VALUES ('966666666','0000','00120','board_of_directors','person','${ANNA}','АННА ПЕТРОВА',NULL,'m1','2022-02-02',NULL),
+               ('966666666','0000','00150','partner','entity','900000001','ОБЩИНА ТЕСТОВО','25','m2','2020-01-01',NULL),
+               ('966666666','0000','00150','partner','entity','800000001','ЧАСТНА ТЕСТ ООД','75','m3','2020-01-01',NULL);
+    `);
+    const p = (await getRegistryPerson(db, ANNA))!;
+    expect(p.roles.some((r) => r.company.eik === '966666666')).toBe(true);
+    expect(p.network.nodes.map((n) => n.id)).not.toContain('eik:966666666');
+  });
+
   it('marks the roles that ended', async () => {
     const p = (await getRegistryPerson(served(), BORIS))!;
     expect(p.roles.every((r) => r.removedOn)).toBe(true);

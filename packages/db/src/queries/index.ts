@@ -24,5 +24,6 @@ export * from './details';
 export * from './sitemaps';
 export * from './related-persons';
 export * from './registry';
+export * from './public-stakes';
 export * from './declarations';
 export * from './person-activity';

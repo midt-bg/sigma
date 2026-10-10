@@ -1,6 +1,8 @@
 import type { LoadedPersonProfile } from './person-profile.server';
 import type { InterestObservation, TimelineContracts } from '@sigma/db';
 import type { PersonRole, ConflictLink, PersonDeclaration } from '@sigma/api-contract';
+import type { PublicStake } from '@sigma/db';
+import { hasPublicStake } from './public-stake';
 
 export interface TimelineCompany {
   eik: string;
@@ -15,6 +17,35 @@ export interface TimelineCompany {
   /** A held position, shown with the offices: a public enterprise (ADR-0047), or the organization the person
    *  files declarations for as a member of its bodies. */
   publicEnterprise: boolean;
+  /** The public stake in the company, as far as the sources establish it. */
+  publicStake?: PublicStake;
+  /** Shown with the offices: a public enterprise, or a company with an established public stake, however
+   *  small, in which the person holds a seat rather than a share. */
+  heldSeat: boolean;
+}
+// Owning a part of the company — by the register or by a declaration — is a share, not a seat.
+const OWNER_ROLES = new Set(['sole_owner', 'partner', 'trader']);
+/** The person's tie to the company is a seat, not a share: no registered ownership and only declared management.
+ *  A seat in a company with a public stake is held like one at a public enterprise. */
+export const seatOnly = (
+  roles: Pick<PersonRole, 'role'>[],
+  links: Pick<ConflictLink, 'relation'>[],
+) => !roles.some((r) => OWNER_ROLES.has(r.role)) && links.every((l) => l.relation === 'manages');
+/** The companies with a public stake in which the person holds a seat and no share: their contracts are not the
+ *  person's (`heldSeats` of the activity scope). */
+export function heldSeatEiks(
+  roles: PersonRole[],
+  links: ConflictLink[],
+  stakes: Record<string, PublicStake> | undefined,
+): string[] {
+  return Object.keys(stakes ?? {}).filter(
+    (eik) =>
+      hasPublicStake(stakes![eik]) &&
+      seatOnly(
+        roles.filter((r) => r.company.eik === eik),
+        links.filter((l) => l.eik === eik),
+      ),
+  );
 }
 export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
   const companies = new Map<string, TimelineCompany>();
@@ -31,6 +62,7 @@ export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
         declarations: [],
         asOf: null,
         publicEnterprise: false,
+        heldSeat: false,
       });
     return companies.get(eik)!;
   };
@@ -46,13 +78,16 @@ export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
     c.asOf = p.timeline.reads.find((r) => r.eik === c.eik)?.asOf ?? null;
     c.publicEnterprise =
       c.roles.some((r) => !!r.company.ownershipKind || !!r.company.office) && !c.links.length;
+    c.publicStake = p.publicStakes?.[c.eik];
+    c.heldSeat =
+      c.publicEnterprise || (hasPublicStake(c.publicStake) && seatOnly(c.roles, c.links));
     c.roles = [
       ...new Map(c.roles.map((r) => [`${r.role}|${r.addedOn}|${r.removedOn}`, r])).values(),
     ];
   }
   return [...companies.values()].sort(
     (a, b) =>
-      Number(b.publicEnterprise) - Number(a.publicEnterprise) ||
+      Number(b.heldSeat) - Number(a.heldSeat) ||
       Number(!!b.links.length) - Number(!!a.links.length) ||
       b.contracts.reduce((s, c) => s + c.eligible, 0) -
         a.contracts.reduce((s, c) => s + c.eligible, 0) ||

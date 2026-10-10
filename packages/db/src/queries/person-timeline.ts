@@ -33,9 +33,10 @@ export async function getPersonTimeline(
   db: D1Database,
   indent: string | null,
   personIds: string[],
+  heldSeats: string[] = [],
 ) {
   const ids = [...new Set(personIds)];
-  const { cte, params } = personActivityScope(indent, ids);
+  const { cte, params } = personActivityScope(indent, ids, heldSeats);
   const [contracts, observations, reads, buyers, offices, authorities] = await Promise.all([
     db
       .prepare(
@@ -54,10 +55,11 @@ export async function getPersonTimeline(
         AND ${declarationYearDisputed('il', 'o.reported_year')}) disputed,
       CASE WHEN il.interest_class='family_ownership' THEN 'family' ELSE 'self' END scope
       FROM interest_links il JOIN interest_link_observations o ON o.link_key=il.link_key
-      WHERE il.person_id IN (SELECT value FROM json_each(?)) AND ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
+      WHERE il.person_id IN (SELECT value FROM json_each(?1)) AND ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
+        AND NOT (il.relation IS 'manages' AND il.eik IN (SELECT value FROM json_each(?2)))
       ORDER BY il.eik,o.reported_year,o.declaration_id,o.kind,o.timing`,
       )
-      .bind(JSON.stringify(ids))
+      .bind(JSON.stringify(ids), JSON.stringify(heldSeats))
       .all<InterestObservation>(),
     db
       .prepare(

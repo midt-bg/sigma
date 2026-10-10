@@ -448,6 +448,12 @@ td .chip {
   z-index: 2;
   background: var(--paper, #fdfaf5);
 }
+/* The public stake of a company the person holds a seat in, under its name. */
+.time-public-stake {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
 .person-time-controls {
   display: flex;
   flex-wrap: wrap;
