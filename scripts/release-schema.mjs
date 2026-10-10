@@ -321,6 +321,18 @@ export function runApply({ migrations, target, log = (line) => console.log(line)
   return { marks, applies, bookmark };
 }
 
+/** The first JSON object in a CLI's output: pnpm and wrangler may print notices on the same stream first. */
+export function parseJsonObject(out) {
+  for (let i = out.indexOf('{'); i >= 0; i = out.indexOf('{', i + 1)) {
+    try {
+      return JSON.parse(out.slice(i));
+    } catch {
+      // not the payload — keep looking
+    }
+  }
+  throw new Error(`no JSON object in: ${out.slice(0, 200)}`);
+}
+
 /** The live target through the wrangler CLI, as `deploy.yml` reaches it. */
 function wranglerTarget({ database, remote, config }) {
   const where = remote ? '--remote' : '--local';
@@ -354,7 +366,7 @@ function wranglerTarget({ database, remote, config }) {
     },
     restorePoint() {
       if (!remote) return 'local (none)';
-      const info = JSON.parse(wrangler(['d1', 'time-travel', 'info', database, '--json']));
+      const info = parseJsonObject(wrangler(['d1', 'time-travel', 'info', database, '--json']));
       const bookmark = info?.bookmark ?? info?.result?.bookmark;
       if (!bookmark) throw new Error('no Time Travel bookmark for the target; nothing was written');
       if (process.env.GITHUB_STEP_SUMMARY)

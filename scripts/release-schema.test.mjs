@@ -292,3 +292,16 @@ test('the deploy reaches the schema through the ledger only', async () => {
     'the schema comes before the Workers',
   );
 });
+
+test('the restore point is read past the notices printed before it', async () => {
+  const { parseJsonObject } = await import('./release-schema.mjs');
+  // As measured on Dev2: pnpm's engine warning, on stdout, before wrangler's JSON.
+  const out =
+    '.  |  WARN  Unsupported engine: wanted: {"node":">=24"} (current: {"node":"v22"})\n' +
+    '{\n  "bookmark": "00000001-00000008-00005100-be4e1f9e7fa1502c955efb43aad2267b"\n}\n';
+  assert.equal(
+    parseJsonObject(out).bookmark,
+    '00000001-00000008-00005100-be4e1f9e7fa1502c955efb43aad2267b',
+  );
+  assert.throws(() => parseJsonObject('no json here'), /no JSON object/);
+});
