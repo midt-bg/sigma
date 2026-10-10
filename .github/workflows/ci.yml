@@ -117,6 +117,15 @@ jobs:
         run: |
           pnpm check:fake-d1:test
           pnpm check:fake-d1
+      # Data version (docs/deploy.md „Версията на данните“): a pull request that changes a file computing
+      # stored values without raising packages/db/data-version.json gets a warning, never a failure — the
+      # reviewer decides whether stored rows need a rebuilt slot. The merge commit is base + change, so a
+      # shallow fetch of the base and a two-dot diff is the change itself.
+      - name: Data version
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          node scripts/check-data-version.mjs "origin/${{ github.base_ref }}"
       # Docs integrity (#102): fail on a dangling docs reference in source or an
       # unindexed doc. The checker self-tests first, so the gate is itself gated.
       - name: Docs integrity
