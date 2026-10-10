@@ -266,3 +266,29 @@ test('a false error from migrations apply is answered by the ledger, not by a bl
   assert.match(lines.join('\n'), /migrations apply failed \(attempt 1\/3\), 24 left/);
   assert.match(lines.at(-1), /ledger complete, parity OK/);
 });
+
+test('the deploy reaches the schema through the ledger only', async () => {
+  const { readFileSync } = await import('node:fs');
+  const code = readFileSync('.github/workflows/deploy.yml', 'utf8')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('#'))
+    .join('\n');
+  assert.match(code, /node scripts\/release-schema\.mjs plan "\$\{SIGMA_D1_NAME:-sigma\}"/);
+  assert.match(
+    code,
+    /node scripts\/release-schema\.mjs apply "\$\{SIGMA_D1_NAME:-sigma\}" --remote --yes/,
+  );
+  // No hand-kept list of migration files, no probe-and-ALTER, no whole precompute on the served
+  // database, no one-time currency branch.
+  for (const banned of [
+    /packages\/db\/migrations\//,
+    /ALTER TABLE/,
+    /precompute\.sql/,
+    /backfill-current-value-currency/,
+  ])
+    assert.doesNotMatch(code, banned);
+  assert.ok(
+    code.indexOf('release-schema.mjs apply') < code.indexOf('Deploy explorer'),
+    'the schema comes before the Workers',
+  );
+});
