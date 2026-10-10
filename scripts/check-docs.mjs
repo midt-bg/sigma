@@ -5,6 +5,7 @@
 //      source (code comments, README, the docs themselves) must resolve to a
 //      real file. Refs inside a URL/longer path are ignored, and test files
 //      (*.test.*) are skipped — their doc-shaped strings are fixtures, not refs.
+//      Applied migrations are skipped too: their text is frozen.
 //   2. No orphan docs. Every `docs/**/*.md` must be reachable from the docs index
 //      (docs/README.md), or — for ADRs — from docs/adr/README.md. Keeps the
 //      index honest so a new doc can't land unlinked.
@@ -48,6 +49,15 @@ export function isMarkdown(path) {
 /** `true` for a test/spec file — excluded from the ref scan (its doc paths are fixtures). */
 export function isTestFile(path) {
   return /\.(test|spec)\.[mc]?[jt]sx?$/.test(path);
+}
+
+/**
+ * `true` for a migration: its text is frozen once applied (packages/db/migrations.lock), so a doc it names
+ * may move after it and the migration cannot follow. 0000_init.sql still names the pipeline doc by the name
+ * it had in June.
+ */
+export function isLockedMigration(path) {
+  return /(^|\/)packages\/db\/migrations\/\d{4}_[^/]+\.sql$/.test(path);
 }
 
 /** `true` iff this module is the entry point — URL-safe (percent-encoded paths, spaces, non-ASCII). */
@@ -145,7 +155,9 @@ export function findOrphanDocs() {
 }
 
 function main() {
-  const files = SCAN_ROOTS.flatMap((r) => walk(join(ROOT, r))).filter((abs) => !isTestFile(abs));
+  const files = SCAN_ROOTS.flatMap((r) => walk(join(ROOT, r))).filter(
+    (abs) => !isTestFile(abs) && !isLockedMigration(abs),
+  );
   const dangling = findDanglingRefs(files);
   const orphans = findOrphanDocs();
 

@@ -13,6 +13,7 @@ import {
   linkTargets,
   isMarkdown,
   isTestFile,
+  isLockedMigration,
   computeOrphans,
   isMain,
 } from './check-docs.mjs';
@@ -85,4 +86,15 @@ test('isMain is robust to a checkout path with a space (finding #3)', () => {
 test('isMain is false when imported (argv points elsewhere) and safe when argv is undefined', () => {
   assert.equal(isMain('file:///a/check-docs.mjs', '/a/some-test.mjs'), false);
   assert.equal(isMain('file:///a/check-docs.mjs', undefined), false);
+});
+
+test('isLockedMigration matches applied migrations, whose frozen text may name a doc that moved since', () => {
+  assert.equal(isLockedMigration('/repo/packages/db/migrations/0000_init.sql'), true);
+  assert.equal(
+    isLockedMigration('packages/db/migrations/0025_joint_procurement_and_ordering_unit.sql'),
+    true,
+  );
+  assert.equal(isLockedMigration('packages/db/src/migrations.test.ts'), false);
+  assert.equal(isLockedMigration('scripts/precompute.sql'), false);
+  assert.equal(isLockedMigration('packages/db/migrations/notes.sql'), false);
 });
