@@ -21,7 +21,11 @@ import {
   stagedDropSql,
   swapSql,
   ShipYield,
+  wranglerFileSender,
 } from './ship-related-persons.mjs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('sqlLiteral escapes quotes, strips NUL, and NULLs non-finite/absent', () => {
   assert.equal(sqlLiteral(null), 'NULL');
@@ -958,4 +962,62 @@ test('a container stop between two requests yields instead of leaving half an up
   );
   assert.equal(h.calls.length, 3);
   assert.ok(!h.calls.some(([name]) => name === 'publish'));
+});
+
+// The wrangler calls the sender makes, answered by a script: each --file and each --command in turn.
+function scriptedWrangler(answers) {
+  const calls = [];
+  const exec = (cmd, args) => {
+    assert.equal(cmd, 'wrangler');
+    const kind = args.includes('--file') ? 'file' : 'command';
+    calls.push(kind);
+    const answer = answers[kind].shift();
+    if (answer instanceof Error) throw answer;
+    return answer;
+  };
+  return { exec, calls };
+}
+const failed = (stderr) =>
+  Object.assign(new Error('Command failed: wrangler d1 execute'), { stderr });
+
+test('a target without the receipt table holds no receipt: the file is sent again', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-sender-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const w = scriptedWrangler({
+    file: [failed('D1_ERROR: 7009'), ''],
+    command: [failed('✘ [ERROR] no such table: rp_receipt: SQLITE_ERROR')],
+  });
+  const send = wranglerFileSender({
+    d1Name: 'sigma-test',
+    remote: true,
+    dir,
+    cwd: dir,
+    waitMs: () => 0,
+    exec: w.exec,
+    sleep: () => {},
+  });
+  t.mock.method(console, 'error', () => {});
+  send('clear_staging', 'DROP TABLE IF EXISTS x;');
+  assert.deepEqual(w.calls, ['file', 'command', 'file']);
+  assert.deepEqual(readdirSync(dir), [], 'the file is removed afterwards');
+});
+
+test('a receipt read that fails for another reason stops the sender', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-sender-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const w = scriptedWrangler({
+    file: [failed('Not currently importing anything')],
+    command: [failed('fetch failed'), failed('fetch failed'), failed('fetch failed')],
+  });
+  const send = wranglerFileSender({
+    d1Name: 'sigma-test',
+    remote: true,
+    dir,
+    cwd: dir,
+    waitMs: () => 0,
+    exec: w.exec,
+    sleep: () => {},
+  });
+  assert.throws(() => send('publish', 'SELECT 1;'), /cannot tell whether publish was applied/);
+  assert.deepEqual(w.calls, ['file', 'command', 'command', 'command']);
 });

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { retryD1 } from './d1-retry.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { retryD1, sendWithReceipt, withReceipt } from './d1-retry.mjs';
 
 const RACE = 'Command failed: wrangler d1 execute … ✘ [ERROR] Not currently importing anything.';
 
@@ -108,4 +109,142 @@ test('without injected helpers it sleeps for real and logs to stderr', (t) => {
   assert.equal(answer, 'ok');
   assert.ok(Date.now() - started >= 20, 'the pause is a real wait');
   assert.equal(JSON.parse(lines[0]).label, 'reindex-officials-017');
+});
+
+// A target that behaves as D1 does for one file: all of it or none of it. Its table has a primary key, so a
+// chunk sent twice fails on the second copy, as the staged tables do.
+function target() {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rows (id INTEGER PRIMARY KEY);');
+  return {
+    apply: (body) => {
+      db.exec('BEGIN');
+      try {
+        db.exec(body);
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+    readReceipt: (label) => {
+      if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='rp_receipt'").get()) return null;
+      return db.prepare('SELECT token FROM rp_receipt WHERE label=?').get(label)?.token ?? null;
+    },
+    rows: () => db.prepare('SELECT COUNT(*) n FROM rows').get().n,
+  };
+}
+const quiet = { waitMs: () => 0, sleep: () => {} };
+
+test('the receipt is the last statement of the file it travels with', () => {
+  const body = withReceipt('INSERT INTO rows VALUES(1);', "rows.0 o'clock", 't-1');
+  assert.ok(body.startsWith('INSERT INTO rows VALUES(1);\n'));
+  assert.ok(body.endsWith("INSERT OR REPLACE INTO rp_receipt VALUES('rows.0 o''clock', 't-1');\n"));
+});
+
+test('a file that landed but was reported as failed is not sent again', () => {
+  const db = target();
+  const lines = [];
+  let sends = 0;
+  sendWithReceipt(
+    'INSERT INTO rows VALUES(1);',
+    (body) => {
+      sends++;
+      db.apply(body);
+      throw new Error(RACE);
+    },
+    { label: 'publish', readReceipt: db.readReceipt, log: (l) => lines.push(l), ...quiet },
+  );
+  assert.equal(sends, 1);
+  assert.equal(db.rows(), 1);
+  assert.equal(JSON.parse(lines[0]).event, 'd1_file_landed_despite_error');
+});
+
+test('a file that did not land is sent again, and the landing ends it', () => {
+  const db = target();
+  const lines = [];
+  let sends = 0;
+  sendWithReceipt(
+    'INSERT INTO rows VALUES(1);',
+    (body) => {
+      if (++sends === 1) throw new Error('D1_ERROR: 7009');
+      db.apply(body);
+    },
+    { label: 'rows.0', readReceipt: db.readReceipt, log: (l) => lines.push(l), ...quiet },
+  );
+  assert.equal(sends, 2);
+  assert.equal(db.rows(), 1);
+  assert.deepEqual(
+    lines.map((l) => [JSON.parse(l).event, JSON.parse(l).receipt]),
+    [['d1_call_retried', 'absent']],
+  );
+});
+
+test('an earlier receipt under the same label is not this sending', () => {
+  const db = target();
+  db.apply(withReceipt('INSERT INTO rows VALUES(1);', 'registry-batch', 'earlier'));
+  let sends = 0;
+  sendWithReceipt(
+    'INSERT INTO rows VALUES(2);',
+    (body) => {
+      if (++sends === 1) throw new Error('D1_ERROR: 7009');
+      db.apply(body);
+    },
+    { label: 'registry-batch', readReceipt: db.readReceipt, log: () => {}, ...quiet },
+  );
+  assert.equal(sends, 2);
+  assert.equal(db.rows(), 2);
+});
+
+test('a file that never lands fails with its last error after the allowed attempts', () => {
+  const db = target();
+  const waits = [];
+  let sends = 0;
+  assert.throws(
+    () =>
+      sendWithReceipt(
+        'INSERT INTO rows VALUES(1);',
+        () => {
+          throw new Error(`D1_ERROR: 7009 #${++sends}`);
+        },
+        {
+          label: 'rows.0',
+          readReceipt: db.readReceipt,
+          log: () => {},
+          waitMs: (n) => 30_000 * n,
+          sleep: (ms) => waits.push(ms),
+        },
+      ),
+    /7009 #3/,
+  );
+  assert.equal(sends, 3);
+  assert.equal(db.rows(), 0);
+  assert.deepEqual(waits, [30_000, 60_000, 90_000]);
+});
+
+test('a receipt that cannot be read stops the run instead of sending again', () => {
+  let sends = 0;
+  let reads = 0;
+  assert.throws(
+    () =>
+      sendWithReceipt(
+        'INSERT INTO rows VALUES(1);',
+        () => {
+          sends++;
+          throw new Error(RACE);
+        },
+        {
+          label: 'publish',
+          readReceipt: () => {
+            reads++;
+            throw new Error('D1 is unreachable');
+          },
+          log: () => {},
+          ...quiet,
+        },
+      ),
+    /cannot tell whether publish was applied: .*D1 is unreachable.*Not currently importing/,
+  );
+  assert.equal(sends, 1);
+  assert.equal(reads, 3);
 });

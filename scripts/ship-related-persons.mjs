@@ -14,6 +14,7 @@
 //   node scripts/ship-related-persons.mjs --work-db … --remote --yes                          # apply to D1
 import { assertAuditedBuild } from './cacbg/build-proof.mjs';
 import { progress } from './cacbg/progress.mjs';
+import { sendWithReceipt } from './d1-retry.mjs';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -537,6 +538,65 @@ export function readPublishedGeneration(d1Name, remote, deps = {}) {
   }
 }
 
+/**
+ * Files to D1 through the wrangler CLI, each with its receipt (`sendWithReceipt`): written to `dir`,
+ * executed against `d1Name`, removed. `exec` and `sleep` are test seams; production passes neither.
+ */
+export function wranglerFileSender({
+  d1Name,
+  remote,
+  dir,
+  cwd,
+  waitMs,
+  exec = execFileSync,
+  sleep,
+}) {
+  const where = remote ? '--remote' : '--local';
+  const readReceipt = (label) => {
+    let out;
+    try {
+      out = exec(
+        'wrangler',
+        [
+          'd1',
+          'execute',
+          d1Name,
+          where,
+          '--json',
+          '--command',
+          `SELECT token FROM rp_receipt WHERE label=${sqlLiteral(label)}`,
+        ],
+        { cwd, encoding: 'utf8' },
+      );
+    } catch (error) {
+      // The table arrives with the first receipt: a target without it has no file that landed with one.
+      if (/no such table: rp_receipt/.test(`${error?.message}${error?.stdout}${error?.stderr}`))
+        return null;
+      throw error;
+    }
+    const rows = parseWranglerJson(out)[0]?.results ?? [];
+    return typeof rows[0]?.token === 'string' ? rows[0].token : null;
+  };
+  return (label, sql) => {
+    const file = join(dir, `${label}.sql`);
+    try {
+      sendWithReceipt(
+        sql,
+        (body) => {
+          writeFileSync(file, body);
+          exec('wrangler', ['d1', 'execute', d1Name, where, '--yes', '--file', file], {
+            cwd,
+            stdio: 'inherit',
+          });
+        },
+        { label, readReceipt, waitMs, sleep },
+      );
+    } finally {
+      rmSync(file, { force: true });
+    }
+  };
+}
+
 export function readShippedCounts(d1Name, remote, expected, deps = {}) {
   const tables = Object.entries(expected)
     .filter(([, n]) => typeof n === 'number')
@@ -712,30 +772,19 @@ async function main() {
 
   // Upload staging tables, verify, then publish with one rename swap.
   const tmp = emit ? null : mkdtempSync(join(tmpdir(), 'sigma-ship-'));
-  // Each file is one transaction: a failed one leaves the target as it was, so a transient D1 failure
-  // (7009, a reset Durable Object) is retried as is.
-  const applyFile = (name, sql) => {
-    const f = join(tmp, `${name}.sql`);
-    writeFileSync(f, sql);
-    try {
-      for (let attempt = 1; ; attempt++) {
-        try {
-          execFileSync(
-            'wrangler',
-            ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--yes', '--file', f],
-            { cwd: resolve('apps/web'), stdio: 'inherit' },
-          );
-          return;
-        } catch (error) {
-          if (attempt >= 3) throw error;
-          console.error(`ship: ${name} failed (attempt ${attempt}/3); retrying`);
-          sleepSync(30_000 * attempt);
-        }
-      }
-    } finally {
-      rmSync(f, { force: true });
-    }
-  };
+  // Each file is one transaction and carries its receipt. After an error the receipt decides: a file that
+  // landed despite the error (wrangler's false „Not currently importing anything") is not sent again; one
+  // that did not (7009, a reset Durable Object) is.
+  const retryMs = parseNonNegativeInt(arg('retry-ms', 30_000), 'retry-ms');
+  const applyFile = emit
+    ? null
+    : wranglerFileSender({
+        d1Name,
+        remote,
+        dir: tmp,
+        cwd: resolve('apps/web'),
+        waitMs: (n) => retryMs * n,
+      });
 
   if (emit) mkdirSync(emit, { recursive: true });
   // One read of a source table: null when the table is absent from the work DB.
