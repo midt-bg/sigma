@@ -25,6 +25,19 @@ import { importSql } from './cacbg/import-sql.mjs';
 const root = resolve(import.meta.dirname, '..');
 const webDir = resolve(root, 'apps/web');
 
+/**
+ * The slot's record of the rules that built it (packages/db/data-version.json, migration 0026), written once
+ * the slot is verified. A production deploy releases only onto a slot whose version is the code's.
+ */
+export function dataVersionSql({ version, commit, runId, builtAt }) {
+  if (!Number.isInteger(version) || version < 1)
+    throw new Error(`Invalid data version: ${version}`);
+  return (
+    'INSERT OR REPLACE INTO data_version (id, version, source_commit, built_at, run_id) VALUES ' +
+    `(1, ${version}, ${sqlLiteral(commit ?? null)}, ${sqlLiteral(builtAt)}, ${sqlLiteral(runId ?? null)});\n`
+  );
+}
+
 /** Tables a served slot never takes from the snapshot: SQLite's and Cloudflare's own, the migration ledger,
  *  the full-text index's shadow tables, the work staging, and the ship's generations. */
 export function shippedTables(tables, stagingSql) {
@@ -610,6 +623,20 @@ async function main() {
   await assertIntegrity((sql) => d1Json(target.name, sql), {
     label: `rebuilt slot ${target.name}`,
   });
+  // 9. The slot says which rules built it — only now, after every check, so a slot that failed one has no
+  // version and a production deploy will not release onto it.
+  const { version } = JSON.parse(
+    readFileSync(resolve(root, 'packages/db/data-version.json'), 'utf8'),
+  );
+  apply(
+    'data-version',
+    dataVersionSql({
+      version,
+      commit: process.env.SIGMA_SOURCE_COMMIT || null,
+      runId: process.env.SIGMA_RUN_ID || null,
+      builtAt: new Date().toISOString(),
+    }),
+  );
   console.log(
     JSON.stringify({
       event: 'declarations_job_complete',
@@ -619,6 +646,8 @@ async function main() {
       slot: target.name,
       tables: withRows.length,
       rows: shipped,
+      dataVersion: version,
+      sourceCommit: process.env.SIGMA_SOURCE_COMMIT || null,
     }),
   );
 }

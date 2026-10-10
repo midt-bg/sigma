@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  dataVersionSql,
   ifNotExists,
   ownershipStatements,
   parentsFirst,
@@ -226,4 +227,30 @@ test('a resumed rebuild takes the schema from the migrations and only the data f
     .map((r) => r.name);
   local.close();
   assert.ok(names.includes('contracts') && names.includes('search_index'));
+});
+
+test('the slot records the rules that built it, in one row', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(readFileSync('packages/db/migrations/0026_data_version.sql', 'utf8'));
+  const write = (v) => db.exec(dataVersionSql(v));
+  write({ version: 2, commit: "it's1", runId: 'run-1', builtAt: '2026-10-10T12:00:00Z' });
+  write({ version: 2, commit: 'abc', runId: null, builtAt: '2026-10-11T12:00:00Z' });
+  assert.deepEqual(
+    db
+      .prepare('SELECT id, version, source_commit, built_at, run_id FROM data_version')
+      .all()
+      .map((r) => ({ ...r })),
+    [{ id: 1, version: 2, source_commit: 'abc', built_at: '2026-10-11T12:00:00Z', run_id: null }],
+  );
+  assert.throws(() => dataVersionSql({ version: 0, builtAt: 'x' }), /Invalid data version/);
+  assert.throws(() => dataVersionSql({ version: '2', builtAt: 'x' }), /Invalid data version/);
+});
+
+test('the data version is written only after every check of the slot', () => {
+  const source = readFileSync('scripts/rebuild-slot.mjs', 'utf8');
+  const main = source.slice(source.indexOf('async function main()'));
+  const written = main.indexOf("apply(\n    'data-version'");
+  assert.ok(written > 0, 'main writes the data version');
+  assert.ok(main.indexOf('assertIntegrity(') < written, 'after the integrity gate');
+  assert.ok(main.indexOf('Slot counts differ from the snapshot') < written, 'after the row counts');
 });

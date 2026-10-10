@@ -32,6 +32,8 @@ DECLARATIONS_BUCKET = "sigma-declarations"
 SIGMA_D1_ID = "00000000-0000-0000-0000-000000000000"
 SIGMA_D1_NAME = "sigma"
 SIGMA_SHIP_ENV = "production"
+# The commit a deploy ships, rendered from SIGMA_SOURCE_COMMIT; a rebuild records it with the data version.
+SIGMA_SOURCE_COMMIT = ""
 
 # `database_id` is a zero-UUID placeholder for local dev (miniflare). `pnpm --filter @sigma/etl run
 # deploy` substitutes SIGMA_D1_ID into wrangler.deploy.toml via scripts/wrangler-render.mjs.
