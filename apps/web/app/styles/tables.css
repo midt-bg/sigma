@@ -415,3 +415,20 @@ td.rank {
         no-repeat scroll;
   }
 }
+
+/* Tablets and narrow laptop windows: from 601 px the card tables are tables again, and at 768 px and
+   about 961–1199 px (the filter rail takes its column) a list can be wider than its box. The last column
+   is often the value, and its unit („млрд.“) would sit in the hidden part — 1,31 billion read as „1,31 м“.
+   Same cue as on phones: a fade at the edge that only shows while there is more to scroll. */
+@media (min-width: 601px) {
+  .table-wrap:not(.tbl-prose) {
+    scrollbar-width: thin;
+    background:
+      linear-gradient(to right, var(--paper) 30%, transparent) left center / 24px 100% no-repeat
+        local,
+      linear-gradient(to left, var(--paper) 30%, transparent) right center / 24px 100% no-repeat
+        local,
+      linear-gradient(to left, oklch(18% 0.012 70 / 0.12), transparent) right center / 16px 100%
+        no-repeat scroll;
+  }
+}
