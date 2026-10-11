@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { BASE_SCHEMA } from './base-schema';
 import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 // refresh-slice.sql / precompute.sql officials block reads interest_links (0003) — build it in every chain.
@@ -196,7 +196,7 @@ function seedOcdsOnlySharedNumber(dbPath: string): void {
 }
 
 function initWorkDb(dbPath: string): void {
-  readScript(dbPath, schemaPath);
+  for (const file of BASE_SCHEMA) readScript(dbPath, file);
   readScript(dbPath, migration1Path);
   readScript(dbPath, migration2Path);
   readScript(dbPath, migration3Path);
@@ -755,7 +755,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -842,7 +842,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-ocds-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -1032,7 +1032,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -1088,7 +1088,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -1144,7 +1144,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -1286,7 +1286,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);

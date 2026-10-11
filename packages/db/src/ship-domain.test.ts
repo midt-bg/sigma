@@ -38,6 +38,10 @@ describe('ship-domain', () => {
     const persistTo = resolve(dir, 'served');
     try {
       readScript(workDb, resolve(root, 'packages/db/migrations/0000_init.sql'));
+      readScript(
+        workDb,
+        resolve(root, 'packages/db/migrations/0025_joint_procurement_and_ordering_unit.sql'),
+      );
       sqlite(
         workDb,
         `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:1', 'Authority line 1
