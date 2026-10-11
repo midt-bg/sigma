@@ -316,3 +316,40 @@ test('the restore point is read past the notices printed before it', async () =>
   );
   assert.throws(() => parseJsonObject('no json here'), /no JSON object/);
 });
+
+// Stage as it is: the ledger holds 0000–0021 (an earlier `migrations apply`), the files after it came from
+// the old deploy steps, and every publication renamed the ship's tables — so related_persons_internal, which
+// the ship does not carry, references the previous generation's declarations table.
+const pointAt = (rows, table, target) =>
+  rows.map((r) =>
+    r.name === table && r.type === 'table'
+      ? { ...r, sql: r.sql.replace(/REFERENCES declarations\(id\)/, `REFERENCES "${target}"(id)`) }
+      : r,
+  );
+const throughJoint = names.filter((n) => n <= JOINT);
+
+test('a table the ship does not carry may point at the previous generation: the same reference', () => {
+  const rows = pointAt(stageShape(), 'related_persons_internal', 'rp_prev_declarations');
+  assert.match(
+    rows.find((r) => r.name === 'related_persons_internal').sql,
+    /"rp_prev_declarations"/,
+  );
+  const ledger = names.filter((n) => n < '0022');
+  const plan = planSchema({ migrations, rows, ledger });
+  assert.equal(plan.ok, true, formatPlan(plan));
+  assert.deepEqual(actions(plan).recorded, ledger);
+  assert.deepEqual(
+    actions(plan).mark,
+    throughJoint.filter((n) => n >= '0022'),
+  );
+});
+
+test('a reference to another table is still a different table', () => {
+  const rows = pointAt(stageShape(), 'related_persons_internal', 'persons');
+  const plan = planSchema({ migrations, rows, ledger: names.filter((n) => n < '0022') });
+  assert.equal(plan.ok, false);
+  assert.match(
+    plan.refusals.join('\n'),
+    /0003_related_persons_foundation\.sql is in the ledger, but the target lacks: table:related_persons_internal/,
+  );
+});

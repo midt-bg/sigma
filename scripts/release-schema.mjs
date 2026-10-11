@@ -92,7 +92,13 @@ export function snapshot(db) {
     const fks = db
       .prepare(`PRAGMA foreign_key_list(${t})`)
       .all()
-      .map((f) => `${f.from}>${f.table}.${f.to}:${f.on_update}:${f.on_delete}`)
+      // The ship publishes by renaming (ADR-0045), and SQLite rewrites a reference to a renamed table in
+      // every other table — so a table the ship does not carry (related_persons_internal) points at the
+      // previous generation's name after a publication. It is the same reference.
+      .map(
+        (f) =>
+          `${f.from}>${String(f.table).replace(/^rp_(prev|next)_/, '')}.${f.to}:${f.on_update}:${f.on_delete}`,
+      )
       .sort();
     const uniques = db
       .prepare(`PRAGMA index_list(${t})`)
@@ -291,7 +297,9 @@ export function runApply({ migrations, target, log = (line) => console.log(line)
   const bookmark = target.restorePoint();
   log(`schema: restore point ${bookmark}`);
   if (marks.length) target.mark(marks);
-  const pending = migrations.map((m) => m.name).filter((n) => !target.read().ledger.includes(n));
+  const ledger = () => new Set(target.read().ledger);
+  const recordedNow = ledger();
+  const pending = migrations.map((m) => m.name).filter((n) => !recordedNow.has(n));
   if (JSON.stringify(pending) !== JSON.stringify(applies))
     throw new Error(
       `after marking, the ledger lacks [${pending.join(', ')}] instead of the planned [${applies.join(', ')}]; ` +
@@ -302,7 +310,8 @@ export function runApply({ migrations, target, log = (line) => console.log(line)
       target.applyMigrations();
       break;
     } catch (error) {
-      const left = migrations.map((m) => m.name).filter((n) => !target.read().ledger.includes(n));
+      const recordedAfter = ledger();
+      const left = migrations.map((m) => m.name).filter((n) => !recordedAfter.has(n));
       if (!left.length) break;
       if (attempt >= 3) throw error;
       log(
