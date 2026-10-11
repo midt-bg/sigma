@@ -131,3 +131,60 @@ test('an id that is another database is refused even when the rendered config ma
   );
   assert.deepEqual(run('staging', env, { resolved: ID, named: 'sigma-stage-blue' }).failures, []);
 });
+
+test('the rebuild runner’s deploy checks the live slot’s settings, not its data version', () => {
+  let read = false;
+  const result = preflight({
+    environment: 'production',
+    env: { ...ready, SIGMA_D1_NAME: 'sigma-green' },
+    resolveDatabase: () => ({ id: ID, name: 'sigma-green' }),
+    readDataVersion: () => {
+      read = true;
+      return null;
+    },
+    codeVersion: 2,
+    component: 'rebuild-runner',
+  });
+  assert.deepEqual(result, { failures: [], warnings: [] });
+  assert.equal(read, false);
+  const noSalt = preflight({
+    environment: 'production',
+    env: { ...ready, SIGMA_D1_NAME: 'sigma-green', SUPPRESSION_SALT: '' },
+    resolveDatabase: () => ({ id: ID, name: 'sigma-green' }),
+    readDataVersion: () => null,
+    codeVersion: 2,
+    component: 'rebuild-runner',
+  });
+  assert.match(noSalt.failures.join('\n'), /SUPPRESSION_SALT is not set/);
+});
+
+test('a rebuild-runner deploy writes nothing of the site, and a site deploy nothing of the runner', async () => {
+  const { readFileSync } = await import('node:fs');
+  const yaml = readFileSync('.github/workflows/deploy.yml', 'utf8');
+  const steps = yaml
+    .split('\n      - name: ')
+    .slice(1)
+    // The comment above a step lands in the block before it: only code counts.
+    .map((block) =>
+      block
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('#'))
+        .join('\n'),
+    )
+    .map((body) => ({
+      name: body.split('\n')[0],
+      body,
+      condition: body.match(/\n {8}if: ([^\n]+)/)?.[1] ?? '',
+    }));
+  const runner = /rebuild-runner\.toml|r2 bucket create/;
+  const site =
+    /release-schema\.mjs|run deploy|d1-file\.sh|LOG_IP_KEY|--config wrangler\.deploy\.toml/;
+  const runnerSteps = steps.filter((s) => runner.test(s.body));
+  const siteSteps = steps.filter((s) => !runner.test(s.body) && site.test(s.body));
+  assert.equal(runnerSteps.length, 3);
+  assert.ok(siteSteps.length >= 7);
+  for (const s of runnerSteps)
+    assert.match(s.condition, /env\.SIGMA_COMPONENT == 'rebuild-runner'/, s.name);
+  for (const s of siteSteps) assert.match(s.condition, /env\.SIGMA_COMPONENT == 'site'/, s.name);
+  assert.match(yaml, /SIGMA_COMPONENT: \$\{\{ inputs\.component \|\| 'site' \}\}/);
+});

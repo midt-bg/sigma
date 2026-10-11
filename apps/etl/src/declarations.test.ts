@@ -73,7 +73,7 @@ function fixture() {
             }
     ) as never;
   };
-  return { job, container, run, answer, resume, owner };
+  return { job, container, run, answer, resume, owner, env };
 }
 
 it('survives two yields and DO eviction, keeps one logical run, and accepts only audited publication', async () => {
@@ -318,6 +318,19 @@ describe('declaration coordinator guards and status handling', () => {
     await f.job().alarm();
     expect(f.run()).toMatchObject({ state: 'failed', reason: 'load failed' });
   });
+});
+
+it('hands a rebuild the commit the deploy shipped, and leaves an empty one out', async () => {
+  const idle = { name: 'sigma-idle', id: '11111111-2222-3333-4444-555555555555' };
+  const startEnv = async (commit: string) => {
+    const f = fixture();
+    f.env.SIGMA_SOURCE_COMMIT = commit as never;
+    await f.job().startRun('r', idle);
+    await f.job().alarm();
+    return (f.container.start.mock.calls[0] as unknown as [{ env: Record<string, string> }])[0].env;
+  };
+  expect((await startEnv('abc1234')).SIGMA_SOURCE_COMMIT).toBe('abc1234');
+  expect(await startEnv('')).not.toHaveProperty('SIGMA_SOURCE_COMMIT');
 });
 
 it('rebuilds only an idle slot, passes both slots to the container and follows the rebuild stages', async () => {

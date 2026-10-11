@@ -2,7 +2,8 @@
 // Before a deploy writes anything: the environment's settings and the slot they name (docs/deploy.md,
 // „Проверка преди запис“).
 //
-//   node scripts/deploy-preflight.mjs <environment>     (production | staging | dev2)
+//   node scripts/deploy-preflight.mjs <environment> [--component site|rebuild-runner]
+//     environment: production | staging | dev2
 //
 // Reads SIGMA_D1_NAME, SIGMA_D1_ID, SUPPRESSION_SALT and SUPPRESSION_KEY_VERSION from the environment and
 // asks Cloudflare, read only, which database the name resolves to and which data version it holds.
@@ -39,7 +40,14 @@ export function codeDataVersion() {
  * resolves to none); `readDataVersion()` the version the slot holds
  * (null when it holds none). Returns the failures, which stop the deploy, and the warnings, which do not.
  */
-export function preflight({ environment, env, resolveDatabase, readDataVersion, codeVersion }) {
+export function preflight({
+  environment,
+  env,
+  resolveDatabase,
+  readDataVersion,
+  codeVersion,
+  component = 'site',
+}) {
   const failures = [];
   const warnings = [];
   const policy = RELEASE_ENVIRONMENTS[environment];
@@ -84,6 +92,9 @@ export function preflight({ environment, env, resolveDatabase, readDataVersion, 
   }
   if (failures.length) return { failures, warnings };
 
+  // The rebuild runner exists to give the idle slot the code's version; the live slot it reads may still
+  // hold the previous one, so its deploy does not ask.
+  if (component === 'rebuild-runner') return { failures, warnings };
   const held = readDataVersion();
   if (held !== codeVersion) {
     const message =
@@ -142,8 +153,14 @@ function wranglerReads(name, config) {
 
 function main() {
   const [environment, ...flags] = process.argv.slice(2);
-  const i = flags.indexOf('--config');
-  const config = i >= 0 ? flags[i + 1] : 'wrangler.deploy.jsonc';
+  const flag = (name, fallback) => {
+    const i = flags.indexOf(name);
+    return i >= 0 && flags[i + 1] ? flags[i + 1] : fallback;
+  };
+  const config = flag('--config', 'wrangler.deploy.jsonc');
+  const component = flag('--component', 'site');
+  if (!['site', 'rebuild-runner'].includes(component))
+    throw new Error(`--component must be site or rebuild-runner, got ${component}`);
   const reads = wranglerReads(process.env.SIGMA_D1_NAME ?? '', config);
   const { failures, warnings } = preflight({
     environment,
@@ -151,6 +168,7 @@ function main() {
     resolveDatabase: reads.resolveDatabase,
     readDataVersion: reads.readDataVersion,
     codeVersion: codeDataVersion(),
+    component,
   });
   for (const w of warnings) console.log(`::warning title=Preflight::${w}`);
   for (const f of failures) console.log(`::error title=Preflight::${f}`);

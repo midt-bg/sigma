@@ -1,0 +1,61 @@
+# The Worker that only rebuilds the idle slot for a release (docs/runbooks/production-cutover.md). Same code
+# and container as the ETL Worker, and nothing else of it:
+#   - no Cron Triggers: it runs only when its Workflow is triggered;
+#   - one Workflow, under a name of its own: Workflow names are global to the account, so declaring the
+#     ETL's Workflows here would take them over from the ETL Worker that serves the live slot;
+#   - no D1 binding: the container ships to the idle slot through the API and only reads the live one.
+# The ETL Worker of the previous release keeps refreshing the live slot until the switch. Deployed by
+# deploy.yml with `component: rebuild-runner`; names below are production's and rendered per environment.
+name = "sigma-rebuild-runner"
+main = "src/index.ts"
+compatibility_date = "2026-09-14"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
+[vars]
+# The LIVE slot: read for the published-link gate, never written. The idle slot is the Workflow's input.
+DECLARATIONS_BUCKET = "sigma-declarations"
+SIGMA_D1_ID = "00000000-0000-0000-0000-000000000000"
+SIGMA_D1_NAME = "sigma"
+SIGMA_SHIP_ENV = "production"
+# The commit a deploy ships, rendered from SIGMA_SOURCE_COMMIT; a rebuild records it with the data version.
+SIGMA_SOURCE_COMMIT = ""
+
+[[workflows]]
+binding = "REBUILD_RUN"
+name = "sigma-rebuild-cutover"
+class_name = "RebuildWorkflow"
+
+[[containers]]
+class_name = "DeclarationContainer"
+image = "../../containers/declarations/Dockerfile"
+image_build_context = "../.."
+max_instances = 1
+instance_type = "standard-3"
+
+[[durable_objects.bindings]]
+name = "DECLARATIONS"
+class_name = "DeclarationContainer"
+
+[[migrations]]
+tag = "v1-declarations"
+new_sqlite_classes = ["DeclarationContainer"]
+
+[[r2_buckets]]
+binding = "DECLARATIONS_CORPUS"
+bucket_name = "sigma-declarations"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true

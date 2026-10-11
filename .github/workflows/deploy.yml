@@ -27,6 +27,16 @@ on:
           - staging
           - production
         default: staging
+      component:
+        # `rebuild-runner` deploys ONLY the Worker that rebuilds the idle slot for a release
+        # (apps/etl/wrangler.rebuild-runner.toml, docs/runbooks/production-cutover.md): no schema, no web, no
+        # ETL — the ETL of the previous release keeps refreshing the live slot until the switch.
+        description: What to deploy
+        type: choice
+        options:
+          - site
+          - rebuild-runner
+        default: site
 
 # Least-privilege default token. The deploy job authenticates to Cloudflare with its own
 # scoped API token (see the job `env:` below), never GITHUB_TOKEN — read is all CI needs.
@@ -92,6 +102,11 @@ jobs:
       SIGMA_CSV_CACHE_NAME: ${{ vars.SIGMA_CSV_CACHE_NAME }}
       SIGMA_REPORTS_NAME: ${{ vars.SIGMA_REPORTS_NAME }}
       SIGMA_VECTORIZE_NAME: ${{ vars.SIGMA_VECTORIZE_NAME }}
+      SIGMA_COMPONENT: ${{ inputs.component || 'site' }}
+      SIGMA_REBUILD_RUNNER_NAME: ${{ vars.SIGMA_REBUILD_RUNNER_NAME }}
+      SIGMA_REBUILD_CUTOVER_WORKFLOW_NAME: ${{ vars.SIGMA_REBUILD_CUTOVER_WORKFLOW_NAME }}
+      # The commit this deploy ships; a rebuild records it beside the data version it writes.
+      SIGMA_SOURCE_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -139,6 +154,10 @@ jobs:
           check "$SIGMA_CSV_CACHE_NAME" sigma-csv-cache SIGMA_CSV_CACHE_NAME
           check "$SIGMA_REPORTS_NAME"   sigma-reports   SIGMA_REPORTS_NAME
           check "$SIGMA_VECTORIZE_NAME" sigma-assistant SIGMA_VECTORIZE_NAME
+          if [ "$SIGMA_COMPONENT" = rebuild-runner ]; then
+            check "$SIGMA_REBUILD_RUNNER_NAME" sigma-rebuild-runner SIGMA_REBUILD_RUNNER_NAME
+            check "$SIGMA_REBUILD_CUTOVER_WORKFLOW_NAME" sigma-rebuild-cutover SIGMA_REBUILD_CUTOVER_WORKFLOW_NAME
+          fi
           [ "$fail" = 0 ] || { echo "Refusing to deploy '${{ needs.detect.outputs.env }}' with production resource names."; exit 1; }
 
       - name: Typecheck
@@ -154,7 +173,7 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
-          node scripts/deploy-preflight.mjs "${{ needs.detect.outputs.env }}"
+          node scripts/deploy-preflight.mjs "${{ needs.detect.outputs.env }}" --component "$SIGMA_COMPONENT"
 
       # Schema before serving, through wrangler's migration ledger and nothing else (scripts/release-schema.mjs,
       # docs/deploy.md „Схемата“). The plan only reads: it compares the target's ledger and schema with the
@@ -165,14 +184,14 @@ jobs:
       # it was built for. Nothing here re-runs precompute.sql or rewrites rows: a change to the computation
       # rules is a slot rebuild and a switch (docs/deploy.md), not a step on the served database.
       - name: Schema plan
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           # prod leaves SIGMA_D1_NAME unset and uses the committed 'sigma' default (as wrangler-render does).
           node scripts/release-schema.mjs plan "${SIGMA_D1_NAME:-sigma}"
 
       - name: Schema apply
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
         run: node scripts/release-schema.mjs apply "${SIGMA_D1_NAME:-sigma}" --remote --yes
 
       # A one-time currency backfill that earlier staging deploys ran once mapped annex_total_suspect to the
@@ -182,7 +201,7 @@ jobs:
       # nothing. Staging only:
       # production never ran that backfill, and the integrity gate now asserts the rule everywhere.
       - name: Repair amounts of doubled annex totals (staging)
-        if: steps.guard.outputs.ok == 'true' && needs.detect.outputs.env != 'production'
+        if: steps.guard.outputs.ok == 'true' && needs.detect.outputs.env != 'production' && env.SIGMA_COMPONENT == 'site'
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../scripts/repair-annex-total-suspect.sql
@@ -193,18 +212,18 @@ jobs:
       # refresh re-derives every winner's ownership from it, the next registry run the companies held through
       # it, and the next declarations run its day-job correction.
       - name: Sync the curated public-ownership list
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../scripts/seed-state-owned.sql
 
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
         run: pnpm --filter @sigma/web run deploy
 
       - name: Initialize LOG_IP_KEY secret if absent
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
         run: |
           # LOG_IP_KEY is long-lived so IP HMAC tokens remain stable for same-client correlation.
           # SIGMA_WEB_NAME is unset in production (the committed default `sigma`); a bare "$SIGMA_WEB_NAME"
@@ -251,19 +270,51 @@ jobs:
           printf '%s' "$key" | pnpm --filter @sigma/web exec wrangler secret put LOG_IP_KEY --name "${SIGMA_WEB_NAME:-sigma}"
 
       - name: Deploy refresh Workflow (sigma-etl)
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
         run: pnpm --filter @sigma/etl run deploy
 
       # The declarations container ships to D1 with the same scoped token this job deploys with, and keys
       # the takedown list with the same salt. `secret put` overwrites, so a rotated value lands on the next
       # deploy. SIGMA_ETL_NAME is unset in production (the committed default).
       - name: ETL Worker secrets for the declarations container
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
         run: |
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SUPPRESSION_SALT SUPPRESSION_KEY_VERSION; do
             value="${!name}"
             [ -n "$value" ] || { echo "$name is empty; leaving the Worker secret unchanged."; continue; }
             printf '%s' "$value" | pnpm --filter @sigma/etl exec wrangler secret put "$name" --config wrangler.deploy.toml
+          done
+
+      # The rebuild runner (component: rebuild-runner) — the Worker that rebuilds the idle slot for a release
+      # while the previous release keeps serving (docs/runbooks/production-cutover.md). Same code and container
+      # as the ETL, one Workflow under a name of its own, no Cron Triggers, no D1 binding. Its bucket may not
+      # exist yet in an environment whose ETL predates the declarations; it is created, never emptied.
+      - name: Rebuild runner — declarations bucket
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'rebuild-runner'
+        run: |
+          bucket="${SIGMA_DECLARATIONS_BUCKET:-sigma-declarations}"
+          if pnpm --filter @sigma/etl exec wrangler r2 bucket info "$bucket" >/dev/null 2>&1; then
+            echo "$bucket exists"
+          else
+            pnpm --filter @sigma/etl exec wrangler r2 bucket create "$bucket"
+          fi
+
+      - name: Deploy the rebuild runner
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'rebuild-runner'
+        run: |
+          SIGMA_ETL_NAME="${SIGMA_REBUILD_RUNNER_NAME:-sigma-rebuild-runner}" \
+          SIGMA_REBUILD_WORKFLOW_NAME="${SIGMA_REBUILD_CUTOVER_WORKFLOW_NAME:-sigma-rebuild-cutover}" \
+            node scripts/wrangler-render.mjs apps/etl/wrangler.rebuild-runner.toml
+          pnpm --filter @sigma/etl exec wrangler deploy --config wrangler.deploy.rebuild-runner.toml
+
+      - name: Rebuild runner secrets
+        if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'rebuild-runner'
+        run: |
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SUPPRESSION_SALT SUPPRESSION_KEY_VERSION; do
+            value="${!name}"
+            [ -n "$value" ] || { echo "$name is empty; leaving the Worker secret unchanged."; continue; }
+            printf '%s' "$value" | pnpm --filter @sigma/etl exec wrangler secret put "$name" \
+              --config wrangler.deploy.rebuild-runner.toml
           done
 
       # The declarations run's checkpoints and fetch events are read by nothing once it is over; without

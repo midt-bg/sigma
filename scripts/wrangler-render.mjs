@@ -95,6 +95,7 @@ if (ext === '.json' || ext === '.jsonc') {
     shipEnv: process.env.SIGMA_SHIP_ENV || '',
     d1Name: process.env.SIGMA_D1_NAME || '',
     etlParked: etlSchedule(process.env.SIGMA_ETL_SCHEDULE) === 'off',
+    sourceCommit: process.env.SIGMA_SOURCE_COMMIT || '',
   };
   // Every name that renderToml can substitute has to open the gate. Listing only the older four made
   // this fail OPEN: a config that sets just the newer ones skipped the rendering without a word, and the
@@ -212,6 +213,8 @@ function renderToml(text, names) {
         if (names.shipEnv) line = replaceTomlStringValue(line, 'SIGMA_SHIP_ENV', names.shipEnv);
         if (names.declarationsBucket)
           line = replaceTomlStringValue(line, 'DECLARATIONS_BUCKET', names.declarationsBucket);
+        if (names.sourceCommit)
+          line = replaceTomlStringValue(line, 'SIGMA_SOURCE_COMMIT', names.sourceCommit);
       }
       if (section === '[triggers]' && names.etlParked)
         line = line.replace(/^(\s*crons\s*=\s*).*$/, '$1[]');

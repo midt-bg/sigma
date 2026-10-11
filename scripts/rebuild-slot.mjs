@@ -25,6 +25,19 @@ import { importSql } from './cacbg/import-sql.mjs';
 const root = resolve(import.meta.dirname, '..');
 const webDir = resolve(root, 'apps/web');
 
+/**
+ * The slot's record of the rules that built it (packages/db/data-version.json, migration 0026), written once
+ * the slot is verified. A production deploy releases only onto a slot whose version is the code's.
+ */
+export function dataVersionSql({ version, commit, runId, builtAt }) {
+  if (!Number.isInteger(version) || version < 1)
+    throw new Error(`Invalid data version: ${version}`);
+  return (
+    'INSERT OR REPLACE INTO data_version (id, version, source_commit, built_at, run_id) VALUES ' +
+    `(1, ${version}, ${sqlLiteral(commit ?? null)}, ${sqlLiteral(builtAt)}, ${sqlLiteral(runId ?? null)});\n`
+  );
+}
+
 /** Tables a served slot never takes from the snapshot: SQLite's and Cloudflare's own, the migration ledger,
  *  the full-text index's shadow tables, the work staging, and the ship's generations. */
 export function shippedTables(tables, stagingSql) {
@@ -187,22 +200,60 @@ export function slotFlusher(name, snapshot, apply) {
   };
 }
 
-/** Empty the slot of everything but the full-text shadow tables, which SQLite owns. */
+/**
+ * Empty the slot of everything but the full-text shadow tables, which SQLite owns — children first. A parent
+ * dropped while its children still reference it makes D1 check every child, and in one import that does not
+ * finish: the Durable Object behind the database resets (`D1_RESET_DO`) on every attempt. Measured on a Dev2
+ * slot on 10.10.2026 — creation order fails, children-first passes; the ship drops its staged tables the same
+ * way for the same reason.
+ */
 export function emptySlot(name, apply, read = d1Json) {
-  const drops = read(
+  const rows = read(
     name,
-    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
-  )
-    .map((t) => t.name)
-    .filter((n) => !/^search_index_/.test(n))
+    `SELECT m.name AS name, f."table" AS parent FROM sqlite_master m
+       LEFT JOIN pragma_foreign_key_list(m.name) f
+     WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT LIKE '_cf_%'`,
+  );
+  const tables = [...new Set(rows.map((r) => r.name))].filter((n) => !/^search_index_/.test(n));
+  const foreignKeys = new Map(
+    tables.map((t) => [t, rows.filter((r) => r.name === t && r.parent).map((r) => r.parent)]),
+  );
+  const drops = parentsFirst(tables, foreignKeys)
+    .reverse()
     .map((n) => `DROP TABLE IF EXISTS ${sqlIdent(n)};`);
   if (drops.length) apply('wipe', `PRAGMA defer_foreign_keys=ON;\n${drops.join('\n')}\n`);
+}
+
+/** Rows one clearing file deletes. */
+export const CLEAR_ROWS = 20_000;
+
+/**
+ * The files that empty the slot's copies of `tables` (parents first, as given) — children first, table by
+ * table, at most CLEAR_ROWS rows a file. One file that deleted every row of a filled slot exceeded D1's CPU
+ * time limit and reset the database on every attempt (measured on Dev2, 10.10.2026, after the slot held the
+ * procurement corpus and the register). `rows[t]` is how many rows the slot holds; `keys[t]` the primary key
+ * of a table WITHOUT ROWID, which has no rowid to page by. A repeated file deletes what is left, or nothing.
+ */
+export function clearFiles(label, tables, rows, keys = {}) {
+  const files = [];
+  for (const t of [...tables].reverse()) {
+    const pages = Math.ceil((rows[t] ?? 0) / CLEAR_ROWS);
+    const key = keys[t]?.length ? keys[t].map(sqlIdent).join(', ') : 'rowid';
+    const match = keys[t]?.length > 1 ? `(${key})` : key;
+    for (let page = 0; page < pages; page++)
+      files.push([
+        `${label}-clear-${t}-${page}`,
+        `PRAGMA defer_foreign_keys=ON;\nDELETE FROM ${sqlIdent(t)} WHERE ${match} IN ` +
+          `(SELECT ${key} FROM ${sqlIdent(t)} LIMIT ${CLEAR_ROWS});\n`,
+      ]);
+  }
+  return files;
 }
 
 /** Put a whole local snapshot into the slot: the snapshot's own DDL where the migrations left a gap,
  * then every table emptied children-first and filled parents-first, in chunks of twenty thousand rows.
  * Used twice — once after a long stage, so its hours are durable, and once for the finished build. */
-export function fillSlot(name, snapshotPath, work, { label, apply }) {
+export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json }) {
   const snap = new DatabaseSync(snapshotPath, { readOnly: true });
   try {
     const master = snap
@@ -232,15 +283,35 @@ export function fillSlot(name, snapshotPath, work, { label, apply }) {
     const ordered = parentsFirst(tables, foreignKeys);
     // The internal related-persons table never leaves the build (ADR-0032).
     const withRows = ordered.filter((t) => t !== 'related_persons_internal');
-    apply(
-      `${label}-clear`,
-      `PRAGMA defer_foreign_keys=ON;\n` +
-        [...withRows]
-          .reverse()
-          .map((t) => `DELETE FROM ${sqlIdent(t)};`)
-          .join('\n') +
-        '\n',
+    // What the slot already holds — nothing on a fresh slot, the corpus and the register once an earlier
+    // stage made its hours durable — is deleted in bounded files, children first.
+    const held = {};
+    for (let i = 0; i < withRows.length; i += 20) {
+      const chunk = withRows.slice(i, i + 20);
+      Object.assign(
+        held,
+        read(
+          name,
+          `SELECT ${chunk.map((t) => `(SELECT COUNT(*) FROM ${sqlIdent(t)}) AS ${sqlIdent(t)}`).join(', ')}`,
+        )[0] ?? {},
+      );
+    }
+    const keys = Object.fromEntries(
+      master
+        .filter(
+          (m) => m.type === 'table' && /WITHOUT\s+ROWID/i.test(m.sql) && withRows.includes(m.name),
+        )
+        .map((m) => [
+          m.name,
+          snap
+            .prepare(`PRAGMA table_info(${sqlIdent(m.name)})`)
+            .all()
+            .filter((c) => c.pk > 0)
+            .sort((a, b) => a.pk - b.pk)
+            .map((c) => c.name),
+        ]),
     );
+    for (const [file, sql] of clearFiles(label, withRows, held, keys)) apply(file, sql);
     const counts = {};
     let shipped = 0;
     for (const table of withRows) {
@@ -610,6 +681,20 @@ async function main() {
   await assertIntegrity((sql) => d1Json(target.name, sql), {
     label: `rebuilt slot ${target.name}`,
   });
+  // 9. The slot says which rules built it — only now, after every check, so a slot that failed one has no
+  // version and a production deploy will not release onto it.
+  const { version } = JSON.parse(
+    readFileSync(resolve(root, 'packages/db/data-version.json'), 'utf8'),
+  );
+  apply(
+    'data-version',
+    dataVersionSql({
+      version,
+      commit: process.env.SIGMA_SOURCE_COMMIT || null,
+      runId: process.env.SIGMA_RUN_ID || null,
+      builtAt: new Date().toISOString(),
+    }),
+  );
   console.log(
     JSON.stringify({
       event: 'declarations_job_complete',
@@ -619,6 +704,8 @@ async function main() {
       slot: target.name,
       tables: withRows.length,
       rows: shipped,
+      dataVersion: version,
+      sourceCommit: process.env.SIGMA_SOURCE_COMMIT || null,
     }),
   );
 }
