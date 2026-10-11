@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { declarantGuid, declarantGuidEvidence, DECLARANT_GUID_RULE } from './declarant-guid.mjs';
 
-const G = '0008C66A-3C73-47DF-9135-A095CAC6EA07';
+const G = '1E57DA7A-0000-4000-8000-000000000001';
 const doc = (folder, xmlFile, person, sourceHash = 'e'.repeat(64)) => ({
   folder,
   xmlFile,
@@ -11,7 +11,7 @@ const doc = (folder, xmlFile, person, sourceHash = 'e'.repeat(64)) => ({
 });
 
 test('reads the declarant GUID only from numbered file names', () => {
-  assert.equal(declarantGuid(`${G.toLowerCase()}72887.xml`), G);
+  assert.equal(declarantGuid(`${G.toLowerCase()}90001.xml`), G);
   assert.equal(declarantGuid(`${G}.xml`), null);
   assert.equal(declarantGuid('list.xml'), null);
   assert.equal(declarantGuid(undefined), null);
@@ -72,10 +72,10 @@ test('a GUID per document and different GUIDs never link', () => {
 });
 
 // The GUID is the register's own id for a declarant; the name only guards against the register reusing
-// one. Demanding identical names split a real declarant in two over a single typed letter — same GUID,
-// same council, same years — and left his registry roles on only one of the halves.
+// one. Demanding identical names would split one declarant in two over a single typed letter — same GUID,
+// same council, same years — and leave the registry roles on only one of the halves.
 test('one typed slip under a shared GUID is still one declarant', () => {
-  const guid = 'B35A651B-D353-424E-875C-573B058D3016';
+  const guid = '1E57DA7A-0000-4000-8000-000000000002';
   const doc = (n, person) => ({
     xmlFile: `${guid}${n}.xml`,
     folder: '2023y2',
@@ -83,8 +83,8 @@ test('one typed slip under a shared GUID is still one declarant', () => {
     sourceHash: `h${n}`,
   });
   const edges = declarantGuidEvidence([
-    doc('100001', 'Стоян Великов Примеров'),
-    doc('100002', 'Стоян Велинов Примеров'),
+    doc('900001', 'Стоян Великов Примеров'),
+    doc('900002', 'Стоян Велинов Примеров'),
   ]);
   assert.equal(edges.length, 1);
   assert.equal(edges[0].rule_version, DECLARANT_GUID_RULE);

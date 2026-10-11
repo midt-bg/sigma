@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveOffices } from './declaration-office.mjs';
 
-const GUID = 'BE34B4EA-A0C0-4958-B891-B09BFA1B1B2A';
+const GUID = '1E57DA7A-0000-4000-8000-000000000003';
 const OTHER = 'C0FFEE00-0000-4000-8000-000000000001';
 const file = (guid, n) => `${guid}${n}.xml`;
 const rec = (guid, n, year, institution) => ({
@@ -25,12 +25,12 @@ const by = {
 
 test('the annual filed under the day job takes the office the entry named, in the same year', () => {
   const filings = [
-    rec(GUID, 170080, 2024, 'ТЕСТ ПОЩИ ЕАД'), // the entry declaration, listed under the enterprise
-    rec(GUID, 213894, 2024, 'ТЕСТ ГРУП ХОЛДИНГ АД'), // the annual for 2024: „Месторабота" is the day job
-    rec(GUID, 222200, 2025, 'ТЕСТ ПОЩИ ЕАД'),
+    rec(GUID, 900101, 2024, 'ТЕСТ ПОЩИ ЕАД'), // the entry declaration, listed under the enterprise
+    rec(GUID, 900202, 2024, 'ТЕСТ ГРУП ХОЛДИНГ АД'), // the annual for 2024: „Месторабота" is the day job
+    rec(GUID, 900303, 2025, 'ТЕСТ ПОЩИ ЕАД'),
   ];
   const offices = resolveOffices(filings, by);
-  assert.deepEqual([...offices], [['cacbg:2024:' + file(GUID, 213894), 'ТЕСТ ПОЩИ ЕАД']]);
+  assert.deepEqual([...offices], [['cacbg:2024:' + file(GUID, 900202), 'ТЕСТ ПОЩИ ЕАД']]);
 });
 
 test('the neighbouring year lends when the same year has nothing, the nearer one first', () => {
