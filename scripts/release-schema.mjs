@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { retryD1 } from './d1-retry.mjs';
-import { parseWranglerJson } from './ship-related-persons.mjs';
+import { parseWranglerJson, TABLES as SHIP_TABLES, WIPE_ORDER } from './ship-related-persons.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 export const MIGRATIONS_DIR = resolve(root, 'packages/db/migrations');
@@ -37,6 +37,19 @@ export const MIGRATIONS_DIR = resolve(root, 'packages/db/migrations');
 export const LEDGER = 'd1_migrations';
 // SQLite's and Cloudflare's own objects; neither the chain nor the plan is about them.
 const OWN = /^(sqlite_|_cf_)/;
+
+// The ship publishes by renaming (ADR-0045): X becomes rp_prev_X and rp_next_X becomes X. SQLite rewrites a
+// reference to a renamed table in every other table, so a table the ship wipes but does not carry
+// (related_persons_internal) points at the previous generation's name after a publication. That one case
+// is read as the same reference, and the plan prints it; anywhere else a generation's name is a defect —
+// a shipped table pointing at rp_next_ or rp_prev_, or any other table pointing at either.
+const SHIP_UNCARRIED = WIPE_ORDER.filter((t) => !SHIP_TABLES.includes(t));
+function fkTarget(table, column, target, drift) {
+  const carried = /^rp_prev_(.+)$/.exec(target)?.[1];
+  if (!carried || !SHIP_UNCARRIED.includes(table) || !SHIP_TABLES.includes(carried)) return target;
+  drift?.push(`${table}.${column} → ${target}, compared as ${carried} (the ship's rename)`);
+  return carried;
+}
 
 /** The migration files, in the order wrangler applies them. */
 export function readMigrations(dir = MIGRATIONS_DIR) {
@@ -66,9 +79,10 @@ const quote = (name) => `"${String(name).replaceAll('"', '""')}"`;
  * Everything the schema says, as keys and comparable values: each table (its foreign keys and unique
  * constraints), each column (type, NOT NULL, default, primary-key position), each index, trigger and view
  * (their table and normalized DDL). Column ORDER is not part of it: a column added by ALTER sits last, one
- * written into the CREATE sits where it was written, and the two are the same column.
+ * written into the CREATE sits where it was written, and the two are the same column. `drift`, when given,
+ * collects every reference read as another name (fkTarget).
  */
-export function snapshot(db) {
+export function snapshot(db, drift) {
   const objects = db
     .prepare('SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL')
     .all();
@@ -92,12 +106,9 @@ export function snapshot(db) {
     const fks = db
       .prepare(`PRAGMA foreign_key_list(${t})`)
       .all()
-      // The ship publishes by renaming (ADR-0045), and SQLite rewrites a reference to a renamed table in
-      // every other table — so a table the ship does not carry (related_persons_internal) points at the
-      // previous generation's name after a publication. It is the same reference.
       .map(
         (f) =>
-          `${f.from}>${String(f.table).replace(/^rp_(prev|next)_/, '')}.${f.to}:${f.on_update}:${f.on_delete}`,
+          `${f.from}>${fkTarget(o.name, f.from, String(f.table), drift)}.${f.to}:${f.on_update}:${f.on_delete}`,
       )
       .sort();
     const uniques = db
@@ -227,7 +238,8 @@ export function planSchema({ migrations, rows, ledger }) {
     for (const name of recorded)
       if (!migrations.some((m) => m.name === name))
         refusals.push(`the ledger records ${name}, which is not a migration file of this release`);
-    const result = snapshot(target);
+    const drift = [];
+    const result = snapshot(target, drift);
     const parity = {
       missing: [...final.keys()].filter((k) => !result.has(k)),
       different: [...final.keys()].filter((k) => result.has(k) && result.get(k) !== final.get(k)),
@@ -238,6 +250,7 @@ export function planSchema({ migrations, rows, ledger }) {
       steps,
       refusals,
       parity,
+      drift,
       ok: refusals.length === 0 && parity.missing.length === 0 && parity.different.length === 0,
     };
   } finally {
@@ -260,6 +273,7 @@ export function formatPlan(plan) {
   for (const k of plan.parity.different) lines.push(`  parity: different ${k}`);
   if (plan.parity.extra.length)
     lines.push(`  beside the schema (not compared): ${plan.parity.extra.join(', ')}`);
+  for (const d of plan.drift ?? []) lines.push(`  known drift: ${d}`);
   lines.push(plan.ok ? 'schema plan: OK' : 'schema plan: REFUSED — nothing was written');
   return lines.join('\n');
 }

@@ -320,10 +320,10 @@ test('the restore point is read past the notices printed before it', async () =>
 // Stage as it is: the ledger holds 0000–0021 (an earlier `migrations apply`), the files after it came from
 // the old deploy steps, and every publication renamed the ship's tables — so related_persons_internal, which
 // the ship does not carry, references the previous generation's declarations table.
-const pointAt = (rows, table, target) =>
+const pointAt = (rows, table, target, from = 'declarations') =>
   rows.map((r) =>
     r.name === table && r.type === 'table'
-      ? { ...r, sql: r.sql.replace(/REFERENCES declarations\(id\)/, `REFERENCES "${target}"(id)`) }
+      ? { ...r, sql: r.sql.replace(`REFERENCES ${from}(`, `REFERENCES "${target}"(`) }
       : r,
   );
 const throughJoint = names.filter((n) => n <= JOINT);
@@ -342,6 +342,32 @@ test('a table the ship does not carry may point at the previous generation: the 
     actions(plan).mark,
     throughJoint.filter((n) => n >= '0022'),
   );
+  // Not silent: the plan names the reference it read as another.
+  assert.match(
+    formatPlan(plan),
+    /known drift: related_persons_internal\.declaration_id → rp_prev_declarations, compared as declarations/,
+  );
+  assert.deepEqual(planSchema({ migrations, rows: stageShape(), ledger }).drift, []);
+});
+
+test('a generation’s name anywhere else is a defect, not drift', () => {
+  const ledger = names.filter((n) => n < '0022');
+  for (const [table, from, target, migration] of [
+    // a shipped table left pointing at the staged generation
+    ['interest_link_evidence', 'interest_links', 'rp_next_interest_links', '0009_interest_link_evidence'],
+    // a table the ship has nothing to do with
+    ['contracts', 'tenders', 'rp_prev_tenders', '0000_init'],
+    // the table the rule is for, but at the staged generation
+    ['related_persons_internal', 'declarations', 'rp_next_declarations', '0003_related_persons_foundation'],
+  ]) {
+    const plan = planSchema({ migrations, rows: pointAt(stageShape(), table, target, from), ledger });
+    assert.equal(plan.ok, false, `${table} → ${target}`);
+    assert.match(
+      plan.refusals.join('\n'),
+      new RegExp(`${migration}\\.sql is in the ledger, but the target lacks: table:${table}`),
+    );
+    assert.deepEqual(plan.drift, []);
+  }
 });
 
 test('a reference to another table is still a different table', () => {
