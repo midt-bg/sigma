@@ -113,6 +113,7 @@ if (remote) {
     d1Name: d1,
     expectedId: env.SIGMA_D1_ID,
     resolvedId: info.uuid ?? info.database_id,
+    resolvedName: info.name,
   });
   run('scripts/wrangler-render.mjs', ['apps/web/wrangler.jsonc']);
   copyFileSync('apps/web/wrangler.deploy.jsonc', 'apps/web/wrangler.jsonc');

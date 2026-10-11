@@ -380,10 +380,17 @@ export const SHIP_TARGETS = {
  * needs a THIRD, independent anchor: the operator DECLARES the intended environment (SIGMA_SHIP_ENV), and the
  * repo policy pins production's names / forbids a production name outside production. So the declared env
  * (repo) and the id (Cloudflare-resolved vs the operator's SIGMA_D1_ID) come from different sources and can't
- * be made consistent-but-wrong by inadvertence. Pure — unit-tested; the live id lookup is injected as
- * `resolvedId`. --local carries no durable blast radius, so it is exempt.
+ * be made consistent-but-wrong by inadvertence. Pure — unit-tested; the live lookup is injected as
+ * `resolvedId` and `resolvedName`. --local carries no durable blast radius, so it is exempt.
  */
-export function assertD1TargetAuthorized({ remote, shipEnv, d1Name, expectedId, resolvedId }) {
+export function assertD1TargetAuthorized({
+  remote,
+  shipEnv,
+  d1Name,
+  expectedId,
+  resolvedId,
+  resolvedName,
+}) {
   if (!remote) return;
   // 1. The intended environment must be DECLARED and known — the independent anchor the id/name pair can't fake.
   if (!(shipEnv in SHIP_TARGETS))
@@ -414,6 +421,14 @@ export function assertD1TargetAuthorized({ remote, shipEnv, d1Name, expectedId, 
     throw new Error(
       `D1 target mismatch: name '${d1Name}' resolves to id ${resolvedId}, but SIGMA_D1_ID is ${expectedId}. ` +
         'The name and id disagree (misconfigured Environment or stale id) — refusing to wipe.',
+    );
+  // 4. …and the id must BE that name. `wrangler d1 info <name>` takes the id from a config that binds the name,
+  // and the deploy renders that binding from SIGMA_D1_ID — so the id it answers always equals SIGMA_D1_ID and
+  // step 3 alone can never fail. The name Cloudflare gives that database can: an environment whose
+  // SIGMA_D1_ID fell back to another environment's id resolves here to that other database's name.
+  if (resolvedName !== d1Name)
+    throw new Error(
+      `D1 target mismatch: SIGMA_D1_ID ${expectedId} is the database '${resolvedName || 'unknown'}', not '${d1Name}' — refusing to wipe.`,
     );
 }
 
@@ -660,16 +675,18 @@ export function readShippedCounts(d1Name, remote, expected, deps = {}) {
   return counts;
 }
 
-function resolveD1Id(d1Name) {
+/** The id and the name Cloudflare gives the database `wrangler d1 info <d1Name>` resolves to; empty on any
+ *  failure, which assertD1TargetAuthorized turns into a refusal. */
+function resolveD1(d1Name) {
   try {
     const out = execFileSync('wrangler', ['d1', 'info', d1Name, '--json'], {
       cwd: resolve('apps/web'),
       encoding: 'utf8',
     });
     const info = JSON.parse(out);
-    return info?.uuid ?? info?.database_id ?? '';
+    return { id: info?.uuid ?? info?.database_id ?? '', name: info?.name ?? '' };
   } catch {
-    return '';
+    return { id: '', name: '' };
   }
 }
 
@@ -767,7 +784,9 @@ async function main() {
       shipEnv: process.env.SIGMA_SHIP_ENV ?? '',
       d1Name,
       expectedId: process.env.SIGMA_D1_ID,
-      resolvedId: remote ? resolveD1Id(d1Name) : '',
+      ...(remote
+        ? (({ id, name }) => ({ resolvedId: id, resolvedName: name }))(resolveD1(d1Name))
+        : { resolvedId: '', resolvedName: '' }),
     });
 
   // Upload staging tables, verify, then publish with one rename swap.

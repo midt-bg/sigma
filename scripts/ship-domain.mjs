@@ -141,6 +141,7 @@ if (remote) {
     d1Name,
     expectedId: process.env.SIGMA_D1_ID,
     resolvedId: info.uuid ?? info.database_id,
+    resolvedName: info.name,
   });
 }
 console.log('==> ensuring served D1 migrations are applied');

@@ -118,6 +118,7 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
     d1Name: 'sigma-blue',
     expectedId: ID,
     resolvedId: ID,
+    resolvedName: 'sigma-blue',
   };
   // --local (remote=false) is exempt — no durable blast radius, so any/absent env/ids pass.
   assert.doesNotThrow(() =>
@@ -132,7 +133,9 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
   // remote: declared env + allowlisted name + matching (name→id) pair is allowed.
   assert.doesNotThrow(() => assertD1TargetAuthorized(ok));
   // production is blue-green: the partner slot `sigma-green` is also allowed for env=production.
-  assert.doesNotThrow(() => assertD1TargetAuthorized({ ...ok, d1Name: 'sigma-green' }));
+  assert.doesNotThrow(() =>
+    assertD1TargetAuthorized({ ...ok, d1Name: 'sigma-green', resolvedName: 'sigma-green' }),
+  );
   // missing / unknown declared env → cannot anchor authorization → refuse.
   assert.throws(() => assertD1TargetAuthorized({ ...ok, shipEnv: '' }), /SIGMA_SHIP_ENV must name/);
   assert.throws(
@@ -173,7 +176,29 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
   );
   // a non-production env with its own (non-prod) name + matching id passes.
   assert.doesNotThrow(() =>
-    assertD1TargetAuthorized({ ...ok, shipEnv: 'staging', d1Name: 'sigma-stage' }),
+    assertD1TargetAuthorized({
+      ...ok,
+      shipEnv: 'staging',
+      d1Name: 'sigma-stage',
+      resolvedName: 'sigma-stage',
+    }),
+  );
+  // THE RENDERED-CONFIG CASE: the deploy renders the config from SIGMA_D1_ID, so `wrangler d1 info <name>`
+  // answers SIGMA_D1_ID itself and the id check above cannot fail. A staging run whose SIGMA_D1_ID fell back
+  // to production's id is caught by the name Cloudflare gives that id.
+  assert.throws(
+    () =>
+      assertD1TargetAuthorized({
+        ...ok,
+        shipEnv: 'staging',
+        d1Name: 'sigma-stage-blue',
+        resolvedName: 'sigma-green',
+      }),
+    /SIGMA_D1_ID aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee is the database 'sigma-green', not 'sigma-stage-blue'/,
+  );
+  assert.throws(
+    () => assertD1TargetAuthorized({ ...ok, resolvedName: '' }),
+    /is the database 'unknown', not 'sigma-blue'/,
   );
   assert.ok(SHIP_TARGETS.production.includes('sigma-blue'));
   assert.ok(SHIP_TARGETS.production.includes('sigma-green'));
