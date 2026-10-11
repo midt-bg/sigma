@@ -129,8 +129,16 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // HIT|MISS|BYPASS header lets `curl -I` verify which path a request took.
   // A persisted emulator cache must not mix an old loader payload with a hot-reloaded UI.
   // Production caching is unchanged; local development always reads its current database/code.
+  // A `.data` request with `_routes` asks React Router for SOME of the route loaders only. The key does not
+  // carry `_routes`, so storing that partial answer would serve it as the whole page's data to every later
+  // navigation in the colo — and serving the whole answer to it would be wrong the other way. Neither is
+  // looked up nor stored; the app's own navigations do not send `_routes`.
   const key =
-    !import.meta.env.DEV && request.method === 'GET' ? cacheKey(request, DEPLOY_TAG) : null;
+    !import.meta.env.DEV &&
+    request.method === 'GET' &&
+    !new URL(request.url).searchParams.has('_routes')
+      ? cacheKey(request, DEPLOY_TAG)
+      : null;
   if (key) {
     const cached = await edgeCache.match(key);
     if (cached) {
