@@ -61,8 +61,22 @@ wrangler workflows instances describe sigma-rebuild-cutover <instance>
    `data_version.source_commit`. Спиране след това го няма в слота, а внедряването с тага не пресъздава
    `interest_links`. Без тази стъпка връзката би се публикувала отново до следващия неделен ход.
    - `git diff <source_commit> <таг> -- scripts/cacbg/link-suppressions.jsonl scripts/cacbg/link-corrections.jsonl`
-     — всеки нов ред е връзка, която не трябва да е публична. Ключът ѝ е в записа за спирането
-     ([related-persons-suppression.md](related-persons-suppression.md), „What you need“).
+     — всеки нов ред е връзка, която не трябва да е публична. Редът носи само отпечатък (`fp`); ключът
+     на връзката се намира в изградения слот със солта (`SUPPRESSION_SALT`):
+
+     ```bash
+     wrangler d1 execute <изграден слот> --remote --json --command "SELECT link_key FROM interest_links" |
+       node -e "
+         const fps = new Set(process.argv.slice(1));
+         import('./scripts/cacbg/suppressions.mjs').then(async (m) => {
+           let text = '';
+           for await (const c of process.stdin) text += c;
+           for (const { link_key } of JSON.parse(text.slice(text.indexOf('[')))[0].results)
+             if (fps.has(m.fingerprint(link_key, process.env.SUPPRESSION_SALT))) console.log(link_key);
+         });" <fp> [<fp> …]
+     ```
+
+     Отпечатък без ключ в слота значи, че връзката там и не е изградена.
    - На двата слота: `SELECT link_key FROM interest_links WHERE status = 'suppressed'`. Всеки ключ, спрян в
      живия, но не в изградения, е спешно спиране направо в живия слот.
    - За всяка такава връзка: UPDATE-ът от спешното спиране, но в **изградения** слот. После проверка, че
