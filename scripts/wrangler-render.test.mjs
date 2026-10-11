@@ -128,3 +128,49 @@ bucket_name = "sigma-reports"
   );
   assert.match(rendered, /binding = "REPORTS"\nbucket_name = "sigma-reports"/);
 });
+
+const ETL = `name = "sigma-etl"
+
+[triggers]
+crons = ["0 */6 * * *", "0 3 * * 1"]
+`;
+async function renderEtl(schedule) {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-wrangler-render-'));
+  const config = join(dir, 'wrangler.toml');
+  writeFileSync(config, ETL);
+  process.argv[2] = config;
+  for (const k of [
+    'SIGMA_ETL_NAME',
+    'SIGMA_WORKFLOW_NAME',
+    'SIGMA_REGISTRY_WORKFLOW_NAME',
+    'SIGMA_DECLARATIONS_WORKFLOW_NAME',
+    'SIGMA_REBUILD_WORKFLOW_NAME',
+    'SIGMA_DECLARATIONS_BUCKET',
+    'SIGMA_D1_NAME',
+    'SIGMA_SHIP_ENV',
+  ])
+    delete process.env[k];
+  if (schedule === undefined) delete process.env.SIGMA_ETL_SCHEDULE;
+  else process.env.SIGMA_ETL_SCHEDULE = schedule;
+  try {
+    await import(`./wrangler-render.mjs?test=${Date.now()}-${Math.random()}`);
+  } finally {
+    delete process.env.SIGMA_ETL_SCHEDULE;
+  }
+  return readFileSync(join(dir, 'wrangler.deploy.toml'), 'utf8');
+}
+
+test('a parked ETL deploys without Cron Triggers and keeps its name', async () => {
+  const rendered = await renderEtl('off');
+  assert.match(rendered, /\[triggers\]\ncrons = \[\]/);
+  assert.match(rendered, /^name = "sigma-etl"/m);
+});
+
+test('the ETL keeps its crons unless parked', async () => {
+  for (const schedule of [undefined, '', 'on'])
+    assert.match(await renderEtl(schedule), /crons = \["0 \*\/6 \* \* \*", "0 3 \* \* 1"\]/);
+});
+
+test('a schedule that is neither on nor off is refused', async () => {
+  await assert.rejects(() => renderEtl('of'), /SIGMA_ETL_SCHEDULE must be on or off, got "of"/);
+});
