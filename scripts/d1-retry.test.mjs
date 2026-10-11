@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { retryD1, sendWithReceipt, withReceipt } from './d1-retry.mjs';
 
@@ -247,4 +248,56 @@ test('a receipt that cannot be read stops the run instead of sending again', () 
   );
   assert.equal(sends, 1);
   assert.equal(reads, 3);
+});
+
+test('a repeatable file whose receipt cannot be read is sent again, and said so', () => {
+  const db = target();
+  const lines = [];
+  let sends = 0;
+  sendWithReceipt(
+    'INSERT OR REPLACE INTO rows VALUES(1);',
+    (body) => {
+      if (++sends === 1) throw new Error(RACE);
+      db.apply(body);
+    },
+    {
+      label: 'reindex-officials-017',
+      readReceipt: () => {
+        throw new Error('D1 is unreachable');
+      },
+      repeatable: true,
+      log: (l) => lines.push(l),
+      ...quiet,
+    },
+  );
+  assert.equal(sends, 2);
+  assert.equal(db.rows(), 1);
+  assert.equal(JSON.parse(lines[0]).receipt, 'unreadable');
+});
+
+test('a repeatable file that landed despite the error is not sent again either', () => {
+  const db = target();
+  let sends = 0;
+  sendWithReceipt(
+    'INSERT OR REPLACE INTO rows VALUES(1);',
+    (body) => {
+      sends++;
+      db.apply(body);
+      throw new Error(RACE);
+    },
+    {
+      label: 'person-search-index',
+      readReceipt: db.readReceipt,
+      repeatable: true,
+      log: () => {},
+      ...quiet,
+    },
+  );
+  assert.equal(sends, 1);
+});
+
+test('the declarations job sends every file to D1 with its receipt', () => {
+  const source = readFileSync('scripts/related-persons-job.mjs', 'utf8');
+  assert.doesNotMatch(source, /'--file'/, 'a file sent around the receipt path');
+  assert.match(source, /wranglerFileSender\(\{[^}]*repeatable: true/s);
 });

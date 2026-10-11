@@ -555,7 +555,8 @@ export function readPublishedGeneration(d1Name, remote, deps = {}) {
 
 /**
  * Files to D1 through the wrangler CLI, each with its receipt (`sendWithReceipt`): written to `dir`,
- * executed against `d1Name`, removed. `exec` and `sleep` are test seams; production passes neither.
+ * executed against `d1Name`, removed. `repeatable` files are sent again when their receipt cannot be read
+ * (sendWithReceipt). `env` is the environment wrangler runs with; `exec` and `sleep` are test seams.
  */
 export function wranglerFileSender({
   d1Name,
@@ -563,6 +564,8 @@ export function wranglerFileSender({
   dir,
   cwd,
   waitMs,
+  env,
+  repeatable = false,
   exec = execFileSync,
   sleep,
 }) {
@@ -581,7 +584,7 @@ export function wranglerFileSender({
           '--command',
           `SELECT token FROM rp_receipt WHERE label=${sqlLiteral(label)}`,
         ],
-        { cwd, encoding: 'utf8' },
+        { cwd, encoding: 'utf8', ...(env ? { env } : {}) },
       );
     } catch (error) {
       // The table arrives with the first receipt: a target without it has no file that landed with one.
@@ -602,9 +605,10 @@ export function wranglerFileSender({
           exec('wrangler', ['d1', 'execute', d1Name, where, '--yes', '--file', file], {
             cwd,
             stdio: 'inherit',
+            ...(env ? { env } : {}),
           });
         },
-        { label, readReceipt, waitMs, sleep },
+        { label, readReceipt, waitMs, sleep, repeatable },
       );
     } finally {
       rmSync(file, { force: true });

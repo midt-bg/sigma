@@ -29,7 +29,9 @@ export function withReceipt(sql, label, token) {
 }
 
 /**
- * Send a file that is NOT repeatable — rows inserted, tables renamed — and still survive a false error.
+ * Send a file to D1 and survive a false error — a file that is not repeatable (rows inserted, tables
+ * renamed), and with `repeatable` one that is (a schema file every run re-applies, a chunk that deletes and
+ * re-inserts its own rows).
  *
  * The status polling of `wrangler d1 execute --file` reports „Not currently importing anything" for imports
  * that have finished (above). Repeating a repeatable file is harmless; repeating this kind is not: on Stage
@@ -39,14 +41,19 @@ export function withReceipt(sql, label, token) {
  * So each file carries a receipt with a token of this sending (`withReceipt`), and after an error the
  * receipt is read FIRST: holding the token, the file landed and nothing is sent again; without it, nothing
  * landed and the file is sent again, up to `attempts` times. A receipt that cannot be read is no answer:
- * the run stops rather than guess, because a guess either way can be wrong twice.
+ * the run stops rather than guess, because a guess either way can be wrong twice — unless the file is
+ * `repeatable`, when sending it again is the harmless answer.
+ *
+ * Repeatable files need it too. On Stage on 11.10.2026 wrangler reported the false error on about every
+ * other search-index chunk after publication; one chunk got it three times in a row, the plain repeat
+ * (retryD1) gave up on a file that had landed, and the run had to retry the whole stage.
  *
  * @param {string} sql the file's statements
  * @param {(body: string) => void} send executes the file as given
  * @param {{ label: string, readReceipt: (label: string) => string | null, attempts?: number,
  *           waitMs?: (n: number) => number, sleep?: (ms: number) => void, log?: (line: string) => void,
- *           token?: string }} options `readReceipt` answers the token the target holds for the label, null
- *           when it holds none, and throws when it cannot tell
+ *           token?: string, repeatable?: boolean }} options `readReceipt` answers the token the target holds
+ *           for the label, null when it holds none, and throws when it cannot tell
  */
 export function sendWithReceipt(
   sql,
@@ -59,6 +66,7 @@ export function sendWithReceipt(
     sleep,
     log,
     token = randomUUID(),
+    repeatable = false,
   },
 ) {
   const pause = sleep ?? sleepSync;
@@ -72,10 +80,17 @@ export function sendWithReceipt(
       // The wait comes before the read, so an import that is still landing has landed when it is asked.
       pause(waitMs(attempt));
       let landed;
+      let unreadable = false;
       for (let read = 1; landed === undefined; read++) {
         try {
           landed = readReceipt(label) === token;
         } catch (readError) {
+          if (read >= attempts && repeatable) {
+            // No answer, and a repeat is harmless: send it again.
+            landed = false;
+            unreadable = true;
+            break;
+          }
           if (read >= attempts)
             throw new Error(
               `cannot tell whether ${label} was applied: its receipt could not be read ` +
@@ -96,7 +111,13 @@ export function sendWithReceipt(
         return;
       }
       if (attempt >= attempts) throw error;
-      say(JSON.stringify({ event: 'd1_call_retried', receipt: 'absent', ...event }));
+      say(
+        JSON.stringify({
+          event: 'd1_call_retried',
+          receipt: unreadable ? 'unreadable' : 'absent',
+          ...event,
+        }),
+      );
     }
   }
 }
