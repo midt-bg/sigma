@@ -16,7 +16,7 @@ import { seedVerdicts, fixtureRegistry } from './tr-fixture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-const GUID = 'BE34B4EA-A0C0-4958-B891-B09BFA1B1B2A';
+const GUID = '1E57DA7A-0000-4000-8000-000000000003';
 const OTHER = 'C0FFEE00-0000-4000-8000-000000000001';
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
@@ -97,7 +97,7 @@ before(() => {
     // The entry declaration, listed under the enterprise itself.
     filing({
       folder: '2024',
-      xmlFile: `${GUID}170080.xml`,
+      xmlFile: `${GUID}900101.xml`,
       year: '2024',
       category: 'Членовете на управителните органи на публични предприятия',
       institution: 'ТЕСТ ПОЩИ ЕАД',
@@ -110,7 +110,7 @@ before(() => {
     // is the day job, under the name the company carried then.
     filing({
       folder: '2025',
-      xmlFile: `${GUID}213894.xml`,
+      xmlFile: `${GUID}900202.xml`,
       year: '2024',
       category: 'Членовете на управителните органи на публични предприятия',
       institution: 'Ежегодни декларации',
@@ -179,8 +179,8 @@ test('the annual filed under the day job is filed for the enterprise the registe
   const db = new DatabaseSync(DB, { readOnly: true });
   const institutionOf = (file) =>
     db.prepare('SELECT institution FROM declarations WHERE xml_file = ?').get(file).institution;
-  assert.equal(institutionOf(`${GUID}213894.xml`), 'ТЕСТ ПОЩИ ЕАД');
-  assert.equal(institutionOf(`${GUID}170080.xml`), 'ТЕСТ ПОЩИ ЕАД');
+  assert.equal(institutionOf(`${GUID}900202.xml`), 'ТЕСТ ПОЩИ ЕАД');
+  assert.equal(institutionOf(`${GUID}900101.xml`), 'ТЕСТ ПОЩИ ЕАД');
   // One official, not one per employer.
   assert.equal(
     db

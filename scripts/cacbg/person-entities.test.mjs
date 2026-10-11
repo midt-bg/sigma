@@ -628,7 +628,7 @@ test('conflicting identities in one listing group are quarantined, including amb
 test('the declarant identifier joins documents across offices and yields to two registry identities', () => {
   const { db, filing, name, a, b } = fixture();
   try {
-    const guid = '0008C66A-3C73-47DF-9135-A095CAC6EA07';
+    const guid = '1E57DA7A-0000-4000-8000-000000000001';
     const first = { ...filing(`${guid}1.xml`), identityEvidence: [], folder: '2024', year: 2024 };
     const second = { ...first, xmlFile: `${guid}2.xml`, folder: '2025', work: 'Друга институция' };
     const stranger = { ...first, xmlFile: 'other.xml', person: 'Георги Иванов Примеров' };
