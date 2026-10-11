@@ -23,12 +23,18 @@
 1. **Спрете ходовете.** За всеки поток на production (`sigma-refresh`, `sigma-registry`,
    `sigma-declarations`, `sigma-rebuild`): `wrangler workflows instances list <поток>` и
    `wrangler workflows instances terminate <поток> <id>` за всеки, който върви.
-2. **Паркирайте новия ETL** — махнете графика му, без да качвате код:
+2. **Паркирайте новия ETL** — махнете графика му, без да качвате код. В обвивка с токена на production и
+   без никоя друга `SIGMA_*` променлива:
 
    ```bash
-   SIGMA_ETL_SCHEDULE=off node scripts/wrangler-render.mjs apps/etl/wrangler.toml
+   env | grep '^SIGMA_'                          # празно
+   SIGMA_D1_ID=<id на живия слот> SIGMA_ETL_SCHEDULE=off node scripts/wrangler-render.mjs apps/etl/wrangler.toml
+   grep -E '^name|^crons' apps/etl/wrangler.deploy.toml   # първият name е "sigma-etl"; crons = []
    pnpm --filter @sigma/etl exec wrangler triggers deploy --config wrangler.deploy.toml
    ```
+
+   Рендерирането иска `SIGMA_D1_ID`, иначе спира. Име на друга среда в обвивката (напр. от `.env.local`
+   на dev) би рендерирало нейния Worker и би паркирало него, не production.
 
    Потоците му още отговарят на ръчно пускане, но нищо не тръгва само. Новият ETL не може да се смени с
    ETL-а на предишната версия: миграцията на неговия Durable Object не се връща. Докато трае връщането,
