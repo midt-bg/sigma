@@ -9,11 +9,11 @@ const ready = {
   SUPPRESSION_SALT: 'salt',
   SUPPRESSION_KEY_VERSION: '1',
 };
-const run = (environment, env, { resolved = ID, held = 2 } = {}) =>
+const run = (environment, env, { resolved = ID, named = env.SIGMA_D1_NAME, held = 2 } = {}) =>
   preflight({
     environment,
     env,
-    resolveId: () => resolved,
+    resolveDatabase: () => ({ id: resolved, name: resolved ? named : '' }),
     readDataVersion: () => held,
     codeVersion: 2,
   });
@@ -93,7 +93,7 @@ test('an unknown environment is refused before anything is read', () => {
   const { failures } = preflight({
     environment: 'prod',
     env: ready,
-    resolveId: () => reads++,
+    resolveDatabase: () => (reads++, { id: '', name: '' }),
     readDataVersion: () => reads++,
     codeVersion: 2,
   });
@@ -118,4 +118,16 @@ test('the deploy checks the environment before the schema and names the web Work
   assert.ok(preflightAt < code.indexOf('release-schema.mjs plan'), 'before the schema');
   assert.doesNotMatch(code, /--name "\$SIGMA_WEB_NAME"/, 'production leaves SIGMA_WEB_NAME unset');
   assert.match(code, /secret put LOG_IP_KEY --name "\$\{SIGMA_WEB_NAME:-sigma\}"/);
+});
+
+test('an id that is another database is refused even when the rendered config makes it resolve', () => {
+  // The deploy renders the config from SIGMA_D1_ID, so `wrangler d1 info <name>` answers that very id; only
+  // Cloudflare's name for it tells that staging fell back to production's id.
+  const env = { SIGMA_D1_NAME: 'sigma-stage-blue', SIGMA_D1_ID: ID };
+  const { failures } = run('staging', env, { resolved: ID, named: 'sigma-green' });
+  assert.match(
+    failures.join('\n'),
+    new RegExp(`SIGMA_D1_ID ${ID} is the database sigma-green, not sigma-stage-blue`),
+  );
+  assert.deepEqual(run('staging', env, { resolved: ID, named: 'sigma-stage-blue' }).failures, []);
 });

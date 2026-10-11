@@ -34,11 +34,12 @@ export function codeDataVersion() {
 }
 
 /**
- * The checks, over injected reads, so every refusal is tested without Cloudflare. `resolveId(name)` answers
- * the id the name resolves to ('' when it resolves to none); `readDataVersion()` the version the slot holds
+ * The checks, over injected reads, so every refusal is tested without Cloudflare. `resolveDatabase(name)` answers
+ * the id `wrangler d1 info` resolves the name to and the name Cloudflare gives that database (both '' when it
+ * resolves to none); `readDataVersion()` the version the slot holds
  * (null when it holds none). Returns the failures, which stop the deploy, and the warnings, which do not.
  */
-export function preflight({ environment, env, resolveId, readDataVersion, codeVersion }) {
+export function preflight({ environment, env, resolveDatabase, readDataVersion, codeVersion }) {
   const failures = [];
   const warnings = [];
   const policy = RELEASE_ENVIRONMENTS[environment];
@@ -59,10 +60,18 @@ export function preflight({ environment, env, resolveId, readDataVersion, codeVe
   if (failures.length) return { failures, warnings };
 
   // The name and the id are one setting in two places; a pair that disagrees writes somewhere unintended.
-  const resolved = resolveId(name);
-  if (resolved !== env.SIGMA_D1_ID)
+  // `wrangler d1 info <name>` takes the id from the rendered config, which binds the name to SIGMA_D1_ID, so
+  // the id it answers is SIGMA_D1_ID whenever a config is there: the check that bites is the NAME Cloudflare
+  // gives that id. An environment whose own id is missing falls back to another environment's, and that
+  // database answers with its own name.
+  const resolved = resolveDatabase(name);
+  if (resolved.id !== env.SIGMA_D1_ID)
     failures.push(
-      `SIGMA_D1_NAME ${name} resolves to ${resolved || 'no database'}, but SIGMA_D1_ID is another id: set the two together`,
+      `SIGMA_D1_NAME ${name} resolves to ${resolved.id || 'no database'}, but SIGMA_D1_ID is another id: set the two together`,
+    );
+  else if (resolved.name !== name)
+    failures.push(
+      `SIGMA_D1_ID ${env.SIGMA_D1_ID} is the database ${resolved.name || 'with no name'}, not ${name}: set the two together`,
     );
 
   if (policy.strict) {
@@ -99,12 +108,12 @@ function wranglerReads(name, config) {
       },
     );
   return {
-    resolveId: (db) => {
+    resolveDatabase: (db) => {
       try {
         const info = parseJsonObject(wrangler(['d1', 'info', db, '--json']));
-        return info.uuid ?? info.database_id ?? '';
+        return { id: info.uuid ?? info.database_id ?? '', name: info.name ?? '' };
       } catch {
-        return '';
+        return { id: '', name: '' };
       }
     },
     readDataVersion: () => {
@@ -139,7 +148,7 @@ function main() {
   const { failures, warnings } = preflight({
     environment,
     env: process.env,
-    resolveId: reads.resolveId,
+    resolveDatabase: reads.resolveDatabase,
     readDataVersion: reads.readDataVersion,
     codeVersion: codeDataVersion(),
   });

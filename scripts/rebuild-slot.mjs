@@ -415,6 +415,7 @@ async function main() {
     d1Name: target.name,
     expectedId: target.id,
     resolvedId: info.uuid ?? info.database_id,
+    resolvedName: info.name,
   });
 
   const work = resolve(root, 'data/work/rebuild');
