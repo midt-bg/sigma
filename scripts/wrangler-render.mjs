@@ -222,10 +222,11 @@ function renderToml(text, names) {
 }
 
 /**
- * SIGMA_ETL_SCHEDULE: `on` (or unset) keeps the committed crons; `off` deploys the ETL Worker with
- * `crons = []`, which removes its Cron Triggers — the ETL is parked, its Workflows still answer a manual
- * trigger. Rolling a release back parks the new ETL this way (docs/runbooks/release-rollback.md). Anything
- * else is refused: a typo must not decide whether production keeps refreshing.
+ * SIGMA_ETL_SCHEDULE: `on` (or unset) keeps the committed crons; `off` renders the ETL config with
+ * `crons = []`, so `wrangler triggers deploy` removes its Cron Triggers — the ETL is parked, its Workflows
+ * still answer a manual trigger. Rolling a release back parks the new ETL this way, with no code upload
+ * (docs/runbooks/release-rollback.md). Anything else is refused: a typo must not decide whether
+ * production keeps refreshing.
  */
 function etlSchedule(value) {
   const schedule = value || 'on';
