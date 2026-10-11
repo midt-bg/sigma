@@ -21,7 +21,11 @@ vi.mock('react-router', () => ({
       });
     }
     const bids = url.searchParams.get('bids');
-    const body = bids === '1' ? 'ROWS: single-bid only (2)' : 'ROWS: all contracts (5)';
+    const body = url.searchParams.has('_routes')
+      ? `PARTIAL: ${url.searchParams.get('_routes')} only`
+      : bids === '1'
+        ? 'ROWS: single-bid only (2)'
+        : 'ROWS: all contracts (5)';
     return new Response(body, {
       status: 200,
       headers: {
@@ -123,6 +127,24 @@ describe('app.ts edge cache middleware', () => {
     expect(broad.edge).toBe('MISS');
     expect(broad.body).toContain('all contracts');
     expect(broad.body).not.toContain('single-bid only'); // the poisoning the fix prevents
+  });
+
+  it('never stores nor serves a partial `_routes` answer under the page key', async () => {
+    // One anonymous GET for a subset of the loaders must not become the data every visitor's navigation
+    // to that page receives.
+    const partial = await get('https://x/contracts.data?_routes=root');
+    expect(partial.edge).toBe('BYPASS');
+    expect(partial.body).toContain('PARTIAL: root only');
+    expect(fakeCache.store.size).toBe(0);
+
+    const whole = await get('https://x/contracts.data');
+    expect(whole.edge).toBe('MISS');
+    expect(whole.body).toContain('all contracts');
+
+    // …and the cached whole answer is not handed to a partial request either.
+    const again = await get('https://x/contracts.data?_routes=root');
+    expect(again.edge).toBe('BYPASS');
+    expect(again.body).toContain('PARTIAL: root only');
   });
 
   it('never caches a non-ok (404) response — the invariant cache-key.ts relies on (#221/#213)', async () => {
