@@ -1046,3 +1046,34 @@ test('a receipt read that fails for another reason stops the sender', (t) => {
   assert.throws(() => send('publish', 'SELECT 1;'), /cannot tell whether publish was applied/);
   assert.deepEqual(w.calls, ['file', 'command', 'command', 'command']);
 });
+
+test('a repeatable file is sent again when its receipt cannot be read, with the given environment', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-sender-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const envs = [];
+  const w = scriptedWrangler({
+    file: [failed('Not currently importing anything'), ''],
+    command: [failed('fetch failed'), failed('fetch failed'), failed('fetch failed')],
+  });
+  const send = wranglerFileSender({
+    d1Name: 'sigma-test',
+    remote: true,
+    dir,
+    cwd: dir,
+    waitMs: () => 0,
+    env: { MARK: 'job-env' },
+    repeatable: true,
+    exec: (cmd, args, opts) => {
+      envs.push(opts.env?.MARK);
+      return w.exec(cmd, args, opts);
+    },
+    sleep: () => {},
+  });
+  t.mock.method(console, 'error', () => {});
+  send('reindex-officials-001', 'SELECT 1;');
+  assert.deepEqual(w.calls, ['file', 'command', 'command', 'command', 'file']);
+  assert.ok(
+    envs.every((e) => e === 'job-env'),
+    'wrangler runs with the job environment',
+  );
+});

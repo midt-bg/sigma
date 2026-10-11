@@ -1,13 +1,18 @@
 // Shared Node pipeline for the Container and the existing Actions job. Local mode never calls Wrangler.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './cacbg/corpus.mjs';
 import { retryD1 } from './d1-retry.mjs';
 import { importSql } from './cacbg/import-sql.mjs';
 import { progress } from './cacbg/progress.mjs';
-import { assertD1TargetAuthorized, parseWranglerJson, TABLES } from './ship-related-persons.mjs';
+import {
+  assertD1TargetAuthorized,
+  parseWranglerJson,
+  TABLES,
+  wranglerFileSender,
+} from './ship-related-persons.mjs';
 const flag = (n) => process.argv.includes(`--${n}`);
 const value = (n) => {
   const i = process.argv.indexOf(`--${n}`);
@@ -93,7 +98,8 @@ const wrangler = (args, output = false) =>
   });
 // A call that converges — a schema file every run re-applies, a chunk that deletes and re-inserts its own
 // rows, an export, a read — survives wrangler's import-status race and D1's short faults by being repeated
-// (scripts/d1-retry.mjs). The one write that does not converge, the column added below, stays `wrangler()`.
+// (scripts/d1-retry.mjs). Files go through `repeatableFile` below. The one write that does not converge, the column
+// added below, stays `wrangler()`.
 const repeatable = (args, output = false, before = () => {}) =>
   retryD1(
     () => {
@@ -104,6 +110,22 @@ const repeatable = (args, output = false, before = () => {}) =>
   );
 const d1 = process.env.SIGMA_D1_NAME;
 mkdirSync(work, { recursive: true });
+// A FILE that converges goes with its receipt (scripts/d1-retry.mjs): wrangler's false error after the file
+// landed is answered by the receipt instead of costing an attempt — on Stage it came on about every other
+// search-index chunk, three times in a row once, and the plain repeat gave up on a file that had landed. A
+// receipt that cannot be read is answered by sending the file again, which is harmless for these.
+const sendFile = remote
+  ? wranglerFileSender({
+      d1Name: d1,
+      remote: true,
+      dir: work,
+      cwd: resolve('apps/web'),
+      env,
+      repeatable: true,
+    })
+  : null;
+const repeatableFile = (label, sql) => sendFile(label, sql);
+const migration = (name) => readFileSync(resolve(`packages/db/migrations/${name}.sql`), 'utf8');
 if (remote) {
   if (!flag('yes')) throw Error('--remote requires --yes');
   const info = JSON.parse(repeatable(['d1', 'info', d1, '--json'], true));
@@ -173,25 +195,15 @@ if (doing('snapshot') && remote) {
     '0018_person_entities',
     '0022_person_relatives',
   ])
-    repeatable([
-      'd1',
-      'execute',
-      d1,
-      '--remote',
-      '--yes',
-      '--file',
-      resolve(`packages/db/migrations/${name}.sql`),
-    ]);
+    repeatableFile(name, migration(name));
   // Observation tables are idempotent; add the role boundary once, independently of job retries.
-  const registrySchema = join(work, 'registry-identity-schema.sql');
-  writeFileSync(
-    registrySchema,
-    readFileSync('packages/db/migrations/0017_registry_identity_observations.sql', 'utf8').replace(
+  repeatableFile(
+    'registry-identity-schema',
+    migration('0017_registry_identity_observations').replace(
       'ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT;',
       '',
     ),
   );
-  repeatable(['d1', 'execute', d1, '--remote', '--yes', '--file', registrySchema]);
   const columns = parseWranglerJson(
     repeatable(
       ['d1', 'execute', d1, '--remote', '--json', '--command', 'PRAGMA table_info(registry_roles)'],
@@ -209,15 +221,7 @@ if (doing('snapshot') && remote) {
       'ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT',
     ]);
   for (const name of ['0019_registry_scoped_birthdates', '0020_registry_company_history'])
-    repeatable([
-      'd1',
-      'execute',
-      d1,
-      '--remote',
-      '--yes',
-      '--file',
-      resolve(`packages/db/migrations/${name}.sql`),
-    ]);
+    repeatableFile(name, migration(name));
   const tables = [
     ...new Set([
       'bidders',
@@ -322,11 +326,7 @@ if (doing('publish') && remote) {
       ['--import', './scripts/cacbg/register-ts.mjs', 'scripts/emit-refresh-group.mjs', group],
       { env: { ...env, SIGMA_OFFICIAL_PERSON_IDS_JSON: '', ...extraEnv }, encoding: 'utf8' },
     );
-  const applyReindex = (name, sql) => {
-    const file = join(work, `${name}.sql`);
-    writeFileSync(file, sql);
-    repeatable(['d1', 'execute', d1, '--remote', '--yes', '--file', file]);
-  };
+  const applyReindex = (name, sql) => repeatableFile(name, sql);
 
   applyReindex('reindex-entities', emitRefreshGroup('entity-search-index'));
 
@@ -366,15 +366,10 @@ if (doing('publish') && remote) {
      )`,
   ]);
   // Everyone else with a page, after the officials are final.
-  repeatable([
-    'd1',
-    'execute',
-    d1,
-    '--remote',
-    '--yes',
-    '--file',
-    resolve('scripts/person-search-index.sql'),
-  ]);
+  repeatableFile(
+    'person-search-index',
+    readFileSync(resolve('scripts/person-search-index.sql'), 'utf8'),
+  );
   if (r2) {
     const stamp = await corpus.get(CORPUS_STAMP);
     if (!stamp || digest(stamp) !== digest(sourceStamp))
