@@ -354,13 +354,27 @@ test('a generation’s name anywhere else is a defect, not drift', () => {
   const ledger = names.filter((n) => n < '0022');
   for (const [table, from, target, migration] of [
     // a shipped table left pointing at the staged generation
-    ['interest_link_evidence', 'interest_links', 'rp_next_interest_links', '0009_interest_link_evidence'],
+    [
+      'interest_link_evidence',
+      'interest_links',
+      'rp_next_interest_links',
+      '0009_interest_link_evidence',
+    ],
     // a table the ship has nothing to do with
     ['contracts', 'tenders', 'rp_prev_tenders', '0000_init'],
     // the table the rule is for, but at the staged generation
-    ['related_persons_internal', 'declarations', 'rp_next_declarations', '0003_related_persons_foundation'],
+    [
+      'related_persons_internal',
+      'declarations',
+      'rp_next_declarations',
+      '0003_related_persons_foundation',
+    ],
   ]) {
-    const plan = planSchema({ migrations, rows: pointAt(stageShape(), table, target, from), ledger });
+    const plan = planSchema({
+      migrations,
+      rows: pointAt(stageShape(), table, target, from),
+      ledger,
+    });
     assert.equal(plan.ok, false, `${table} → ${target}`);
     assert.match(
       plan.refusals.join('\n'),
