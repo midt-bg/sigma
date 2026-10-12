@@ -74,6 +74,31 @@ describe('TrendChart', () => {
     expect(c.querySelector('text.label-partial')!.textContent).toBe('частично');
   });
 
+  it('draws a partial first year as a dashed, labelled head into the solid line', () => {
+    const first = { ...point('2022', 10), partialStart: true };
+    const c = render(
+      <TrendChart points={[first, point('2023', 100), point('2024', 100)]} granularity="year" />,
+    );
+    // The solid line and its area start at the first complete year…
+    expect(c.querySelector('path.line')!.getAttribute('d')).toBe('M380.0,28.0L760.0,28.0');
+    expect(c.querySelector('path.area')!.getAttribute('d')).toBe(
+      'M380.0,28.0L760.0,28.0L760.0,218L380.0,218Z',
+    );
+    // …and the partial first year joins it dashed, marked and named.
+    expect(c.querySelector('path.line-partial')!.getAttribute('d')).toBe('M0.0,199.0L380.0,28.0');
+    const dot = c.querySelector('circle.dot-partial')!;
+    expect([dot.getAttribute('cx'), dot.getAttribute('cy')]).toEqual(['0', '199']);
+    expect(c.querySelector('text.label-partial')!.textContent).toBe('частично');
+  });
+
+  it('draws two points that are both partial without a solid line', () => {
+    const first = { ...point('2025', 10), partialStart: true };
+    const c = render(<TrendChart points={[first, point('2026', 5, true)]} granularity="year" />);
+    expect(c.querySelector('path.line')).toBeNull();
+    expect(c.querySelector('path.area')).toBeNull();
+    expect(c.querySelectorAll('path.line-partial')).toHaveLength(2);
+  });
+
   it('keeps a complete series solid to its last point', () => {
     const c = render(
       <TrendChart points={[point('2023', 100), point('2024', 50)]} granularity="year" />,

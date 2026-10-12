@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { BASE_SCHEMA } from './base-schema';
 
 // Issue #247, second reported contract. The стотинки band added in #298 measures against the PROCEDURE
 // estimate, so it only fires when the whole procedure is one lot. On a multi-lot procedure the dropped
@@ -19,7 +20,6 @@ import { describe, expect, it } from 'vitest';
 // call-off sits at ~1x the procedure estimate and is spared.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // The амендмент columns refresh-slice.sql/promote-amendments.sql now write into served `amendments`
@@ -63,7 +63,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
   const dir = mkdtempSync(resolve(tmpdir(), `sigma-lotband-${label}-`));
   const dbPath = resolve(dir, 'test.sqlite');
   try {
-    readScript(dbPath, schemaPath);
+    for (const file of BASE_SCHEMA) readScript(dbPath, file);
     readScript(dbPath, migration2Path);
     readScript(dbPath, migration3Path);
     readScript(dbPath, migration6Path);

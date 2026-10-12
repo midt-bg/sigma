@@ -180,6 +180,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                       totalEur={competition.totals.valueEur}
                       singleOffer={competition.totals.singleOffer}
                       contracts={competition.totals.contracts}
+                      scopeLabel="на договорите с известен брой оферти"
                     />
                     {competition.topConcentration && (
                       <p className="small muted">

@@ -177,6 +177,27 @@ describe('PersonRolesTables', () => {
     expect(row.querySelector('a[href="/companies/977777777"]')!.textContent).toBe('ФОНД ТЕСТ ЕАД');
     expect(row.textContent).toContain('държавно');
   });
+
+  it('names the seat in the organization the person files for as a held position, not public property', () => {
+    const r: PersonRole = {
+      company: {
+        name: 'СДРУЖЕНИЕ ТЕСТ',
+        eik: '000000017',
+        href: '/companies/000000017',
+        office: true,
+      },
+      role: 'governing_body',
+      share: null,
+      sharePct: null,
+      addedOn: '2022-02-02',
+      removedOn: null,
+      entryNumber: 'f1',
+      fetchedAt: '2026-09-10T03:00:00Z',
+    };
+    const row = render(<PersonRolesTables roles={[r]} />).querySelector('tbody tr')!;
+    expect(row.textContent).toContain('заемана длъжност');
+    expect(row.textContent).not.toMatch(/държавно|общинско/);
+  });
 });
 
 describe('RegistrySource', () => {

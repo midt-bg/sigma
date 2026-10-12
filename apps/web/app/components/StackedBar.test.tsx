@@ -27,11 +27,12 @@ const slice = (over: Partial<ProcedureSlice> = {}): ProcedureSlice => ({
   contracts: 2,
   valueEur: 100,
   sharePct: 0.25,
+  contractSharePct: 0.5,
   ...over,
 });
 
-function render(slices: ProcedureSlice[]) {
-  act(() => root.render(<StackedBar slices={slices} />));
+function render(slices: ProcedureSlice[], basis?: 'value' | 'contracts') {
+  act(() => root.render(<StackedBar slices={slices} basis={basis} />));
   return container;
 }
 
@@ -67,5 +68,33 @@ describe('StackedBar', () => {
     expect(legend.textContent).toContain('Открита процедура');
     expect(legend.textContent).toContain('Пряко договаряне');
     expect(legend.textContent).not.toContain('Под прага');
+  });
+
+  it('by contracts, sizes the segments by their share of the contracts and gives counts, not percentages', () => {
+    const c = render(
+      [
+        slice({ contracts: 3, contractSharePct: 0.75 }),
+        // a group whose contracts carry no amount: no value share, still part of the count
+        slice({
+          key: 'unknown',
+          label: 'Неизвестна',
+          contracts: 1,
+          valueEur: 0,
+          sharePct: 0,
+          contractSharePct: 0.25,
+        }),
+        slice({ key: 'other', label: 'Друго', contracts: 0, contractSharePct: 0 }),
+      ],
+      'contracts',
+    );
+
+    const segments = [...c.querySelectorAll<HTMLElement>('.hbar > span')];
+    expect(segments.map((segment) => segment.style.width)).toEqual(['75%', '25%']);
+    expect(segments[1]!.title).toBe('Неизвестна — 1 договор');
+    const legend = c.querySelector('.hbar-legend')!.textContent;
+    expect(legend).toContain('Открита процедура · 3 договора');
+    expect(legend).toContain('Неизвестна · 1 договор');
+    expect(legend).not.toContain('Друго');
+    expect(legend).not.toContain('%');
   });
 });

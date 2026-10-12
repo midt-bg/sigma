@@ -206,11 +206,15 @@ export function tradeRegisterLegalForm(name: string): string | null {
 
 /**
  * Display name for a winning entity. A consortium row holds a `;`-joined member list → show the
- * first member + „и др." (the **Обединение** badge is rendered separately by the caller). Companies
- * pass through unchanged — source names keep their quoting/casing, because that is the source truth.
+ * first member + „и др." (the **Обединение** badge is rendered separately by the caller); so does the
+ * list of a framework agreement's parties. Companies pass through unchanged — source names keep their
+ * quoting/casing, because that is the source truth.
  */
-export function entityName(name: string, kind: 'company' | 'consortium'): string {
-  if (kind === 'consortium' && name.includes(';')) {
+export function entityName(
+  name: string,
+  kind: 'company' | 'consortium' | 'framework_parties',
+): string {
+  if ((kind === 'consortium' || kind === 'framework_parties') && name.includes(';')) {
     const first = (name.split(';')[0] ?? '').trim();
     if (first) return `${first} и др.`;
   }

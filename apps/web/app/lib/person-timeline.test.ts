@@ -6,8 +6,16 @@ import { describe, expect, it } from 'vitest';
 import type { ConflictLink, PersonDeclaration, PersonRole } from '@sigma/api-contract';
 import type { InterestObservation, TimelineContracts } from '@sigma/db';
 import type { LoadedPersonProfile } from './person-profile.server';
-import { emptyActivity } from './person-profile.test-support';
-import { timelineCompanies, timelineYears } from './person-timeline';
+import { emptyActivity, emptyIntervals } from './person-profile.test-support';
+import {
+  heldSeatEiks,
+  insideSpans,
+  officeSpans,
+  packLanes,
+  timelineCompanies,
+  timelineYears,
+  yearSpans,
+} from './person-timeline';
 
 const role = (eik: string, name: string, over: Partial<PersonRole> = {}): PersonRole => ({
   company: { eik, name, href: null },
@@ -69,6 +77,7 @@ function profile(over: {
   observations?: InterestObservation[];
   reads?: { eik: string; asOf: string }[];
   declarations?: PersonDeclaration[];
+  publicStakes?: LoadedPersonProfile['publicStakes'];
 }): LoadedPersonProfile {
   return {
     person: over.roles
@@ -94,12 +103,71 @@ function profile(over: {
     declarations: over.declarations ?? [],
     activity: emptyActivity,
     totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    timelineIntervals: emptyIntervals,
+    publicStakes: over.publicStakes ?? {},
     tieLayout: null,
     aliases: [],
     relatives: [],
     namedBy: [],
   };
 }
+
+// A seat in a company with an established public stake, however small, stands with the offices; a share in
+// one does not, whoever else owns it.
+describe('a seat in a company with a public stake', () => {
+  const minority = {
+    listed: null,
+    derived: null,
+    direct: [{ name: 'Тест Банка', kind: 'bnb' as const, pct: 25 }],
+    indirect: [],
+  };
+  const q = profile({
+    links: [
+      { eik: '601', company: 'СЪВЕТ АД', relation: 'manages' } as ConflictLink,
+      { eik: '602', company: 'ДЯЛ АД', relation: 'owns' } as ConflictLink,
+    ],
+    roles: [
+      role('601', 'СЪВЕТ АД', { role: 'board_of_directors' }),
+      role('603', 'СЪДРУЖНИК ООД', { role: 'partner' }),
+      role('604', 'ЧАСТНО ООД'),
+    ],
+    publicStakes: { '601': minority, '602': minority, '603': minority },
+  });
+  const held = Object.fromEntries(timelineCompanies(q).map((c) => [c.eik, c.heldSeat]));
+
+  it('puts a seat with the offices, and a share with the companies', () => {
+    expect(held).toEqual({ '601': true, '602': false, '603': false, '604': false });
+    expect(timelineCompanies(q)[0]!.eik).toBe('601');
+    expect(timelineCompanies(q)[0]!.publicStake).toEqual(minority);
+  });
+});
+
+describe('heldSeatEiks', () => {
+  const stake = {
+    listed: null,
+    derived: null,
+    direct: [{ name: 'О', kind: 'municipal' as const, pct: 25 }],
+    indirect: [],
+  };
+  it('names the companies with a public stake in which the person holds a seat and no share', () => {
+    expect(
+      heldSeatEiks(
+        [
+          role('701', 'СЪВЕТ АД', { role: 'board_of_directors' }),
+          role('702', 'ДЯЛ ООД', { role: 'partner' }),
+          role('702', 'ДЯЛ ООД', { role: 'manager' }),
+          role('704', 'ЧАСТНО ООД'),
+        ],
+        [
+          { eik: '701', relation: 'manages' } as ConflictLink,
+          { eik: '703', relation: 'owns' } as ConflictLink,
+        ],
+        { '701': stake, '702': stake, '703': stake, '705': { ...stake, direct: [] } },
+      ),
+    ).toEqual(['701']);
+    expect(heldSeatEiks([], [], undefined)).toEqual([]);
+  });
+});
 
 describe('timelineCompanies', () => {
   const p = profile({
@@ -126,6 +194,28 @@ describe('timelineCompanies', () => {
 
   it('puts declared links first, then the most contracts in office years, then the name', () => {
     expect(companies.map((c) => c.eik)).toEqual(['111', '444', '222', '555', '333']);
+  });
+
+  it('puts the seat in the organization the person files for with the offices, as a public enterprise', () => {
+    const q = profile({
+      links: [],
+      roles: [
+        role('888', 'СДРУЖЕНИЕ ТЕСТ', {
+          role: 'governing_body',
+          company: { eik: '888', name: 'СДРУЖЕНИЕ ТЕСТ', href: null, office: true },
+        }),
+        role('111', 'ЯНТАР ООД'),
+      ],
+      contracts: [],
+      observations: [],
+      reads: [],
+      declarations: [],
+    });
+    const list = timelineCompanies(q);
+    expect(list.map((c) => [c.eik, c.publicEnterprise])).toEqual([
+      ['888', true],
+      ['111', false],
+    ]);
   });
 
   it('keeps one entry per company, linked to its profile when it has one', () => {
@@ -182,5 +272,79 @@ describe('timelineYears', () => {
       reads: [{ eik: '222', asOf: '2026-09-01T03:00:00Z' }],
     });
     expect(timelineYears(p, timelineCompanies(p))).toEqual([2019, 2020, 2021]);
+  });
+});
+
+// The timeline as intervals.
+describe('officeSpans', () => {
+  const doc = (year: string, type: string, declaredOn: string | null = null) =>
+    ({
+      id: `${year}-${type}`,
+      year,
+      template: 'assets',
+      type,
+      declaredOn,
+      submittedOn: null,
+      institution: 'Община Тест',
+      position: 'Съветник',
+      url: '',
+      companyEiks: [],
+    }) satisfies PersonDeclaration;
+
+  it('splits at a year without a filing and anchors only the edges a declaration dates', () => {
+    expect(
+      officeSpans([
+        doc('2017', 'Entry', '2017-04-20'),
+        doc('2018', 'Annualy'),
+        doc('2020', 'Annualy'),
+        doc('2021', 'Vacate', '2021-08-12'),
+      ]),
+    ).toEqual([
+      { from: '2017-01-01', to: '2018-12-31', knownStart: '2017-04-20', knownEnd: null },
+      { from: '2020-01-01', to: '2021-08-12', knownStart: null, knownEnd: '2021-08-12' },
+    ]);
+  });
+
+  it('ignores a filing without a position or a year, as the red numbers do', () => {
+    expect(officeSpans([{ ...doc('2019', 'Annualy'), position: '' }, doc('', 'Annualy')])).toEqual(
+      [],
+    );
+  });
+
+  it('does not anchor an edge with a filing dated in another year', () => {
+    expect(officeSpans([doc('2019', 'Vacate', '2020-01-15')])).toEqual([
+      { from: '2019-01-01', to: '2019-12-31', knownStart: null, knownEnd: null },
+    ]);
+  });
+});
+
+describe('packLanes', () => {
+  const pr = (id: string, announcedAt: string | null, signedAt: string) => ({
+    id,
+    announcedAt,
+    signedAt,
+  });
+  it('puts a procurement in the first row it fits after the previous one ends', () => {
+    const lanes = packLanes([
+      pr('b', '2020-03-01', '2020-05-01'),
+      pr('a', '2020-01-01', '2020-02-01'),
+      pr('c', '2020-02-10', '2020-04-01'),
+      pr('d', null, '2020-06-15'),
+    ]);
+    expect(lanes.map((l) => l.map((p) => p.id))).toEqual([['a', 'b', 'd'], ['c']]);
+  });
+});
+
+describe('yearSpans and insideSpans', () => {
+  it('joins consecutive years and tests a day against inclusive spans', () => {
+    const spans = yearSpans(['2020', '2019', '2022', '2019']);
+    expect(spans).toEqual([
+      ['2019-01-01', '2020-12-31'],
+      ['2022-01-01', '2022-12-31'],
+    ]);
+    expect(insideSpans(spans, '2020-12-31')).toBe(true);
+    expect(insideSpans(spans, '2021-06-01')).toBe(false);
+    expect(insideSpans(spans, null)).toBe(false);
+    expect(insideSpans(undefined, '2020-01-01')).toBe(false);
   });
 });

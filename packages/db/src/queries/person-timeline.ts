@@ -1,5 +1,5 @@
 import { declarationYearDisputed } from './declaration-source';
-import { cleanName } from '@sigma/shared';
+import { cleanName, officeInstitution } from '@sigma/shared';
 import { personActivityScope } from './person-activity';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -33,9 +33,10 @@ export async function getPersonTimeline(
   db: D1Database,
   indent: string | null,
   personIds: string[],
+  heldSeats: string[] = [],
 ) {
   const ids = [...new Set(personIds)];
-  const { cte, params } = personActivityScope(indent, ids);
+  const { cte, params } = personActivityScope(indent, ids, heldSeats);
   const [contracts, observations, reads, buyers, offices, authorities] = await Promise.all([
     db
       .prepare(
@@ -54,10 +55,11 @@ export async function getPersonTimeline(
         AND ${declarationYearDisputed('il', 'o.reported_year')}) disputed,
       CASE WHEN il.interest_class='family_ownership' THEN 'family' ELSE 'self' END scope
       FROM interest_links il JOIN interest_link_observations o ON o.link_key=il.link_key
-      WHERE il.person_id IN (SELECT value FROM json_each(?)) AND ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
+      WHERE il.person_id IN (SELECT value FROM json_each(?1)) AND ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
+        AND NOT (il.relation IS 'manages' AND il.eik IN (SELECT value FROM json_each(?2)))
       ORDER BY il.eik,o.reported_year,o.declaration_id,o.kind,o.timing`,
       )
-      .bind(JSON.stringify(ids))
+      .bind(JSON.stringify(ids), JSON.stringify(heldSeats))
       .all<InterestObservation>(),
     db
       .prepare(
@@ -84,15 +86,19 @@ export async function getPersonTimeline(
       }>(),
     db
       .prepare(
-        `SELECT DISTINCT institution FROM declarations WHERE person_id IN (SELECT value FROM json_each(?)) AND institution IS NOT NULL`,
+        `SELECT DISTINCT institution, category FROM declarations WHERE person_id IN (SELECT value FROM json_each(?)) AND institution IS NOT NULL`,
       )
       .bind(JSON.stringify(ids))
-      .all<{ institution: string }>(),
-    db
-      .prepare(
-        'SELECT a.id,a.name FROM authorities a JOIN authority_totals t ON t.authority_id=a.id',
-      )
-      .all<{ id: string; name: string }>(),
+      .all<{ institution: string; category: string | null }>(),
+    // Every authority's name, only to match the declared institutions below: a person known only from
+    // the register (no declaration ids) has none, and those are most of the profiles.
+    ids.length
+      ? db
+          .prepare(
+            'SELECT a.id,a.name FROM authorities a JOIN authority_totals t ON t.authority_id=a.id',
+          )
+          .all<{ id: string; name: string }>()
+      : { results: [] as { id: string; name: string }[] },
   ]);
   // Exact organisation names only. A locality (e.g. „Несебър“) cannot identify a municipality.
   const key = (name: string) =>
@@ -102,7 +108,13 @@ export async function getPersonTimeline(
       .replace(/[„“”"«»]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
-  const institutionProfiles = offices.results.map(({ institution }) => {
+  // The institutions as the profile shows them: a seat in an organization's bodies under the organization, not
+  // under the workplace the filing names (officeInstitution).
+  const categories = offices.results.map((o) => o.category);
+  const shown = [
+    ...new Set(offices.results.map((o) => officeInstitution(o, categories)?.name ?? o.institution)),
+  ];
+  const institutionProfiles = shown.map((institution) => {
     const matches = authorities.results.filter((a) => key(a.name) === key(institution));
     return { institution, authorityId: matches.length === 1 ? matches[0]!.id : null };
   });

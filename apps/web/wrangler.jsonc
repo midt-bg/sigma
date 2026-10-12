@@ -102,5 +102,8 @@
     "head_sampling_rate": 1,
     "logs": { "enabled": true, "head_sampling_rate": 1, "persist": true, "invocation_logs": false },
     "traces": { "enabled": false, "persist": true, "head_sampling_rate": 1 },
+    // Real-time Issues (wrangler 4.142+): a 5xx or an uncaught exception becomes an issue that the account's
+    // „Real-Time Issue" notification sends by e-mail — the overloaded-database 500s went unnoticed for days.
+    "issues": { "enabled": true },
   },
 }

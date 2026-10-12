@@ -225,13 +225,7 @@ export function categoryForDivision(division: string | null | undefined): CpvCat
 // non-competitive bucket, the one worth the reader's eye). Counts in comments are corpus tallies.
 
 export type ProcedureGroupKey =
-  | 'open'
-  | 'competition'
-  | 'collection'
-  | 'negotiated_invited'
-  | 'direct'
-  | 'other'
-  | 'unknown';
+  'open' | 'competition' | 'collection' | 'negotiated_invited' | 'direct' | 'other' | 'unknown';
 
 export interface ProcedureGroup {
   key: ProcedureGroupKey;
@@ -383,6 +377,11 @@ export const EU_SCOREBOARD: {
   singleBidder: { good: 0.1, bad: 0.2 },
   directAward: { good: 0.05, bad: 0.1 },
 };
+
+/** The fewest contracts behind a share before it is ranked (/competition) or rated against the EU
+ *  thresholds (an authority's page): below it one or two contracts decide the share, and a verdict
+ *  would be noise about a named body. One number for both surfaces so they never disagree. */
+export const COMPETITION_MIN_CONTRACTS = 20;
 
 /** Rate a share (0..1) where lower is better against a good/bad band. Deterministic; values strictly
  *  inside the band are 'mid'. */

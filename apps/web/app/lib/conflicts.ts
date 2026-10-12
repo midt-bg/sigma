@@ -34,6 +34,16 @@ export function declaredStakeNoun(links: { relation: string }[]): string {
     : 'собствен дял';
 }
 
+/** The chip in a company's header: what the officials declared about it, never more than every link says.
+ *  Management is not a stake, so a company whose officials declared only that they manage it says so. */
+export function declarantsChip(relations: readonly string[]): string {
+  if (relations.every((r) => r === 'related')) return 'дял на свързано лице';
+  if (relations.every((r) => r === 'manages')) return 'декларирано управление от длъжностно лице';
+  return relations.some((r) => r === 'manages' || r === 'owns+manages')
+    ? 'деклариран дял или управление на длъжностно лице'
+    : 'деклариран дял на длъжностно лице';
+}
+
 // Defense in depth: the slug is base64url and the ЕИК numeric today (so encoding is a no-op), but if either
 // assumption ever drifts, an un-escaped `/`, `?` or `#` would break routing and the cache key. Escape the
 // dynamic segments unconditionally (ydimitrof #226, conflicts.ts).
@@ -110,10 +120,17 @@ export interface ConflictPersonRow {
     self: number;
     family: number;
     registry?: number;
-    /** Registry group: whether the register records an ownership or only a management of the company. */
-    registryRole?: 'owner' | 'manager';
+    /** Registry group: whether the register records an ownership, a management, or only a seat on a
+     *  collegial body (съвет на директорите, управителен съвет, орган на управление) of the company. */
+    registryRole?: 'owner' | 'manager' | 'board';
     /** A declared management of the company, with no declared stake in it. */
     manages?: number;
+    /** A declared management the register records only as a seat on a collegial body (or not at all): listed
+     *  with the seats, under „всички роли“. */
+    board?: number;
+    /** Registry group: what the person's declarations say about the company, where they name it — a declared
+     *  tie Sigma does not count (a stake, a management, a relative's stake), or an entry naming it. */
+    declared?: 'stake' | 'manages' | 'family' | 'named' | null;
     /** Registry group: the years whose annual declaration does not name the registered company. */
     missingYears?: string[];
   }[];
@@ -138,6 +155,15 @@ export interface ConflictPersonRow {
   /** ≥1 contract is signed in an observed year with institution and position data for the person. */
   hasContemporaneous: boolean;
   declaredInstitutions?: DeclaredInstitution[];
+  /** The row's figures without the seats on collegial bodies — registered, or declared and confirmed only as
+   *  such a seat; null when the person has nothing else. Absent on a row with no such seat. */
+  direct?: {
+    companyCount: number;
+    contractCount: number;
+    contractValueEur: number | null;
+    contemporaneousValueEur: number | null;
+    hasContemporaneous: boolean;
+  } | null;
 }
 
 /** The NEXUS_ORDER key of a SINGLE link, as an orderable tuple (strongest first). Mirrors the DB's
@@ -316,9 +342,13 @@ export function officialRole(o: {
 export type ConflictStakeFilter = 'self' | 'family' | 'registry';
 export type ConflictSignal = 'own' | 'window';
 export type ConflictSort = 'period' | 'total' | 'contracts';
+/** Which registry roles the list covers: ownership and sole management, or also the seats on collegial
+ *  bodies. The default is the first; `?role=all` adds the second. */
+export type ConflictRoleScope = 'direct' | 'all';
 
 export interface ConflictListFilters {
   stake: ConflictStakeFilter | null;
+  role: ConflictRoleScope;
   signals: ConflictSignal[];
   /** Institution keys (see `institutionKey`). */
   institutions: string[];
@@ -332,6 +362,7 @@ export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
   const sort = sp.get('sort');
   return {
     stake: stake === 'self' || stake === 'family' || stake === 'registry' ? stake : null,
+    role: sp.get('role') === 'all' ? 'all' : 'direct',
     signals: getMulti(sp, 'signal').filter(
       (s): s is ConflictSignal => s === 'own' || s === 'window',
     ),
@@ -391,9 +422,112 @@ const rowInstitutions = (r: ConflictPersonRow): DeclaredInstitution[] =>
 
 const matchText = (s: string) => s.replace(/\s+/g, ' ').trim().toLocaleLowerCase('bg');
 
+/**
+ * The rows in the chosen role scope. `all` is everything. `direct` keeps every declared row and, of the
+ * registry rows, the ownership and sole management: a person the register records only on a collegial
+ * body leaves the list, and one with both keeps only the companies they own or manage, with the figures
+ * of those companies alone. A seat is not ownership, and the company's contracts beside a board member's
+ * name read as money that reached them.
+ */
+export function applyRoleScope<T extends ConflictPersonRow>(
+  rows: T[],
+  scope: ConflictRoleScope,
+): T[] {
+  if (scope === 'all') return rows;
+  return rows.flatMap((r) => {
+    if (r.direct === undefined) return [r];
+    if (!r.direct) return [];
+    return [
+      {
+        ...r,
+        ...r.direct,
+        companies: r.companies?.filter((c) => c.registryRole !== 'board' && !c.board),
+      },
+    ];
+  });
+}
+
+type RowFigures = Pick<
+  ConflictPersonRow,
+  | 'companyCount'
+  | 'contractCount'
+  | 'contractValueEur'
+  | 'contemporaneousValueEur'
+  | 'hasContemporaneous'
+>;
+const sumNullable = (a: number | null, b: number | null) => (a == null ? b : b == null ? a : a + b);
+function addFigures(a: RowFigures | null, b: RowFigures | null): RowFigures | null {
+  if (!a || !b) return a ?? b;
+  return {
+    companyCount: a.companyCount + b.companyCount,
+    contractCount: a.contractCount + b.contractCount,
+    contractValueEur: sumNullable(a.contractValueEur, b.contractValueEur),
+    contemporaneousValueEur: sumNullable(a.contemporaneousValueEur, b.contemporaneousValueEur),
+    hasContemporaneous: a.hasContemporaneous || b.hasContemporaneous,
+  };
+}
+const offices = (list: DeclaredInstitution[] = []) =>
+  list.flatMap((i) => [
+    { institution: i.institution, position: null, year: null },
+    ...i.positions.map((position) => ({ institution: i.institution, position, year: null })),
+    ...i.years.map((year) => ({ institution: i.institution, position: null, year })),
+  ]);
+
+/**
+ * One row per person. A person with a declared tie and companies the register alone records in arrives as
+ * two parts: the declared row, and the registry row with only the companies the declared one does not hold
+ * (`getRegistryRolePersonRows`). They leave as one row — the declared part leads, every company once, and the
+ * figures of all of them. Without this the declared tie hid the rest: a person who declared one company lost
+ * from the list every other company the register records them in.
+ *
+ * The parts are disjoint by company, so their figures add up. Run it after the role scope and the stake
+ * filter, which choose between the parts, and before the other filters, which ask about the person.
+ */
+export function mergePersonParts<T extends ConflictPersonRow>(rows: T[]): T[] {
+  const people = new Map<string, T>();
+  for (const row of rows) {
+    const key = row.personIdentity ?? row.officialSlug;
+    const prev = people.get(key);
+    if (!prev) {
+      people.set(key, row);
+      continue;
+    }
+    const [lead, rest] =
+      prev.stakeKind === 'registry' && row.stakeKind !== 'registry' ? [row, prev] : [prev, row];
+    const whole = (r: T): RowFigures => ({
+      companyCount: r.companyCount,
+      contractCount: r.contractCount,
+      contractValueEur: r.contractValueEur,
+      contemporaneousValueEur: r.contemporaneousValueEur,
+      hasContemporaneous: r.hasContemporaneous,
+    });
+    people.set(key, {
+      ...lead,
+      ...addFigures(whole(lead), whole(rest)),
+      companies: [...(lead.companies ?? []), ...(rest.companies ?? [])],
+      soleCompany: null,
+      ownInstitution: lead.ownInstitution || rest.ownInstitution,
+      declaredInstitutions: groupDeclaredInstitutions([
+        ...offices(lead.declaredInstitutions),
+        ...offices(rest.declaredInstitutions),
+      ]),
+      // A part without seats on a collegial body is whole in either view.
+      ...(lead.direct === undefined && rest.direct === undefined
+        ? {}
+        : {
+            direct: addFigures(
+              lead.direct === undefined ? whole(lead) : lead.direct,
+              rest.direct === undefined ? whole(rest) : rest.direct,
+            ),
+          }),
+    });
+  }
+  return [...people.values()];
+}
+
 /** The rows the filters keep. A person with both an own and a relative's stake ('mixed') answers both the
  *  'self' and the 'family' filter — but NOT 'registry': 'mixed' is only ever produced by two DECLARED
- *  stakes, while a registry row is by construction someone with no published declared interest at all.
+ *  stakes, while a registry row holds by construction only companies with no published declared interest.
  *  Letting 'mixed' through made the list longer than the facet count promised (19 shown against 16 counted)
  *  and put declared stakes under „роля по Търговския регистър". Every chosen signal must hold; the search
  *  matches the name, position or institution. */

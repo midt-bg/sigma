@@ -13,6 +13,7 @@ import type {
   OfficialConflicts,
 } from '@sigma/api-contract';
 import { contractSlug, personSlug } from './identity';
+import { PAID_BY_AUTHORITY } from './authority-payees';
 
 // The tables migration 0003 (свързани-лица) creates. A „no such table" for one of THESE means 0003 is not
 // applied on this D1 yet (a fresh or half-provisioned env) — the safe, expected gap we degrade for. A
@@ -466,12 +467,16 @@ export async function getCompanyConflicts(
 
 // How many of one body's winners carry a surfaced declared stake, and how many of those were declared by an
 // official OF that body (ila.own = 'exact' — the deterministic own-institution verdict, never the locality
-// heuristic). Winners, not links: two officials in one company are one company.
-export const AUTHORITY_CONFLICTS_SQL = `SELECT COUNT(DISTINCT il.eik) AS companies,
-    COUNT(DISTINCT CASE WHEN ila.own = 'exact' THEN il.eik END) AS own_companies
-  FROM interest_link_authorities ila
-  JOIN interest_links il ON il.link_key = ila.link_key
-  WHERE ila.authority_id = ? AND ${SURFACED_OWNERSHIP}`;
+// heuristic). Winners, not links: two officials in one company are one company. The winners and their links
+// are the ones the /conflicts?authority= list this figure links to shows (related-people-list.ts): the body's
+// payees from the live contracts, not the per-body breakdown the last related-persons run stored, which
+// misses a winner first paid since.
+export const AUTHORITY_CONFLICTS_SQL = `WITH ${PAID_BY_AUTHORITY}
+  SELECT COUNT(DISTINCT il.eik) AS companies,
+    COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM interest_link_authorities ila
+      WHERE ila.link_key = il.link_key AND ila.authority_id = ?1 AND ila.own = 'exact') THEN il.eik END) AS own_companies
+  FROM interest_links il JOIN persons p ON p.id = il.person_id
+  WHERE ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY} AND il.eik IN (SELECT eik FROM paid)`;
 
 export interface AuthorityConflictSummary {
   companies: number;

@@ -110,8 +110,9 @@ const FORM = { 1: 'ET', 4: 'OOD', 5: 'AD', 6: 'KDA', 10: 'EOOD' };
 
 /**
  * Registry facts for a fixture company, as the decision pass reads them from the registry layer:
- * `owners` and `managers` are persons standing in those roles, each its own registered holder; `form`
- * is the legal form — the register's code, or a numeric one older fixtures use — and `suffix` the
+ * `owners` and `managers` are persons standing in those roles, each its own registered holder; `boards` sit on
+ * the board of directors (`pastBoards` until mid-2020) and `governing` on the governing body of an association;
+ * `form` is the legal form — the register's code, or a numeric one older fixtures use — and `suffix` the
  * ЗТРРЮЛНЦ form on the name.
  */
 export function fixtureRegistry(
@@ -120,6 +121,9 @@ export function fixtureRegistry(
     owners = [],
     pastOwners = [],
     managers = [],
+    boards = [],
+    pastBoards = [],
+    governing = [],
     seat = null,
     seatEntryDate = null,
     ownEntryDate = '2011-05-02',
@@ -149,6 +153,9 @@ export function fixtureRegistry(
       ...owners.map((n) => holder('00190', n)),
       ...pastOwners.map((n) => holder('00190', n, '2020-06-30')),
       ...managers.map((n) => holder('00070', n)),
+      ...boards.map((n) => holder('00120', n)),
+      ...pastBoards.map((n) => holder('00120', n, '2020-06-30')),
+      ...governing.map((n) => holder('00125', n)),
     ],
   );
 }

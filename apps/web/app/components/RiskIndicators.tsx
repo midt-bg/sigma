@@ -2,6 +2,7 @@ import type { ContractDetail } from '@sigma/api-contract';
 import { Link } from 'react-router';
 import { pct } from '@sigma/shared';
 import { evaluateRiskIndicators } from '../lib/riskLogic';
+import { unverifiedValueNote } from '../lib/contractValue';
 
 // The per-contract risk signals. Copy is deliberately non-accusatory (#219): each item states the
 // structural fact and frames it as a signal that warrants a look, never as proven wrongdoing. The
@@ -10,6 +11,15 @@ import { evaluateRiskIndicators } from '../lib/riskLogic';
 // Labels mirror methodology §10 and the homepage FLAG_LABELS for a consistent vocabulary.
 export function RiskIndicators({ contract }: { contract: ContractDetail }) {
   const flags = evaluateRiskIndicators(contract);
+  // The value half of the anomaly names the contract's own verdict (the note above its figures), not one
+  // generic phrase for every flagged value.
+  const valueNote = unverifiedValueNote(contract.value);
+  const anomaly = [
+    valueNote && valueNote.title.charAt(0).toLowerCase() + valueNote.title.slice(1),
+    contract.dateSuspect && 'договорът е подписан след датата си на публикуване',
+  ]
+    .filter(Boolean)
+    .join('; ');
 
   if (flags.length === 0) {
     return null;
@@ -65,8 +75,7 @@ export function RiskIndicators({ contract }: { contract: ContractDetail }) {
           if (flag.type === 'anomalies') {
             return (
               <li key={i}>
-                <strong>Стойностна или времева аномалия:</strong> стойността е с непотвърдена
-                достоверност или договорът е подписан след датата си на публикуване.
+                <strong>Стойностна или времева аномалия:</strong> {anomaly}.
               </li>
             );
           }

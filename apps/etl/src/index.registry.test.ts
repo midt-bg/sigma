@@ -14,6 +14,8 @@ const { client, reg } = vi.hoisted(() => ({
     prepareEntryBaseline: vi.fn(),
     recordEntryPage: vi.fn(),
     deferPortal: vi.fn(),
+    deferEntryPass: vi.fn(),
+    entryFeedHealth: vi.fn(),
     deferDeed: vi.fn(),
     deferXml: vi.fn(),
     queueNewWinners: vi.fn(),
@@ -51,6 +53,7 @@ beforeEach(() => {
   reg.prepareEntryBaseline.mockResolvedValue('ready');
   reg.renewRegistryLease.mockResolvedValue(true);
   reg.nextEntryPass.mockResolvedValue(null);
+  reg.entryFeedHealth.mockResolvedValue({ due: 0, oldestOpenDay: null, lastProgressAt: null });
   reg.queueNewWinners.mockResolvedValue(1);
   reg.nextQueued.mockResolvedValueOnce(['111111111']).mockResolvedValue([]);
   client.deed.mockResolvedValue({ status: 'ok', deed: {} });
@@ -215,16 +218,85 @@ describe('published registry Workflow — configuration, pacing and failure path
     expect(reg.recordEntryPage).not.toHaveBeenCalled();
   });
 
-  it('defers the portal when a page cannot be recorded, and still reads the queue', async () => {
+  it('moves a day whose page cannot be recorded to tomorrow and goes on with the next day', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(T0);
-    reg.nextEntryPass.mockResolvedValue(pass(2));
-    client.changes.mockResolvedValue({ items: [], hasMore: true, total: 30 });
-    reg.recordEntryPage.mockRejectedValue(new Error('portal repeated a page'));
-    expect(await start(PAYLOAD).result).toMatchObject({ changed: 0, changeDays: 0, read: 1 });
+    const other = { day: '2026-09-11', delay: 14, next_page: 1 };
+    reg.nextEntryPass
+      .mockResolvedValueOnce(pass(2))
+      .mockResolvedValueOnce(other)
+      .mockResolvedValue(null);
+    client.changes.mockResolvedValue({ items: [], hasMore: false, total: 0 });
+    reg.recordEntryPage
+      .mockRejectedValueOnce(new Error('portal repeated a page'))
+      .mockResolvedValueOnce(0);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await start(PAYLOAD).result).toMatchObject({ changed: 0, changeDays: 1, read: 1 });
+    expect(reg.deferEntryPass).toHaveBeenCalledOnce();
+    expect(reg.deferEntryPass).toHaveBeenCalledWith({}, pass(2), '2026-09-14');
+    expect(reg.deferPortal).not.toHaveBeenCalled();
+    expect(client.changes.mock.calls).toEqual([
+      ['2026-09-12', 2],
+      ['2026-09-11', 1],
+    ]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"registry_pass_deferred"'));
+  });
+
+  it('lets a day the portal cannot answer wait alone, and a failed request still hold the portal', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sunday = { day: '2026-09-06', delay: 1, next_page: 1 };
+    reg.nextEntryPass
+      .mockResolvedValueOnce(sunday)
+      .mockResolvedValueOnce(pass(1))
+      .mockResolvedValue(null);
+    client.changes
+      .mockRejectedValueOnce(new RegistryError('portal sent no entry list for 2026-09-06'))
+      .mockRejectedValueOnce(new RegistryError('registry request failed: Error: timeout'));
+    await start(PAYLOAD).result;
+    expect(reg.deferEntryPass).toHaveBeenCalledWith({}, sunday, '2026-09-14');
     expect(reg.deferPortal).toHaveBeenCalledOnce();
     expect(reg.deferPortal).toHaveBeenCalledWith({}, at(HOURS_6));
-    expect(client.changes).toHaveBeenCalledOnce();
+    expect(reg.recordEntryPage).not.toHaveBeenCalled();
+  });
+
+  it('gives the portal six hours when the run’s own D1 work fails between two reads', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    reg.nextEntryPass.mockResolvedValueOnce(pass(1)).mockResolvedValue(null);
+    client.changes.mockRejectedValueOnce(new RegistryError('invalid portal entry list'));
+    reg.deferEntryPass.mockRejectedValueOnce(new Error('D1_ERROR: network connection lost'));
+    expect(await start(PAYLOAD).result).toMatchObject({ changeDays: 0, read: 1 });
+    expect(reg.deferPortal).toHaveBeenCalledWith({}, at(HOURS_6));
+  });
+
+  it('says at error level when the feed has stopped moving, and only then', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const health = (lastProgressAt: string | null, oldestOpenDay = '2026-09-10', due = 3) =>
+      reg.entryFeedHealth.mockResolvedValueOnce({ due, oldestOpenDay, lastProgressAt });
+    // Catching up: due passes, but one completed an hour ago.
+    health(at(-3600000));
+    expect(await start(PAYLOAD).result).not.toHaveProperty('feedStale');
+    // Nothing completed for three days while passes were due.
+    health(at(-3 * 24 * 3600000));
+    expect(await start(PAYLOAD).result).toMatchObject({ feedStale: true });
+    expect(error).toHaveBeenLastCalledWith(expect.stringContaining('"stuck":true'));
+    // Never any progress at all, not even an accepted import.
+    health(null);
+    expect(await start(PAYLOAD).result).toMatchObject({ feedStale: true });
+    // Moving, but one day has stayed open for over three weeks.
+    health(at(-3600000), '2026-08-20');
+    expect(await start(PAYLOAD).result).toMatchObject({ feedStale: true });
+    expect(error).toHaveBeenLastCalledWith(expect.stringContaining('"abandoned":true'));
+    // Nothing due and nothing old: quiet.
+    health(null, null as never, 0);
+    expect(await start(PAYLOAD).result).not.toHaveProperty('feedStale');
+    expect(error).toHaveBeenCalledTimes(3);
+    expect(reg.entryFeedHealth).toHaveBeenCalledWith({}, '2026-09-13');
   });
 
   it('ends the run when the lease is lost before a page is recorded, with no deferral or reads', async () => {

@@ -18,13 +18,11 @@ type GateLog = { info: (e: object) => void; warn: (e: object) => void; error: (e
 // Hoisted so the vi.mock factories (themselves hoisted above the imports) can close over them.
 const { ingest, eop, integrity } = vi.hoisted(() => ({
   ingest: {
-    acquireRefreshLease: vi.fn(
-      async (): Promise<RefreshLease> => ({
-        acquired: true,
-        holder: 'test-instance',
-        expiresAt: '2026-06-07T00:30:00.000Z',
-      }),
-    ),
+    acquireRefreshLease: vi.fn(async (): Promise<RefreshLease> => ({
+      acquired: true,
+      holder: 'test-instance',
+      expiresAt: '2026-06-07T00:30:00.000Z',
+    })),
     releaseRefreshLease: vi.fn(async () => {}),
     pendingWindows: vi.fn(async (): Promise<PendingWindow[]> => []),
     recordPendingWindow: vi.fn(async () => {}),
@@ -36,13 +34,11 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
         _eligible?: (w: PendingWindow) => boolean,
       ) => ({ settled: 0, remaining: [] as PendingWindow[] }),
     ),
-    renewRefreshLease: vi.fn(
-      async (): Promise<RefreshLease> => ({
-        acquired: true,
-        holder: 'test-instance',
-        expiresAt: '2026-06-07T00:30:00.000Z',
-      }),
-    ),
+    renewRefreshLease: vi.fn(async (): Promise<RefreshLease> => ({
+      acquired: true,
+      holder: 'test-instance',
+      expiresAt: '2026-06-07T00:30:00.000Z',
+    })),
     createTransientStaging: vi.fn(async () => {}),
     dropTransientStaging: vi.fn(async () => {}),
     refreshDerivedContractCount: vi.fn(async () => 42),

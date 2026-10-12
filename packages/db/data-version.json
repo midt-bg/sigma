@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "computedBy": [
+    "scripts/normalize-raw.sql",
+    "scripts/refresh-slice.sql",
+    "scripts/precompute.sql",
+    "scripts/promote-amendments.sql",
+    "scripts/derive-amendments.sql",
+    "scripts/resolve-amendment-contracts.sql",
+    "apps/etl/src/public-ownership.ts"
+  ]
+}

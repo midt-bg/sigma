@@ -12,6 +12,8 @@ const q = vi.hoisted(() => ({
   getRegistryRolePersonRows: vi.fn(),
   getRelatedPersonHeadline: vi.fn(),
   getPersonTimeline: vi.fn(),
+  getTimelineIntervals: vi.fn(async () => ({ bands: {}, declared: [], procurements: [] })),
+  getPublicStakes: vi.fn(async () => ({})),
   getOfficialConflicts: vi.fn(),
   getRegistryIdentity: vi.fn(),
   getRegistryPerson: vi.fn(),
@@ -181,6 +183,165 @@ describe('leaderboard loader (/conflicts)', () => {
     expect(filtered.data.total).toBe(1);
     expect(filtered.data.page).toBe(1);
     expect(filtered.data.pageRows[0]!.personIdentity).toBe('p1204');
+  });
+});
+
+// Ownership and sole management by default; the seats on collegial bodies only when the reader adds them.
+describe('leaderboard loader — the role scope', () => {
+  const registryRow = (
+    slug: string,
+    companies: { eik: string; registryRole: 'owner' | 'manager' | 'board' }[],
+    direct: { companyCount: number; contractValueEur: number } | null,
+  ) => ({
+    official: slug,
+    officialSlug: slug,
+    personIdentity: slug,
+    stakeKind: 'registry',
+    companyCount: companies.length,
+    companies: companies.map((c) => ({ ...c, company: c.eik, self: 0, family: 0, registry: 1 })),
+    contractCount: 3,
+    contractValueEur: 900,
+    contemporaneousValueEur: 900,
+    hasContemporaneous: true,
+    ownInstitution: false,
+    direct: direct && {
+      ...direct,
+      contractCount: 1,
+      contemporaneousValueEur: null,
+      hasContemporaneous: false,
+    },
+    declaredOffices: [],
+  });
+  beforeEach(() => {
+    q.getRelatedPersonRows.mockResolvedValue([
+      { official: 'Декларирал', officialSlug: 'd', personIdentity: 'd', declaredOffices: [] },
+    ]);
+    q.getRegistryRolePersonRows.mockResolvedValue([
+      registryRow('seat-only', [{ eik: '1', registryRole: 'board' }], null),
+      registryRow(
+        'both',
+        [
+          { eik: '2', registryRole: 'owner' },
+          { eik: '3', registryRole: 'board' },
+        ],
+        { companyCount: 1, contractValueEur: 40 },
+      ),
+    ]);
+  });
+
+  it('leaves a seat-only person out and keeps only the owned company of one with both', async () => {
+    const res = await leaderboardLoader({ request: req(), context } as never);
+    expect(res.data.pageRows.map((r) => r.officialSlug).sort()).toEqual(['both', 'd']);
+    const both = res.data.pageRows.find((r) => r.officialSlug === 'both')!;
+    expect(both).toMatchObject({
+      companyCount: 1,
+      contractValueEur: 40,
+      contractCount: 1,
+      hasContemporaneous: false,
+    });
+    expect(both.companies!.map((c) => c.eik)).toEqual(['2']);
+    expect(res.data.facets.role).toEqual({ direct: 2, all: 3 });
+    expect(res.data.facets.registry).toBe(1);
+  });
+
+  it('adds the seats when asked, with the whole figures', async () => {
+    const res = await leaderboardLoader({ request: req('?role=all'), context } as never);
+    expect(res.data.pageRows.map((r) => r.officialSlug).sort()).toEqual(['both', 'd', 'seat-only']);
+    expect(res.data.pageRows.find((r) => r.officialSlug === 'both')).toMatchObject({
+      companyCount: 2,
+      contractValueEur: 900,
+    });
+    expect(res.data.facets.registry).toBe(2);
+  });
+});
+
+// One row per person: a declared tie no longer hides the companies the register alone records the person in.
+describe('leaderboard loader — one row per person', () => {
+  const offices = [{ institution: 'Община Тест', position: 'Кмет', year: '2020' }];
+  beforeEach(() => {
+    q.getRelatedPersonRows.mockResolvedValue([
+      {
+        official: 'Иван Тестов',
+        officialSlug: 'iv',
+        personIdentity: 'x',
+        stakeKind: 'self',
+        companyCount: 1,
+        soleCompany: { company: 'Деклариран', eik: '7' },
+        companies: [{ company: 'Деклариран', eik: '7', self: 1, family: 0 }],
+        contractCount: 2,
+        contractValueEur: 100,
+        contemporaneousValueEur: 60,
+        hasContemporaneous: true,
+        ownInstitution: false,
+        declaredOffices: offices,
+      },
+    ]);
+    q.getRegistryRolePersonRows.mockResolvedValue([
+      {
+        official: 'Иван Тестов',
+        officialSlug: 'iv',
+        personIdentity: 'x',
+        stakeKind: 'registry',
+        companyCount: 2,
+        soleCompany: null,
+        companies: [
+          {
+            company: 'Управляван',
+            eik: '8',
+            self: 0,
+            family: 0,
+            registry: 1,
+            registryRole: 'manager',
+          },
+          { company: 'Съвет', eik: '9', self: 0, family: 0, registry: 1, registryRole: 'board' },
+        ],
+        contractCount: 3,
+        contractValueEur: 900,
+        contemporaneousValueEur: 500,
+        hasContemporaneous: true,
+        ownInstitution: false,
+        direct: {
+          companyCount: 1,
+          contractCount: 1,
+          contractValueEur: 40,
+          contemporaneousValueEur: null,
+          hasContemporaneous: false,
+        },
+        declaredOffices: offices,
+      },
+    ]);
+  });
+  const load = async (qs = '') =>
+    (await leaderboardLoader({ request: req(qs), context } as never)).data;
+
+  it('lists the declared company and the registered ones in one row, with the figures of all of them', async () => {
+    const res = await load();
+    expect(res.total).toBe(1);
+    expect(res.pageRows[0]).toMatchObject({
+      officialSlug: 'iv',
+      stakeKind: 'self',
+      companyCount: 2,
+      contractCount: 3,
+      contractValueEur: 140,
+      contemporaneousValueEur: 60,
+      declaredInstitutions: [{ institution: 'Община Тест', positions: ['Кмет'], years: ['2020'] }],
+    });
+    expect(res.pageRows[0]!.companies!.map((c) => c.eik)).toEqual(['7', '8']);
+    expect(res.facets).toMatchObject({ self: 1, registry: 1, role: { direct: 1, all: 1 } });
+    const all = await load('?role=all');
+    expect(all.pageRows[0]!.companies!.map((c) => c.eik)).toEqual(['7', '8', '9']);
+    expect(all.pageRows[0]).toMatchObject({ companyCount: 3, contractValueEur: 1000 });
+  });
+
+  it('lets the stake filter choose the part: the register’s companies alone, or the declared one', async () => {
+    const registry = await load('?stake=registry');
+    expect(registry.pageRows[0]!.companies!.map((c) => c.eik)).toEqual(['8']);
+    expect(registry.pageRows[0]).toMatchObject({ stakeKind: 'registry', contractValueEur: 40 });
+    const self = await load('?stake=self');
+    expect(self.pageRows[0]!.companies!.map((c) => c.eik)).toEqual(['7']);
+    expect(self.pageRows[0]).toMatchObject({ stakeKind: 'self', contractValueEur: 100 });
+    // A signal is about the person: the joined row holds it.
+    expect((await load('?signal=window')).total).toBe(1);
   });
 });
 

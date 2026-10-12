@@ -27,6 +27,13 @@ describe('coverage labels', () => {
     );
   });
 
+  it('names a partial first year beside the partial last one', () => {
+    expect(coveragePartialNote(2025, '2020')).toBe(`${START_YEAR}–2025 (2020 и 2025 г. частично)`);
+    // Nothing to add when no first year is partial, or when it is the same year.
+    expect(coveragePartialNote(2025, null)).toBe(`${START_YEAR}–2025 (2025 г. частично)`);
+    expect(coveragePartialNote(2025, '2025')).toBe(`${START_YEAR}–2025 (2025 г. частично)`);
+  });
+
   it('lists years newest first and returns no option before the start year', () => {
     expect(yearOptions(2023)).toEqual(['2023', '2022', '2021', '2020']);
     expect(yearOptions(null)[0]).toBe(String(FALLBACK_END_YEAR));
@@ -37,7 +44,11 @@ describe('coverage labels', () => {
 describe('getCoverageMeta', () => {
   // The binding comes from the shared double: a cast to D1Database outside packages/test-support is
   // what `pnpm check:fake-d1` forbids (#325).
-  const dbReturning = (row: object | null) => fakeD1([{ when: 'FROM home_totals', first: row }]);
+  const dbReturning = (row: object | null, years: { key: string; contracts: number }[] = []) =>
+    fakeD1([
+      { when: 'FROM home_totals', first: row },
+      { when: "facet = 'year'", all: years },
+    ]);
 
   it('reads the singleton metadata row and derives its end year', async () => {
     const { db, sql } = dbReturning({
@@ -49,8 +60,20 @@ describe('getCoverageMeta', () => {
       asOf: '2025-12-15',
       refreshedAt: '2026-01-02T03:04:05Z',
       coverageEndYear: 2025,
+      partialStartYear: null,
     });
-    expect(sql).toEqual(['SELECT as_of, refreshed_at FROM home_totals WHERE id = 1']);
+    expect(sql).toEqual([
+      'SELECT as_of, refreshed_at FROM home_totals WHERE id = 1',
+      `SELECT key, contracts FROM facet_counts WHERE facet = 'year'`,
+    ]);
+  });
+
+  it('reports a ramp-up first year from the national year counts', async () => {
+    const { db } = dbReturning({ as_of: '2025-12-15', refreshed_at: 'x' }, [
+      { key: '2020', contracts: 50 },
+      { key: '2021', contracts: 900 },
+    ]);
+    expect((await getCoverageMeta(db)).partialStartYear).toBe('2020');
   });
 
   it('uses null metadata and the fallback year when the singleton row is absent', async () => {
@@ -59,6 +82,7 @@ describe('getCoverageMeta', () => {
       asOf: null,
       refreshedAt: null,
       coverageEndYear: FALLBACK_END_YEAR,
+      partialStartYear: null,
     });
   });
 });

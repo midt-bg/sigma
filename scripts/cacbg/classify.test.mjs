@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  interestClassOf,
   nameDistinctiveness,
   temporalStatus,
   localityToken,
@@ -181,4 +182,15 @@ test('authOwn: the authority’s own town counts even when the declarant wrote o
   );
   assert.equal(OWN_RANK.exact > OWN_RANK.name_contains, true);
   assert.equal(OWN_RANK.name_contains > OWN_RANK.locality, true);
+});
+
+test('interestClassOf: running a company with any public stake is a held position; a share stays a share', () => {
+  const link = (over) => ({ scope: 'self', relation: 'manages', ...over });
+  assert.equal(interestClassOf(link({ ownershipKind: 'state' })), 'ex_officio_board');
+  assert.equal(interestClassOf(link({ publicStake: true })), 'ex_officio_board');
+  assert.equal(interestClassOf(link({})), 'private_ownership');
+  // A genuine private interest is not erased by a public co-owner.
+  for (const relation of ['owns', 'owns+manages'])
+    assert.equal(interestClassOf(link({ relation, publicStake: true })), 'private_ownership');
+  assert.equal(interestClassOf(link({ scope: 'family', publicStake: true })), 'family_ownership');
 });

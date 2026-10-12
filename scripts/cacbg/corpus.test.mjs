@@ -222,6 +222,80 @@ test('R2 crawl resumes per object, extracts the same records without a disk corp
   }
 });
 
+// The headers arrive and the body stops after its first half, as undici reports a connection the proxy drops.
+const cutResponse = (body) => {
+  let sent = false;
+  return new Response(
+    new ReadableStream({
+      pull(controller) {
+        if (sent)
+          controller.error(
+            new TypeError('terminated', {
+              cause: Object.assign(Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+            }),
+          );
+        else {
+          sent = true;
+          controller.enqueue(body.subarray(0, body.length >> 1));
+        }
+      },
+    }),
+    { headers: { 'x-corpus-sha256': digest(body) } },
+  );
+};
+const whole = (body) => new Response(body, { headers: { 'x-corpus-sha256': digest(body) } });
+const remoteWith = (respond) => {
+  const pauses = [];
+  let calls = 0;
+  const store = corpusStore(
+    'never-read',
+    'http://declarations.r2',
+    async () => respond(++calls),
+    async (ms) => {
+      pauses.push(ms);
+    },
+  );
+  return { store, pauses, calls: () => calls };
+};
+const declaration = Buffer.from('<PublicPerson/>'.repeat(64));
+
+test('a corpus body cut off mid-read is read again, and the next whole one is returned', async () => {
+  const r = remoteWith((n) => (n === 1 ? cutResponse(declaration) : whole(declaration)));
+  assert.deepEqual(await r.store.get('2025/a.xml'), declaration);
+  assert.equal(r.calls(), 2);
+  assert.deepEqual(r.pauses, [500]);
+});
+
+test('a corpus body cut off on every attempt fails after the fifth, with the cut as the reason', async () => {
+  const r = remoteWith(() => cutResponse(declaration));
+  await assert.rejects(
+    () => r.store.get('2025/a.xml'),
+    (e) => e.message === 'terminated' && e.cause?.message === 'other side closed',
+  );
+  assert.equal(r.calls(), 5);
+  assert.deepEqual(r.pauses, [500, 1000, 2000, 4000]);
+});
+
+test('a corpus body that ends short without an error is read again; one that never matches fails', async () => {
+  const short = new Response(declaration.subarray(0, 10), {
+    headers: { 'x-corpus-sha256': digest(declaration) },
+  });
+  const once = remoteWith((n) => (n === 1 ? short : whole(declaration)));
+  assert.deepEqual(await once.store.get('2025/a.xml'), declaration);
+  assert.equal(once.calls(), 2);
+  const never = remoteWith(
+    () =>
+      new Response(declaration.subarray(0, 10), {
+        headers: { 'x-corpus-sha256': digest(declaration) },
+      }),
+  );
+  await assert.rejects(
+    () => never.store.get('2025/a.xml'),
+    /Corpus checksum mismatch: 2025\/a\.xml/,
+  );
+  assert.equal(never.calls(), 5);
+});
+
 test('the client accepts exactly the shared corpus key list', () => {
   for (const key of ACCEPTED_KEYS) assert.equal(safeKey(key), key);
   for (const key of [...REJECTED_KEYS, ...REJECTED_TRAVERSAL_KEYS])

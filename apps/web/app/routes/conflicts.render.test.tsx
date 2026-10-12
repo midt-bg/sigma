@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRoutesStub } from 'react-router';
 import type { ConflictLink } from '@sigma/api-contract';
 import {
+  type ConflictPersonRow,
   groupByPerson,
   conflictListFilters,
   filterConflictRows,
@@ -106,6 +107,7 @@ async function renderConflicts(
   links: ConflictLink[],
   authority: { slug: string; name: string } | null = null,
   url = '/conflicts',
+  registryRows: ConflictPersonRow[] = [],
 ) {
   const Stub = createRoutesStub([
     {
@@ -114,7 +116,7 @@ async function renderConflicts(
       loader: ({ request }) => {
         const sp = new URL(request.url).searchParams;
         const filters = conflictListFilters(sp);
-        const all = groupByPerson(links);
+        const all = [...groupByPerson(links), ...registryRows];
         const rows = sortConflictRows(filterConflictRows(all, filters), filters.sort);
         const page = Number(sp.get('page') || 1);
         return {
@@ -130,6 +132,7 @@ async function renderConflicts(
             own: all.filter((r) => r.ownInstitution).length,
             window: all.filter((r) => r.hasContemporaneous).length,
             institutions: institutionOptions(all, filters.institutions),
+            role: { direct: all.length - 1, all: all.length },
           },
         };
       },
@@ -221,6 +224,39 @@ describe('/conflicts route — render', () => {
       ),
     ).toEqual(['period', 'total', 'contracts']);
     expect(sorts.filter((a) => a.getAttribute('aria-current') === 'true')).toEqual([sorts[1]]);
+  });
+
+  // The seats on collegial bodies are a second step of the same choice, not a hidden box: the default says
+  // what it holds and how many, and a seat is named as a seat wherever it is shown.
+  it('offers the role scope in two steps and names a seat as a seat', async () => {
+    const seat: ConflictPersonRow = {
+      official: 'Член Тестов',
+      officialSlug: 'seat',
+      institution: null,
+      position: null,
+      companyCount: 1,
+      companies: [
+        { company: 'ТЕСТ АД', eik: '555', self: 0, family: 0, registry: 1, registryRole: 'board' },
+      ],
+      soleCompany: null,
+      contractCount: 1,
+      contractValueEur: 10,
+      contemporaneousValueEur: null,
+      stakeKind: 'registry',
+      ownInstitution: false,
+      hasContemporaneous: false,
+      direct: null,
+    };
+    await renderConflicts([link()], null, '/conflicts?role=all&stake=registry', [seat]);
+    const group = container.querySelector('details[aria-label="Роля в дружеството"]')!;
+    const labels = [...group.querySelectorAll('label')].map((l) => l.textContent!.trim());
+    expect(labels).toEqual([
+      'собственост или управление1',
+      'всички роли, включително членство в съвет2',
+    ]);
+    expect(group.querySelector<HTMLInputElement>('input[value="all"]')!.checked).toBe(true);
+    expect(text()).toContain('членство в съвет по Търговския регистър');
+    expect(text()).toContain('или като член на съвет на директорите');
   });
 
   it('says which institution the list is narrowed to, and how to widen it', async () => {
@@ -500,15 +536,112 @@ it('names the register that actually publishes the declarations', async () => {
   expect(text()).not.toContain('КПКОНПИ');
 });
 
-// The registry-only bucket holds exactly the people who did NOT name the company in their declaration,
-// so the standing title („декларирали дял") stated the opposite of what the filtered list shows.
-it('titles the registry-only list by what it actually holds', async () => {
-  await renderConflicts([link()]);
-  expect(container.querySelector('h1')?.textContent).toContain('декларирали');
+// Every heading over the list must hold for every row in it. Unfiltered, the list mixes declared stakes,
+// declared management and roles only the register records, so no heading may say „декларирали дял" of all.
+it('titles the list by what every row holds, and narrows the headings with the stake filter', async () => {
+  const headings = () => ({
+    h1: container.querySelector('h1')?.textContent ?? '',
+    h2: container.querySelector('#list')?.textContent ?? '',
+    caption: container.querySelector('caption')?.textContent ?? '',
+  });
 
-  await renderConflicts([link()], null, '/conflicts?stake=registry');
+  await renderConflicts([link()]);
+  expect(headings()).toEqual({
+    h1: 'Длъжностни лица и дружества изпълнители',
+    h2: 'Длъжностни лица и дружества изпълнители',
+    caption:
+      'Длъжностни лица и дружества изпълнители: деклариран дял, декларирано управление или вписана роля в регистъра',
+  });
+  expect(text()).not.toContain('декларирали дял — свой или на свързано лице — в дружество');
+  expect(text()).toContain(
+    'Сумите са стойности на договорите на дружествата, не пари, получени от лицата.',
+  );
+
+  await renderConflicts([link()], null, '/conflicts?stake=self');
+  expect(headings().h1).toBe(
+    'Длъжностни лица с деклариран дял или управление в компании изпълнители',
+  );
+  expect(headings().caption).toBe(
+    'Длъжностни лица с деклариран дял или декларирано управление в дружества изпълнители',
+  );
+
+  await renderConflicts([link({ relation: 'related' })], null, '/conflicts?stake=family');
+  expect(headings().h1).toBe('Длъжностни лица с дял на свързано лице в компании изпълнители');
+  expect(headings().caption).toBe(
+    'Длъжностни лица с деклариран дял на свързано лице в дружества изпълнители',
+  );
+});
+
+// The registry-only group is the people whose declarations have no PUBLISHED link with the company — a
+// held or a joint-stock link included. The lede says exactly that, not that the declaration omits it.
+it('says what the declarations say about a registered company, and never that it was left out', async () => {
+  const row: ConflictPersonRow = {
+    official: 'ВЕРА ТЕСТОВА СЪВЕТОВА',
+    officialSlug: 'vera',
+    personIdentity: 'v'.repeat(64),
+    institution: null,
+    position: null,
+    companyCount: 1,
+    companies: [
+      {
+        company: 'ТЕСТ АД',
+        eik: '666',
+        self: 0,
+        family: 0,
+        registry: 1,
+        registryRole: 'board',
+        declared: 'manages',
+      },
+    ],
+    soleCompany: null,
+    contractCount: 1,
+    contractValueEur: 10,
+    contemporaneousValueEur: null,
+    stakeKind: 'registry',
+    ownInstitution: false,
+    hasContemporaneous: false,
+    direct: null,
+  };
+  await renderConflicts([], null, '/conflicts?stake=registry&role=all', [row]);
+  expect(text()).toContain('В декларацията: управление.');
+  expect(text()).not.toContain('само по Търговския регистър');
+  expect(text()).not.toMatch(/недеклар|не е декларира/);
+});
+
+it('says of the registry-only group only what the group proves', async () => {
+  const owner: ConflictPersonRow = {
+    official: 'Собственик Тестов',
+    officialSlug: 'owner',
+    institution: null,
+    position: null,
+    companyCount: 1,
+    companies: [
+      { company: 'ТЕСТ ООД', eik: '555', self: 0, family: 0, registry: 1, registryRole: 'owner' },
+    ],
+    soleCompany: null,
+    contractCount: 1,
+    contractValueEur: 10,
+    contemporaneousValueEur: null,
+    stakeKind: 'registry',
+    ownInstitution: false,
+    hasContemporaneous: false,
+    direct: null,
+  };
+  await renderConflicts([link()], null, '/conflicts?stake=registry', [owner]);
   const heading = container.querySelector('h1')?.textContent ?? '';
   expect(heading).toContain('Търговския регистър');
   expect(heading).not.toContain('декларирали');
-  expect(text()).toContain('без това дружество да е посочено в декларацията им');
+  expect(text()).toContain(
+    'на дружество, спечелило обществена поръчка. СИГМА не е потвърдила декларирана връзка на лицето с това дружество; когато декларацията го посочва, това е отбелязано при него.',
+  );
+  expect(text()).not.toContain('без това дружество да е посочено');
+  expect(text()).not.toContain('Самоличността е доказана');
+  expect(container.querySelector('caption')?.textContent).toBe(
+    'Длъжностни лица с вписана роля в регистъра при дружества изпълнители',
+  );
+
+  await renderConflicts([link()], null, '/conflicts?stake=registry&role=all', [owner]);
+  expect(text()).toContain(
+    'собственик или управител — или като член на съвет на директорите, управителен съвет или друг орган на управление — на дружество',
+  );
 });

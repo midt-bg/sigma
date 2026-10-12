@@ -24,6 +24,7 @@ export interface FilterGroup {
   categories?: FilterCategory[];
   selected: string[];
   allLabel?: string; // radio groups: the „Всички" (clear) option label
+  allCount?: number; // radio groups: the count beside that option, when it is not simply everything
 }
 
 // Sticky filter rail. Filters live in the URL (shareable). A `<Form method="get">` auto-submits on
@@ -47,7 +48,9 @@ export function FilterRail({
 }) {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const preservedScope = ['authority', 'bidder'].flatMap((key) =>
+  // Filters that have no control in the rail but narrow the list: the no-JS submit must carry them, or
+  // „само една оферта" (/contracts?bids=1) silently became the whole list.
+  const preservedScope = ['authority', 'bidder', 'bids'].flatMap((key) =>
     sp.getAll(key).map((value) => ({ key, value })),
   );
   const groupKeys = groups.map((g) => g.key);
@@ -121,6 +124,9 @@ export function FilterRail({
                     onChange={() => {}}
                   />{' '}
                   {g.allLabel ?? 'Всички'}
+                  {g.allCount != null && (
+                    <span className="muted small">{fmtCount(g.allCount)}</span>
+                  )}
                 </label>
               )}
               {g.categories

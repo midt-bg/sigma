@@ -274,7 +274,15 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               </p>
             </div>
           )}
-          {c.frameworkAwards != null && (
+          {c.frameworkAgreement && (
+            <p className="small">
+              <Chip>рамково споразумение (таван)</Chip> Стойността е най-многото, което
+              възложителите могат да поръчат по това рамково споразумение, а не изразходвана сума.
+              Не влиза в сумите и класациите на СИГМА; броят се поръчките по него, всяка като
+              отделен договор.
+            </p>
+          )}
+          {c.frameworkAwards != null && !c.frameworkAgreement && (
             <p className="small muted">
               Рамково споразумение / ДСП — едно от {count(c.frameworkAwards)} възлагания по тази
               процедура. Прогнозната стойност е за цялата процедура, а не за отделното възлагане.
@@ -593,6 +601,12 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   <>
                     {' '}
                     · <Chip>обединение</Chip>
+                  </>
+                )}
+                {c.bidder.kind === 'framework_parties' && (
+                  <>
+                    {' '}
+                    · <Chip>страни по рамково споразумение</Chip>
                   </>
                 )}
                 {c.bidder.sector && (

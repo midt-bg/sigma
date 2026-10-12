@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
 import {
   companyProfileHref,
+  applyRoleScope,
   conflictListFilters,
   contractHref,
+  declarantsChip,
   declaredStakeNoun,
   filterConflictRows,
   groupByPerson,
   groupDeclaredInstitutions,
   institutionOptions,
+  mergePersonParts,
   officialHref,
   officialRole,
   sortConflictRows,
@@ -528,13 +531,17 @@ describe('/conflicts list filters', () => {
       ),
     ).toEqual({
       stake: 'family',
+      role: 'direct',
       signals: ['own'],
       institutions: ['РУСЕ'],
       sort: 'total',
       q: 'Иван',
     });
+    expect(conflictListFilters(sp('role=all')).role).toBe('all');
+    expect(conflictListFilters(sp('role=bogus')).role).toBe('direct');
     expect(conflictListFilters(sp('stake=x&sort=y'))).toEqual({
       stake: null,
+      role: 'direct',
       signals: [],
       institutions: [],
       sort: 'period',
@@ -651,18 +658,27 @@ it('sorts period values and keeps unknown amounts last', () => {
     link({ officialSlug: 'b' }),
     link({ officialSlug: 'c' }),
   ]);
-  Object.assign(rows.find((r) => r.officialSlug === 'a')!, {
-    contemporaneousValueEur: null,
-    hasContemporaneous: true,
-  });
-  Object.assign(rows.find((r) => r.officialSlug === 'b')!, {
-    contemporaneousValueEur: 0,
-    hasContemporaneous: true,
-  });
-  Object.assign(rows.find((r) => r.officialSlug === 'c')!, {
-    contemporaneousValueEur: 100,
-    hasContemporaneous: true,
-  });
+  Object.assign(
+    rows.find((r) => r.officialSlug === 'a')!,
+    {
+      contemporaneousValueEur: null,
+      hasContemporaneous: true,
+    },
+  );
+  Object.assign(
+    rows.find((r) => r.officialSlug === 'b')!,
+    {
+      contemporaneousValueEur: 0,
+      hasContemporaneous: true,
+    },
+  );
+  Object.assign(
+    rows.find((r) => r.officialSlug === 'c')!,
+    {
+      contemporaneousValueEur: 100,
+      hasContemporaneous: true,
+    },
+  );
   expect(conflictListFilters(new URLSearchParams('sort=period-contracts')).sort).toBe('period');
   expect(sortConflictRows(rows, 'period').map((r) => r.officialSlug)).toEqual(['c', 'b', 'a']);
 });
@@ -683,4 +699,229 @@ it('reads the registry-role stake filter and keeps registry rows out of the own/
   expect(f('registry')).toEqual(['reg']);
   expect(f('self')).toEqual([own.officialSlug]);
   expect(f(null)).toEqual([own.officialSlug, 'reg']);
+});
+
+describe('applyRoleScope', () => {
+  const base: ConflictPersonRow = {
+    official: 'Иван Минев',
+    officialSlug: 'a',
+    institution: null,
+    position: null,
+    companyCount: 2,
+    soleCompany: null,
+    contractCount: 3,
+    contractValueEur: 900,
+    contemporaneousValueEur: 900,
+    stakeKind: 'registry',
+    ownInstitution: false,
+    hasContemporaneous: true,
+  };
+  const company = (eik: string, registryRole: 'owner' | 'manager' | 'board') => ({
+    company: eik,
+    eik,
+    self: 0,
+    family: 0,
+    registry: 1,
+    registryRole,
+  });
+  const direct = {
+    companyCount: 1,
+    contractCount: 1,
+    contractValueEur: 40,
+    contemporaneousValueEur: null,
+    hasContemporaneous: false,
+  };
+  it('keeps declared rows, drops a seat-only row, and trims one with both to what it owns or manages', () => {
+    const declared = { ...base, stakeKind: 'self' as const, officialSlug: 'd' };
+    const seat = {
+      ...base,
+      officialSlug: 's',
+      companies: [company('1', 'board')],
+      direct: null,
+    };
+    const both = {
+      ...base,
+      officialSlug: 'b',
+      companies: [company('2', 'manager'), company('3', 'board')],
+      direct,
+    };
+    const scoped = applyRoleScope([declared, seat, both], 'direct');
+    expect(scoped.map((r) => r.officialSlug)).toEqual(['d', 'b']);
+    expect(scoped[1]).toMatchObject({ ...direct, companies: [company('2', 'manager')] });
+    expect(applyRoleScope([declared, seat, both], 'all')).toEqual([declared, seat, both]);
+  });
+
+  it('lists a declared seat on a board only with the seats, as a registered one', () => {
+    const declaredCompany = (eik: string, board: number) => ({
+      company: eik,
+      eik,
+      self: 0,
+      family: 0,
+      manages: 1,
+      board,
+    });
+    const seatOnly = {
+      ...base,
+      stakeKind: 'self' as const,
+      officialSlug: 'ds',
+      companies: [declaredCompany('4', 1)],
+      direct: null,
+    };
+    const stakeAndSeat = {
+      ...base,
+      stakeKind: 'self' as const,
+      officialSlug: 'dm',
+      companies: [{ ...declaredCompany('5', 0), self: 1, manages: 0 }, declaredCompany('6', 1)],
+      direct,
+    };
+    const scoped = applyRoleScope([seatOnly, stakeAndSeat], 'direct');
+    expect(scoped.map((r) => r.officialSlug)).toEqual(['dm']);
+    expect(scoped[0]!.companies!.map((c) => c.eik)).toEqual(['5']);
+    expect(scoped[0]).toMatchObject(direct);
+    expect(applyRoleScope([seatOnly, stakeAndSeat], 'all')).toHaveLength(2);
+  });
+});
+
+// A person with a declared tie and companies the register alone records in is one row: the declared part
+// leads, every company once, and the figures of both parts — which hold different companies — add up.
+describe('mergePersonParts', () => {
+  const part = (over: Partial<ConflictPersonRow>): ConflictPersonRow => ({
+    official: 'Иван Минев',
+    officialSlug: 'iv',
+    personIdentity: 'id-iv',
+    institution: null,
+    position: null,
+    companyCount: 1,
+    soleCompany: { company: 'Едно', eik: '1' },
+    contractCount: 2,
+    contractValueEur: 100,
+    contemporaneousValueEur: 60,
+    stakeKind: 'self',
+    ownInstitution: false,
+    hasContemporaneous: true,
+    companies: [{ company: 'Едно', eik: '1', self: 1, family: 0 }],
+    declaredInstitutions: [{ institution: 'Община Тест', positions: ['Кмет'], years: ['2020'] }],
+    ...over,
+  });
+  const registry = part({
+    officialSlug: 'iv-registry',
+    stakeKind: 'registry',
+    companyCount: 2,
+    soleCompany: null,
+    contractCount: 3,
+    contractValueEur: 900,
+    contemporaneousValueEur: null,
+    hasContemporaneous: false,
+    ownInstitution: true,
+    companies: [
+      { company: 'Две', eik: '2', self: 0, family: 0, registry: 1, registryRole: 'owner' },
+      { company: 'Три', eik: '3', self: 0, family: 0, registry: 1, registryRole: 'manager' },
+    ],
+    declaredInstitutions: [
+      { institution: 'ОБЩИНА ТЕСТ', positions: ['Кмет', 'Съветник'], years: ['2020', '2021'] },
+    ],
+    direct: {
+      companyCount: 1,
+      contractCount: 1,
+      contractValueEur: 40,
+      contemporaneousValueEur: null,
+      hasContemporaneous: false,
+    },
+  });
+
+  it('joins the declared part and the registry part of one person, the declared part leading', () => {
+    for (const rows of [
+      [part({}), registry],
+      [registry, part({})],
+    ]) {
+      const [row, ...rest] = mergePersonParts(rows);
+      expect(rest).toEqual([]);
+      expect(row).toMatchObject({
+        officialSlug: 'iv',
+        stakeKind: 'self',
+        companyCount: 3,
+        soleCompany: null,
+        contractCount: 5,
+        contractValueEur: 1000,
+        contemporaneousValueEur: 60,
+        hasContemporaneous: true,
+        ownInstitution: true,
+        declaredInstitutions: [
+          { institution: 'Община Тест', positions: ['Кмет', 'Съветник'], years: ['2020', '2021'] },
+        ],
+      });
+      expect(row!.companies!.map((c) => [c.eik, c.self, c.registry ?? 0])).toEqual([
+        ['1', 1, 0],
+        ['2', 0, 1],
+        ['3', 0, 1],
+      ]);
+      // The declared part has no seat on a collegial body, so it counts whole beside the registry's figures.
+      expect(row!.direct).toEqual({
+        companyCount: 2,
+        contractCount: 3,
+        contractValueEur: 140,
+        contemporaneousValueEur: 60,
+        hasContemporaneous: true,
+      });
+    }
+  });
+
+  it('keeps a person with one part as it is, and people apart', () => {
+    const other = part({ officialSlug: 'p2', personIdentity: undefined });
+    expect(mergePersonParts([part({}), other])).toEqual([part({}), other]);
+  });
+
+  it('carries no figures without the seats when neither part has a seat, and none when both are only seats', () => {
+    expect('direct' in mergePersonParts([part({}), { ...registry, direct: undefined }])[0]!).toBe(
+      false,
+    );
+    expect(
+      mergePersonParts([part({ direct: null }), { ...registry, direct: null }])[0]!.direct,
+    ).toBeNull();
+    expect(mergePersonParts([part({ direct: null }), registry])[0]!.direct).toMatchObject({
+      companyCount: 1,
+      contractValueEur: 40,
+    });
+  });
+
+  it('adds unknown amounts as unknown, not as zero', () => {
+    const row = mergePersonParts([
+      part({ contractValueEur: null, contemporaneousValueEur: null }),
+      { ...registry, contractValueEur: null },
+    ])[0]!;
+    expect(row.contractValueEur).toBeNull();
+    expect(row.contemporaneousValueEur).toBeNull();
+    expect(
+      mergePersonParts([
+        part({ companies: undefined, declaredInstitutions: undefined }),
+        registry,
+      ])[0]!.companies!.map((c) => c.eik),
+    ).toEqual(['2', '3']);
+  });
+});
+
+describe('declarantsChip — the company header claims no more than its links', () => {
+  it('names management as management, never as a stake', () => {
+    expect(declarantsChip(['manages'])).toBe('декларирано управление от длъжностно лице');
+    expect(declarantsChip(['manages', 'manages'])).toBe(
+      'декларирано управление от длъжностно лице',
+    );
+  });
+
+  it('keeps a relative-only stake and an own stake as they were', () => {
+    expect(declarantsChip(['related'])).toBe('дял на свързано лице');
+    expect(declarantsChip(['owns', 'related'])).toBe('деклариран дял на длъжностно лице');
+  });
+
+  it('says „дял или управление" when management stands beside a stake', () => {
+    expect(declarantsChip(['owns', 'manages'])).toBe(
+      'деклариран дял или управление на длъжностно лице',
+    );
+    expect(declarantsChip(['owns+manages'])).toBe(
+      'деклариран дял или управление на длъжностно лице',
+    );
+    expect(declarantsChip(['related', 'manages'])).toBe(
+      'деклариран дял или управление на длъжностно лице',
+    );
+  });
 });

@@ -9,6 +9,11 @@ import { describe, expect, it } from 'vitest';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
+// The objects later edited into 0000 (joint procurements, the ordering unit), in a migration of their own.
+const migration25 = resolve(
+  root,
+  'packages/db/migrations/0025_joint_procurement_and_ordering_unit.sql',
+);
 const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
@@ -32,13 +37,15 @@ function readScript(dbPath: string, path: string): void {
 }
 
 describe('served migrations', () => {
-  // 0000_init remains the complete base served schema. Later migrations must be additive over that
-  // base so initial setup (`wrangler d1 migrations apply`) and ETL ships keep the same table shape.
+  // 0000_init is the base served schema as it was first applied; nothing is ever edited into it again.
+  // Later migrations are additive over it, so initial setup (`wrangler d1 migrations apply`) and the
+  // ledger of an existing database reach the same table shape.
   it('builds the served schema from the migration chain', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, migration0);
+      readScript(dbPath, migration25);
       readScript(dbPath, migration1);
       readScript(dbPath, migration2);
 
@@ -116,6 +123,7 @@ describe('served migrations', () => {
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, migration0);
+      readScript(dbPath, migration25);
       readScript(dbPath, migration1);
       sqlite(
         dbPath,

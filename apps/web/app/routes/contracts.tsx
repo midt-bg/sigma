@@ -20,7 +20,7 @@ import {
 import { cached } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { UNVERIFIED_HINT } from '../lib/contractValue';
+import { FRAMEWORK_HINT, UNVERIFIED_HINT } from '../lib/contractValue';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -79,6 +79,9 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
   const fAuthority = sp.get('authority');
   const fBidder = sp.get('bidder');
   const filtered = fAuthority || fBidder;
+  // „Само една оферта" has no control in the rail (the home page links straight to it), so the list must
+  // say it is narrowed and offer the way out.
+  const fOneOffer = sp.get('bids') === '1';
   // A filtered view shares one authority/bidder across every row, so the name is taken from the
   // first result (null when the filter combined with others yields no rows — then show the label only).
   const filterAuthorityName = fAuthority ? (result.items[0]?.authorityName ?? null) : null;
@@ -130,7 +133,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Договори' }]} />
       <main id="main">
         <PageHeader
-          kicker={`${count(result.total)} договора`}
+          kicker={`${count(result.total)} договора${fOneOffer ? ' с една оферта' : ''}`}
           title="Договори"
           lede="Всеки сключен договор по обществена поръчка. Всяко обобщение другаде в платформата — обща сума за институция, за компания или поток между двете — се свежда точно до този списък. Филтрите остават в адреса."
         />
@@ -155,12 +158,24 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                   {result.suspect > 0 && (
                     <>
                       {' '}
-                      · <span className="suspect">{result.suspect} с непотвърдена стойност</span>
+                      ·{' '}
+                      <span className="suspect">
+                        {count(result.suspect)} с вероятно грешна или липсваща стойност
+                      </span>
                     </>
                   )}
                 </>
               }
             />
+
+            {fOneOffer && (
+              <p className="active-filters">
+                Показани са само договорите с <strong>една оферта</strong> ·{' '}
+                <Link to={withParams(sp, { bids: null, cursor: null, page: null })}>
+                  покажи всички договори
+                </Link>
+              </p>
+            )}
 
             {filtered && (
               <p className="active-filters">
@@ -234,6 +249,9 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           <span className="unp">
                             УНП {c.unp}
                             {c.isConsortium ? ' · обединение' : ''}
+                            {c.bidderKind === 'framework_parties'
+                              ? ' · страни по рамково споразумение'
+                              : ''}
                           </span>
                         </td>
                         <td className="parties" data-label="Възложител · Изпълнител">
@@ -252,7 +270,15 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           {date(c.signedAt)}
                         </td>
                         <td className="money" data-label="Стойност (€)">
-                          {c.valueEur == null ? (
+                          {c.frameworkAgreement ? (
+                            <span className="muted" title={FRAMEWORK_HINT}>
+                              таван
+                              {c.frameworkCeilingEur != null && (
+                                <> {moneyBare(c.frameworkCeilingEur)}</>
+                              )}
+                              <span className="sr-only"> — {FRAMEWORK_HINT}</span>
+                            </span>
+                          ) : c.valueEur == null ? (
                             <span className="suspect">данните се проверяват</span>
                           ) : c.valueUnverified ? (
                             <span className="money-unverified" title={UNVERIFIED_HINT}>

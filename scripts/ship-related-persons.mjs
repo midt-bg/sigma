@@ -14,6 +14,7 @@
 //   node scripts/ship-related-persons.mjs --work-db … --remote --yes                          # apply to D1
 import { assertAuditedBuild } from './cacbg/build-proof.mjs';
 import { progress } from './cacbg/progress.mjs';
+import { sendWithReceipt } from './d1-retry.mjs';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -379,10 +380,17 @@ export const SHIP_TARGETS = {
  * needs a THIRD, independent anchor: the operator DECLARES the intended environment (SIGMA_SHIP_ENV), and the
  * repo policy pins production's names / forbids a production name outside production. So the declared env
  * (repo) and the id (Cloudflare-resolved vs the operator's SIGMA_D1_ID) come from different sources and can't
- * be made consistent-but-wrong by inadvertence. Pure — unit-tested; the live id lookup is injected as
- * `resolvedId`. --local carries no durable blast radius, so it is exempt.
+ * be made consistent-but-wrong by inadvertence. Pure — unit-tested; the live lookup is injected as
+ * `resolvedId` and `resolvedName`. --local carries no durable blast radius, so it is exempt.
  */
-export function assertD1TargetAuthorized({ remote, shipEnv, d1Name, expectedId, resolvedId }) {
+export function assertD1TargetAuthorized({
+  remote,
+  shipEnv,
+  d1Name,
+  expectedId,
+  resolvedId,
+  resolvedName,
+}) {
   if (!remote) return;
   // 1. The intended environment must be DECLARED and known — the independent anchor the id/name pair can't fake.
   if (!(shipEnv in SHIP_TARGETS))
@@ -413,6 +421,14 @@ export function assertD1TargetAuthorized({ remote, shipEnv, d1Name, expectedId, 
     throw new Error(
       `D1 target mismatch: name '${d1Name}' resolves to id ${resolvedId}, but SIGMA_D1_ID is ${expectedId}. ` +
         'The name and id disagree (misconfigured Environment or stale id) — refusing to wipe.',
+    );
+  // 4. …and the id must BE that name. `wrangler d1 info <name>` takes the id from a config that binds the name,
+  // and the deploy renders that binding from SIGMA_D1_ID — so the id it answers always equals SIGMA_D1_ID and
+  // step 3 alone can never fail. The name Cloudflare gives that database can: an environment whose
+  // SIGMA_D1_ID fell back to another environment's id resolves here to that other database's name.
+  if (resolvedName !== d1Name)
+    throw new Error(
+      `D1 target mismatch: SIGMA_D1_ID ${expectedId} is the database '${resolvedName || 'unknown'}', not '${d1Name}' — refusing to wipe.`,
     );
 }
 
@@ -537,6 +553,69 @@ export function readPublishedGeneration(d1Name, remote, deps = {}) {
   }
 }
 
+/**
+ * Files to D1 through the wrangler CLI, each with its receipt (`sendWithReceipt`): written to `dir`,
+ * executed against `d1Name`, removed. `repeatable` files are sent again when their receipt cannot be read
+ * (sendWithReceipt). `env` is the environment wrangler runs with; `exec` and `sleep` are test seams.
+ */
+export function wranglerFileSender({
+  d1Name,
+  remote,
+  dir,
+  cwd,
+  waitMs,
+  env,
+  repeatable = false,
+  exec = execFileSync,
+  sleep,
+}) {
+  const where = remote ? '--remote' : '--local';
+  const readReceipt = (label) => {
+    let out;
+    try {
+      out = exec(
+        'wrangler',
+        [
+          'd1',
+          'execute',
+          d1Name,
+          where,
+          '--json',
+          '--command',
+          `SELECT token FROM rp_receipt WHERE label=${sqlLiteral(label)}`,
+        ],
+        { cwd, encoding: 'utf8', ...(env ? { env } : {}) },
+      );
+    } catch (error) {
+      // The table arrives with the first receipt: a target without it has no file that landed with one.
+      if (/no such table: rp_receipt/.test(`${error?.message}${error?.stdout}${error?.stderr}`))
+        return null;
+      throw error;
+    }
+    const rows = parseWranglerJson(out)[0]?.results ?? [];
+    return typeof rows[0]?.token === 'string' ? rows[0].token : null;
+  };
+  return (label, sql) => {
+    const file = join(dir, `${label}.sql`);
+    try {
+      sendWithReceipt(
+        sql,
+        (body) => {
+          writeFileSync(file, body);
+          exec('wrangler', ['d1', 'execute', d1Name, where, '--yes', '--file', file], {
+            cwd,
+            stdio: 'inherit',
+            ...(env ? { env } : {}),
+          });
+        },
+        { label, readReceipt, waitMs, sleep, repeatable },
+      );
+    } finally {
+      rmSync(file, { force: true });
+    }
+  };
+}
+
 export function readShippedCounts(d1Name, remote, expected, deps = {}) {
   const tables = Object.entries(expected)
     .filter(([, n]) => typeof n === 'number')
@@ -600,16 +679,18 @@ export function readShippedCounts(d1Name, remote, expected, deps = {}) {
   return counts;
 }
 
-function resolveD1Id(d1Name) {
+/** The id and the name Cloudflare gives the database `wrangler d1 info <d1Name>` resolves to; empty on any
+ *  failure, which assertD1TargetAuthorized turns into a refusal. */
+function resolveD1(d1Name) {
   try {
     const out = execFileSync('wrangler', ['d1', 'info', d1Name, '--json'], {
       cwd: resolve('apps/web'),
       encoding: 'utf8',
     });
     const info = JSON.parse(out);
-    return info?.uuid ?? info?.database_id ?? '';
+    return { id: info?.uuid ?? info?.database_id ?? '', name: info?.name ?? '' };
   } catch {
-    return '';
+    return { id: '', name: '' };
   }
 }
 
@@ -707,35 +788,26 @@ async function main() {
       shipEnv: process.env.SIGMA_SHIP_ENV ?? '',
       d1Name,
       expectedId: process.env.SIGMA_D1_ID,
-      resolvedId: remote ? resolveD1Id(d1Name) : '',
+      ...(remote
+        ? (({ id, name }) => ({ resolvedId: id, resolvedName: name }))(resolveD1(d1Name))
+        : { resolvedId: '', resolvedName: '' }),
     });
 
   // Upload staging tables, verify, then publish with one rename swap.
   const tmp = emit ? null : mkdtempSync(join(tmpdir(), 'sigma-ship-'));
-  // Each file is one transaction: a failed one leaves the target as it was, so a transient D1 failure
-  // (7009, a reset Durable Object) is retried as is.
-  const applyFile = (name, sql) => {
-    const f = join(tmp, `${name}.sql`);
-    writeFileSync(f, sql);
-    try {
-      for (let attempt = 1; ; attempt++) {
-        try {
-          execFileSync(
-            'wrangler',
-            ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--yes', '--file', f],
-            { cwd: resolve('apps/web'), stdio: 'inherit' },
-          );
-          return;
-        } catch (error) {
-          if (attempt >= 3) throw error;
-          console.error(`ship: ${name} failed (attempt ${attempt}/3); retrying`);
-          sleepSync(30_000 * attempt);
-        }
-      }
-    } finally {
-      rmSync(f, { force: true });
-    }
-  };
+  // Each file is one transaction and carries its receipt. After an error the receipt decides: a file that
+  // landed despite the error (wrangler's false „Not currently importing anything") is not sent again; one
+  // that did not (7009, a reset Durable Object) is.
+  const retryMs = parseNonNegativeInt(arg('retry-ms', 30_000), 'retry-ms');
+  const applyFile = emit
+    ? null
+    : wranglerFileSender({
+        d1Name,
+        remote,
+        dir: tmp,
+        cwd: resolve('apps/web'),
+        waitMs: (n) => retryMs * n,
+      });
 
   if (emit) mkdirSync(emit, { recursive: true });
   // One read of a source table: null when the table is absent from the work DB.

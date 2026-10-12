@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { BASE_SCHEMA } from './base-schema';
 import {
   assertIntegrity,
   checkAmendmentTwins,
@@ -25,7 +26,6 @@ import {
 } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 // precompute.sql's officials block reads interest_links (0003); build it so precompute doesn't fail.
@@ -78,7 +78,7 @@ VALUES
 function freshDb(): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'sigma-integrity-'));
   const dbPath = resolve(dir, 'test.sqlite');
-  readScript(dbPath, schemaPath);
+  for (const file of BASE_SCHEMA) readScript(dbPath, file);
   readScript(dbPath, migration1Path);
   readScript(dbPath, migration2Path);
   readScript(dbPath, migration3Path);
@@ -126,6 +126,7 @@ describe('reconciliation gate — clean corpus', () => {
       'non-empty-corpus',
       'rollup-reconciliation',
       'current-amount-parity',
+      'annex-total-suspect-basis',
       'no-negative-values',
       'eik-validity',
       'date-sanity',

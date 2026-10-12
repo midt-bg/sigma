@@ -4,7 +4,9 @@
 // UI renders „—" or a „данните се проверяват" note), never a fabricated value.
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-export type EntityKind = 'company' | 'consortium';
+/** `framework_parties` — the suppliers a framework agreement was concluded with, named together in one
+ *  contractor field. They are not a joint bidder: each order under the agreement is its own contract. */
+export type EntityKind = 'company' | 'consortium' | 'framework_parties';
 export type OwnershipKind = 'state' | 'municipal' | 'mixed';
 
 /** One keyset page. Total is from a rollup or a cached COUNT; cursors drive Prev/Next (no deep
@@ -32,6 +34,7 @@ export interface ProcedureSlice {
   contracts: number;
   valueEur: number;
   sharePct: number; // 0–1 share of the entity's value
+  contractSharePct: number; // 0–1 share of the contracts the mix counts (all of them on the authority page)
 }
 
 /** A facet option (filter checkbox) with its result count. */
@@ -61,8 +64,9 @@ export interface HomeData {
   /** Single-offer (bids_received = 1) contracts for the homepage section. */
   recentSingleOffer: ContractListItem[];
   topSingleOffer: ContractListItem[];
-  /** Aggregate value/count of single-offer contracts — for the homepage portion bar. */
-  singleOffer: { valueEur: number; contracts: number };
+  /** Single-offer contracts against their base — contracts with a known number of offers, the base
+   *  /analytics and /competition use too — for the homepage portion bar. Values sum positive amounts. */
+  singleOffer: { valueEur: number; contracts: number; baseValueEur: number; baseContracts: number };
 }
 
 // ── Companies ─────────────────────────────────────────────────────────────────────────────────
@@ -131,7 +135,13 @@ export interface CompanyDetail {
   avgBids: number | null;
   periodFirst: string | null;
   periodLast: string | null;
-  suspect: number; // own contracts excluded from sums (suspect value)
+  /** Own contracts whose value is probably wrong at the source (value_low, summed as published) or missing
+   *  (not summed) — the contracts list's badge for this company. Framework agreements are never in it. */
+  suspect: number;
+  /** Framework agreements this contractor is a party to, and their combined ceiling — the most the
+   *  buyers may order under them. Never in the sums above: the orders are separate contracts. */
+  frameworkAgreements: number;
+  frameworkCeilingEur: number;
   topAuthorities: AuthorityShare[];
   moreAuthorities: number;
   procedureMix: ProcedureSlice[];
@@ -196,7 +206,12 @@ export interface AuthorityDetail {
   avgBids: number | null;
   periodFirst: string | null;
   periodLast: string | null;
+  /** As CompanyDetail.suspect: the contracts list's „вероятно грешна или липсваща стойност" count. */
   suspect: number;
+  /** Framework agreements this authority concluded, and their combined ceiling. Never in the spend
+   *  above: what the buyers ordered under them are separate contracts. */
+  frameworkAgreements: number;
+  frameworkCeilingEur: number;
   topContractors: CompanyShare[];
   moreContractors: number;
   sectors: SectorSpend[];
@@ -230,6 +245,10 @@ export interface ContractListItem {
   /** The value is present and summed, but the source figure looks wrong (`value_flag = 'value_low'`).
    *  Lists must mark it: unmarked, 92 € reads exactly like a genuine 92 € contract. */
   valueUnverified: boolean;
+  /** The record of a framework agreement itself: `valueEur` is null on purpose and the row shows the
+   *  agreement's ceiling instead, which is not money spent. */
+  frameworkAgreement: boolean;
+  frameworkCeilingEur: number | null;
 }
 
 export interface ContractParty {
@@ -252,12 +271,7 @@ export interface ContractParty {
  *  them: `value_low` (published far below the forecast) reads nothing like `annex_total_suspect`
  *  (a known 2× double-count). */
 export type ContractValueFlag =
-  | 'ok'
-  | 'review'
-  | 'value_low'
-  | 'value_suspect'
-  | 'annex_suspect'
-  | 'annex_total_suspect';
+  'ok' | 'review' | 'value_low' | 'value_suspect' | 'annex_suspect' | 'annex_total_suspect';
 
 export interface ContractValueTimeline {
   estimatedEur: number | null; // lot forecast when available; otherwise procurement-level forecast
@@ -347,6 +361,9 @@ export interface ContractDetail {
    *  contracts under the parent tender. Null for a normal single/per-lot award. The procedure-level
    *  estimate then represents the whole framework ceiling, not this individual call-off. */
   frameworkAwards: number | null;
+  /** The record of a framework agreement itself (ЦАИС ЕОП: „поръчка за рамково споразумение"): its
+   *  value is the agreement's ceiling, never summed; the orders placed under it are separate contracts. */
+  frameworkAgreement: boolean;
   authority: ContractParty;
   bidder: ContractParty;
   lots: ContractLots | null;
@@ -382,14 +399,7 @@ export interface CpvCohortStats {
  *  claimed when the cohort is large enough for that cut to be real AND the percentile anchors around
  *  it are distinct (so a tie-collapsed or tiny cohort never yields a fake „top 1%"). */
 export type CohortBand =
-  | 'top1'
-  | 'top5'
-  | 'top10'
-  | 'top25'
-  | 'above-median'
-  | 'at-median'
-  | 'below-median'
-  | 'bottom25';
+  'top1' | 'top5' | 'top10' | 'top25' | 'above-median' | 'at-median' | 'below-median' | 'bottom25';
 
 /** The „Подобни договори" benchmark for the contract page - null when there is no honest cohort. */
 export interface ContractCohortBenchmark {
@@ -579,7 +589,15 @@ export interface CompanyPeople {
 /** One role a person holds, or held, at one company. */
 export interface PersonRole {
   /** `ownershipKind`: a public enterprise, where a role is a held position (ADR-0047). */
-  company: { name: string; eik: string; href: string | null; ownershipKind?: OwnershipKind };
+  company: {
+    name: string;
+    eik: string;
+    href: string | null;
+    ownershipKind?: OwnershipKind;
+    /** The organization the person files declarations for as a member of its bodies: for this person the
+     *  seat is a held position, as in a public enterprise — the organization is not public property. */
+    office?: true;
+  };
   role: RegistryRoleKind;
   share: string | null;
   sharePct: number | null;
@@ -634,14 +652,15 @@ export interface TrendPoint {
   valueEur: number;
   contracts: number;
   partial: boolean; // the final period (the as_of period) is still being filled; rendered dashed
+  partialStart?: boolean; // a period of the first year, while the source was being taken up; rendered dashed
 }
 
 export interface TrendYear {
   year: string;
   valueEur: number;
   contracts: number;
-  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year, a zero previous year, or the partial final year
-  partial: boolean; // the as_of year, still incomplete; YoY is suppressed and it is marked in the UI
+  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year, a zero previous year, a partial year or the year after a partial one
+  partial: boolean; // incomplete: the as_of year, or the first year while the source was taken up; marked in the UI
 }
 
 export interface TrendData {
@@ -923,13 +942,16 @@ export interface CompanyConflicts {
 /** A source document, with dates kept distinct from the reporting year. */
 export interface PersonDeclaration {
   /** Ownership the Trade Register recorded for the declarant at the end of the reporting year, in a
-   *  company this document does not name. Only partidas the site has read; never a finding by itself. */
+   *  company none of the person's filings for that year names. Only partidas the site has read, and only
+   *  years of which at least one entry was read; never a finding by itself. */
   registryOmissions?: {
     eik: string;
     company: string;
     role: RegistryRoleKind;
     entryNumber: string;
     addedOn: string;
+    /** The latest earlier year whose filings name the company. */
+    earlierYear?: string;
   }[];
   /** Comparison notes, separate from interests actually declared in this document. */
   discrepancies?: {
@@ -948,6 +970,11 @@ export interface PersonDeclaration {
   submittedOn: string | null;
   institution: string | null;
   position: string | null;
+  /** Set when the declaration is filed for a seat in the bodies of an organization (ADR-0047 §2):
+   *  `institution` is then that organization — named by the declaration's category (`category`), or by
+   *  the „Месторабота" of a copy in a folder of declaration types (`workplace`) — and `work` is the
+   *  document's own „Месторабота", verbatim. Presentation only; the declaration is stored as filed. */
+  office?: { basis: 'category' | 'workplace'; work: string | null };
   url: string;
   companyEiks: string[];
   /** Business interests in this document only; unresolved entities have no profile link. */
@@ -957,5 +984,13 @@ export interface PersonDeclaration {
     kind: string;
     timing: string;
     scope: 'self' | 'family' | 'unknown';
+    /** Set on an entry Sigma shows as declared but does not count among the related persons, and why:
+     *  shares of a joint-stock company, a change declaration that gives no period, a company the register
+     *  does not confirm is the one declared, or none of these (`declared`). Absent on a counted entry. */
+    status?: DeclaredEntryStatus;
+    /** The person's roles in the company as the Trade Register records them, when it does. */
+    registryRoles?: RegistryRoleKind[];
   }[];
 }
+
+export type DeclaredEntryStatus = 'shares' | 'period' | 'unconfirmed' | 'declared';

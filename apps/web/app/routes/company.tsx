@@ -34,6 +34,7 @@ import { ContractMiniTable } from '../components/ContractMiniTable';
 import { CompanyRolesTables, RegistrySource } from '../components/RegistryRoles';
 import { ShareBar, Chip, OwnershipChip, Section, RegistryCta } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { declarantsChip } from '../lib/conflicts';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
@@ -199,9 +200,14 @@ export default function Company({ loaderData }: Route.ComponentProps) {
   const c = loaderData.company;
   const { trend, ties, people, tieLayout, declarants, jointContracts } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
-  const noEikCompany = !c.isConsortium && !c.hasEik;
-  const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
-  const wonVerb = c.isConsortium ? 'спечелило' : 'спечелила';
+  const frameworkParties = c.kind === 'framework_parties';
+  const noEikCompany = !c.isConsortium && !frameworkParties && !c.hasEik;
+  const subjectPhrase = frameworkParties
+    ? 'тези доставчици'
+    : c.isConsortium
+      ? 'това обединение'
+      : 'тази компания';
+  const wonVerb = frameworkParties ? 'спечелили' : c.isConsortium ? 'спечелило' : 'спечелила';
   const hasDeclarants = (declarants?.length ?? 0) > 0;
   return (
     <>
@@ -216,7 +222,13 @@ export default function Company({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker={
             <>
-              {c.isConsortium ? 'Група изпълнители' : noEikCompany ? 'Участник' : 'Компания'}
+              {frameworkParties
+                ? 'Страни по рамково споразумение'
+                : c.isConsortium
+                  ? 'Група изпълнители'
+                  : noEikCompany
+                    ? 'Участник'
+                    : 'Компания'}
               {noEikCompany && (
                 <>
                   {' '}
@@ -234,9 +246,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   {' · '}
                   <a href="#declared-people">
                     <Chip tone="window" explain={false}>
-                      {declarants.every((l) => l.relation === 'related')
-                        ? 'дял на свързано лице'
-                        : 'деклариран дял на длъжностно лице'}
+                      {declarantsChip(declarants.map((l) => l.relation))}
                     </Chip>
                   </a>
                 </>
@@ -284,22 +294,31 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             },
             {
               term: 'Вид субект',
-              value: c.isConsortium
-                ? 'група изпълнители'
-                : noEikCompany
-                  ? 'участник без потвърден идентификатор'
-                  : 'дружество',
-              sub: c.isConsortium
-                ? 'съвместно посочени изпълнители в източника'
-                : noEikCompany
-                  ? 'без ЕИК в източника'
-                  : undefined,
+              value: frameworkParties
+                ? 'страни по рамково споразумение'
+                : c.isConsortium
+                  ? 'група изпълнители'
+                  : noEikCompany
+                    ? 'участник без потвърден идентификатор'
+                    : 'дружество',
+              sub: frameworkParties
+                ? 'доставчиците, с които е сключено споразумението; не са обединение'
+                : c.isConsortium
+                  ? 'съвместно посочени изпълнители в източника'
+                  : noEikCompany
+                    ? 'без ЕИК в източника'
+                    : undefined,
             },
             c.settlement && { term: 'Седалище', value: c.settlement, sub: c.region ?? undefined },
             c.suspect > 0 && {
-              term: 'Непотвърдена стойност',
+              term: 'Вероятно грешна или липсваща стойност',
               value: `${count(c.suspect)} ${plural(c.suspect, 'договор', 'договора')}`,
-              sub: 'в броя и в сумите, с прогнозната стойност вместо подадената',
+              sub: 'грешните са в сумите, както са подадени; липсващите не са',
+            },
+            c.frameworkAgreements > 0 && {
+              term: 'Рамкови споразумения',
+              value: `${count(c.frameworkAgreements)} · таван ${money(c.frameworkCeilingEur)}`,
+              sub: 'таван, а не изразходвана сума — не влиза в сумите; броят се поръчките по тях',
             },
           ]}
         />
@@ -453,19 +472,19 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             <Section
               id="from"
               title="Откъде печели"
-              hint={`Институции, подредени по сумата, платена на ${c.displayName.replace(/\.$/, '')}.`}
+              hint={`Институции, подредени по стойността на договорите им с ${c.displayName.replace(/\.$/, '')} — стойности на договорите, а не извършени плащания.`}
             >
               <div className="table-wrap tbl-cards">
                 <table>
                   <caption className="sr-only">
-                    Институции платци, подредени по сумата, платена на компанията
+                    Институции възложители, подредени по стойността на договорите им с компанията
                   </caption>
                   <thead>
                     <tr>
                       <th scope="col">#</th>
                       <th scope="col">Институция</th>
                       <th scope="col" className="num">
-                        Платено на компанията (€)
+                        Стойност на договорите (€)
                       </th>
                       <th scope="col" className="num">
                         Договори
@@ -482,7 +501,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                         <td className="cell-title" data-label="Институция">
                           <Link to={`/authorities/${a.slug}`}>{a.name}</Link>
                         </td>
-                        <td className="money" data-label="Платено (€)">
+                        <td className="money" data-label="Стойност (€)">
                           {moneyBare(a.paidEur)}
                         </td>
                         <td className="money" data-label="Договори">

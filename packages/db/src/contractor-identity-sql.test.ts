@@ -4,9 +4,10 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { BASE_SCHEMA } from './base-schema';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schema = readFileSync(resolve(root, 'packages/db/migrations/0000_init.sql'), 'utf8');
+const schema = BASE_SCHEMA.map((file) => readFileSync(file, 'utf8')).join('\n');
 const migration2 = readFileSync(
   resolve(root, 'packages/db/migrations/0002_current_value_currency.sql'),
   'utf8',

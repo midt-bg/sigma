@@ -28,6 +28,25 @@ export function declarationTypeLabel(d: Pick<PersonDeclaration, 'type' | 'templa
         : 'декларация';
   return kind ? `${kind} · ${template}` : template;
 }
+/** What Sigma established about an entry it shows as declared but does not count as a declared tie: the
+ *  reason, and the person's roles in the company when the register records them. Never a finding. */
+export function declaredEntryNote(
+  i: NonNullable<PersonDeclaration['interests']>[number],
+): string | null {
+  if (!i.status) return null;
+  const roles = i.registryRoles?.length
+    ? `Регистърът вписва лицето в дружеството като ${[...new Set(i.registryRoles.map((r) => ROLE_LABEL[r]))].join(', ')}. `
+    : '';
+  const reason =
+    i.status === 'shares'
+      ? 'Акции или дял в акционерно дружество: регистърът не води акционерите. '
+      : i.status === 'period'
+        ? 'Декларация за промяна — периодът не е посочен. '
+        : i.status === 'unconfirmed'
+          ? 'Регистърът не потвърждава, че е това дружество. '
+          : '';
+  return `${reason}${roles}Не се брои като декларирана връзка в „Свързани лица“.`;
+}
 export function declaredInterestLabel(
   i: NonNullable<PersonDeclaration['interests']>[number],
 ): string {
@@ -91,6 +110,14 @@ const columns: Column<PersonDeclaration>[] = [
       <>
         {d.institution || 'Неустановена институция'}
         {d.position && <div className="small muted">{d.position}</div>}
+        {d.office?.basis === 'category' && (
+          <div className="small muted">Институция по категорията на декларацията</div>
+        )}
+        {d.office?.work && (
+          <div className="small muted">
+            Месторабота според декларацията: <span className="verbatim">„{d.office.work}“</span>
+          </div>
+        )}
       </>
     ),
   },
@@ -107,6 +134,7 @@ const columns: Column<PersonDeclaration>[] = [
                 <div className="small">
                   <Chip>{declaredInterestLabel(i)}</Chip>
                 </div>
+                {i.status && <p className="small muted">{declaredEntryNote(i)}</p>}
               </li>
             ))}
           </ul>
@@ -141,9 +169,12 @@ const columns: Column<PersonDeclaration>[] = [
           <p className="small declaration-discrepancy" key={`registry-${o.eik}-${o.role}`}>
             <strong>Регистър срещу декларация за {d.year} г.</strong> Към 31.12.{d.year} лицето е
             вписано в Търговския регистър като {ROLE_LABEL[o.role]} в{' '}
-            <Link to={`/companies/${o.eik}`}>{o.company}</Link> (вписване от {date(o.addedOn)}), а
-            дружеството не е посочено в тази декларация. Възможни причини: разлика в изписването на
-            дружеството, отчетен период, който не съвпада с вписването, или пропуск в декларацията.{' '}
+            <Link to={`/companies/${o.eik}`}>{o.company}</Link> (вписване от {date(o.addedOn)}).{' '}
+            {o.earlierYear
+              ? `Дружеството е посочено в декларацията за ${o.earlierYear} г.; в документите за ${d.year} г. СИГМА не го откри.`
+              : `СИГМА не откри дружеството в декларациите на лицето за ${d.year} г.`}{' '}
+            Сравнението е автоматично — възможно е различно изписване или различен отчетен период.
+            Това не е установено нарушение.{' '}
             <Link to="/conflicts/methodology#contest">Възражение</Link>
           </p>
         ))}

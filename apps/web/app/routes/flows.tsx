@@ -141,7 +141,7 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
               {
                 href: '/flows?sector=45',
                 title: 'Строителство — топ потоци',
-                desc: 'Кои възложители плащат на кои строителни компании.',
+                desc: 'Кои възложители възлагат договори на кои строителни компании.',
               },
               {
                 href: '/flows?sector=33',

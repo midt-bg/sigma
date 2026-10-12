@@ -7,7 +7,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createRoutesStub } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PersonDeclaration } from '@sigma/api-contract';
-import { Declarations, declarationTypeLabel, declaredInterestLabel } from './Declarations';
+import {
+  Declarations,
+  declarationTypeLabel,
+  declaredEntryNote,
+  declaredInterestLabel,
+} from './Declarations';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,6 +76,30 @@ describe('declarationTypeLabel', () => {
     );
     expect(declarationTypeLabel({ type: null, template: 'interests' })).toBe('част II · интереси');
     expect(declarationTypeLabel({ type: 'Unexpected', template: 'legacy' })).toBe('декларация');
+  });
+});
+
+describe('declaredEntryNote', () => {
+  it('says why a declared entry is not counted, and what the register records — never a finding', () => {
+    expect(declaredEntryNote(interest())).toBeNull();
+    const shares = declaredEntryNote(interest({ kind: 'securities', status: 'shares' }))!;
+    expect(shares).toContain('регистърът не води акционерите');
+    const period = declaredEntryNote(
+      interest({ kind: 'management', timing: 'unknown', status: 'period' }),
+    )!;
+    expect(period).toContain('Декларация за промяна — периодът не е посочен');
+    const unconfirmed = declaredEntryNote(interest({ status: 'unconfirmed' }))!;
+    expect(unconfirmed).toContain('Регистърът не потвърждава, че е това дружество');
+    const board = declaredEntryNote(
+      interest({ kind: 'management', status: 'declared', registryRoles: ['board_of_directors'] }),
+    )!;
+    expect(board).toContain(
+      'Регистърът вписва лицето в дружеството като член на съвета на директорите',
+    );
+    for (const note of [shares, period, unconfirmed, board]) {
+      expect(note).toContain('Не се брои като декларирана връзка');
+      expect(note).not.toMatch(/конфликт|частен интерес|недеклар/);
+    }
   });
 });
 
@@ -180,6 +209,36 @@ describe('Declarations', () => {
     expect(cell(row, 'Дружества и декларирани роли').textContent).toBe(
       'Няма участия в показаните дружества',
     );
+  });
+
+  it('shows a seat in an organization’s bodies under the organization, with the workplace as written', () => {
+    const c = render(
+      <Declarations
+        declarations={[
+          declaration({
+            id: 'c',
+            institution: 'Сдружение Тест',
+            position: 'Член на съвета',
+            office: { basis: 'category', work: 'ТЕСТ ГРУП ЕООД' },
+          }),
+          declaration({
+            id: 'w',
+            institution: 'Сдружение Тест',
+            position: 'Член на съвета',
+            office: { basis: 'workplace', work: 'СТ' },
+          }),
+        ]}
+      />,
+    );
+    const [byCategory, byWorkplace] = [...c.querySelectorAll('tbody tr')].map(
+      (row) => cell(row, 'Институция и длъжност').textContent,
+    );
+    expect(byCategory).toBe(
+      'Сдружение ТестЧлен на съветаИнституция по категорията на декларациятаМесторабота според декларацията: „ТЕСТ ГРУП ЕООД“',
+    );
+    expect(byWorkplace).toBe('Сдружение ТестЧлен на съветаМесторабота според декларацията: „СТ“');
+    // The quoted workplace keeps its own letters: the table's small caps do not reach it.
+    expect(c.querySelector('tbody tr .verbatim')!.textContent).toBe('„ТЕСТ ГРУП ЕООД“');
   });
 
   it('notes an entry or exit declaration whose year differs from its document date', () => {

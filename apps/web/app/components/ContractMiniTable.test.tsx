@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createRoutesStub } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ContractListItem } from '@sigma/api-contract';
-import { UNVERIFIED_HINT } from '../lib/contractValue';
+import { FRAMEWORK_HINT, UNVERIFIED_HINT } from '../lib/contractValue';
 import { ContractMiniTable } from './ContractMiniTable';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,6 +39,8 @@ const contract = (over: Partial<ContractListItem> = {}): ContractListItem => ({
   bidsReceived: 3,
   valueEur: 1234.56,
   valueUnverified: false,
+  frameworkAgreement: false,
+  frameworkCeilingEur: null,
   ...over,
 });
 
@@ -94,5 +96,26 @@ describe('ContractMiniTable', () => {
     expect(unverified.getAttribute('title')).toBe(UNVERIFIED_HINT);
     expect(unverified.querySelector('.money-unverified-mark')?.textContent).toBe('⚠');
     expect(unverified.querySelector('.sr-only')?.textContent).toContain(UNVERIFIED_HINT);
+  });
+
+  it('shows a framework agreement as its ceiling, not as a missing or unverified value', () => {
+    const c = render(
+      [
+        contract({
+          id: 'agreement',
+          valueEur: null,
+          frameworkAgreement: true,
+          frameworkCeilingEur: 1_000_000,
+        }),
+      ],
+      'bidder',
+    );
+    const value = cell(c.querySelector('tbody tr')!, 'Стойност (€)');
+    expect(value.querySelector('.suspect')).toBeNull();
+    expect(value.querySelector('.money-unverified')).toBeNull();
+    const ceiling = value.querySelector('[title]')!;
+    expect(ceiling.getAttribute('title')).toBe(FRAMEWORK_HINT);
+    expect(ceiling.textContent).toMatch(/^таван\s1\sмлн\./); // the money format joins with a no-break space
+    expect(ceiling.querySelector('.sr-only')?.textContent).toContain(FRAMEWORK_HINT);
   });
 });

@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import { d1FromSqlite, throwingD1 } from '@sigma/test-support';
+import { OFFICE_ORGANIZATIONS } from '@sigma/shared';
 import { getPersonActivity, getRegistryIdentity, getRegistryOfficials } from './person-activity';
 import { getPersonTimeline } from './person-timeline';
 let db: DatabaseSync;
@@ -25,7 +26,7 @@ function fixture() {
     CREATE TABLE registry_deeds(eik,outcome,fetched_at);
     INSERT INTO registry_deeds VALUES('111111111','ok','2026-08-30T12:00:00Z');
     CREATE TABLE interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year,relation);
-    CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+    CREATE TABLE interest_link_evidence(link_key,evidence_kind,matched_fact TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
     CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
     CREATE TABLE person_registry_links(person_id,registry_indent);
     CREATE TABLE bidders(id,name,eik_normalized,ownership_kind);
@@ -34,7 +35,7 @@ function fixture() {
     CREATE TABLE tenders(id,title,authority_id);
     CREATE TABLE authorities(id,name);
     CREATE TABLE authority_totals(authority_id);
-    CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+    CREATE TABLE declarations(id,person_id,institution,position,declared_year,category TEXT GENERATED ALWAYS AS (NULL) VIRTUAL);
     CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
     INSERT INTO authority_totals VALUES('auth:1');
     INSERT INTO declarations VALUES('dec20','official','Община','Съветник','2020'),('dec21','official','Община','Съветник','2021');
@@ -117,6 +118,35 @@ it('a role in a public enterprise brings none of its contracts; a declared manag
     new URLSearchParams('basis=self'),
   );
   expect(own.contracts.map((r) => r.id).sort()).toEqual(['a', 'b']);
+});
+it('a seat in the organization the person files for as a member of its bodies brings none of its contracts', async () => {
+  const [ORG] = OFFICE_ORGANIZATIONS;
+  const d1 = fixture();
+  // The fixture's declarations carry no category; this test needs one.
+  db.exec(`
+    CREATE TABLE declarations_copy AS SELECT id,person_id,institution,position,declared_year FROM declarations;
+    DROP TABLE declarations;
+    CREATE TABLE declarations(id,person_id,institution,position,declared_year,category);
+    INSERT INTO declarations SELECT *, NULL FROM declarations_copy;
+    DROP TABLE declarations_copy;
+    INSERT INTO declarations VALUES('org','official','НС','Член','2020','Членовете на ръководните и на контролните ${ORG!.categoryIncludes}');
+    INSERT INTO bidders(id,name,eik_normalized) VALUES('eik:${ORG!.eik}','Организация','${ORG!.eik}');
+    INSERT INTO company_totals VALUES('eik:${ORG!.eik}',1);
+    INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','${ORG!.eik}','governing_body','2000-01-01',NULL);
+    INSERT INTO contracts VALUES('org','Организация','eik:${ORG!.eik}','t','2020-01-01',70);
+  `);
+  const member = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(member.contracts.some((r) => r.id === 'org')).toBe(false);
+  // The timeline names the seat after the organization, not after the workplace the filing gives.
+  const timeline = await getPersonTimeline(d1, 'person', ['official']);
+  expect(timeline.institutionProfiles).toEqual([
+    { institution: 'Община', authorityId: 'auth:1' },
+    { institution: ORG!.name, authorityId: null },
+  ]);
+  // Filed under any other category, the organization is like any other company the person has a role in.
+  db.exec("UPDATE declarations SET category='Кметове и общински съветници' WHERE id='org'");
+  const other = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(other.contracts.some((r) => r.id === 'org')).toBe(true);
 });
 it('an open role supports contracts only through the last successful registry observation', async () => {
   const d1 = fixture();
@@ -328,6 +358,23 @@ it('the shared timeline covers all contracts without the 500-card limit and sepa
   });
   expect(result.observations).toHaveLength(2);
   expect(result.observations.find((o) => o.timing === 'prior')!.reportedYear).toBe('2025');
+});
+
+it('reads the authority names only for a person with declarations to match them against', async () => {
+  const d1 = fixture();
+  const sql: string[] = [];
+  const recorded = new Proxy(d1, {
+    get: (target, prop, receiver) =>
+      prop === 'prepare'
+        ? (query: string) => (sql.push(query), target.prepare(query))
+        : Reflect.get(target, prop, receiver),
+  });
+  const authorityNames = () => sql.filter((q) => q.includes('JOIN authority_totals')).length;
+  // Known only from the register: no declaration, so no institution to link and no names to read.
+  expect((await getPersonTimeline(recorded, 'person', [])).institutionProfiles).toEqual([]);
+  expect(authorityNames()).toBe(0);
+  await getPersonTimeline(recorded, 'person', ['official']);
+  expect(authorityNames()).toBe(1);
 });
 
 it('includes every proven source identity of the register identity, with or without a public interest', async () => {
@@ -546,4 +593,26 @@ it('opens the office with its year and closes it on the day of the exit filing',
     INSERT INTO declaration_metadata VALUES('e20','Entry','2020-01-20','2020-01-21'),
       ('v20','Vacate','2020-04-01','2020-04-02');`);
   expect(await ids('tied')).toEqual([]);
+});
+
+// A seat in a company with a public stake, however small, is a held position: neither the registered role nor a
+// declared management brings the company's contracts to the person. A declared stake in it stays the person's.
+it('leaves out the contracts of a company in which the person holds a seat with a public stake', async () => {
+  const d1 = fixture();
+  const all = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(all.total).toBeGreaterThan(0);
+  db.exec("UPDATE interest_links SET relation='manages'");
+  const seat = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams(), 'all', [
+    '111111111',
+  ]);
+  expect(seat.total).toBe(0);
+  const timeline = await getPersonTimeline(d1, 'person', ['official'], ['111111111']);
+  expect(timeline.contracts).toEqual([]);
+  expect(timeline.observations).toEqual([]);
+  // A share in the same company is the person's, whoever else owns it.
+  db.exec("UPDATE interest_links SET relation='owns'");
+  const stake = await getPersonActivity(d1, null, ['official'], new URLSearchParams(), 'all', [
+    '111111111',
+  ]);
+  expect(stake.total).toBe(all.total);
 });

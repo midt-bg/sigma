@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   companyNameKey,
   companyNamesAlike,
+  declaredNameMatches,
+  declaredTextHasEik,
+  filingsNameCompany,
   isMatchableKey,
   registryCompanyName,
 } from './company-name-key';
@@ -155,5 +158,53 @@ describe('registryCompanyName', () => {
     expect(registryCompanyName('АЛФА ООД', 'OOD')).toBe('АЛФА ООД');
     expect(registryCompanyName('АЛФА', 'CC')).toBe('АЛФА');
     expect(registryCompanyName('АЛФА', null)).toBe('АЛФА');
+  });
+});
+
+describe('declaredNameMatches', () => {
+  it('reads a legal form glued to the name, and a note in brackets, as the same company', () => {
+    expect(declaredNameMatches('ТЕСТ ГРУПЕООД', 'ТЕСТ ГРУП')).toBe(true);
+    expect(declaredNameMatches('„Тест Груп" ООД (без дейност от 2004 г.)', 'ТЕСТ ГРУП')).toBe(true);
+  });
+
+  it('counts one name contained whole in the other, so a note never rests on a near miss', () => {
+    expect(declaredNameMatches('Медицински център Тестмед ЕООД', 'ТЕСТМЕД')).toBe(true);
+    expect(declaredNameMatches('ПРИМЕР 97 ООД', 'ПРИМЕР')).toBe(true);
+  });
+
+  it('keeps a word that merely starts like the company apart, and a too-short name exact', () => {
+    expect(declaredNameMatches('ПРИМЕРНО СТРОИТЕЛСТВО ЕООД', 'ПРИМЕР')).toBe(false);
+    expect(declaredNameMatches('ТСТ ТРЕЙД ООД', 'ТСТ')).toBe(false);
+  });
+
+  it('names nothing from a blank entry', () => {
+    expect(declaredNameMatches('', 'ТЕСТ ГРУП')).toBe(false);
+    expect(declaredNameMatches('ЕООД', 'ТЕСТ ГРУП')).toBe(false);
+  });
+});
+
+describe('declaredTextHasEik', () => {
+  it('finds the ЕИК written into an entry, spaces and all, but not inside a longer number', () => {
+    expect(declaredTextHasEik('ТЕСТ ГРУП ЕООД, ЕИК 123456789', '123456789')).toBe(true);
+    expect(declaredTextHasEik('ЕИК: 123 456 789', '123456789')).toBe(true);
+    expect(declaredTextHasEik('сметка 91234567890', '123456789')).toBe(false);
+    expect(declaredTextHasEik('ЕИК 123456789', 'not-an-eik')).toBe(false);
+  });
+});
+
+describe('filingsNameCompany', () => {
+  const company = { eik: '123456789', names: ['ТЕСТ ГРУП', null, 'СТАРО ИМЕ'] };
+
+  it('takes a resolved ЕИК, the ЕИК in the text, the current name or a former one', () => {
+    expect(filingsNameCompany({ eiks: ['123456789'], named: [] }, company)).toBe(true);
+    expect(filingsNameCompany({ eiks: [], named: ['ЕИК 123456789'] }, company)).toBe(true);
+    expect(filingsNameCompany({ eiks: [], named: ['"Тест груп" ЕООД'] }, company)).toBe(true);
+    expect(filingsNameCompany({ eiks: [], named: ['Старо Име ООД'] }, company)).toBe(true);
+  });
+
+  it('says no only when nothing in the filings resembles the company', () => {
+    expect(filingsNameCompany({ eiks: ['987654321'], named: ['ДРУГА ФИРМА ООД'] }, company)).toBe(
+      false,
+    );
   });
 });

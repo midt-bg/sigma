@@ -16,6 +16,22 @@ const BACKOFF_MS = [50, 150];
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// D1's own back-pressure: it is queueing more than it can serve. That is not a blip, and repeating the
+// query only lengthens the queue — with a loader's retry wrapped around this one, a single page asked the
+// same scan up to nine times while a crawler held the database overloaded (28.09.2026). So the request
+// ends at once, as a 503 the router renders and a crawler reads as „come back later", never as a 500.
+const OVERLOADED = /D1 DB is overloaded|Requests queued for too long/;
+
+/** D1 refused the query because it is overloaded: back-pressure, not a transient fault to retry. */
+export function isD1Overloaded(error: unknown): boolean {
+  return OVERLOADED.test(error instanceof Error ? error.message : String(error));
+}
+
+/** The 503 an overloaded D1 becomes; `Retry-After` is set on the way out (workers/app.ts). */
+export function d1OverloadedResponse(): Response {
+  return new Response('D1 is overloaded', { status: 503, statusText: 'Service Unavailable' });
+}
+
 async function withRetry<T>(run: () => Promise<T>): Promise<T> {
   for (const [i, backoff] of BACKOFF_MS.entries()) {
     try {
@@ -24,6 +40,7 @@ async function withRetry<T>(run: () => Promise<T>): Promise<T> {
       // A thrown Response is React Router's 404/redirect idiom, never a transient fault. Nothing below
       // D1 throws one, but re-throwing keeps that true if a future caller passes one through.
       if (error instanceof Response) throw error;
+      if (isD1Overloaded(error)) throw d1OverloadedResponse();
       console.warn(
         `[retryingD1] read failed (attempt ${i + 1}/${BACKOFF_MS.length + 1}), retrying:`,
         error instanceof Error ? error.message : error,
@@ -32,7 +49,12 @@ async function withRetry<T>(run: () => Promise<T>): Promise<T> {
     }
   }
   // The last attempt is deliberately outside the loop: its error is the one the caller must see.
-  return await run();
+  try {
+    return await run();
+  } catch (error) {
+    if (isD1Overloaded(error)) throw d1OverloadedResponse();
+    throw error;
+  }
 }
 
 /** A prepared SELECT whose result methods survive a transient fault. `bind()` keeps the wrapper, so it

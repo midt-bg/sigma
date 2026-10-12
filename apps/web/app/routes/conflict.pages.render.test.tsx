@@ -230,9 +230,52 @@ describe('/persons/:id — render', () => {
     expect(note.textContent).toContain('Регистър срещу декларация за 2021 г.');
     expect(note.textContent).toContain('едноличен собственик на капитала');
     expect(note.textContent).toContain('ГАМА ЕООД');
-    expect(note.textContent).toContain('Възможни причини');
-    expect(note.textContent).not.toContain('нарушение');
+    // What the comparison found, not a hypothesis about the declarant: no „пропуск", no „не е посочено".
+    expect(note.textContent).toContain(
+      'СИГМА не откри дружеството в декларациите на лицето за 2021 г.',
+    );
+    expect(note.textContent).toContain('Сравнението е автоматично');
+    expect(note.textContent).toContain('Това не е установено нарушение.');
+    expect(note.textContent).not.toContain('пропуск');
+    expect(note.textContent).not.toContain('не е посочено');
     expect(note.querySelector('a[href="/companies/222"]')).not.toBeNull();
+  });
+
+  it('says in which earlier year the declarant named the company the register still records', async () => {
+    await mount(Person as never, {
+      official: 'Иван Петров',
+      links: [link()],
+      declarations: [
+        {
+          id: '2023',
+          year: '2023',
+          institution: 'Община Тест',
+          position: 'Кмет',
+          template: 'assets',
+          type: 'Annualy',
+          declaredOn: null,
+          submittedOn: null,
+          url: 'https://example.test/2023',
+          companyEiks: [],
+          registryOmissions: [
+            {
+              eik: '222',
+              company: 'ГАМА ЕООД',
+              role: 'sole_owner',
+              entryNumber: 'e2',
+              addedOn: '2021-03-01',
+              earlierYear: '2021',
+            },
+          ],
+        },
+      ],
+    });
+    const note = container.querySelector('.declaration-discrepancy')!;
+    expect(note.textContent).toContain(
+      'Дружеството е посочено в декларацията за 2021 г.; в документите за 2023 г. СИГМА не го откри.',
+    );
+    expect(note.textContent).not.toContain('СИГМА не откри дружеството');
+    expect(note.textContent).toContain('Това не е установено нарушение.');
   });
 
   it('names a relative the register confirms, linking only one with a page, and the reverse mention', async () => {
@@ -405,9 +448,13 @@ describe('/conflicts/methodology — render', () => {
     // every rung of the ladder, by the name the seal and the card use
     for (const rung of ['Документ', 'Потвърдено', 'Оборена', 'Неизвестна'])
       expect(t).toContain(rung);
-    // rung 1 — the joint-stock bar and its reason (the „11 акции" trap)
-    expect(t).toContain('Акционерна форма');
+    // rung 1 — the joint-stock bar and its reason (the „11 акции" trap), for a stake only: a declared
+    // management is checked on the body that runs the company
+    expect(t).toContain('Дял в акционерно дружество');
     expect(t).toContain('не е публична');
+    expect(t).toContain('декларираното управление се проверява по органа на управление');
+    // the seat in the organization a person files for as a member of its bodies is an office
+    expect(t).toContain('подава декларация именно като член на тези органи');
     // rung 2 — all three names, one registered person, and the variants a name may take
     expect(t).toContain('и трите имена');
     expect(t).toContain('едно и също вписано лице');
@@ -424,6 +471,15 @@ describe('/conflicts/methodology — render', () => {
     expect(t).toContain('самоличността на дружеството');
   });
 
+  it('describes held links by the rule in force, with no number written into the prose', async () => {
+    // A count typed into the page outlives the data: it said „близо 400 … ≈408 млн. €" and a register that
+    // would become available, long after the register was read daily and the held links had changed.
+    await mount(ConflictMethodology as never, {});
+    const t = text();
+    expect(t).toContain('Задържани, не показани');
+    expect(t).not.toMatch(/близо 400|408 млн|регистърът стане достъпен|уникалността му/);
+  });
+
   it('states the three libel rails in plain language', async () => {
     await mount(ConflictMethodology as never, {});
     const t = text();
@@ -436,5 +492,15 @@ describe('/conflicts/methodology — render', () => {
     expect(t).toContain('чиято имуществена декларация не е публична');
     // the contest/correction anchor the leaderboard links to
     expect(container.querySelector('#contest, #shown')).not.toBeNull();
+  });
+
+  it('names the identifiers it never shows instead of claiming to show no personal data', async () => {
+    await mount(ConflictMethodology as never, {});
+    const t = text();
+    expect(t).toContain('Не показваме адреси, ЕГН, номера на документи и банкови сметки');
+    expect(t).not.toContain('Не показваме лични данни');
+    // The register-versus-declaration note: what SIGMA did not find, over the whole year, never a breach.
+    expect(t).toContain('СИГМА не открива в нито един от документите му за същата година');
+    expect(t).not.toContain('или пропуск');
   });
 });

@@ -432,6 +432,93 @@ test('rung 4 — suppressed inside the 2011–2012 re-registration window', () =
   assert.equal(v.kind, 'unknown');
 });
 
+// ── a declared management is judged as management (tr-rules-10) ─────────────────
+// The bar and the refutation are about a stake: the shareholder book is not public and a parcel of shares may
+// be a minority, and the date of the ownership record says nothing about who manages. A seat on the body that
+// runs a company is on the register, so a declared management is looked for there.
+const manages = { ...base, relation: 'manages' };
+
+test('a declared management of a joint-stock company is read on its board, never barred', () => {
+  const ad = registry([holder('00120', 'ИВАН ПЕТРОВ ТЕСТОВ'), holder('00190', 'ДРУГО ЛИЦЕ ТУК')], {
+    legal_form: 'AD',
+    name: '"ГАМА ИНВЕСТ" АД',
+  });
+  const v = evidenceVerdict({ ...manages, registry: ad });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.publishable, true);
+  assert.equal(v.registryRole, 'manager');
+  assert.equal(v.matchedFact, 'role:manager:00120');
+  // The same company stays barred for a declared stake, with or without a management beside it.
+  assert.equal(evidenceVerdict({ ...base, registry: ad }).kind, 'bar_joint_stock');
+  assert.equal(
+    evidenceVerdict({ ...base, relation: 'owns+manages', registry: ad }).kind,
+    'bar_joint_stock',
+  );
+  assert.equal(
+    evidenceVerdict({ ...base, scope: 'family', relation: 'related', registry: ad }).kind,
+    'bar_joint_stock',
+  );
+});
+
+test('a declared management of an association is read on its governing body; a stake there stays held', () => {
+  const assoc = registry([holder('00125', 'ИВАН ПЕТРОВ ТЕСТОВ')], {
+    legal_form: 'ASSOC',
+    name: 'СДРУЖЕНИЕ "ТЕСТ"',
+  });
+  const v = evidenceVerdict({ ...manages, registry: assoc });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.matchedFact, 'role:manager:00125');
+  assert.equal(evidenceVerdict({ ...base, registry: assoc }).kind, 'unknown');
+});
+
+test('a past seat on the board still shows the company is the declared one', () => {
+  const ad = registry(
+    [holder('00120', 'ИВАН ПЕТРОВ ТЕСТОВ', '2016-03-01', { removed_on: '2022-05-01' })],
+    { legal_form: 'EAD', name: '"ГАМА" ЕАД' },
+  );
+  const v = evidenceVerdict({ ...manages, registry: ad });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.roleEndedOn, '2022-05-01');
+});
+
+test('a declared stake never reads the bodies: the stake rungs answer as before', () => {
+  const coop = registry(
+    [holder('00131', 'ИВАН ПЕТРОВ ТЕСТОВ'), holder('00190', 'ДРУГ СОБСТВЕНИК', '2023-01-01')],
+    { legal_form: 'K', name: 'КООПЕРАЦИЯ ТЕСТ' },
+  );
+  assert.equal(evidenceVerdict({ ...base, registry: coop }).kind, 'unknown');
+  assert.equal(evidenceVerdict({ ...manages, registry: coop }).kind, 'document');
+});
+
+test('a declared management is never refuted by the date of the ownership record', () => {
+  const older = registry([holder('00190', 'СЪВСЕМ ДРУГ СОБСТВЕНИК', '2015-03-01')]);
+  assert.equal(evidenceVerdict({ ...base, registry: older }).kind, 'refuted');
+  const v = evidenceVerdict({ ...manages, registry: older });
+  assert.equal(v.kind, 'unknown');
+  assert.equal(v.publishable, false);
+});
+
+test('a supervisory seat is not management, and a joint-stock company without the person stays unknown', () => {
+  const ad = registry([holder('00140', 'ИВАН ПЕТРОВ ТЕСТОВ')], {
+    legal_form: 'AD',
+    name: '"ГАМА ИНВЕСТ" АД',
+  });
+  const v = evidenceVerdict({ ...manages, registry: ad });
+  assert.equal(v.kind, 'unknown');
+  assert.equal(v.publishable, false);
+});
+
+test('a namesake on a body designates nobody for a declared management', () => {
+  const two = registry(
+    [
+      holder('00120', 'ИВАН ПЕТРОВ ТЕСТОВ', '2011-05-02', { subject_id: 'a'.repeat(64) }),
+      holder('00070', 'ИВАН ПЕТРОВ ТЕСТОВ', '2011-05-02', { subject_id: 'b'.repeat(64) }),
+    ],
+    { legal_form: 'AD', name: '"ГАМА" АД' },
+  );
+  assert.equal(evidenceVerdict({ ...manages, registry: two }).kind, 'unknown');
+});
+
 // ── rungs 5 and 6 ─────────────────────────────────────────────────────────────
 test('rung 5 — everything else is „Неизвестна" and stays hidden', () => {
   const recent = registry([holder('00190', 'ДРУГ СОБСТВЕНИК', '2023-01-01')]);

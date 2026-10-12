@@ -247,6 +247,12 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
         )}
 
         <TotalsStrip totals={totals} label="Обобщение на конкуренцията" />
+        <p className="small muted">
+          Делът с една оферта — по брой и по стойност — е от договорите с известен брой оферти (
+          {count(data.totals.contracts)} договора за {money(data.totals.valueEur)}); стойността е
+          сумата на положителните суми. Без филтри това е същото число като на началната страница и
+          в „Анализи“.
+        </p>
 
         <Section
           id="single-offer"
@@ -297,7 +303,7 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
               Най-висока <em>концентрация</em> на доставчици
             </>
           }
-          hint="Индекс на Херфиндал-Хиршман (HHI) върху разпределението на разходите на възложителя между изпълнителите: 1 значи всичко към една фирма. Само възложители с поне двама доставчици."
+          hint="Индекс на Херфиндал-Хиршман (HHI) върху разпределението на стойността на договорите на възложителя между изпълнителите: 1 значи всичко към една фирма. Само възложители с поне двама доставчици."
         >
           {data.byConcentration.length ? (
             <DataTable

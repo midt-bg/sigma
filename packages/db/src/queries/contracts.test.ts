@@ -53,6 +53,8 @@ function listDb(
   // `1=0` is the guard the list query uses for an input it could not decode — the page it returns
   // must be empty, and the count that goes with it zero. Its routes come first so the guard wins.
   return fakeD1([
+    // An empty contract_rollup (no all-open row): the headline is counted live, as these tests expect.
+    { when: 'contract_rollup', first: null },
     { when: '1=0', all: [] },
     { when: '1=0', first: { total: 0, eur: 0, suspect: 0 } },
     { when: 'COUNT(*) AS total', first: summary },
@@ -194,6 +196,36 @@ describe('buildFilters (via listContracts)', () => {
     expect(page.items[0]!.sectorCode).toBeNull(); // r.cpv_code ? … : null
   });
 
+  it('marks a framework agreement row with its ceiling and leaves an order under it as a plain row', async () => {
+    const db = listDb([
+      {
+        ...contractRow,
+        id: 'c:agreement',
+        amount_eur: null,
+        framework: 2,
+        signing_value_eur: 1_000_000,
+        bidder_kind: 'framework_parties',
+        // a ceiling flagged too low is still a ceiling, never an unverified value
+        value_flag: 'value_low',
+      },
+      { ...contractRow, id: 'c:order', framework: 1, signing_value_eur: 1000 },
+    ]).db;
+    const [agreement, order] = (await listContracts(db, {})).items;
+    expect(agreement).toMatchObject({
+      valueEur: null,
+      valueUnverified: false,
+      frameworkAgreement: true,
+      frameworkCeilingEur: 1_000_000,
+      bidderKind: 'framework_parties',
+      isConsortium: false,
+    });
+    expect(order).toMatchObject({
+      valueEur: 1000,
+      frameworkAgreement: false,
+      frameworkCeilingEur: null,
+    });
+  });
+
   it('emits a backward page in reversed fetch order (before-cursor → reverse)', async () => {
     // 3 rows, pageSize 2 → a full page so the reverse is observable (pageSize 1 would hide it).
     const rows = [
@@ -213,9 +245,72 @@ describe('buildFilters (via listContracts)', () => {
 
 describe('contractsSummary', () => {
   it('returns zeroed totals when the aggregate row is missing', async () => {
-    const db = fakeD1([{ when: 'COUNT(*) AS total', first: null }]).db; // no aggregate row
+    const db = fakeD1([
+      { when: 'contract_rollup', first: null },
+      { when: 'COUNT(*) AS total', first: null }, // no aggregate row
+    ]).db;
     const summary = await contractsSummary(db, {});
     expect(summary).toEqual({ total: 0, valueEur: 0, suspect: 0 });
+  });
+
+  // A database that predates contract_rollup counts live; any other failure is a real one and surfaces.
+  const failing = (message: string) => () => {
+    throw new Error(message);
+  };
+
+  it('counts live while contract_rollup does not exist', async () => {
+    const db = fakeD1([
+      { when: 'contract_rollup', first: failing('D1_ERROR: no such table: contract_rollup') },
+      { when: 'COUNT(*) AS total', first: { total: 4, eur: 40, suspect: 1 } },
+    ]).db;
+    expect(await contractsSummary(db, { years: ['2024'] })).toEqual({
+      total: 4,
+      valueEur: 40,
+      suspect: 1,
+    });
+  });
+
+  it('does not mistake another rollup failure for a missing table', async () => {
+    const db = fakeD1([
+      { when: 'contract_rollup', first: failing('D1_ERROR: database is locked') },
+    ]).db;
+    await expect(contractsSummary(db, { years: ['2024'] })).rejects.toThrow('database is locked');
+  });
+});
+
+describe('listContracts — the page of a sparse filter without its rollup', () => {
+  // A headline the caller already holds (the route counts it first) can come from the live count while the
+  // rollup is missing; the page then asks the rollup whether to start from candidates, and must walk.
+  const sparse = { years: ['2019'], sectors: ['45'], pageSize: 10 };
+  const summary = { total: 3, valueEur: 30, suspect: 0 };
+
+  it('walks the sort index when contract_rollup does not exist', async () => {
+    const fake = fakeD1([
+      {
+        when: 'contract_rollup',
+        first: () => {
+          throw new Error('no such table: contract_rollup');
+        },
+      },
+      { when: 'FROM contracts c', all: [contractRow] },
+    ]);
+    const page = await listContracts(fake.db, sparse, summary);
+    expect(page.items).toHaveLength(1);
+    const query = fake.sql.find((s) => s.includes('sort_value'))!;
+    expect(query).not.toContain('WITH cand');
+  });
+
+  it('surfaces any other failure of the rollup', async () => {
+    const fake = fakeD1([
+      {
+        when: 'contract_rollup',
+        first: () => {
+          throw new Error('D1_ERROR: database is locked');
+        },
+      },
+      { when: 'FROM contracts c', all: [contractRow] },
+    ]);
+    await expect(listContracts(fake.db, sparse, summary)).rejects.toThrow('database is locked');
   });
 });
 
@@ -291,10 +386,27 @@ describe('streamContractsCsv', () => {
     expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]); // UTF-8 BOM
     const csv = new TextDecoder().decode(bytes);
     expect(csv.split('\n')[0]).toBe(
-      'id,unp,subject,authority,authority_eik,contractor,contractor_eik,kind,sector_code,procedure,signed_at,value_eur,eu_funded,bids_received',
+      'id,unp,subject,authority,authority_eik,contractor,contractor_eik,kind,sector_code,procedure,signed_at,value_eur,eu_funded,bids_received,framework_ceiling_eur',
     );
     expect(csv).toContain('UNP-1');
     expect(csv).toContain('123456789'); // authority_eik column
+  });
+
+  it('gives a framework agreement an empty value_eur and its ceiling in the last column', async () => {
+    const agreement = {
+      ...csvRow,
+      amount_eur: null,
+      framework: 2,
+      signing_value_eur: 1_000_000,
+      bids_received: 3,
+    };
+    const order = { ...csvRow, amount_eur: 2000, framework: 1, signing_value_eur: 2000 };
+    const lines = (await streamContractsCsv(csvDb([[agreement, order], []]).db, {}).text())
+      .split('\n')
+      .filter(Boolean);
+    // trailing columns: …,value_eur,eu_funded,bids_received,framework_ceiling_eur
+    expect(lines[1]).toMatch(/,,0,3,1000000$/); // no summed value; the ceiling stands apart
+    expect(lines[2]).toMatch(/,2000,0,3,$/); // an order under it is an ordinary, summed contract
   });
 
   it('emits only the header when the filtered set is empty', async () => {
@@ -321,6 +433,50 @@ describe('streamContractsCsv', () => {
     expect(csv.match(/\n/g)!).toHaveLength(CHUNK + 1); // header + CHUNK rows
     expect(fake.sql.some((s) => s.includes('c.eu_funded = 1 AND c.rowid > ?'))).toBe(true);
     expect(fake.sql).toHaveLength(2); // === CHUNK page did not close; a second pull ran
+  });
+});
+
+describe('getContractFacets — precomputed sector and year rows', () => {
+  it('reads sector and year from facet_counts without scanning contracts', async () => {
+    const fake = facetDb({
+      rollup: [
+        { facet: 'eu', key: '1', contracts: 3 },
+        { facet: 'sector', key: '45', contracts: 7 },
+        { facet: 'sector', key: '72', contracts: 9 },
+        { facet: 'sector', key: '', contracts: 1 }, // CPV-less contracts: counted, never a sector
+        { facet: 'year', key: '2024', contracts: 6 },
+        { facet: 'year', key: 'unknown', contracts: 2 },
+        { facet: 'year', key: '2025', contracts: 5 },
+      ],
+      // A live answer that would be wrong: reading it would show in the counts below.
+      sectors: [{ division: '45', contracts: 999 }],
+      years: [{ key: '2024', contracts: 999 }],
+    });
+    const facets = await getContractFacets(fake.db);
+    expect(fake.sql).toEqual([expect.stringContaining('FROM facet_counts')]);
+    expect(facets.sectors.map((s) => [s.value, s.count])).toEqual([
+      ['72', 9],
+      ['45', 7],
+    ]);
+    expect(facets.years.map((y) => [y.value, y.count])).toEqual([
+      ['2025', 5],
+      ['2024', 6],
+      ['unknown', 2],
+    ]);
+  });
+
+  it('counts live only the facet a not-yet-refreshed database lacks', async () => {
+    const fake = facetDb({
+      rollup: [{ facet: 'sector', key: '45', contracts: 7 }],
+      years: [{ key: '2023', contracts: 4 }],
+    });
+    const facets = await getContractFacets(fake.db);
+    expect(fake.sql.some((sql) => sql.includes('JOIN tenders t ON t.id = c.tender_id'))).toBe(
+      false,
+    );
+    expect(fake.sql.some((sql) => sql.includes('GROUP BY key'))).toBe(true);
+    expect(facets.sectors).toEqual([expect.objectContaining({ value: '45', count: 7 })]);
+    expect(facets.years).toEqual([expect.objectContaining({ value: '2023', count: 4 })]);
   });
 });
 

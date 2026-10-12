@@ -2,6 +2,7 @@
 // partida's facts. The register itself is read through @sigma/ingest's client; nothing here touches the net.
 import type { DeedLookup, RegistryPerson, RegistryRole } from '@sigma/ingest';
 import { addDays, companyNamesFromDeed, deedFacts, rolesFromDeed } from '@sigma/ingest';
+import { PUBLIC_OWNERSHIP_SQL } from './public-ownership';
 
 export const REGISTRY_LEASE_TTL_MS = 30 * 60 * 1000;
 
@@ -58,12 +59,16 @@ async function leaseHolder(db: D1Database): Promise<string | null> {
 const queued = async (db: D1Database) =>
   (await db.prepare('SELECT COUNT(*) AS n FROM registry_queue').first<{ n: number }>())?.n ?? 0;
 
-/** Every company in scope: winners with a partida ЕИК and a contract, plus the explicitly requested. */
+/** Every company in scope: winners with a partida ЕИК and a contract, plus the explicitly requested — and every
+ *  partida already read, so its name history is read too. A partida read before the history was, and no longer
+ *  requested, kept its roles but never its former names; a declaration naming the company as it was called then
+ *  read as one that does not name it. */
 const REQUESTED_COMPANIES = `(
          SELECT DISTINCT b.eik_normalized AS eik FROM bidders b
          WHERE b.eik_valid=1 AND length(b.eik_normalized)=9
            AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id=b.id)
          UNION SELECT eik FROM registry_requested_companies WHERE length(eik)=9
+         UNION SELECT eik FROM registry_deeds WHERE outcome='ok' AND length(eik)=9
        ) requested`;
 
 /** Queue the winners never read: companies with a partida ЕИК and at least one contract. */
@@ -381,6 +386,48 @@ export async function nextEntryPass(
     .bind(today, now)
     .first<EntryPass>();
 }
+/** Move one pass to a later day, keeping its place within the day (page, count, last page) as it was. A day
+ *  whose answer cannot be used then waits on its own, instead of holding every later day back with it. */
+export async function deferEntryPass(
+  db: D1Database,
+  pass: Pick<EntryPass, 'day' | 'delay'>,
+  dueOn: string,
+): Promise<void> {
+  await db
+    .prepare(
+      'UPDATE registry_entry_passes SET due_on=?3 WHERE day=?1 AND delay=?2 AND completed_at IS NULL',
+    )
+    .bind(pass.day, pass.delay, dueOn)
+    .run();
+}
+
+export interface EntryFeedHealth {
+  /** Open passes whose day has come. */
+  due: number;
+  /** The earliest day with a pass still open. */
+  oldestOpenDay: string | null;
+  /** When a pass last completed — or the full import was accepted, before the first one did. */
+  lastProgressAt: string | null;
+}
+
+/** How far the portal feed is behind, for the run to say so when it stops moving. */
+export async function entryFeedHealth(db: D1Database, today: string): Promise<EntryFeedHealth> {
+  // A SELECT without FROM answers with exactly one row.
+  const row = (await db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM registry_entry_passes WHERE completed_at IS NULL AND due_on <= ?1) AS due,
+         (SELECT MIN(day) FROM registry_entry_passes WHERE completed_at IS NULL) AS oldestOpenDay,
+         COALESCE(
+           (SELECT MAX(completed_at) FROM registry_entry_passes),
+           (SELECT baseline_completed_at FROM registry_entry_state WHERE id=1)
+         ) AS lastProgressAt`,
+    )
+    .bind(today)
+    .first<EntryFeedHealth>())!;
+  return { due: row.due, oldestOpenDay: row.oldestOpenDay, lastProgressAt: row.lastProgressAt };
+}
+
 export async function deferPortal(db: D1Database, until: string): Promise<void> {
   await db
     .prepare('UPDATE registry_entry_state SET portal_retry_at=?1 WHERE id=1')
@@ -448,76 +495,6 @@ export async function deferXml(db: D1Database, until: string): Promise<void> {
     .bind(until)
     .run();
 }
-
-// SQLite folds case for ASCII only, and the register writes an owner in capitals or not: each word in all
-// three spellings.
-const nameHas = (patterns: string[]) =>
-  `(${patterns
-    .flatMap((p) => [p.toUpperCase(), p.replace(/\p{L}/u, (c) => c.toUpperCase()), p])
-    .map((p) => `name LIKE '${p}'`)
-    .join(' OR ')})`;
-const MUNICIPALITY = nameHas(['община%', 'столична община%']);
-const STATE = nameHas([
-  '%министерство%',
-  '%министър%',
-  '%държавата%',
-  'държава%',
-  '%народна банка%',
-]);
-// A contracting authority of these kinds, with no partida of a trade company, is a public body.
-const PUBLIC_BODY_TYPES = [
-  'Публичноправна организация',
-  'Министерство или всякакъв друг национален или федерален орган, включително техни регионални или местни подразделения',
-  'Орган на централната власт',
-  'Национална или федерална агенция/служба',
-  'Регионален или местен орган',
-  'Местен орган',
-  'Регионална или местна агенция/служба',
-];
-
-/** Public ownership the Trade Register records (ADR-0047), for the refresh to read: a company whose standing
- *  sole owner, or partner with more than half of the partners' capital, is the state, a ministry, a
- *  municipality, another public body or a company already public. Municipal when a municipality holds it, directly or through its
- *  companies. */
-export const PUBLIC_OWNERSHIP_SQL = [
-  `CREATE TABLE IF NOT EXISTS state_owned_eik (
-    eik TEXT PRIMARY KEY,
-    ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal', 'mixed')),
-    canonical_name TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS public_owned_eik (
-    eik TEXT PRIMARY KEY,
-    ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal')))`,
-  `DELETE FROM public_owned_eik`,
-  `INSERT INTO public_owned_eik (eik, ownership_kind)
-  WITH RECURSIVE owners AS (
-    SELECT r.eik, r.subject_id owner, r.subject_name name, r.role,
-      CAST(REPLACE(REPLACE(trim(r.share), ' ', ''), ',', '.') AS REAL) amount
-    FROM registry_roles r
-    WHERE r.subject_kind = 'entity' AND r.role IN ('sole_owner', 'partner')
-      AND r.removed_on IS NULL AND r.uncertain_after IS NULL
-  ), capital AS (
-    SELECT eik, SUM(CAST(REPLACE(REPLACE(trim(share), ' ', ''), ',', '.') AS REAL)) total
-    FROM registry_roles
-    WHERE role = 'partner' AND removed_on IS NULL AND uncertain_after IS NULL
-    GROUP BY eik
-  ), controlled AS (
-    SELECT o.eik, o.owner, o.name FROM owners o LEFT JOIN capital c ON c.eik = o.eik
-    WHERE o.role = 'sole_owner' OR o.amount * 2 > c.total
-  ), public_body AS (
-    SELECT substr(id, 6) eik, type_group = 'община' municipal FROM authorities
-    WHERE id GLOB 'auth:[0-9]*' AND type IN (${PUBLIC_BODY_TYPES.map((t) => `'${t}'`).join(', ')})
-      AND substr(id, 6) NOT IN (SELECT eik FROM registry_deeds WHERE outcome = 'ok')
-  ), public_owned(eik, kind, depth) AS (
-    SELECT c.eik, CASE WHEN ${MUNICIPALITY} OR pb.municipal THEN 'municipal' ELSE 'state' END, 0
-    FROM controlled c LEFT JOIN public_body pb ON pb.eik = c.owner
-    WHERE pb.eik IS NOT NULL OR ${MUNICIPALITY} OR ${STATE}
-      OR c.owner IN (SELECT eik FROM state_owned_eik WHERE ownership_kind = 'state')
-    UNION
-    SELECT c.eik, p.kind, p.depth + 1 FROM controlled c JOIN public_owned p ON p.eik = c.owner
-    WHERE p.depth < 4
-  )
-  SELECT eik, MIN(kind) FROM public_owned GROUP BY eik`,
-];
 
 export async function derivePublicOwnership(db: D1Database): Promise<number> {
   await db.batch(PUBLIC_OWNERSHIP_SQL.map((sql) => db.prepare(sql)));

@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { BASE_SCHEMA } from './base-schema';
 import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 // refresh-slice.sql / precompute.sql officials block reads interest_links (0003) — build it in every chain.
@@ -196,7 +196,7 @@ function seedOcdsOnlySharedNumber(dbPath: string): void {
 }
 
 function initWorkDb(dbPath: string): void {
-  readScript(dbPath, schemaPath);
+  for (const file of BASE_SCHEMA) readScript(dbPath, file);
   readScript(dbPath, migration1Path);
   readScript(dbPath, migration2Path);
   readScript(dbPath, migration3Path);
@@ -587,12 +587,175 @@ describe('joint-procurement authority attribution', () => {
   );
 });
 
+describe('refresh-slice lot values', () => {
+  // The window's OCDS lots fill the served lots by their domain id: only an empty field is filled, the
+  // latest OCDS row of a lot wins, `LOT-n` and `n` are the same lot, and a lot outside the window or an
+  // OCDS lot with no served row is left alone.
+  it('fills only the empty fields of the window lots, from the latest OCDS row of each', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-lot-values-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      seedEopBaseDay(dbPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type)
+           VALUES ('auth:323456789', 'Authority LV', '323456789', 'public');
+         INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status)
+           VALUES ('t:UNP-LV-1', 'UNP-LV-1', 'Lot tender', 'auth:323456789', 'BGN', 'open', 'published'),
+                  ('t:UNP-LV-2', 'UNP-LV-2', 'Other tender', 'auth:323456789', 'BGN', 'open', 'published');
+         INSERT INTO lots (id, tender_id, title, value_amount, value_currency) VALUES
+           ('lot:UNP-LV-1:1', 't:UNP-LV-1', 'Empty lot', NULL, NULL),
+           ('lot:UNP-LV-1:2', 't:UNP-LV-1', 'Valued, no currency', 7, NULL),
+           ('lot:UNP-LV-1:A3', 't:UNP-LV-1', 'Fully valued', 9, 'BGN'),
+           ('lot:UNP-LV-1:4', 't:UNP-LV-1', 'No amount upstream', NULL, NULL),
+           ('lot:UNP-LV-2:1', 't:UNP-LV-2', 'Outside the window', NULL, NULL);
+         INSERT INTO raw_tenders
+           (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+            estimated_value, currency, authority_name, authority_eik, authority_type, lot_id, published_at)
+         VALUES ('ocds:2026-06-01', 2026, '2026-06-07T00:00:00Z', 'UNP-LV-1', 'TENDER-LV-1', 'open',
+                 'Lot tender', 1000, 'BGN', 'Authority LV', '323456789', 'public', NULL, '2026-06-01');
+         INSERT INTO raw_ocds_lots (id, source, fetched_at, tender_id, lot_id, value_amount, value_currency)
+         VALUES (1, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', 'LOT-1', 100, 'EUR'),
+                (2, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', '1', 150, 'BGN'),
+                (3, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', 'LOT-2', 200, 'EUR'),
+                (4, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', 'A3', 300, 'EUR'),
+                (5, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', '4', NULL, 'EUR'),
+                (6, 'ocds:2026-06-01', '2026-06-07T00:00:00Z', 'TENDER-LV-1', '99', 5, 'EUR');`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+
+      expect(
+        sqliteJson<{ id: string; value_amount: number | null; value_currency: string | null }>(
+          dbPath,
+          "SELECT id, value_amount, value_currency FROM lots WHERE id GLOB 'lot:UNP-LV-*' ORDER BY id",
+        ),
+      ).toEqual([
+        { id: 'lot:UNP-LV-1:1', value_amount: 150, value_currency: 'BGN' },
+        { id: 'lot:UNP-LV-1:2', value_amount: 7, value_currency: 'EUR' },
+        { id: 'lot:UNP-LV-1:4', value_amount: null, value_currency: 'EUR' },
+        { id: 'lot:UNP-LV-1:A3', value_amount: 9, value_currency: 'BGN' },
+        { id: 'lot:UNP-LV-2:1', value_amount: null, value_currency: null },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('refresh-slice tender status', () => {
+  it('marks a served tender awarded when the window brings its contract, and no other', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-awarded-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type)
+           VALUES ('auth:223456787', 'Authority Shared', '223456787', 'public');
+         INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status)
+           VALUES ('t:UNP-SHARED', 'UNP-SHARED', 'Shared tender', 'auth:223456787', 'BGN', 'open', 'published'),
+                  ('t:UNP-QUIET', 'UNP-QUIET', 'Quiet tender', 'auth:223456787', 'BGN', 'open', 'published');`,
+      );
+      // A contract for an already served tender, with no tender header in the window.
+      seedEopOnlySharedNumber(dbPath);
+      sqlite(dbPath, "DELETE FROM raw_tenders WHERE unp = 'UNP-SHARED';");
+
+      readScript(dbPath, refreshSlicePath);
+
+      expect(
+        sqliteJson<{ id: string; status: string }>(
+          dbPath,
+          "SELECT id, status FROM tenders WHERE id IN ('t:UNP-SHARED', 't:UNP-QUIET') ORDER BY id",
+        ),
+      ).toEqual([
+        { id: 't:UNP-QUIET', status: 'published' },
+        { id: 't:UNP-SHARED', status: 'awarded' },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('refresh-slice rewrites only what changed', () => {
+  // flow_pairs and the entity rows of the search index are recomputed in full on every run, so a drift in
+  // them heals — but a row that already holds its value is left as it is, not deleted and written again.
+  it('heals flow_pairs and the entity search rows without touching the unchanged ones', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-writes-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      seedEopBaseDay(dbPath);
+      readScript(dbPath, refreshSlicePath);
+
+      type Pair = { authority_id: string; bidder_id: string; won_eur: number };
+      const pairsSql = `SELECT authority_id, bidder_id, authority_name, bidder_name, bidder_kind,
+          round(won_eur, 6) AS won_eur, contracts FROM flow_pairs ORDER BY authority_id, bidder_id`;
+      const entitySql = `SELECT rowid AS rid, kind, ref, title, ident, subtitle, round(amount, 6) AS amount
+          FROM search_index WHERE kind IN ('company', 'authority') ORDER BY kind, ref`;
+      const pairs = sqliteJson<Pair>(dbPath, pairsSql);
+      const entities = sqliteJson<{ rid: number; kind: string; ref: string }>(dbPath, entitySql);
+      const companies = entities.filter((e) => e.kind === 'company');
+      const authority = entities.find((e) => e.kind === 'authority');
+      expect(pairs).toHaveLength(2);
+      expect(companies).toHaveLength(2);
+      expect(authority).toBeDefined();
+      const [drifted, kept] = pairs as [Pair, Pair];
+      const [renamed, untouched] = companies as [(typeof companies)[0], (typeof companies)[0]];
+
+      // The drifts an earlier fault could leave behind: a pair with no contracts, a pair with a wrong
+      // sum, a stale company row, a company row with a wrong title, an authority row gone missing.
+      sqlite(
+        dbPath,
+        `CREATE TABLE pair_writes (op TEXT, authority_id TEXT, bidder_id TEXT);
+         CREATE TRIGGER pair_insert AFTER INSERT ON flow_pairs
+           BEGIN INSERT INTO pair_writes VALUES ('insert', new.authority_id, new.bidder_id); END;
+         CREATE TRIGGER pair_update AFTER UPDATE ON flow_pairs
+           BEGIN INSERT INTO pair_writes VALUES ('update', new.authority_id, new.bidder_id); END;
+         CREATE TRIGGER pair_delete AFTER DELETE ON flow_pairs
+           BEGIN INSERT INTO pair_writes VALUES ('delete', old.authority_id, old.bidder_id); END;
+         INSERT INTO flow_pairs VALUES ('auth:123456786', 'eik:000000000', 'Stale', 'Stale', 'company', 1, 1);
+         UPDATE flow_pairs SET won_eur = won_eur + 1
+           WHERE authority_id = ${sqlValue(drifted.authority_id)} AND bidder_id = ${sqlValue(drifted.bidder_id)};
+         INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
+           VALUES ('company', 'eik:000000000', 'Stale', '000000000', '', 1);
+         UPDATE search_index SET title = 'Wrong title' WHERE rowid = ${renamed.rid};
+         DELETE FROM search_index WHERE rowid = ${authority?.rid};
+         DELETE FROM pair_writes;`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+
+      expect(sqliteJson(dbPath, pairsSql)).toEqual(pairs);
+      expect(
+        sqliteJson(dbPath, 'SELECT op, authority_id, bidder_id FROM pair_writes ORDER BY op'),
+      ).toEqual([
+        { op: 'delete', authority_id: 'auth:123456786', bidder_id: 'eik:000000000' },
+        { op: 'update', authority_id: drifted.authority_id, bidder_id: drifted.bidder_id },
+      ]);
+      expect(kept.bidder_id).not.toBe(drifted.bidder_id);
+
+      const healed = sqliteJson<{ rid: number; kind: string; ref: string }>(dbPath, entitySql);
+      const content = (rows: { rid: number }[]) => rows.map(({ rid: _rid, ...rest }) => rest);
+      expect(content(healed)).toEqual(content(entities));
+      const rid = (ref: string) => healed.find((e) => e.ref === ref)?.rid;
+      expect(rid(untouched.ref)).toBe(untouched.rid);
+      expect(rid(renamed.ref)).not.toBe(renamed.rid);
+      expect(rid(authority!.ref)).not.toBe(authority!.rid);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('refresh-slice EOP base derivation', () => {
   it('derives new eop base rows as c:e contracts and is idempotent', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -679,7 +842,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-ocds-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -869,7 +1032,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -925,7 +1088,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -981,7 +1144,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -1123,7 +1286,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      for (const file of BASE_SCHEMA) readScript(dbPath, file);
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
@@ -1502,7 +1665,17 @@ describe('refresh-slice EOP base derivation', () => {
       const authorityAfterWindow2 = sqliteJson(sliceDb, authoritySql);
       const bidderAfterWindow2 = sqliteJson(sliceDb, bidderSql);
 
+      // The same window again changes no enrichment field, so the enrichment writes no row at all.
+      sqlite(
+        sliceDb,
+        `CREATE TABLE enrich_writes (tbl TEXT, id TEXT);
+         CREATE TRIGGER enrich_authority AFTER UPDATE OF nuts, settlement, address, contact_email, contact_phone
+           ON authorities BEGIN INSERT INTO enrich_writes VALUES ('authorities', new.id); END;
+         CREATE TRIGGER enrich_bidder AFTER UPDATE OF nuts, settlement, address, contact_email, contact_phone
+           ON bidders BEGIN INSERT INTO enrich_writes VALUES ('bidders', new.id); END;`,
+      );
       readScript(sliceDb, refreshSlicePath);
+      expect(sqliteJson(sliceDb, 'SELECT * FROM enrich_writes')).toEqual([]);
       expect(sqliteJson(sliceDb, 'SELECT * FROM parties ORDER BY party_key')).toEqual(
         partiesAfterWindow2,
       );

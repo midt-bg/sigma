@@ -28,7 +28,7 @@ export const TIE_EDGE_LABEL: Record<CompanyTieKind, string> = {
   subcontract: 'подизпълнител',
   declared_stake: 'общо свързано лице',
   role: 'роля',
-  money: 'плаща',
+  money: 'договори',
 };
 
 /** What an edge says on itself: the kind of tie — or, for a role tie, the roles. */

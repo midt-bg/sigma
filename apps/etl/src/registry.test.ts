@@ -21,9 +21,12 @@ import {
   recordEntryPage,
   deferDeed,
   deferPortal,
+  deferEntryPass,
+  entryFeedHealth,
   deferXml,
   derivePublicOwnership,
 } from './registry';
+import { PUBLIC_OWNER_UNSETTLED_SQL } from './public-ownership';
 
 const migrations = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -340,6 +343,18 @@ it('queued winners do not starve new winners; XML Retry-After pauses all reads',
   expect(await nextQueued(db, 10, '2026-09-13T00:10:00Z')).toHaveLength(2);
 });
 
+// A partida read before the name history was, and no longer requested, is read again for its history: without
+// it a declaration naming the company by a former name reads as one that does not name it.
+it('queues a partida already read whose name history is missing, wherever it came from', async () => {
+  const { db, sqlite } = served();
+  sqlite.exec(`INSERT INTO registry_deeds (eik,name,legal_form,outcome,fetched_at)
+    VALUES ('777777777','НЕПОИСКАНО ТЕСТ','OOD','ok','2026-09-14T00:00:00Z')`);
+  await queueNewWinners(db, '2026-09-20T00:00:00Z', 10);
+  expect(sqlite.prepare("SELECT reason FROM registry_queue WHERE eik='777777777'").get()).toEqual({
+    reason: 'new',
+  });
+});
+
 it('queues declared companies without contracts and stores per-entry identity evidence atomically', async () => {
   const { db, sqlite } = served();
   sqlite.exec(
@@ -529,6 +544,64 @@ describe('lease, baseline and portal pass edges', () => {
     expect(p.row()).toMatchObject({ next_page: 2, rows_seen: 1, completed_at: null });
   });
 
+  it('closes a day without entries on its first, empty page', async () => {
+    const p = await onePass();
+    await recordEntryPage(p.db, await p.pass(), { items: [], hasMore: false, total: 0 }, NOW);
+    expect(p.row()).toMatchObject({
+      next_page: 2,
+      first_count: 0,
+      rows_seen: 0,
+      completed_at: NOW,
+    });
+    expect(await nextEntryPass(p.db, '2026-09-13', NOW)).toBeNull();
+  });
+
+  it('lets a deferred day wait while the next goes on, and keeps its place within the day', async () => {
+    const s = served();
+    s.sqlite.exec(
+      `INSERT INTO registry_entry_state (id,seeded_through,baseline_status,baseline_through)
+       VALUES(1,'2026-09-10','ready','2026-09-10')`,
+    );
+    await seedEntryPasses(s.db, '2026-09-13', NOW);
+    const first = (await nextEntryPass(s.db, '2026-09-13', NOW))!;
+    expect(first.day).toBe('2026-09-11');
+    await recordEntryPage(
+      s.db,
+      first,
+      { items: [change('111111111')], hasMore: true, total: 30 },
+      NOW,
+    );
+    const started = (await nextEntryPass(s.db, '2026-09-13', NOW))!;
+    await deferEntryPass(s.db, started, '2026-09-14');
+    expect((await nextEntryPass(s.db, '2026-09-13', NOW))?.day).toBe('2026-09-12');
+    // Back the next day, on the page it had reached.
+    expect(await nextEntryPass(s.db, '2026-09-14', '2026-09-14T00:00:00Z')).toMatchObject({
+      day: '2026-09-11',
+      next_page: 2,
+      rows_seen: 1,
+      first_count: 30,
+    });
+  });
+
+  it('reports how far the feed is behind and when it last moved', async () => {
+    const p = await onePass();
+    expect(await entryFeedHealth(p.db, '2026-09-13')).toEqual({
+      due: 1,
+      oldestOpenDay: '2026-09-12',
+      lastProgressAt: null,
+    });
+    // Before the first pass completes, the accepted import is the last progress.
+    p.sqlite.exec(`UPDATE registry_entry_state SET baseline_completed_at='2026-09-11T20:00:00Z'`);
+    expect((await entryFeedHealth(p.db, '2026-09-13')).lastProgressAt).toBe('2026-09-11T20:00:00Z');
+    await recordEntryPage(p.db, await p.pass(), { items: [], hasMore: false, total: 0 }, NOW);
+    // The day's second, fourteen-day pass is still open but not yet due.
+    expect(await entryFeedHealth(p.db, '2026-09-13')).toEqual({
+      due: 0,
+      oldestOpenDay: '2026-09-12',
+      lastProgressAt: NOW,
+    });
+  });
+
   it('holds every portal pass back until the portal deferral has passed', async () => {
     const p = await onePass();
     await deferPortal(p.db, '2026-09-13T06:00:00Z');
@@ -580,6 +653,132 @@ describe('derivePublicOwnership', () => {
     // Rebuilt, not accumulated.
     sqlite.exec("DELETE FROM registry_roles WHERE eik = '100000005'");
     expect(await derivePublicOwnership(db)).toBe(4);
+    sqlite.close();
+  });
+
+  // The owners as a whole: every standing owner public (no share recorded for any), or the public side
+  // holding the majority of a fully recorded capital between them — and a company held through one of those.
+  const together = (
+    eik: string,
+    role: string,
+    kind: string,
+    id: string,
+    name: string,
+    share: string | null,
+  ) =>
+    `('${eik}','0000','${role === 'sole_owner' ? '00230' : '00190'}','${role}','${kind}','${id}','${name}',${share === null ? 'NULL' : `'${share}'`},'e1','2020-01-01')`;
+  const ownedTogether = () => {
+    const s = served();
+    s.sqlite.exec(`
+      INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id, subject_name, share, entry_number, added_on) VALUES
+        ${[
+          // Three municipalities, no share recorded for any of them.
+          together('300000001', 'partner', 'entity', '000000011', 'Община Тестово', null),
+          together('300000001', 'partner', 'entity', '000000012', 'ОБЩИНА ПРИМЕРНО', null),
+          together('300000001', 'partner', 'entity', '000000013', 'община Образцово', null),
+          // Two municipalities with 30 % each beside a person with 40 %.
+          together('300000002', 'partner', 'entity', '000000011', 'Община Тестово', '300'),
+          together('300000002', 'partner', 'entity', '000000012', 'ОБЩИНА ПРИМЕРНО', '300'),
+          together('300000002', 'partner', 'person', 'p1', 'ИВАН ТЕСТОВ ПРИМЕРОВ', '400'),
+          // Held by the first one alone.
+          together('300000003', 'sole_owner', 'entity', '300000001', 'ТЕСТ ВОДА ООД', null),
+          // A company the register has not been read for holds 60 %, a municipality 40 %.
+          together('300000004', 'partner', 'entity', '300000099', 'ТЕСТ ГРУП ООД', '600'),
+          together('300000004', 'partner', 'entity', '000000011', 'Община Тестово', '400'),
+          // A municipality with no share recorded beside a person with one.
+          together('300000005', 'partner', 'entity', '000000011', 'Община Тестово', null),
+          together('300000005', 'partner', 'person', 'p2', 'МАРИЯ ТЕСТОВА ПРИМЕРОВА', '500'),
+          // A person with 60 %, a municipality with 40 %: private, and nothing about it is open.
+          together('300000006', 'partner', 'person', 'p3', 'ПЕТЪР ТЕСТОВ ПРИМЕРОВ', '600'),
+          together('300000006', 'partner', 'entity', '000000011', 'Община Тестово', '400'),
+        ].join(',')};
+    `);
+    return s;
+  };
+
+  it('finds a company public by its owners together, and a company held through one', async () => {
+    const { sqlite, db } = ownedTogether();
+    expect(await derivePublicOwnership(db)).toBe(3);
+    expect(
+      sqlite
+        .prepare('SELECT eik, ownership_kind FROM public_owned_eik ORDER BY eik')
+        .all()
+        .map((r) => ({ ...r })),
+    ).toEqual([
+      { eik: '300000001', ownership_kind: 'municipal' },
+      { eik: '300000002', ownership_kind: 'municipal' },
+      { eik: '300000003', ownership_kind: 'municipal' },
+    ]);
+    sqlite.close();
+  });
+
+  it('takes the kind from the owner in control, else municipal when a municipality is among the public owners', async () => {
+    const { sqlite, db } = served();
+    sqlite.exec(`
+      INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id, subject_name, share, entry_number, added_on) VALUES
+        ${[
+          // A ministry and a municipality, neither share recorded: public together, and municipal because a
+          // municipality is among them.
+          together(
+            '300000007',
+            'partner',
+            'entity',
+            '000000021',
+            'Министерство на тестовете',
+            null,
+          ),
+          together('300000007', 'partner', 'entity', '000000011', 'Община Тестово', null),
+          // Held by a state company through a recorded majority: state.
+          together('300000008', 'partner', 'entity', '300000009', 'ДЪРЖАВНО ТЕСТ ЕАД', '700'),
+          together('300000008', 'partner', 'entity', '000000011', 'Община Тестово', '300'),
+          together(
+            '300000009',
+            'sole_owner',
+            'entity',
+            '000000021',
+            'Министерство на тестовете',
+            null,
+          ),
+        ].join(',')};
+    `);
+    await derivePublicOwnership(db);
+    expect(
+      sqlite
+        .prepare('SELECT eik, ownership_kind FROM public_owned_eik ORDER BY eik')
+        .all()
+        .map((r) => ({ ...r })),
+    ).toEqual([
+      { eik: '300000007', ownership_kind: 'municipal' },
+      { eik: '300000008', ownership_kind: 'state' },
+      { eik: '300000009', ownership_kind: 'state' },
+    ]);
+    sqlite.close();
+  });
+
+  it('names the companies whose ownership is still open, with the owners whose partida would settle it', async () => {
+    const { sqlite, db } = ownedTogether();
+    await derivePublicOwnership(db);
+    const open = sqlite
+      .prepare(PUBLIC_OWNER_UNSETTLED_SQL)
+      .all()
+      .map((r) => ({ ...r }));
+    // 300000004: a public owner beside a company never read. 300000005: a public owner whose share is
+    // not recorded. 300000006 is private and settled; the public ones are settled too.
+    expect([...new Set(open.map((r) => r.eik))]).toEqual(['300000004', '300000005']);
+    expect(open.filter((r) => r.unread === 1).map((r) => r.owner)).toEqual(['300000099']);
+    // Once that partida is read and shows no public owner, the open question is the share alone — and the
+    // company with every share recorded drops out.
+    sqlite.exec(
+      "INSERT INTO registry_deeds (eik, name, legal_form, outcome, fetched_at) VALUES ('300000099', 'ТЕСТ ГРУП', 'OOD', 'ok', '2026-10-01')",
+    );
+    expect([
+      ...new Set(
+        sqlite
+          .prepare(PUBLIC_OWNER_UNSETTLED_SQL)
+          .all()
+          .map((r) => (r as { eik: string }).eik),
+      ),
+    ]).toEqual(['300000005']);
     sqlite.close();
   });
 });

@@ -12,6 +12,7 @@ const q = vi.hoisted(() => ({
   getCompanyTies: vi.fn(),
   getRegistryCompany: vi.fn(),
   getSpendingTrend: vi.fn(),
+  getPartialStartYear: vi.fn(async () => null),
   getDb: vi.fn((env: { DB: unknown }) => env.DB),
 }));
 vi.mock('@sigma/db', () => q);

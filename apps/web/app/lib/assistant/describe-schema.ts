@@ -65,7 +65,9 @@ export const TABLES: TableDoc[] = [
   {
     name: 'bidders',
     grain: 'един изпълнител',
-    columns: "id, name, kind ('company'|'consortium'), eik_normalized, eik_valid",
+    columns:
+      "id, name, kind ('company'|'consortium'|'framework_parties' — страните по рамково споразумение, " +
+      'не обединение), eik_normalized, eik_valid',
   },
   {
     name: 'contracts',
@@ -73,7 +75,9 @@ export const TABLES: TableDoc[] = [
     columns:
       'id, tender_id→tenders, bidder_id→bidders, amount (display, в `currency`), currency, ' +
       'amount_eur (КАНОНИЧЕН EUR, SAFE TO SUM; сумирай с amount_eur IS NOT NULL), value_flag, date_flag, ' +
-      'fx_converted, fx_rate, signed_at, bids_received, eu_funded',
+      'fx_converted, fx_rate, signed_at, bids_received, eu_funded, ' +
+      'framework (1 = поръчка по рамково споразумение; 2 = самото споразумение — таванът му е в ' +
+      'signing_value_eur, а amount_eur е NULL: НИКОГА не го сумирай)',
   },
   { name: 'amendments', grain: 'един анекс', columns: 'id, contract_id→contracts, …' },
   { name: 'parties', grain: 'роля по OCDS преписка', columns: 'ocid (≠ УНП!), role, …' },
@@ -101,7 +105,14 @@ export const TABLES: TableDoc[] = [
   {
     name: 'facet_counts',
     grain: 'брой за филтър-фасет',
-    columns: "facet ('year'|'procedure'|'eu'), key, contracts",
+    columns:
+      "facet ('procedure'|'eu'|'sector'|'year'|'single_offer'), key, contracts, value_eur (при 'single_offer': key 'known' = договорите с известен брой оферти, 'one' = тези с една оферта; value_eur — сумата на положителните стойности)",
+  },
+  {
+    name: 'contract_rollup',
+    grain: 'обобщение на списъка с договори за всяка комбинация от филтрите',
+    columns:
+      "procedure_type, eu, sector, one_offer, value_bucket, year ('(all)' = филтърът не е зададен), contracts, value_eur, unverified",
   },
   {
     name: 'flow_pairs',
@@ -137,8 +148,9 @@ export const CANONICAL_QUERIES: { intent: string; sql: string }[] = [
     sql: 'SELECT substr(c.signed_at, 1, 4) AS year, SUM(c.amount_eur) AS total_eur\nFROM contracts c\nWHERE c.amount_eur IS NOT NULL AND c.signed_at IS NOT NULL\nGROUP BY year ORDER BY year;',
   },
   {
-    intent: 'Дял на договорите с една оферта',
-    sql: 'SELECT\n  SUM(CASE WHEN c.bids_received = 1 THEN c.amount_eur ELSE 0 END) AS single_offer_eur,\n  SUM(c.amount_eur) AS total_eur\nFROM contracts c WHERE c.amount_eur IS NOT NULL;',
+    intent:
+      'Дял на договорите с една оферта — сред договорите с известен брой оферти, както на сайта (стойност само от положителните суми)',
+    sql: 'SELECT\n  SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS single_offer,\n  COUNT(*) AS contracts,\n  SUM(CASE WHEN c.bids_received = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END) AS single_offer_eur,\n  SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END) AS total_eur\nFROM contracts c WHERE c.bids_received >= 1;',
   },
   {
     intent: 'Разход по CPV сектор',

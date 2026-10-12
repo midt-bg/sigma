@@ -19,6 +19,11 @@ import { money, pct } from '@sigma/shared';
  *  in every list so the mark means one thing across the site. */
 export const UNVERIFIED_HINT = 'стойността в източника изглежда грешна';
 
+/** List-row copy for the record of a framework agreement: the figure shown is its ceiling, the most that
+ *  may be ordered under it, and no sum on the site includes it. */
+export const FRAMEWORK_HINT =
+  'рамково споразумение: таван, а не изразходвана сума; не влиза в сумите';
+
 export interface UnverifiedValueNote {
   /** Heading for the explanation block. Varies with the verdict: most cases are a source defect, but
    *  the catch-all ones are honestly ours („does not pass our checks"), so the title must not claim
@@ -79,8 +84,19 @@ export function unverifiedValueNote(v: ContractValueTimeline): UnverifiedValueNo
 
   if (v.flag === 'value_low') {
     // `value_low` covers two different source defects: a non-positive value, and a value that is a
-    // rounding error next to the forecast. Only claim the ratio when it actually holds — the rule also
-    // fires on `COALESCE(current, signing) <= 0`, where there is no percentage to quote.
+    // rounding error next to the forecast. The rule fires on `COALESCE(current, signing) <= 0` too, so a
+    // contract signed at a normal price can carry it because its CURRENT value is 0 — then the signing
+    // value is fine and the sentence must be about the current one.
+    if (v.signingEur != null && v.signingEur > 0 && v.currentEur != null && v.currentEur <= 0) {
+      return {
+        title: 'Текущата стойност изглежда сгрешена в източника',
+        badge: 'вероятно грешна стойност',
+        scope: 'current',
+        headline: `Текущата стойност в източника е ${money(v.currentEur)}, а при сключване договорът е за ${money(v.signingEur)}. Нула след изменение не е реална цена на договора — най-често изменението е подадено без нова стойност.`,
+        detail: SOURCE,
+      };
+    }
+    // Only claim the ratio when it actually holds; with no usable forecast there is none to quote.
     const nonPositive = v.signingEur != null && v.signingEur <= 0;
     const ratio =
       v.signingEur != null && v.estimatedEur != null && v.estimatedEur > 0
@@ -90,12 +106,50 @@ export function unverifiedValueNote(v: ContractValueTimeline): UnverifiedValueNo
       ? `Публикуваната стойност на договора е ${money(v.signingEur)}.`
       : ratio != null && ratio < LOW_VALUE_SHARE
         ? `Публикуваната стойност е ${money(v.signingEur)} при прогнозна ${money(v.estimatedEur)} — под ${pct(LOW_VALUE_SHARE, 0)} от нея.`
-        : `Публикуваната стойност (${money(v.signingEur)}) е несъразмерно ниска спрямо прогнозната.`;
+        : `Публикуваната стойност (${money(v.signingEur)}) е несъразмерно ниска за договора.`;
     return {
       title: 'Стойността изглежда сгрешена в източника',
       badge: 'вероятно грешна стойност',
       scope: 'both',
       headline: `${observed} Обичайно това е единична цена (лв./км, лв./час) или заместващ текст, попаднал в полето за стойност на договора.`,
+      detail: SOURCE,
+    };
+  }
+
+  // The verdicts that are ours rather than a demonstrable source defect: each says what the check found and
+  // what the sums do with the contract, so no two of them share a label (methodology §2 lists all of them).
+  if (v.flag === 'value_suspect') {
+    return {
+      title: 'Стойността е заменена с прогнозната',
+      badge: 'заменена с прогнозната',
+      scope: 'both',
+      headline: `Подадената стойност е неправдоподобно висока спрямо прогнозата на процедурата — над 2 млрд. €, над 200 пъти прогнозата или почти точно 100 пъти (пропусната десетична запетая). ${
+        v.procedureEstimatedEur != null
+          ? 'В сумите на СИГМА договорът влиза с прогнозната стойност на процедурата вместо с подадената.'
+          : 'Процедурата няма прогнозна стойност, с която да я заменим, затова договорът не влиза в сумите.'
+      }`,
+      detail: SOURCE,
+    };
+  }
+
+  if (v.flag === 'annex_suspect') {
+    return {
+      title: 'Анекс с неправдоподобна стойност',
+      badge: 'съмнителен анекс',
+      scope: 'current',
+      headline:
+        'Анекс е вдигнал текущата стойност неправдоподобно — до отрицателна, над 100 пъти подписаната или с една стъпка поне 10 пъти. В сумите на СИГМА договорът влиза със стойността при сключване.',
+      detail: SOURCE,
+    };
+  }
+
+  if (v.flag === 'review') {
+    return {
+      title: 'Стойността е далеч над прогнозата',
+      badge: 'за проверка',
+      scope: 'both',
+      headline:
+        'Стойността е поне 10 пъти над прогнозата на процедурата. Може да е вярна, затова влиза в сумите така, както е подадена, но я отбелязваме.',
       detail: SOURCE,
     };
   }

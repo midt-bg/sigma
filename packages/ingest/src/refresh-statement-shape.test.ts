@@ -65,7 +65,8 @@ describe('refresh-slice statement shape', () => {
   it('keeps every UPDATE … FROM <cte> small enough that the planner survived it', () => {
     // The band is measured, not guessed — all three points observed on this file:
     // (code lines = comments and blank lines stripped, exactly as `code()` below counts them):
-    //   lot-values  ·  30 code lines ·  1 nested SELECT  · runs fine (since 2026-06)
+    //   lot-values  ·  35 code lines ·  3 nested SELECTs · runs fine (30 lines and 1 since 2026-06)
+    //   enrich-*    ·  22 code lines ·  7 nested SELECTs · runs fine (each, since 2026-10)
     //   amendments  · 105 code lines ·  5 nested SELECTs · runs fine (after this split)
     //   amendments  · 247 code lines · 19 nested SELECTs · OOMed D1 for nineteen days
     const offenders = refreshSliceStatementGroups(SQL)
@@ -110,10 +111,35 @@ describe('refresh-slice statement shape', () => {
     expect(drops.filter((i) => i > SQL.indexOf('FROM amend_contract_base'))).toHaveLength(1);
   });
 
+  it('counts the corpus-wide totals from one cube, created once and dropped on both sides', () => {
+    // data_freshness, home_totals, sector_totals and facet_counts were eight scans of the whole contracts
+    // table per refresh; they now fold one grouped pass. A total that went back to scanning `contracts`
+    // directly would bring the scans back — the only direct reads left are the index-backed date bounds.
+    // The cube lives from `globals` through `contract-rollup`, the batch after it, which drops it.
+    const groups = refreshSliceStatementGroups(SQL);
+    const at = groups.findIndex((g) => g.name === 'globals');
+    expect(at, 'no `globals` batch').toBeGreaterThan(-1);
+    expect(groups[at + 1]?.name, '`contract-rollup` must follow `globals`').toBe('contract-rollup');
+    const body = groups
+      .slice(at, at + 2)
+      .flatMap((g) => g.statements.map(code))
+      .join(';\n');
+    const create = body.indexOf('CREATE TABLE contract_cube AS');
+    const drops = [...body.matchAll(/DROP TABLE IF EXISTS contract_cube\b/g)].map((m) => m.index);
+    expect((body.match(/CREATE TABLE contract_cube\b/g) ?? []).length).toBe(1);
+    expect(drops.filter((i) => i < create)).toHaveLength(1);
+    expect(drops.filter((i) => i > body.lastIndexOf('FROM contract_cube'))).toHaveLength(1);
+    const scans = [...body.matchAll(/FROM contracts\b(?!\s+c\s+LEFT JOIN tenders)([^;]*)/g)]
+      .map((m) => m[1] ?? '')
+      .filter((rest) => !/^\s+WHERE signed_at\b/.test(rest));
+    expect(scans, 'a total in `globals` reads the contracts table directly again').toEqual([]);
+  });
+
   it('registers the transient table so an aborted run is swept', () => {
     // Without this, a run that dies between CREATE and DROP leaves the table in D1 until the next
     // refresh happens to reach its DROP — exactly the kind of silent residue this batch already bit us with.
     const refreshTs = readFileSync(join(ROOT, 'packages/ingest/src/refresh.ts'), 'utf8');
     expect(refreshTs).toMatch(/SCRATCH_TABLES\s*=\s*\[[^\]]*'amend_contract_base'/);
+    expect(refreshTs).toMatch(/SCRATCH_TABLES\s*=\s*\[[^\]]*'contract_cube'/);
   });
 });

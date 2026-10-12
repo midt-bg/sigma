@@ -300,6 +300,11 @@ describe('entityName (non-collapsing branches)', () => {
   it('falls through when the first member segment is empty', () => {
     expect(entityName('; ВТОРО ООД', 'consortium')).toBe('; ВТОРО ООД');
   });
+  it('shortens the parties of a framework agreement like a member list', () => {
+    expect(entityName('ДОСТАВЧИК АЛФА ЕООД; ДОСТАВЧИК БЕТА ЕООД', 'framework_parties')).toBe(
+      'ДОСТАВЧИК АЛФА ЕООД и др.',
+    );
+  });
 });
 
 describe('cleanName (unbalanced-quote branch)', () => {

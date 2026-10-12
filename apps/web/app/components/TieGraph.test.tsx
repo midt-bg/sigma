@@ -262,8 +262,10 @@ describe('tieDescription', () => {
     );
   });
 
-  it('describes the money layer as a payment', () => {
-    expect(tieDescription(e({ kind: 'money', weightEur: 1000 }))).toContain('плаща');
+  it('describes the money layer as contract value, never as a payment', () => {
+    const text = tieDescription(e({ kind: 'money', weightEur: 1000 }));
+    expect(text).toContain('договори за');
+    expect(text).not.toMatch(/плаща|платен|похарч/);
   });
 
   it('describes a role tie by its roles, and as past once they all ended', () => {

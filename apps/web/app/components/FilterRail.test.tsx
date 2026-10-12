@@ -108,6 +108,18 @@ describe('FilterRail', () => {
     ]);
   });
 
+  it('keeps „само една оферта" (bids=1) through a submit without JS and through a ticked box', async () => {
+    // The home page links straight to /contracts?bids=1; the rail has no control for it, so before the
+    // fix the no-JS submit dropped it and the list silently became all contracts.
+    await render([year], '/contracts?bids=1&sort=date-desc');
+    expect(hidden()).toEqual([
+      ['sort', 'date-desc'],
+      ['bids', '1'],
+    ]);
+    await click(box('year', '2024'));
+    expect(params().get('bids')).toBe('1');
+  });
+
   it('clears a single-choice group through its „all" option', async () => {
     const value: GroupSpec = {
       key: 'value',
@@ -123,6 +135,7 @@ describe('FilterRail', () => {
       label: 'Дял',
       type: 'radio',
       allLabel: 'всички',
+      allCount: 12,
       options: [
         { value: 'self', label: 'Собствен' },
         { value: 'family', label: 'На свързано лице' },
@@ -135,7 +148,8 @@ describe('FilterRail', () => {
     expect(container.textContent).not.toContain('Изтегли CSV');
     const all = (name: string) => box(name, '');
     expect(all('value').closest('label')!.textContent).toBe(' Всички');
-    expect(all('stake').closest('label')!.textContent).toBe(' всички');
+    // A default option that is not simply everything says how many it holds, like the others do.
+    expect(all('stake').closest('label')!.textContent).toBe(' всички12');
     expect([all('value').checked, box('value', 'gt100m').checked]).toEqual([false, true]);
     expect(all('stake').checked).toBe(true);
     const empty = container.querySelector('details[aria-label="Процедура"]')!;

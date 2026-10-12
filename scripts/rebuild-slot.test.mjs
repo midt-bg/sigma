@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  CLEAR_ROWS,
+  clearFiles,
+  dataVersionSql,
+  fillSlot,
+  emptySlot,
   ifNotExists,
   ownershipStatements,
   parentsFirst,
@@ -226,4 +231,138 @@ test('a resumed rebuild takes the schema from the migrations and only the data f
     .map((r) => r.name);
   local.close();
   assert.ok(names.includes('contracts') && names.includes('search_index'));
+});
+
+test('the slot records the rules that built it, in one row', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(readFileSync('packages/db/migrations/0026_data_version.sql', 'utf8'));
+  const write = (v) => db.exec(dataVersionSql(v));
+  write({ version: 2, commit: "it's1", runId: 'run-1', builtAt: '2026-10-10T12:00:00Z' });
+  write({ version: 2, commit: 'abc', runId: null, builtAt: '2026-10-11T12:00:00Z' });
+  assert.deepEqual(
+    db
+      .prepare('SELECT id, version, source_commit, built_at, run_id FROM data_version')
+      .all()
+      .map((r) => ({ ...r })),
+    [{ id: 1, version: 2, source_commit: 'abc', built_at: '2026-10-11T12:00:00Z', run_id: null }],
+  );
+  assert.throws(() => dataVersionSql({ version: 0, builtAt: 'x' }), /Invalid data version/);
+  assert.throws(() => dataVersionSql({ version: '2', builtAt: 'x' }), /Invalid data version/);
+});
+
+test('the data version is written only after every check of the slot', () => {
+  const source = readFileSync('scripts/rebuild-slot.mjs', 'utf8');
+  const main = source.slice(source.indexOf('async function main()'));
+  const written = main.indexOf("apply(\n    'data-version'");
+  assert.ok(written > 0, 'main writes the data version');
+  assert.ok(main.indexOf('assertIntegrity(') < written, 'after the integrity gate');
+  assert.ok(main.indexOf('Slot counts differ from the snapshot') < written, 'after the row counts');
+});
+
+test('the slot is emptied children first, without the full-text shadow tables', () => {
+  // As sqlite_master lists them — parents first, the order in which they were created.
+  const rows = [
+    { name: 'authorities', parent: null },
+    { name: 'tenders', parent: 'authorities' },
+    { name: 'contracts', parent: 'tenders' },
+    { name: 'contracts', parent: 'bidders' },
+    { name: 'bidders', parent: null },
+    { name: 'amendments', parent: null },
+    { name: 'search_index', parent: null },
+    { name: 'search_index_data', parent: null },
+    { name: 'persons', parent: 'persons' },
+  ];
+  const sent = [];
+  emptySlot(
+    'sigma-test',
+    (label, sql) => sent.push([label, sql]),
+    () => rows,
+  );
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0][0], 'wipe');
+  const order = [...sent[0][1].matchAll(/DROP TABLE IF EXISTS "([^"]+)"/g)].map((m) => m[1]);
+  const before = (a, b) => order.indexOf(a) < order.indexOf(b);
+  assert.ok(before('contracts', 'tenders') && before('tenders', 'authorities'));
+  assert.ok(before('contracts', 'bidders'));
+  assert.ok(order.includes('search_index') && !order.includes('search_index_data'));
+  assert.ok(order.includes('persons'), 'a table that references itself is dropped once');
+  assert.match(sent[0][1], /^PRAGMA defer_foreign_keys=ON;\n/);
+});
+
+test('an empty slot sends nothing', () => {
+  const sent = [];
+  emptySlot(
+    'sigma-test',
+    (...args) => sent.push(args),
+    () => [],
+  );
+  assert.deepEqual(sent, []);
+});
+
+test('a filled slot is emptied in bounded files, children first, without breaking a foreign key', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`PRAGMA foreign_keys=ON;
+    CREATE TABLE parent (id INTEGER PRIMARY KEY);
+    CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id));
+    CREATE TABLE rollup (a TEXT, b TEXT, n INTEGER, PRIMARY KEY (a, b)) WITHOUT ROWID;
+    INSERT INTO parent VALUES (1), (2), (3);
+    WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM k WHERE i < 45001)
+      INSERT INTO child SELECT i, 1 + i % 3 FROM k;`);
+  db.exec("INSERT INTO rollup VALUES ('x', 'y', 1), ('x', 'z', 2)");
+  const files = clearFiles(
+    'ship',
+    ['parent', 'child', 'rollup'],
+    { parent: 3, child: 45001, rollup: 2 },
+    {
+      rollup: ['a', 'b'],
+    },
+  );
+  assert.deepEqual(
+    files.map(([label]) => label),
+    [
+      'ship-clear-rollup-0',
+      'ship-clear-child-0',
+      'ship-clear-child-1',
+      'ship-clear-child-2',
+      'ship-clear-parent-0',
+    ],
+  );
+  assert.equal(Math.ceil(45001 / CLEAR_ROWS), 3);
+  for (const [, sql] of files) db.exec(`BEGIN; ${sql} COMMIT;`);
+  for (const t of ['parent', 'child', 'rollup'])
+    assert.equal(db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n, 0, t);
+  assert.deepEqual(
+    clearFiles('ship', ['parent'], { parent: 0 }),
+    [],
+    'an empty table sends nothing',
+  );
+});
+
+test('the finished build clears what the slot holds before it ships, by the slot’s own counts', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-fill-'));
+  try {
+    const snapshot = join(dir, 'snap.sqlite');
+    const db = new DatabaseSync(snapshot);
+    db.exec(`CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id));
+      INSERT INTO parent VALUES (1); INSERT INTO child VALUES (1, 1), (2, 1);`);
+    db.close();
+    const sent = [];
+    const result = fillSlot('sigma-test', snapshot, dir, {
+      label: 'ship',
+      apply: (label) => sent.push(label),
+      read: () => [{ parent: 1, child: 25000 }],
+    });
+    assert.deepEqual(sent, [
+      'ship-schema',
+      'ship-clear-child-0',
+      'ship-clear-child-1',
+      'ship-clear-parent-0',
+      'ship-parent-000',
+      'ship-child-000',
+    ]);
+    assert.deepEqual(result.counts, { parent: 1, child: 2 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

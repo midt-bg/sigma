@@ -32,6 +32,8 @@ DECLARATIONS_BUCKET = "sigma-declarations"
 SIGMA_D1_ID = "00000000-0000-0000-0000-000000000000"
 SIGMA_D1_NAME = "sigma"
 SIGMA_SHIP_ENV = "production"
+# The commit a deploy ships, rendered from SIGMA_SOURCE_COMMIT; a rebuild records it with the data version.
+SIGMA_SOURCE_COMMIT = ""
 
 # `database_id` is a zero-UUID placeholder for local dev (miniflare). `pnpm --filter @sigma/etl run
 # deploy` substitutes SIGMA_D1_ID into wrangler.deploy.toml via scripts/wrangler-render.mjs.
@@ -84,9 +86,9 @@ binding = "DECLARATIONS_CORPUS"
 bucket_name = "sigma-declarations"
 
 # Six-hourly: procurement and the register. Sundays 03:00 UTC: the declarations (DECLARATIONS_CRON).
-# Sunday is `7`, not `0`: the Cloudflare API rejects `0 3 * * 0` as an invalid cron string.
+# Cloudflare counts the weekdays 1 = Sunday … 7 = Saturday — `7` started the run on Saturdays.
 [triggers]
-crons = ["0 */6 * * *", "0 3 * * 7"]
+crons = ["0 */6 * * *", "0 3 * * 1"]
 
 [observability]
 enabled = true
@@ -102,3 +104,9 @@ invocation_logs = true
 enabled = false
 persist = true
 head_sampling_rate = 1
+
+# Real-time Issues (wrangler 4.142+): an uncaught exception, a failed invocation or a console.error becomes an
+# issue, and the account's „Real-Time Issue" notification sends it by e-mail. The runs' own error-level events
+# (registry_feed_stale, declarations_run_failed) are written for it — a quiet „Completed" hid a stuck feed.
+[observability.issues]
+enabled = true

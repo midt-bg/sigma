@@ -80,7 +80,8 @@ describe('contract filters against a real SQLite engine (#138)', () => {
     const singleRows = await csvDataRows(streamContractsCsv(db, { bids: 'one' }));
     expect(singleRows).toHaveLength(1);
     const cells = singleRows[0]!.split(',');
-    expect(cells[cells.length - 1]).toBe('1'); // bids_received column of the single-bid row
+    // bids_received of the single-bid row, then the (empty) framework_ceiling_eur of an ordinary contract
+    expect(cells.slice(-2)).toEqual(['1', '']);
     expect(cells).toContain('300'); // the € 300 single-bid contract, not any other row
   });
 

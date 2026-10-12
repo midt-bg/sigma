@@ -21,7 +21,11 @@ import {
   stagedDropSql,
   swapSql,
   ShipYield,
+  wranglerFileSender,
 } from './ship-related-persons.mjs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('sqlLiteral escapes quotes, strips NUL, and NULLs non-finite/absent', () => {
   assert.equal(sqlLiteral(null), 'NULL');
@@ -114,6 +118,7 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
     d1Name: 'sigma-blue',
     expectedId: ID,
     resolvedId: ID,
+    resolvedName: 'sigma-blue',
   };
   // --local (remote=false) is exempt — no durable blast radius, so any/absent env/ids pass.
   assert.doesNotThrow(() =>
@@ -128,7 +133,9 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
   // remote: declared env + allowlisted name + matching (name→id) pair is allowed.
   assert.doesNotThrow(() => assertD1TargetAuthorized(ok));
   // production is blue-green: the partner slot `sigma-green` is also allowed for env=production.
-  assert.doesNotThrow(() => assertD1TargetAuthorized({ ...ok, d1Name: 'sigma-green' }));
+  assert.doesNotThrow(() =>
+    assertD1TargetAuthorized({ ...ok, d1Name: 'sigma-green', resolvedName: 'sigma-green' }),
+  );
   // missing / unknown declared env → cannot anchor authorization → refuse.
   assert.throws(() => assertD1TargetAuthorized({ ...ok, shipEnv: '' }), /SIGMA_SHIP_ENV must name/);
   assert.throws(
@@ -169,7 +176,29 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
   );
   // a non-production env with its own (non-prod) name + matching id passes.
   assert.doesNotThrow(() =>
-    assertD1TargetAuthorized({ ...ok, shipEnv: 'staging', d1Name: 'sigma-stage' }),
+    assertD1TargetAuthorized({
+      ...ok,
+      shipEnv: 'staging',
+      d1Name: 'sigma-stage',
+      resolvedName: 'sigma-stage',
+    }),
+  );
+  // THE RENDERED-CONFIG CASE: the deploy renders the config from SIGMA_D1_ID, so `wrangler d1 info <name>`
+  // answers SIGMA_D1_ID itself and the id check above cannot fail. A staging run whose SIGMA_D1_ID fell back
+  // to production's id is caught by the name Cloudflare gives that id.
+  assert.throws(
+    () =>
+      assertD1TargetAuthorized({
+        ...ok,
+        shipEnv: 'staging',
+        d1Name: 'sigma-stage-blue',
+        resolvedName: 'sigma-green',
+      }),
+    /SIGMA_D1_ID aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee is the database 'sigma-green', not 'sigma-stage-blue'/,
+  );
+  assert.throws(
+    () => assertD1TargetAuthorized({ ...ok, resolvedName: '' }),
+    /is the database 'unknown', not 'sigma-blue'/,
   );
   assert.ok(SHIP_TARGETS.production.includes('sigma-blue'));
   assert.ok(SHIP_TARGETS.production.includes('sigma-green'));
@@ -958,4 +987,93 @@ test('a container stop between two requests yields instead of leaving half an up
   );
   assert.equal(h.calls.length, 3);
   assert.ok(!h.calls.some(([name]) => name === 'publish'));
+});
+
+// The wrangler calls the sender makes, answered by a script: each --file and each --command in turn.
+function scriptedWrangler(answers) {
+  const calls = [];
+  const exec = (cmd, args) => {
+    assert.equal(cmd, 'wrangler');
+    const kind = args.includes('--file') ? 'file' : 'command';
+    calls.push(kind);
+    const answer = answers[kind].shift();
+    if (answer instanceof Error) throw answer;
+    return answer;
+  };
+  return { exec, calls };
+}
+const failed = (stderr) =>
+  Object.assign(new Error('Command failed: wrangler d1 execute'), { stderr });
+
+test('a target without the receipt table holds no receipt: the file is sent again', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-sender-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const w = scriptedWrangler({
+    file: [failed('D1_ERROR: 7009'), ''],
+    command: [failed('✘ [ERROR] no such table: rp_receipt: SQLITE_ERROR')],
+  });
+  const send = wranglerFileSender({
+    d1Name: 'sigma-test',
+    remote: true,
+    dir,
+    cwd: dir,
+    waitMs: () => 0,
+    exec: w.exec,
+    sleep: () => {},
+  });
+  t.mock.method(console, 'error', () => {});
+  send('clear_staging', 'DROP TABLE IF EXISTS x;');
+  assert.deepEqual(w.calls, ['file', 'command', 'file']);
+  assert.deepEqual(readdirSync(dir), [], 'the file is removed afterwards');
+});
+
+test('a receipt read that fails for another reason stops the sender', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-sender-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const w = scriptedWrangler({
+    file: [failed('Not currently importing anything')],
+    command: [failed('fetch failed'), failed('fetch failed'), failed('fetch failed')],
+  });
+  const send = wranglerFileSender({
+    d1Name: 'sigma-test',
+    remote: true,
+    dir,
+    cwd: dir,
+    waitMs: () => 0,
+    exec: w.exec,
+    sleep: () => {},
+  });
+  assert.throws(() => send('publish', 'SELECT 1;'), /cannot tell whether publish was applied/);
+  assert.deepEqual(w.calls, ['file', 'command', 'command', 'command']);
+});
+
+test('a repeatable file is sent again when its receipt cannot be read, with the given environment', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-sender-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const envs = [];
+  const w = scriptedWrangler({
+    file: [failed('Not currently importing anything'), ''],
+    command: [failed('fetch failed'), failed('fetch failed'), failed('fetch failed')],
+  });
+  const send = wranglerFileSender({
+    d1Name: 'sigma-test',
+    remote: true,
+    dir,
+    cwd: dir,
+    waitMs: () => 0,
+    env: { MARK: 'job-env' },
+    repeatable: true,
+    exec: (cmd, args, opts) => {
+      envs.push(opts.env?.MARK);
+      return w.exec(cmd, args, opts);
+    },
+    sleep: () => {},
+  });
+  t.mock.method(console, 'error', () => {});
+  send('reindex-officials-001', 'SELECT 1;');
+  assert.deepEqual(w.calls, ['file', 'command', 'command', 'command', 'file']);
+  assert.ok(
+    envs.every((e) => e === 'job-env'),
+    'wrangler runs with the job environment',
+  );
 });

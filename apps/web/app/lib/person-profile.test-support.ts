@@ -1,4 +1,7 @@
-import type { PersonActivity } from '@sigma/db';
+import type { PersonActivity, TimelineIntervals } from '@sigma/db';
+
+/** A profile with nothing to draw as intervals: no band, no declared years, no procurements. */
+export const emptyIntervals: TimelineIntervals = { bands: {}, declared: [], procurements: [] };
 export const emptyActivity: PersonActivity = {
   contracts: [],
   page: 1,

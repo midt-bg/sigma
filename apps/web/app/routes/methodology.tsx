@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
+import { COMPETITION_MIN_CONTRACTS } from '@sigma/config';
 import { count, date, money, pct } from '@sigma/shared';
-import { getMethodologyStats, getDb } from '@sigma/db';
+import { getMethodologyStats, getDb, getPartialStartYear } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -22,7 +23,12 @@ export const headers = cached(3600);
 
 // Pull the live corpus figures so the credibility-critical copy matches reality, not hard-coded numbers.
 export async function loader({ context }: Route.LoaderArgs) {
-  return getMethodologyStats(getDb(context.cloudflare.env));
+  const db = getDb(context.cloudflare.env);
+  const [stats, partialStartYear] = await Promise.all([
+    getMethodologyStats(db),
+    getPartialStartYear(db),
+  ]);
+  return { ...stats, partialStartYear };
 }
 
 const TOC = [
@@ -43,11 +49,16 @@ type GapRow = [string, string, 'has' | 'gap', string, 'info' | 'soft' | 'none'];
 
 export default function Methodology({ loaderData }: Route.ComponentProps) {
   const t = loaderData.totals;
+  const vv = loaderData.valueVerdicts;
   const endYear = coverageEndYear(t.asOf);
-  const period =
-    loaderData.firstDate && t.asOf
-      ? `${loaderData.firstDate.slice(0, 4)} г. — ${endYear} г. (${endYear} г. частично)`
-      : `${START_YEAR} г. — ${endYear} г. (${endYear} г. частично)`;
+  const startYear =
+    loaderData.firstDate && t.asOf ? loaderData.firstDate.slice(0, 4) : String(START_YEAR);
+  // The first year is partial when the source was still being taken up that year (partial-years.ts).
+  const partialYears =
+    loaderData.partialStartYear && loaderData.partialStartYear !== String(endYear)
+      ? `${loaderData.partialStartYear} и ${endYear}`
+      : String(endYear);
+  const period = `${startYear} г. — ${endYear} г. (${partialYears} г. частично)`;
   const gaps: GapRow[] = [
     ['Институция, име и ID', 'Обявление / OCDS parties', 'has', 'да', 'info'],
     ['Компания, име и ЕИК', 'Решение за избор + договор', 'has', 'да', 'info'],
@@ -130,7 +141,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
               </p>
               <ul>
                 <li>
-                  <strong>Институции</strong> — възложителите. Кой колко харчи, на какво.
+                  <strong>Институции</strong> — възложителите. Кой какви договори е възложил и за
+                  колко.
                 </li>
                 <li>
                   <strong>Компании</strong> — изпълнителите, ключът е ЕИК. Колко е спечелила всяка,
@@ -203,16 +215,56 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     договор. Поръчките в отбраната и сигурността по специален ред — не.
                   </dd>
                 </div>
-                <div className="row">
-                  <dt>Непотвърдени стойности</dt>
+                <div className="row" id="value-flags">
+                  <dt>Отбелязани стойности</dt>
                   <dd>
-                    {count(t.suspect)} договора имат стойност, която не издържа проверките ни (напр.
-                    анекс ≥100× или явна грешка) — за тях показваме прогнозната стойност на
-                    процедурата вместо подадената. Отделно маркираме и договори с несъразмерно ниска
-                    спрямо прогнозната стойност. И в двата случая записът остава в броя{' '}
-                    <strong>и в сумите</strong>: изключването на суми би скрило разход, който
-                    наистина е направен. Затова маркировката е на самия договор, а не в
-                    аритметиката.
+                    <p>
+                      Стойността на всеки договор минава през проверки. Отбелязаният договор остава
+                      в броя — изключването би скрило разход, който наистина е направен;
+                      маркировката е на самия договор, а в сумите влиза числото, посочено за групата
+                      му:
+                    </p>
+                    <ul>
+                      <li>
+                        <strong>Вероятно грешна стойност</strong> — {count(vv.value_low)} договора:
+                        нула, отрицателна или под 1 000 € и под 5% от прогнозата (обикновено
+                        единична цена в полето за стойност). В сумите — както е подадена.
+                      </li>
+                      <li>
+                        <strong>Заменена с прогнозната</strong> — {count(vv.value_suspect)}:
+                        неправдоподобно висока — над 2 млрд. €, над 200 пъти прогнозата на
+                        процедурата или почти точно 100 пъти (пропусната десетична запетая). В
+                        сумите — с прогнозната стойност на процедурата.
+                      </li>
+                      <li>
+                        <strong>Съмнителен анекс</strong> — {count(vv.annex_suspect)}: анекс е
+                        вдигнал стойността до отрицателна, над 100 пъти подписаната или с една
+                        стъпка поне 10 пъти. В сумите — стойността при сключване.
+                      </li>
+                      <li>
+                        <strong>Двойно отчетена текуща стойност</strong> —{' '}
+                        {count(vv.annex_total_suspect)}: анекс е удвоил договора с една стъпка, а
+                        едно изменение по закон е до +50%. В сумите — стойността при сключване.
+                      </li>
+                      <li>
+                        <strong>За проверка</strong> — {count(vv.review)}: поне 10 пъти над
+                        прогнозата на процедурата. В сумите — както е подадена.
+                      </li>
+                      <li>
+                        <strong>Без използваема стойност</strong> — {count(vv.missing)}: чужда
+                        валута без курс, неправдоподобна стойност без прогноза за замяна или договор
+                        без стойност. Не влизат в сумите.
+                      </li>
+                      <li>
+                        <strong>Рамкови споразумения</strong> — {count(vv.framework)}: стойността им
+                        е таван, а не разход, и не влиза в сумите; броят се поръчките по тях.
+                      </li>
+                    </ul>
+                    <p>
+                      Без забележка са {count(vv.ok)} договора. „Вероятно грешна или липсваща
+                      стойност“ в списъка с договори и на страниците на институции и фирми е първата
+                      група заедно с договорите без използваема стойност.
+                    </p>
                   </dd>
                 </div>
               </dl>
@@ -321,6 +373,19 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   </p>
                   <span className="src">→ bidders.kind</span>
                 </dd>
+                <dt>Рамково споразумение</dt>
+                <dd>
+                  <p>
+                    Записът за сключено рамково споразумение носи неговия таван — най-многото, което
+                    възложителите могат да поръчат по него, а не изразходвана сума. Затова таванът
+                    не влиза в нито една сума, класация или брой договори на изпълнител и
+                    възложител; броят се поръчките по споразумението, всяка като отделен договор.
+                    Доставчиците, с които е сключено, се показват като „страни по рамково
+                    споразумение“, а не като обединение. Кое е споразумение и кое поръчка по него,
+                    казва самата ЦАИС ЕОП.
+                  </p>
+                  <span className="src">→ contracts.framework</span>
+                </dd>
                 <dt>Поток</dt>
                 <dd>
                   <p>
@@ -397,7 +462,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     използва два от тях само като <strong>външен ориентир</strong>: дял с една
                     оферта — целево ≤ 10%, високо ≥ 20%; дял пряко възлагане — целево ≤ 5%, високо ≥
                     10%. Това е сравнение спрямо обща рамка, а не оценка на конкретна процедура или
-                    възложител.
+                    възложител. Сравнение се прави само при поне {COMPETITION_MIN_CONTRACTS}{' '}
+                    договора зад дела (с известен брой оферти, съответно с класифицирана процедура)
+                    — същият праг, по който се подреждат възложителите на страницата „Конкуренция";
+                    при по-малко делът се показва без оценка.
                   </p>
                   <span className="src">
                     →{' '}
@@ -443,8 +511,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 да не се появи фалшива точност при малка или изравнена по цена кохорта. Позицията е
                 приблизителна (широки стъпала, не точен процент), контекст за мащаба, а не оценка за
                 нередност, и ползва различен метод от отчета за аномалии, затова двете числа може
-                леко да се разминават. Договори с непотвърдена стойност не участват и не получават
-                сравнение.
+                леко да се разминават. Договори с отбелязана стойност (раздел 2) не участват и не
+                получават сравнение.
               </p>
             </section>
 
@@ -511,9 +579,12 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 </table>
               </div>
               <p className="small muted mt-s3">
-                <strong>Място на изпълнение</strong>, <strong>собственици и свързани лица</strong> и{' '}
-                <strong>рискови сигнали</strong> са в процес на разработка за следваща версия —
-                изискват пълно сливане с допълнителни източници и отделен аналитичен слой.
+                <strong>Свързаните лица</strong> имат собствена{' '}
+                <Link to="/conflicts/methodology">методология</Link>;{' '}
+                <strong>собствениците и управителите</strong> по Търговския регистър се показват на
+                страницата на всяко дружество; <strong>рисковите сигнали</strong> са описани в{' '}
+                <a href="#flagged">раздел 10</a>. <strong>Мястото на изпълнение</strong> на договора
+                все още не се извлича — картата разпределя договорите по областта на институцията.
               </p>
             </section>
 
@@ -571,10 +642,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 <dt>Стойностна или времева аномалия</dt>
                 <dd>
                   <p>
-                    Стойност с непотвърдена достоверност (виж речника) или договор, подписан повече
-                    от два дни след датата си на публикуване. Двудневният допуск поема обичайното
-                    забавяне при въвеждане; отвъд него редът на датите остава необяснен от
-                    източника.
+                    Отбелязана стойност (раздел 2, „Отбелязани стойности“) или договор, подписан
+                    повече от два дни след датата си на публикуване. Двудневният допуск поема
+                    обичайното забавяне при въвеждане; отвъд него редът на датите остава необяснен
+                    от източника.
                   </p>
                   <span className="src">→ value_flag / date_flag</span>
                 </dd>

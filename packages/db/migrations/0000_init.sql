@@ -8,7 +8,7 @@
 -- then ship-domain copies the served tables into the served D1 and runs precompute on it).
 --
 -- Modelling rationale (cleaning policy, value_flag, consortium model, canonical EUR + FX, the
--- synthetic-tender rule) lives in docs/etl.md and docs/core-scope.md.
+-- synthetic-tender rule) lives in docs/etl-pipeline.md and docs/core-scope.md.
 --
 -- Layout: (1) domain tables the explorer reads (+ amendments history + the OCDS parties projection),
 -- (1b) rollups + FTS search, (3) fx_rates / nuts_regions / data_freshness reference, (4) indexes.
@@ -42,7 +42,6 @@ CREATE TABLE tenders (
   source_id       TEXT NOT NULL UNIQUE,    -- УНП (ЦАИС ЕОП identifier)
   title           TEXT NOT NULL,
   authority_id    TEXT NOT NULL REFERENCES authorities(id),
-  ordering_unit_name TEXT,                 -- verbatim "Възложител" (raw authority_name) on this row; preserves sub-unit identity collapsed by canonical authorities.name (mode)
   cpv_code        TEXT,
   cpv_description TEXT,                     -- human-readable CPV label (no external dictionary needed)
   estimated_value REAL,
@@ -113,7 +112,6 @@ CREATE TABLE contracts (
   id               TEXT PRIMARY KEY,       -- 'c:' || staging row id
   tender_id        TEXT NOT NULL REFERENCES tenders(id),
   bidder_id        TEXT NOT NULL REFERENCES bidders(id),
-  ordering_unit_name TEXT,                 -- verbatim "Възложител" (raw authority_name) on this row; preserves sub-unit identity collapsed by canonical authorities.name (mode)
   amount           REAL NOT NULL,          -- as-recorded headline value in `currency` (display); signing for annex_suspect
   currency         TEXT NOT NULL DEFAULT 'BGN',
   signed_at        TEXT,
@@ -125,13 +123,13 @@ CREATE TABLE contracts (
   bids_received    INTEGER,
   contract_kind    TEXT,                   -- Доставки / Услуги / Строителство
   awarded_to_group INTEGER,                -- this AWARD went to an обединение (per-contract, distinct from bidders.is_consortium)
-  value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | value_low | value_suspect | annex_suspect | annex_total_suspect (data-quality verdict; assigned in scripts/normalize-raw.sql)
+  value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | annex_suspect | value_suspect (data-quality verdict)
   date_flag        TEXT NOT NULL DEFAULT 'ok',  -- ok | signed_after_publication (non-destructive date-quality verdict)
-  amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; populated for all flags (value_suspect repaired to the procedure estimate); NULL only when no trustworthy EUR figure (FX-rateless foreign / value_suspect w/o estimate / no signing+current)
+  amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; NULL = excluded (value_suspect)
   fx_converted     INTEGER NOT NULL DEFAULT 0,  -- 1 = amount_eur came from a foreign-currency market rate
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
   signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
-  current_value_eur REAL,                  -- current_value in EUR; NULL for value_suspect/annex_suspect/annex_total_suspect (suspect annex suppressed)
+  current_value_eur REAL,                  -- current_value in EUR; NULL for value_suspect/annex_suspect (suspect annex suppressed)
   lot_id           TEXT,                   -- domain lot id ('lot:'||УНП||':'||raw) when the award is lot-scoped; soft-links lots(id)
   document_number  TEXT,                   -- Номер на документ
   published_at     TEXT,                   -- Публикуван на
@@ -152,17 +150,6 @@ CREATE TABLE contracts (
   strategic        INTEGER,                -- Стратегическа поръчка
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
--- Joint procurements retain one lead authority on tenders (the only authority that receives spend),
--- while this bridge records every participating authority. ordinal 0 is always the lead.
-CREATE TABLE contract_co_authorities (
-  contract_id  TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-  authority_id TEXT NOT NULL REFERENCES authorities(id),
-  ordinal      INTEGER NOT NULL CHECK (ordinal >= 0),
-  PRIMARY KEY (contract_id, authority_id)
-);
-CREATE INDEX idx_contract_co_authorities_authority
-  ON contract_co_authorities(authority_id, contract_id);
 
 -- Domain amendment history used to roll current_value/annex_count without staging. Natural-keyed so
 -- re-imports are idempotent; built by scripts/promote-amendments.sql from the transient amendment feed.
@@ -211,11 +198,11 @@ CREATE INDEX idx_parties_eik ON parties(eik);
 -- One row (id = 1). Index KPIs + freshness for the home page.
 CREATE TABLE home_totals (
   id           INTEGER PRIMARY KEY CHECK (id = 1),
-  contracts    INTEGER NOT NULL,          -- corpus record count: COUNT(*) over ALL contracts (precompute.sql), not the non-NULL amount_eur count behind value_eur
-  value_eur    REAL NOT NULL,             -- SUM(amount_eur): every non-NULL amount_eur regardless of value_flag; corpus contracts may cover a broader set
+  contracts    INTEGER NOT NULL,          -- contracts with a clean (non-NULL) amount_eur
+  value_eur    REAL NOT NULL,             -- SUM(amount_eur) over those same rows (count/sum cover one set)
   authorities  INTEGER NOT NULL,
   bidders      INTEGER NOT NULL,
-  suspect      INTEGER NOT NULL,          -- COUNT of value_suspect rows (data-quality KPI); summed via repair to the procedure estimate, except a value_suspect row with no estimate (amount_eur NULL, excluded like other NULL rows)
+  suspect      INTEGER NOT NULL,          -- value_suspect rows (NULL amount_eur): surfaced, never summed
   first_date   TEXT,
   last_date    TEXT,
   as_of        TEXT,                       -- data_freshness 'admin' as_of (latest real contract date)
@@ -231,7 +218,7 @@ CREATE TABLE company_totals (
   eik            TEXT,                      -- eik_normalized (NULL when name-keyed)
   eik_valid      INTEGER NOT NULL DEFAULT 0,
   settlement     TEXT,
-  won_eur        REAL NOT NULL,            -- SUM(amount_eur) where amount_eur IS NOT NULL, regardless of value_flag
+  won_eur        REAL NOT NULL,            -- SUM(amount_eur) of contracts won (clean rows only)
   contracts      INTEGER NOT NULL,
   authorities    INTEGER NOT NULL,         -- distinct paying authorities
   primary_sector TEXT,                      -- CPV division carrying the most won €
@@ -255,15 +242,6 @@ CREATE TABLE authority_totals (
   eu_eur         REAL NOT NULL DEFAULT 0,
   first_date     TEXT,
   last_date      TEXT
-);
-
--- Joint-procurement participation rollup. joint_contract_value_eur is the total value of the joint
--- procurements the authority took part in; it is informational only and must NEVER be summed into
--- authority_totals.spent_eur or any national/leaderboard total.
-CREATE TABLE authority_joint_participation (
-  authority_id                 TEXT PRIMARY KEY REFERENCES authorities(id),
-  joint_contract_participations INTEGER NOT NULL,
-  joint_contract_value_eur      REAL NOT NULL DEFAULT 0
 );
 
 -- Per CPV division. Sector facet + filter counts on the list pages.

@@ -23,7 +23,8 @@ export function EuBenchmarkStat({
   share: number;
   good: number;
   bad: number;
-  rating: IndicatorRating;
+  /** null: too few contracts for a verdict — the share is shown without one and never in the accent. */
+  rating: IndicatorRating | null;
   ratingLabel: string;
   detail: string;
 }) {

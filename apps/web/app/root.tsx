@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { getDb } from '@sigma/db';
 import {
-  isRouteErrorResponse,
   Link,
   Links,
   Meta,
@@ -24,6 +23,7 @@ import { ScrollToTop } from './components/ScrollToTop';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
 import { serializeJsonForScript } from './lib/json-ld';
+import { errorCopy } from './lib/error-copy';
 import { withDbRetry } from './lib/retry';
 import stylesheet from './app.css?url';
 
@@ -199,18 +199,13 @@ export default function App({ loaderData }: Route.ComponentProps) {
 
 // Errors render inside the chrome so a 404/500 still looks like СИГМА and keeps the nav.
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
-  const is404 = isRouteErrorResponse(error) && error.status === 404;
-  const kicker = is404 ? 'Грешка 404' : 'Грешка';
-  const title = is404 ? 'Страницата не е намерена' : 'Възникна грешка';
-  const lede = is404
-    ? 'Такъв запис няма или адресът се е променил. Започни от търсенето или от някой от списъците.'
-    : 'Нещо се обърка при зареждането. Опитай пак или се върни в началото.';
+  const { kicker, title, lede, documentTitle } = errorCopy(error);
   const stack = import.meta.env.DEV && error instanceof Error ? error.stack : undefined;
 
   return (
     <>
       {/* The boundary bypasses route `meta`, so set the document title here (React hoists it). */}
-      <title>{is404 ? 'Страницата не е намерена — СИГМА' : 'Грешка — СИГМА'}</title>
+      <title>{documentTitle}</title>
       <a className="skip" href="#main">
         Към съдържанието
       </a>

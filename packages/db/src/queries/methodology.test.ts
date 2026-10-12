@@ -77,6 +77,49 @@ describe('getMethodologyStats', () => {
     expect(stats.sectors).toBe(15);
   });
 
+  it('counts every value verdict in the coverage pass, framework agreements apart', async () => {
+    const f = fakeD1([
+      { when: 'home_totals', first: null },
+      {
+        when: 'COUNT(bids_received)',
+        first: {
+          total: 20,
+          bids: 0,
+          eu: 0,
+          dur: 0,
+          lot: 0,
+          ok: 10,
+          value_low: 4,
+          value_suspect: 1,
+          annex_suspect: 1,
+          annex_total_suspect: 1,
+          review: 1,
+          missing: null, // SUM over no matching row
+          framework: 2,
+        },
+      },
+      { when: 'sector_totals', first: null },
+    ]);
+    const stats = await getMethodologyStats(f.db);
+
+    expect(stats.valueVerdicts).toEqual({
+      ok: 10,
+      value_low: 4,
+      value_suspect: 1,
+      annex_suspect: 1,
+      annex_total_suspect: 1,
+      review: 1,
+      missing: 0,
+      framework: 2,
+    });
+    // one scan of the contracts, and a framework agreement's record is counted only as one
+    const scan = f.sql.find((q) => q.includes('COUNT(bids_received)'))!;
+    expect(scan).toContain(
+      "framework IS NOT 2 AND amount_eur IS NOT NULL AND value_flag = 'value_low'",
+    );
+    expect(scan).toContain('SUM(framework = 2) AS framework');
+  });
+
   it('returns zero ratios when total is 0 (avoids division by zero)', async () => {
     const db = fakeDb({
       totalsRow: null,

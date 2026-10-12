@@ -55,8 +55,8 @@ jobs:
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" dir . --redact --no-banner
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -100,7 +100,7 @@ jobs:
           pnpm check:coverage
       - name: Upload coverage report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-report
           retention-days: 14
@@ -117,6 +117,15 @@ jobs:
         run: |
           pnpm check:fake-d1:test
           pnpm check:fake-d1
+      # Data version (docs/deploy.md „Версията на данните“): a pull request that changes a file computing
+      # stored values without raising packages/db/data-version.json gets a warning, never a failure — the
+      # reviewer decides whether stored rows need a rebuilt slot. The merge commit is base + change, so a
+      # shallow fetch of the base and a two-dot diff is the change itself.
+      - name: Data version
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          node scripts/check-data-version.mjs "origin/${{ github.base_ref }}"
       # Docs integrity (#102): fail on a dangling docs reference in source or an
       # unindexed doc. The checker self-tests first, so the gate is itself gated.
       - name: Docs integrity
@@ -141,7 +150,7 @@ jobs:
       pull-requests: write
     continue-on-error: true
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-report
       - name: Sticky coverage comment

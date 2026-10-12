@@ -103,6 +103,11 @@ tbody td .small.muted {
   color: var(--ink-soft);
   text-transform: uppercase;
 }
+/* Text quoted from a source document keeps its own letters. */
+.verbatim {
+  text-transform: none;
+  letter-spacing: normal;
+}
 tbody tr:hover td {
   background: var(--paper-warm);
 }

@@ -54,5 +54,6 @@
     "head_sampling_rate": 1,
     "logs": { "enabled": true, "persist": true, "invocation_logs": true },
     "traces": { "enabled": true, "persist": true },
+    "issues": { "enabled": true },
   },
 }

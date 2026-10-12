@@ -2,7 +2,7 @@ import { Link } from 'react-router';
 import { count, date, moneyBare } from '@sigma/shared';
 import type { ContractListItem } from '@sigma/api-contract';
 import { Chip } from './ui';
-import { UNVERIFIED_HINT } from '../lib/contractValue';
+import { FRAMEWORK_HINT, UNVERIFIED_HINT } from '../lib/contractValue';
 
 // A compact contracts table used on detail pages (company top contracts, authority recent contracts).
 // `counterparty` chooses which side to show: the authority (on a company page) or the bidder (on an
@@ -60,7 +60,13 @@ export function ContractMiniTable({
                 {c.bidsReceived != null ? count(c.bidsReceived) : '—'}
               </td>
               <td className="money" data-label="Стойност (€)">
-                {c.valueEur == null ? (
+                {c.frameworkAgreement ? (
+                  <span className="muted" title={FRAMEWORK_HINT}>
+                    таван
+                    {c.frameworkCeilingEur != null && <> {moneyBare(c.frameworkCeilingEur)}</>}
+                    <span className="sr-only"> — {FRAMEWORK_HINT}</span>
+                  </span>
+                ) : c.valueEur == null ? (
                   <span className="suspect">проверяват</span>
                 ) : c.valueUnverified ? (
                   <span className="money-unverified" title={UNVERIFIED_HINT}>

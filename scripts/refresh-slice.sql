@@ -483,15 +483,23 @@ SELECT authority_id, authority_name, authority_eik, authority_type FROM member_d
 
 -- Learn the modal authority for each valid УНП prefix from the full existing tender history. Raw
 -- staging contains only the touched slice here, so it cannot provide a stable corpus-wide map.
+-- Only the prefixes this window's joint tenders ask for (the table's one reader joins on them): every
+-- prefix of the history was a scan of all tenders and some four thousand rows written on each run.
+-- `source_id` is unique, so each prefix's tenders are an index range: those starting `ppppp-`.
 CREATE TABLE refresh_unp_prefix_authorities (
   prefix TEXT PRIMARY KEY,
   authority_eik TEXT NOT NULL
 );
-WITH prefix_observations AS (
-  SELECT SUBSTR(source_id, 1, 5) AS prefix, SUBSTR(authority_id, 6) AS authority_eik
-  FROM tenders
-  WHERE authority_id NOT LIKE '%;%'
-    AND source_id GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
+WITH wanted AS (
+  SELECT DISTINCT SUBSTR(unp, 1, 5) AS prefix
+  FROM refresh_joint_authority_members
+  WHERE unp GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
+), prefix_observations AS (
+  SELECT w.prefix, SUBSTR(t.authority_id, 6) AS authority_eik
+  FROM wanted w
+  CROSS JOIN tenders t ON t.source_id >= w.prefix || '-' AND t.source_id < w.prefix || '.'
+  WHERE t.authority_id NOT LIKE '%;%'
+    AND t.source_id GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
 ), ranked AS (
   SELECT prefix, authority_eik,
     ROW_NUMBER() OVER (
@@ -733,7 +741,12 @@ ON CONFLICT(id) DO UPDATE SET
   eik_normalized = COALESCE(bidders.eik_normalized, excluded.eik_normalized),
   eik_valid = max(bidders.eik_valid, excluded.eik_valid),
   is_consortium = max(bidders.is_consortium, excluded.is_consortium),
-  kind = CASE WHEN max(bidders.is_consortium, excluded.is_consortium) = 1 THEN 'consortium' ELSE bidders.kind END;
+  -- The parties to a framework agreement keep their kind; `@refresh-batch company-totals` settles it.
+  kind = CASE
+    WHEN bidders.kind = 'framework_parties' THEN bidders.kind
+    WHEN max(bidders.is_consortium, excluded.is_consortium) = 1 THEN 'consortium'
+    ELSE bidders.kind
+  END;
 
 -- Curated public-owned winner classification. Exact EIK matches cover the allowlist; a valid 13-digit
 -- EIK is a branch and carries the ownership of the enterprise in its first nine digits.
@@ -969,14 +982,32 @@ FROM ranked
 WHERE rn = 1;
 
 -- @refresh-batch enrich-authorities
--- Party/contact enrichment for entities touched by the refreshed staging.
-UPDATE authorities SET
-  nuts       = COALESCE((SELECT p.region_nuts    FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.region_nuts, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), nuts),
-  settlement = COALESCE((SELECT p.locality       FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.locality, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), settlement),
-  address    = COALESCE((SELECT p.street_address FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.street_address, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), address),
-  contact_email = COALESCE((SELECT p.contact_email FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.contact_email, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_email),
-  contact_phone = COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.contact_phone, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_phone)
-WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = authorities.bulstat);
+-- Party/contact enrichment for entities touched by the refreshed staging. The five fields are computed for
+-- every authority with a party, as before, but a row is written only when one of them changes: rewriting
+-- each such authority on every run, though nearly none had changed, made this one of the refresh's
+-- larger writers. The same holds for the bidders below.
+WITH fresh AS (
+  SELECT a.id,
+    COALESCE((SELECT p.region_nuts FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.region_nuts, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.nuts) AS nuts,
+    COALESCE((SELECT p.locality FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.locality, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.settlement) AS settlement,
+    COALESCE((SELECT p.street_address FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.street_address, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.address) AS address,
+    COALESCE((SELECT p.contact_email FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.contact_email, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.contact_email) AS contact_email,
+    COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = a.bulstat AND NULLIF(p.contact_phone, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), a.contact_phone) AS contact_phone
+  FROM authorities a
+  WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = a.bulstat)
+)
+UPDATE authorities
+SET nuts = f.nuts, settlement = f.settlement, address = f.address,
+  contact_email = f.contact_email, contact_phone = f.contact_phone
+FROM fresh f
+WHERE f.id = authorities.id
+  AND (authorities.nuts IS NOT f.nuts OR authorities.settlement IS NOT f.settlement OR authorities.address IS NOT f.address
+    OR authorities.contact_email IS NOT f.contact_email OR authorities.contact_phone IS NOT f.contact_phone);
 
 -- Same batch as the UPDATE above: settlement/region/contact land in authority_totals.
 INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
@@ -990,13 +1021,28 @@ WHERE a.bulstat IN (
     SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL
   );
 -- @refresh-batch enrich-bidders
-UPDATE bidders SET
-  nuts       = COALESCE((SELECT p.region_nuts    FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.region_nuts, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), nuts),
-  settlement = COALESCE((SELECT p.locality       FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.locality, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), settlement),
-  address    = COALESCE((SELECT p.street_address FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.street_address, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), address),
-  contact_email = COALESCE((SELECT p.contact_email FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.contact_email, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_email),
-  contact_phone = COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.contact_phone, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_phone)
-WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = bidders.eik_normalized);
+WITH fresh AS (
+  SELECT b.id,
+    COALESCE((SELECT p.region_nuts FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.region_nuts, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.nuts) AS nuts,
+    COALESCE((SELECT p.locality FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.locality, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.settlement) AS settlement,
+    COALESCE((SELECT p.street_address FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.street_address, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.address) AS address,
+    COALESCE((SELECT p.contact_email FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.contact_email, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.contact_email) AS contact_email,
+    COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = b.eik_normalized AND NULLIF(p.contact_phone, '') IS NOT NULL
+      ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), b.contact_phone) AS contact_phone
+  FROM bidders b
+  WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = b.eik_normalized)
+)
+UPDATE bidders
+SET nuts = f.nuts, settlement = f.settlement, address = f.address,
+  contact_email = f.contact_email, contact_phone = f.contact_phone
+FROM fresh f
+WHERE f.id = bidders.id
+  AND (bidders.nuts IS NOT f.nuts OR bidders.settlement IS NOT f.settlement OR bidders.address IS NOT f.address
+    OR bidders.contact_email IS NOT f.contact_email OR bidders.contact_phone IS NOT f.contact_phone);
 
 -- Same batch as the UPDATE above: settlement lands in company_totals.
 INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
@@ -1029,36 +1075,46 @@ WHERE id IN (SELECT authority_id FROM refresh_touched_authorities)
 
 -- @refresh-batch lot-values
 CREATE INDEX IF NOT EXISTS idx_raw_tenders_tender_id ON raw_tenders(tender_id);
+-- `rn = 1` is applied inside `mapped`, not next to the join. Outside, it was the only equality on the CTE the
+-- planner could index, so it scanned every served lot and, for each, every first-ranked row of the window:
+-- the most expensive statement of the refresh (≈ 100 million rows read per run). Filtered inside, the window's
+-- lots drive the update and each finds its row by the primary key; `lots.id IN (…)` keeps that order should
+-- the planner reconsider. A lot with both values already set is skipped — COALESCE could only rewrite them.
 WITH mapped AS (
-  SELECT
-    'lot:' || rt.unp || ':' || CASE
-      WHEN rl.lot_id LIKE 'LOT-%' AND REPLACE(rl.lot_id, 'LOT-', '') <> '' AND REPLACE(rl.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(rl.lot_id, 'LOT-', '') AS INTEGER)
-      WHEN rl.lot_id <> '' AND rl.lot_id NOT GLOB '*[^0-9]*' THEN CAST(rl.lot_id AS INTEGER)
-      ELSE rl.lot_id
-    END AS domain_lot_id,
-    rl.value_amount,
-    rl.value_currency,
-    ROW_NUMBER() OVER (
-      PARTITION BY 'lot:' || rt.unp || ':' || CASE
+  SELECT domain_lot_id, value_amount, value_currency
+  FROM (
+    SELECT
+      'lot:' || rt.unp || ':' || CASE
         WHEN rl.lot_id LIKE 'LOT-%' AND REPLACE(rl.lot_id, 'LOT-', '') <> '' AND REPLACE(rl.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(rl.lot_id, 'LOT-', '') AS INTEGER)
         WHEN rl.lot_id <> '' AND rl.lot_id NOT GLOB '*[^0-9]*' THEN CAST(rl.lot_id AS INTEGER)
         ELSE rl.lot_id
-      END
-      ORDER BY rl.id DESC
-    ) AS rn
-  FROM raw_ocds_lots rl
-  JOIN raw_tenders rt ON rt.tender_id = rl.tender_id
-  WHERE rl.tender_id IS NOT NULL
-    AND rl.lot_id IS NOT NULL
-    AND rt.unp IS NOT NULL
+      END AS domain_lot_id,
+      rl.value_amount,
+      rl.value_currency,
+      ROW_NUMBER() OVER (
+        PARTITION BY 'lot:' || rt.unp || ':' || CASE
+          WHEN rl.lot_id LIKE 'LOT-%' AND REPLACE(rl.lot_id, 'LOT-', '') <> '' AND REPLACE(rl.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(rl.lot_id, 'LOT-', '') AS INTEGER)
+          WHEN rl.lot_id <> '' AND rl.lot_id NOT GLOB '*[^0-9]*' THEN CAST(rl.lot_id AS INTEGER)
+          ELSE rl.lot_id
+        END
+        ORDER BY rl.id DESC
+      ) AS rn
+    FROM raw_ocds_lots rl
+    JOIN raw_tenders rt ON rt.tender_id = rl.tender_id
+    WHERE rl.tender_id IS NOT NULL
+      AND rl.lot_id IS NOT NULL
+      AND rt.unp IS NOT NULL
+  )
+  WHERE rn = 1
 )
 UPDATE lots
 SET
   value_amount = COALESCE(lots.value_amount, mapped.value_amount),
   value_currency = COALESCE(lots.value_currency, mapped.value_currency)
 FROM mapped
-WHERE mapped.rn = 1
-  AND mapped.domain_lot_id = lots.id;
+WHERE mapped.domain_lot_id = lots.id
+  AND lots.id IN (SELECT domain_lot_id FROM mapped)
+  AND (lots.value_amount IS NULL OR lots.value_currency IS NULL);
 
 -- @refresh-batch synthetic-tenders
 -- ── 3) Synthetic 'неизвестна' tenders for OCDS УНП (ocid) — matches normalize step 2b ───────────────
@@ -1283,14 +1339,16 @@ SELECT
   x.subcontractor_name,
   x.subcontract_value,
   x.eauction,
-  x.framework_contract,
+  CASE WHEN x.framework_contract = 1 THEN 1 WHEN x.framework_notice = 1 THEN 2 END,
   x.accelerated,
   x.strategic
 FROM (
   SELECT q.*,
     -- value_suspect is repaired directly from proc_est_eur. value_low (and 'review') is populated here,
     -- so it counts in every sum; it is merely labelled in the UI. annex_suspect uses trusted_native's signing fallback.
+    -- A framework agreement's own record carries its ceiling and is never summed (normalize-raw.sql step 5).
     CASE
+      WHEN q.framework_notice = 1 AND q.framework_contract IS NOT 1 THEN NULL
       WHEN q.value_flag = 'value_suspect' THEN q.proc_est_eur
       WHEN q.trusted_currency = 'EUR' THEN q.trusted_native
       WHEN q.trusted_currency = 'BGN' THEN q.trusted_native / 1.95583
@@ -1652,14 +1710,16 @@ SELECT
   x.subcontractor_name,
   x.subcontract_value,
   x.eauction,
-  x.framework_contract,
+  CASE WHEN x.framework_contract = 1 THEN 1 WHEN x.framework_notice = 1 THEN 2 END,
   x.accelerated,
   x.strategic
 FROM (
   SELECT q.*,
     -- value_suspect is repaired directly from proc_est_eur. value_low (and 'review') is populated here,
     -- so it counts in every sum; it is merely labelled in the UI. annex_suspect uses trusted_native's signing fallback.
+    -- A framework agreement's own record carries its ceiling and is never summed (normalize-raw.sql step 5).
     CASE
+      WHEN q.framework_notice = 1 AND q.framework_contract IS NOT 1 THEN NULL
       WHEN q.value_flag = 'value_suspect' THEN q.proc_est_eur
       WHEN q.trusted_currency = 'EUR' THEN q.trusted_native
       WHEN q.trusted_currency = 'BGN' THEN q.trusted_native / 1.95583
@@ -1984,10 +2044,12 @@ FROM (
 INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
 SELECT DISTINCT authority_id FROM refresh_joint_authority_members;
 
+-- By the tender's key: inside EXISTS, `'t:' || c.unp = tenders.id` could use no index, so every tender not
+-- yet awarded scanned the window's contracts.
 UPDATE tenders
 SET status = 'awarded'
 WHERE status <> 'awarded'
-  AND EXISTS (SELECT 1 FROM raw_contracts c WHERE 't:' || c.unp = tenders.id);
+  AND id IN (SELECT 't:' || unp FROM raw_contracts);
 
 -- Record what THIS batch inserted or replaced — in THIS batch. Every @refresh-batch is one atomic D1
 -- batch and nothing spans them, so the ids a batch touches must be written in the same batch as the
@@ -2234,6 +2296,7 @@ DROP TABLE IF EXISTS amend_contract_base;
 
 CREATE TABLE amend_contract_base AS
   SELECT c.id, c.currency, c.signing_value, c.current_value, c.current_value_currency, c.fx_rate, c.value_flag,
+    c.framework,
     te.estimated_value AS proc_est_native,
     CASE
       -- current_value (when present) is denominated in current_value_currency (whichever
@@ -2417,6 +2480,7 @@ CREATE TABLE amend_contract_base AS
 
 WITH base AS (
   SELECT id, currency, signing_value, current_value, current_value_currency, fx_rate, proc_est_eur, proc_est_native,
+    framework,
     CASE
       WHEN c.value_flag NOT IN ('annex_suspect', 'annex_total_suspect')
         AND NOT (c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
@@ -2503,11 +2567,14 @@ WITH base AS (
     END AS new_current_value_eur,
     currency,
     fx_rate,
-    signing_value
+    signing_value,
+    framework
   FROM base
 ), recalculated AS (
   SELECT id, new_value_flag, display_native, trusted_native,
     CASE
+      -- A framework agreement's own record carries its ceiling, never summed (normalize-raw.sql step 5).
+      WHEN framework = 2 THEN NULL
       WHEN new_value_flag = 'value_suspect' THEN proc_est_eur
       WHEN trusted_native IS NULL THEN NULL
       WHEN trusted_currency = 'EUR' THEN trusted_native
@@ -2566,6 +2633,23 @@ DROP TABLE contractor_identity;
 -- 6) Refresh rollups + FTS. Only the D1-hot rollups are scoped to touched rows; cheaper rollups stay
 -- full-recomputed in isolated batches so convergence stays simple.
 -- @refresh-batch company-totals
+-- The parties to a framework agreement (normalize-raw.sql step 5z), for the contractors this slice
+-- touched: one whose every contract is an agreement record is its parties, and one that also holds an
+-- ordinary contract is a joint bidder again. Settled before the totals, which carry the kind.
+UPDATE bidders SET kind = 'framework_parties'
+WHERE id IN (SELECT bidder_id FROM refresh_touched_bidders)
+  AND kind = 'consortium' AND name LIKE '%;%'
+  AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = bidders.id AND c.framework = 2)
+  AND NOT EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = bidders.id AND c.framework IS NOT 2);
+UPDATE bidders SET kind = 'consortium'
+WHERE id IN (SELECT bidder_id FROM refresh_touched_bidders)
+  AND kind = 'framework_parties'
+  AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = bidders.id AND c.framework IS NOT 2);
+-- Like every batch that writes bidders, this one records them itself, after the write (the two updates
+-- above only ever reach bidders already in the set, so this keeps the rule rather than adding ids).
+INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
+SELECT id FROM bidders
+WHERE id IN (SELECT bidder_id FROM refresh_touched_bidders) AND kind IN ('framework_parties', 'consortium');
 DELETE FROM company_totals WHERE bidder_id IN (SELECT bidder_id FROM refresh_touched_bidders);
 INSERT INTO company_totals (bidder_id, name, kind, ownership_kind, eik, eik_valid, settlement, won_eur, contracts, authorities, eu_eur, first_date, last_date)
 SELECT b.id, b.name, b.kind, b.ownership_kind, b.eik_normalized, b.eik_valid, b.settlement,
@@ -2607,23 +2691,82 @@ WHERE cca.authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
 GROUP BY cca.authority_id;
 
 -- @refresh-batch flow-pairs
-DELETE FROM flow_pairs;
+-- Still recomputed in full on every run, so the table keeps healing itself, but only a pair that changed is
+-- written. Deleting and re-inserting every pair — about 72 thousand, each a row plus four index entries —
+-- made this the refresh's biggest writer, some 360 thousand rows a run, nearly all identical to what they
+-- replaced. A pair is replaced when a name, the kind or the count changed, or its sum moved by half a cent
+-- or more: less is the float noise of adding the same contracts in another order, and the integrity gate's
+-- tolerance over the whole table is 5 €.
+DELETE FROM flow_pairs
+WHERE (authority_id, bidder_id) NOT IN (
+  SELECT t.authority_id, c.bidder_id
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
+  WHERE c.amount_eur IS NOT NULL
+);
 INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts)
-SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*)
-FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
-WHERE c.amount_eur IS NOT NULL
-GROUP BY t.authority_id, c.bidder_id;
+SELECT f.authority_id, f.bidder_id, f.authority_name, f.bidder_name, f.bidder_kind, f.won_eur, f.contracts
+FROM (
+  SELECT t.authority_id, c.bidder_id, a.name AS authority_name, b.name AS bidder_name, b.kind AS bidder_kind,
+    SUM(c.amount_eur) AS won_eur, COUNT(*) AS contracts
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
+  WHERE c.amount_eur IS NOT NULL
+  GROUP BY t.authority_id, c.bidder_id
+) f
+WHERE NOT EXISTS (
+  SELECT 1 FROM flow_pairs p
+  WHERE p.authority_id = f.authority_id AND p.bidder_id = f.bidder_id
+    AND p.authority_name IS f.authority_name AND p.bidder_name IS f.bidder_name
+    AND p.bidder_kind IS f.bidder_kind AND p.contracts = f.contracts
+    AND abs(p.won_eur - f.won_eur) < 0.005
+)
+ON CONFLICT (authority_id, bidder_id) DO UPDATE SET
+  authority_name = excluded.authority_name,
+  bidder_name = excluded.bidder_name,
+  bidder_kind = excluded.bidder_kind,
+  won_eur = excluded.won_eur,
+  contracts = excluded.contracts;
 
 -- @refresh-batch entity-search-index
-DELETE FROM search_index WHERE kind = 'company';
+-- The company and authority rows are rewritten only where they differ from their totals row. Deleting and
+-- re-inserting all of them — some 22 thousand — rewrote the search index on every run although nearly
+-- nothing in it had changed. A stale or vanished row is deleted, then every totals row the index no longer
+-- holds is inserted: EXCEPT compares all the shown fields at once and treats NULLs as equal, like the IS
+-- comparisons of the delete. The index is FTS5, where `kind` and `ref` are not indexed, so each statement
+-- reads it once; the totals side is a lookup by its primary key.
+DELETE FROM search_index WHERE rowid IN (
+  SELECT s.rowid FROM search_index s
+  LEFT JOIN company_totals ct ON ct.bidder_id = s.ref AND ct.bidder_id <> 'unknown:анонимен'
+  WHERE s.kind = 'company'
+    AND (ct.bidder_id IS NULL OR ct.name IS NOT s.title OR COALESCE(ct.eik, '') IS NOT s.ident
+      OR COALESCE(ct.settlement, '') IS NOT s.subtitle OR ct.won_eur IS NOT s.amount)
+);
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
-SELECT 'company', ct.bidder_id, ct.name, COALESCE(ct.eik, ''), COALESCE(ct.settlement, ''), ct.won_eur
-FROM company_totals ct
-WHERE ct.bidder_id <> 'unknown:анонимен';
-DELETE FROM search_index WHERE kind = 'authority';
+SELECT 'company', ref, title, ident, subtitle, amount
+FROM (
+  SELECT ct.bidder_id AS ref, ct.name AS title, COALESCE(ct.eik, '') AS ident,
+    COALESCE(ct.settlement, '') AS subtitle, ct.won_eur AS amount
+  FROM company_totals ct
+  WHERE ct.bidder_id <> 'unknown:анонимен'
+  EXCEPT
+  SELECT ref, title, ident, subtitle, amount FROM search_index WHERE kind = 'company'
+);
+DELETE FROM search_index WHERE rowid IN (
+  SELECT s.rowid FROM search_index s
+  LEFT JOIN authority_totals at ON at.authority_id = s.ref
+  WHERE s.kind = 'authority'
+    AND (at.authority_id IS NULL OR at.name IS NOT s.title
+      OR COALESCE(substr(at.authority_id, 6), '') IS NOT s.ident
+      OR COALESCE(at.settlement, '') IS NOT s.subtitle OR at.spent_eur IS NOT s.amount)
+);
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
-SELECT 'authority', at.authority_id, at.name, COALESCE(substr(at.authority_id, 6), ''), COALESCE(at.settlement, ''), at.spent_eur
-FROM authority_totals at;
+SELECT 'authority', ref, title, ident, subtitle, amount
+FROM (
+  SELECT at.authority_id AS ref, at.name AS title, COALESCE(substr(at.authority_id, 6), '') AS ident,
+    COALESCE(at.settlement, '') AS subtitle, at.spent_eur AS amount
+  FROM authority_totals at
+  EXCEPT
+  SELECT ref, title, ident, subtitle, amount FROM search_index WHERE kind = 'authority'
+);
 -- @refresh-batch official-search-index
 -- Contract refreshes can only change the displayed amount for officials linked to a touched bidder.
 -- Rebuild those officials from all of their links; a full related-persons publish owns withdrawals and
@@ -2708,28 +2851,72 @@ WHERE c.id IN (SELECT id FROM refresh_touched_contracts)
 
 -- Small global rollups - recomputed in full (one-row / small facet tables; cheap per refresh).
 -- @refresh-batch globals
+-- One pass over the corpus for every corpus-wide count written from it — data_freshness, home_totals' contract
+-- count, value and suspect rows, sector_totals, and the contracts list's facets (procedure, EU, sector, year):
+-- grouped once into a small cube, a few thousand rows, then folded per total. They were eight scans of the
+-- whole contracts table. The LEFT JOIN and `has_tender` keep each total's own base exactly as it was: the
+-- tender-joined ones (procedure, sector, sector_totals) and the contracts-only ones (EU, year, home, freshness).
+DROP TABLE IF EXISTS contract_cube;
+CREATE TABLE contract_cube AS
+SELECT
+  t.id IS NOT NULL AS has_tender,
+  -- A contract the contracts list shows: its FROM joins the tender, the authority and the bidder.
+  t.id IS NOT NULL AND a.id IS NOT NULL AND b.id IS NOT NULL AS in_list,
+  t.procedure_type AS procedure_type,
+  -- '?' keeps a value other than 0, 1 or NULL apart: the list's „EU" filter is `= 1` and „national" is
+  -- `IS NULL OR = 0`, so such a contract is in neither. The EU facet folds it into '0', as it always did.
+  CASE WHEN c.eu_funded = 1 THEN '1' WHEN c.eu_funded = 0 OR c.eu_funded IS NULL THEN '0' ELSE '?' END AS eu,
+  COALESCE(substr(t.cpv_code, 1, 2), '') AS sector,
+  CASE WHEN substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]' THEN substr(c.signed_at, 1, 4) ELSE 'unknown' END AS year,
+  CASE WHEN c.id LIKE 'c:e:%' THEN 'eop' WHEN c.id LIKE 'c:o:%' THEN 'ocds' ELSE 'other' END AS src,
+  CASE WHEN c.bids_received = 1 THEN '1' ELSE '0' END AS one_offer,
+  -- A known number of offers: at least one. 0 is not a real count (an award needs an offer) and NULL is
+  -- unknown. The base of the single-offer share (methodology §5), the rule competitionTotals applies.
+  CASE WHEN c.bids_received >= 1 THEN 1 ELSE 0 END AS bids_known,
+  -- The list's value buckets (VALUE_BUCKETS in contracts.ts), each [lower, upper).
+  CASE
+    WHEN c.amount_eur >= 100000000 THEN 'gt100m'
+    WHEN c.amount_eur >= 10000000 THEN '10m-100m'
+    WHEN c.amount_eur >= 1000000 THEN '1m-10m'
+    WHEN c.amount_eur >= 100000 THEN '100k-1m'
+    WHEN c.amount_eur >= 0 THEN 'lt100k'
+    ELSE ''
+  END AS value_bucket,
+  COUNT(*) AS contracts,
+  COUNT(c.amount_eur) AS priced,
+  COALESCE(SUM(c.amount_eur), 0) AS value_eur,
+  -- The single-offer value share sums positive amounts only, so a negative value_low row cannot push it
+  -- outside [0, 1] (competition.ts, #153).
+  COALESCE(SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_pos,
+  SUM(c.value_flag = 'value_suspect') AS suspect,
+  -- The list's headline count of values that are probably wrong at the source (value_low, summed as
+  -- published) or missing (no usable EUR figure, not summed). A framework agreement's own record is
+  -- neither: its figure is a ceiling, not spending, whatever its verdict.
+  SUM(c.framework IS NOT 2 AND (c.amount_eur IS NULL OR c.value_flag = 'value_low')) AS unverified,
+  MAX(CASE WHEN c.signed_at <= date('now') THEN c.signed_at END) AS max_signed
+FROM contracts c
+LEFT JOIN tenders t ON t.id = c.tender_id
+LEFT JOIN authorities a ON a.id = t.authority_id
+LEFT JOIN bidders b ON b.id = c.bidder_id
+-- By position: the dimensions are the first ten result columns, and an alias must not meet a column name.
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
+
 DELETE FROM data_freshness;
 INSERT INTO data_freshness (source, as_of, rows, refreshed_at)
-SELECT
-  CASE
-    WHEN id LIKE 'c:e:%' THEN 'eop'
-    WHEN id LIKE 'c:o:%' THEN 'ocds'
-    ELSE 'other'
-  END AS src,
-  MAX(CASE WHEN signed_at <= date('now') THEN signed_at END),
-  COUNT(*),
-  datetime('now')
-FROM contracts
+SELECT src, MAX(max_signed), SUM(contracts), datetime('now')
+FROM contract_cube
 GROUP BY src;
 
 DELETE FROM home_totals;
 INSERT INTO home_totals (id, contracts, value_eur, authorities, bidders, suspect, first_date, last_date, as_of, refreshed_at)
 SELECT 1,
-  (SELECT COUNT(*) FROM contracts),
-  (SELECT COALESCE(SUM(amount_eur), 0) FROM contracts),
+  (SELECT COALESCE(SUM(contracts), 0) FROM contract_cube),
+  (SELECT COALESCE(SUM(value_eur), 0) FROM contract_cube),
   (SELECT COUNT(*) FROM authority_totals),
-  (SELECT COUNT(*) FROM company_totals),
-  (SELECT COUNT(*) FROM contracts WHERE value_flag = 'value_suspect'),
+  -- The companies the list and the search show (companies.ts): the bucket of winners with no identity is
+  -- not a company.
+  (SELECT COUNT(*) FROM company_totals WHERE kind <> 'unknown'),
+  (SELECT COALESCE(SUM(suspect), 0) FROM contract_cube),
   (SELECT MIN(signed_at) FROM contracts WHERE signed_at >= '2020-01-01' AND signed_at <= date('now')),
   (SELECT MAX(signed_at) FROM contracts WHERE signed_at <= date('now')),
   -- Freshness is the latest in-corpus signed contract date. data_freshness is maintained above.
@@ -2738,18 +2925,95 @@ SELECT 1,
 
 DELETE FROM sector_totals;
 INSERT INTO sector_totals (division, contracts, value_eur)
-SELECT substr(t.cpv_code, 1, 2), COUNT(*), COALESCE(SUM(c.amount_eur), 0)
-FROM contracts c JOIN tenders t ON t.id = c.tender_id
-WHERE c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
-GROUP BY substr(t.cpv_code, 1, 2);
+SELECT sector, SUM(priced), SUM(value_eur)
+FROM contract_cube
+WHERE has_tender = 1 AND sector <> ''
+GROUP BY sector
+HAVING SUM(priced) > 0;
 
 DELETE FROM facet_counts;
 INSERT INTO facet_counts (facet, key, contracts, value_eur)
-SELECT 'procedure', t.procedure_type, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
-FROM contracts c JOIN tenders t ON t.id = c.tender_id GROUP BY t.procedure_type;
+SELECT 'procedure', procedure_type, SUM(contracts), SUM(value_eur)
+FROM contract_cube WHERE has_tender = 1 GROUP BY procedure_type;
 INSERT INTO facet_counts (facet, key, contracts, value_eur)
-SELECT 'eu', CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
-FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
+SELECT 'eu', CASE WHEN eu = '1' THEN '1' ELSE '0' END, SUM(contracts), SUM(value_eur)
+FROM contract_cube GROUP BY CASE WHEN eu = '1' THEN '1' ELSE '0' END;
+-- The contracts list's sector and year facets, which every uncached list page shows: read from here instead
+-- of two full scans per request — those scans were the bulk of the rows D1 read, and what a crawler turned
+-- into an overloaded database. Same expressions as getContractFacets' live fallback.
+INSERT INTO facet_counts (facet, key, contracts, value_eur)
+SELECT 'sector', sector, SUM(contracts), SUM(value_eur)
+FROM contract_cube WHERE has_tender = 1 GROUP BY sector;
+INSERT INTO facet_counts (facet, key, contracts, value_eur)
+SELECT 'year', year, SUM(contracts), SUM(value_eur) FROM contract_cube GROUP BY year;
+-- The national single-offer share, one base for the home page, /analytics and /competition (home.ts,
+-- competition.ts): contracts with a known number of offers, and their one-offer subset — counted, and
+-- valued on positive amounts. With a tender, as competitionTotals' live count joins it, so the national
+-- figure is the sum of the per-sector ones.
+INSERT INTO facet_counts (facet, key, contracts, value_eur)
+SELECT 'single_offer', 'known', COALESCE(SUM(contracts), 0), COALESCE(SUM(value_pos), 0)
+FROM contract_cube WHERE bids_known = 1 AND has_tender = 1;
+INSERT INTO facet_counts (facet, key, contracts, value_eur)
+SELECT 'single_offer', 'one', COALESCE(SUM(contracts), 0), COALESCE(SUM(value_pos), 0)
+FROM contract_cube WHERE one_offer = '1' AND has_tender = 1;
+
+-- @refresh-batch contract-rollup
+-- The contracts list's headline for every combination of its filters (migration 0024): each of the six
+-- dimensions either one of its values or '(all)', so 64 groupings of the listed contracts in the cube. Only a
+-- row that changed is written: a vanished combination is deleted, a new or changed one upserted. A value is
+-- compared to half a cent; adding the same contracts in another order moves it by far less.
+CREATE TABLE IF NOT EXISTS contract_rollup (
+  procedure_type TEXT NOT NULL,
+  eu             TEXT NOT NULL,
+  sector         TEXT NOT NULL,
+  one_offer      TEXT NOT NULL,
+  value_bucket   TEXT NOT NULL,
+  year           TEXT NOT NULL,
+  contracts      INTEGER NOT NULL,
+  value_eur      REAL NOT NULL,
+  unverified     INTEGER NOT NULL,
+  PRIMARY KEY (procedure_type, eu, sector, one_offer, value_bucket, year)
+) WITHOUT ROWID;
+WITH RECURSIVE masks(m) AS (SELECT 0 UNION ALL SELECT m + 1 FROM masks WHERE m < 63)
+DELETE FROM contract_rollup
+WHERE (procedure_type, eu, sector, one_offer, value_bucket, year) NOT IN (
+  SELECT
+    CASE WHEN m & 1 THEN '(all)' ELSE procedure_type END,
+    CASE WHEN m & 2 THEN '(all)' ELSE eu END,
+    CASE WHEN m & 4 THEN '(all)' ELSE sector END,
+    CASE WHEN m & 8 THEN '(all)' ELSE one_offer END,
+    CASE WHEN m & 16 THEN '(all)' ELSE value_bucket END,
+    CASE WHEN m & 32 THEN '(all)' ELSE year END
+  FROM contract_cube CROSS JOIN masks
+  WHERE in_list = 1
+);
+WITH RECURSIVE masks(m) AS (SELECT 0 UNION ALL SELECT m + 1 FROM masks WHERE m < 63),
+fresh AS (
+  SELECT
+    CASE WHEN m & 1 THEN '(all)' ELSE procedure_type END AS procedure_type,
+    CASE WHEN m & 2 THEN '(all)' ELSE eu END AS eu,
+    CASE WHEN m & 4 THEN '(all)' ELSE sector END AS sector,
+    CASE WHEN m & 8 THEN '(all)' ELSE one_offer END AS one_offer,
+    CASE WHEN m & 16 THEN '(all)' ELSE value_bucket END AS value_bucket,
+    CASE WHEN m & 32 THEN '(all)' ELSE year END AS year,
+    SUM(contracts) AS contracts, SUM(value_eur) AS value_eur, SUM(unverified) AS unverified
+  FROM contract_cube CROSS JOIN masks
+  WHERE in_list = 1
+  GROUP BY 1, 2, 3, 4, 5, 6
+)
+INSERT INTO contract_rollup (procedure_type, eu, sector, one_offer, value_bucket, year, contracts, value_eur, unverified)
+SELECT f.procedure_type, f.eu, f.sector, f.one_offer, f.value_bucket, f.year, f.contracts, f.value_eur, f.unverified
+FROM fresh f
+WHERE NOT EXISTS (
+  SELECT 1 FROM contract_rollup r
+  WHERE r.procedure_type = f.procedure_type AND r.eu = f.eu AND r.sector = f.sector
+    AND r.one_offer = f.one_offer AND r.value_bucket = f.value_bucket AND r.year = f.year
+    AND r.contracts = f.contracts AND r.unverified = f.unverified
+    AND abs(r.value_eur - f.value_eur) < 0.005
+)
+ON CONFLICT (procedure_type, eu, sector, one_offer, value_bucket, year) DO UPDATE SET
+  contracts = excluded.contracts, value_eur = excluded.value_eur, unverified = excluded.unverified;
+DROP TABLE IF EXISTS contract_cube;
 
 -- @refresh-batch cohort-stats
 -- cpv_division_stats: same full rebuild as scripts/precompute.sql §4c. Runs in its OWN batch (not in
