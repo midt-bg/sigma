@@ -124,6 +124,14 @@ export function overlapBands(input: {
 }
 
 /** Everything the interval timeline draws for one person, bounded by that person's own rows. */
+// A procurement mark carries its subject only for the tooltip and the label; the contract page has the
+// whole text. Some people have hundreds of marks, and the full subjects made those pages over 1 MB.
+export const TIMELINE_SUBJECT_CHARS = 120;
+function clipSubject(subject: string | null): string | null {
+  if (!subject || subject.length <= TIMELINE_SUBJECT_CHARS) return subject;
+  return `${subject.slice(0, TIMELINE_SUBJECT_CHARS - 1).trimEnd()}…`;
+}
+
 export async function getTimelineIntervals(
   db: D1Database,
   indent: string | null,
@@ -197,6 +205,10 @@ export async function getTimelineIntervals(
       declared: declared.results,
     }),
     declared: declared.results,
-    procurements: procurements.results.map((r) => ({ ...r, tied: !!r.tied })),
+    procurements: procurements.results.map((r) => ({
+      ...r,
+      subject: clipSubject(r.subject),
+      tied: !!r.tied,
+    })),
   };
 }
