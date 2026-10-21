@@ -83,7 +83,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 // The procedure groups the direct-award share leaves out of its base — neither competitive nor direct
-// (procedureCompetition) — named next to the number, so its base is not only the word „класифицирани".
+// (procedureCompetition) — named next to the number, so its base is not only the word „класифицирани“.
 const UNCLASSIFIED = PROCEDURE_GROUPS.filter((g) => g.competitive === null).map(
   (g) => `„${g.label}“`,
 );
@@ -96,7 +96,7 @@ const UNCLASSIFIED_LIST =
 const RATING_LABEL: Record<IndicatorRating, string> = {
   good: 'в нормата на ЕС',
   mid: 'над целевата стойност на ЕС',
-  bad: 'над прага на ЕС',
+  bad: 'над референтната стойност на ЕС',
 };
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
@@ -140,7 +140,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </>
           }
           title={a.name}
-          lede={`Стойността на договорите, които институцията е възложила през ${range} г. Това са стойности на договорите, а не извършени плащания. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
+          lede={`Стойността на договорите, които институцията е възложила през ${range}\u00a0г. Това са стойности на договорите, а не извършени плащания. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
         >
           {/* Only a trader has a partida in the Търговски регистър; a municipality or a school is registered
               in БУЛСТАТ alone, and the register would open an empty report for it. */}
@@ -212,7 +212,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           <Section
             id="single-offer"
             title="Конкуренция"
-            hint="Дял на договорите само с една оферта и дял пряко възлагане (без обявление), спрямо праговете на ЕС."
+            hint="Дял на договорите само с една оферта и дял пряко възлагане (без обявление), спрямо референтните стойности на ЕС."
           >
             {ct.contracts > 0 ? (
               <EuBenchmarkStat
@@ -250,8 +250,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               </div>
             )}
             <p className="small muted mt-8">
-              Праговете са външен ориентир на Европейската комисия (Single Market Scoreboard), не
-              оценка на конкретна процедура.{' '}
+              Референтните стойности са външен ориентир на Европейската комисия (Single Market
+              Scoreboard), не оценка на конкретна процедура.{' '}
               <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
             </p>
           </Section>
@@ -335,7 +335,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
         <Section
           id="top-contractors"
           title="Топ изпълнители"
-          hint={`Подредени по общата сума, спечелена от ${a.name}. Колоната „Дял" показва каква част от парите отива при всеки изпълнител.`}
+          hint={`Подредени по общата сума, спечелена от ${a.name}. Колоната „Дял“ показва каква част от парите отива при всеки изпълнител.`}
         >
           <div className="table-wrap tbl-cards">
             <table>

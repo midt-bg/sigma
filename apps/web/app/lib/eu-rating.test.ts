@@ -4,7 +4,7 @@ import { euRating, SMALL_SAMPLE_LABEL } from './eu-rating';
 
 describe('euRating', () => {
   it('gives no verdict on a share that too few contracts decide', () => {
-    // One contract, one offer: 100 % — and still no „над прага на ЕС" about a named body.
+    // One contract, one offer: 100 % — and still no „над референтната стойност на ЕС" about a named body.
     expect(euRating(1, 1, EU_SCOREBOARD.singleBidder)).toBeNull();
     expect(euRating(1, COMPETITION_MIN_CONTRACTS - 1, EU_SCOREBOARD.directAward)).toBeNull();
   });
@@ -17,6 +17,6 @@ describe('euRating', () => {
 
   it('says why there is no verdict, with the threshold', () => {
     expect(SMALL_SAMPLE_LABEL).toContain(String(COMPETITION_MIN_CONTRACTS));
-    expect(SMALL_SAMPLE_LABEL).not.toContain('над прага');
+    expect(SMALL_SAMPLE_LABEL).not.toContain('над референтната');
   });
 });

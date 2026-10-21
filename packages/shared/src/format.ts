@@ -137,6 +137,12 @@ export function date(iso: string | null | undefined): string {
   return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
 }
 
+/** A plain decimal with a decimal comma, e.g. an index `0,42`. „—" for null/NaN. */
+export function decimal(n: number | null | undefined, dp = 2): string {
+  if (n == null || !Number.isFinite(n)) return EM_DASH;
+  return `${n < 0 ? MINUS : ''}${dec(Math.abs(n), dp, false)}`;
+}
+
 /** ISO date → `октомври 2024` (hand-rolled month names, no Intl). */
 export function monthYear(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
@@ -150,7 +156,7 @@ export function longDate(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return iso;
-  return `${Number(m[3])} ${MONTHS_BG[Number(m[2]) - 1] ?? m[2]} ${m[1]} г.`;
+  return `${Number(m[3])} ${MONTHS_BG[Number(m[2]) - 1] ?? m[2]} ${m[1]}${NBSP}г.`;
 }
 
 /** A period like `юли 2020 — май 2026` from first/last ISO dates. */

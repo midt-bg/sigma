@@ -1025,9 +1025,9 @@ it('draws the overlap band, the office and each procurement from announcement to
     };
     const square = el.querySelector('.time-institution .time-observation')!;
     expect(square.hasAttribute('title')).toBe(false);
-    expect(hover(square)).toMatch(/Встъпителна.*За 2021 г\.Община Тест · Съветник/);
+    expect(hover(square)).toMatch(/Встъпителна.*За 2021\u00a0г\.Община Тест · Съветник/);
     expect(hover(el.querySelector('.time-institution .time-office')!)).toContain(
-      'Краят не е известен — последната декларация е за 2022 г.',
+      'Краят не е известен — последната декларация е за 2022\u00a0г.',
     );
     const role = el.querySelector('.time-role')!;
     expect(role.hasAttribute('title')).toBe(false);

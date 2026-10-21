@@ -4,6 +4,7 @@ import {
   cleanName,
   count,
   date,
+  decimal,
   entityName,
   isFutureDate,
   isNaturalPersonProfileName,
@@ -53,6 +54,16 @@ describe('money', () => {
   });
   it('keeps a sign for negative deltas', () => {
     expect(money(-1500)).toBe(`−2${NBSP}хил.${NBSP}€`);
+  });
+});
+
+describe('decimal', () => {
+  it('writes an index with a decimal comma and „—" when absent', () => {
+    expect(decimal(0.989)).toBe('0,99');
+    expect(decimal(0.25)).toBe('0,25');
+    expect(decimal(-0.5, 1)).toBe('−0,5');
+    expect(decimal(null)).toBe('—');
+    expect(decimal(Number.NaN)).toBe('—');
   });
 });
 
@@ -106,7 +117,7 @@ describe('dates', () => {
   it('formats ISO dates in Bulgarian forms without Intl', () => {
     expect(date('2024-10-14')).toBe('14.10.2024');
     expect(monthYear('2024-10-14')).toBe('октомври 2024');
-    expect(longDate('2024-10-01')).toBe('1 октомври 2024 г.');
+    expect(longDate('2024-10-01')).toBe('1 октомври 2024\u00a0г.');
     expect(periodRange('2020-07-03', '2026-05-20')).toBe('юли 2020 — май 2026');
   });
   it('returns a dash for missing dates', () => {
@@ -278,7 +289,7 @@ describe('pct / signedPct (dp, absence, and precision branches)', () => {
 describe('dates (fallback and tolerance branches)', () => {
   it('tolerates a datetime suffix on date()/longDate()', () => {
     expect(date('2024-10-14T09:30:00Z')).toBe('14.10.2024');
-    expect(longDate('2024-10-01T00:00:00')).toBe('1 октомври 2024 г.');
+    expect(longDate('2024-10-01T00:00:00')).toBe('1 октомври 2024\u00a0г.');
   });
   it('passes an unparseable string through verbatim', () => {
     expect(date('не е дата')).toBe('не е дата');
@@ -289,7 +300,7 @@ describe('dates (fallback and tolerance branches)', () => {
   it('falls back to the raw month number when it is out of range', () => {
     // MONTHS_BG[12] is undefined → the `?? m[2]` guard keeps the digits, never "undefined".
     expect(monthYear('2024-13')).toBe('13 2024');
-    expect(longDate('2024-00-05')).toBe('5 00 2024 г.');
+    expect(longDate('2024-00-05')).toBe('5 00 2024\u00a0г.');
   });
   it('returns a dash for missing month/long dates', () => {
     expect(monthYear(null)).toBe('—');

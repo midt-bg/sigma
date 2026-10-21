@@ -40,7 +40,7 @@ export function TrendBlock({
       />
       {!!omitted?.contracts && (
         <p className="small muted">
-          Без валидна дата (липсва, преди 2020 г. или в бъдещето): {count(omitted.contracts)}{' '}
+          Без валидна дата (липсва, преди 2020&nbsp;г. или в бъдещето): {count(omitted.contracts)}{' '}
           {plural(omitted.contracts, 'договор', 'договора')}, {money(omitted.valueEur)}.
         </p>
       )}

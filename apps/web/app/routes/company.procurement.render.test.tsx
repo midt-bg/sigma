@@ -412,7 +412,7 @@ describe('/companies/:eik — meta', () => {
     });
     expect(tags.find((tag) => 'name' in tag && tag.name === 'description')).toEqual({
       name: 'description',
-      content: 'Профил на „Тест Груп“ и партньори в обществените поръчки 2020–2026.',
+      content: 'Профил на „Тест Груп“ и партньори в обществените поръчки 2020–\u20602026.',
     });
   });
 

@@ -19,19 +19,25 @@ describe('coverage labels', () => {
   });
 
   it('formats the full and partial ranges with a fallback end year', () => {
-    expect(coverageRange(2024)).toBe(`${START_YEAR}–2024`);
-    expect(coverageRange(null)).toBe(`${START_YEAR}–${FALLBACK_END_YEAR}`);
-    expect(coveragePartialNote(2025)).toBe(`${START_YEAR}–2025 (2025 г. частично)`);
+    expect(coverageRange(2024)).toBe(`${START_YEAR}–\u20602024`);
+    expect(coverageRange(null)).toBe(`${START_YEAR}–\u2060${FALLBACK_END_YEAR}`);
+    expect(coveragePartialNote(2025)).toBe(`${START_YEAR}–\u20602025 (2025\u00a0г. частично)`);
     expect(coveragePartialNote(undefined)).toBe(
-      `${START_YEAR}–${FALLBACK_END_YEAR} (${FALLBACK_END_YEAR} г. частично)`,
+      `${START_YEAR}–\u2060${FALLBACK_END_YEAR} (${FALLBACK_END_YEAR}\u00a0г. частично)`,
     );
   });
 
   it('names a partial first year beside the partial last one', () => {
-    expect(coveragePartialNote(2025, '2020')).toBe(`${START_YEAR}–2025 (2020 и 2025 г. частично)`);
+    expect(coveragePartialNote(2025, '2020')).toBe(
+      `${START_YEAR}–\u20602025 (2020 и 2025\u00a0г. частично)`,
+    );
     // Nothing to add when no first year is partial, or when it is the same year.
-    expect(coveragePartialNote(2025, null)).toBe(`${START_YEAR}–2025 (2025 г. частично)`);
-    expect(coveragePartialNote(2025, '2025')).toBe(`${START_YEAR}–2025 (2025 г. частично)`);
+    expect(coveragePartialNote(2025, null)).toBe(
+      `${START_YEAR}–\u20602025 (2025\u00a0г. частично)`,
+    );
+    expect(coveragePartialNote(2025, '2025')).toBe(
+      `${START_YEAR}–\u20602025 (2025\u00a0г. частично)`,
+    );
   });
 
   it('lists years newest first and returns no option before the start year', () => {

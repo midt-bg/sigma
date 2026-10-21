@@ -14,7 +14,7 @@ import { personName } from '../lib/person-name';
 export function meta({ data }: Route.MetaArgs) {
   const q = data?.results.query ? data.typed : '';
   return [
-    { title: q ? `Търсене: „${q}" — СИГМА` : 'Търсене — СИГМА' },
+    { title: q ? `Търсене: „${q}“ — СИГМА` : 'Търсене — СИГМА' },
     { name: 'robots', content: 'noindex' },
   ];
 }
@@ -133,9 +133,11 @@ export default function Search({ loaderData }: Route.ComponentProps) {
   // states (never as a claim that matches were found). On a query that did match, the lede leads
   // with the result line instead.
   const coverage =
-    'Търси из имената на институции и компании, предметите и номерата на договорите и УНП на преписките.';
+    'Търси из имената на институции, компании и лица, предметите и номерата на договорите и УНП на преписките.';
   const lede =
-    hasQuery && !results.empty ? 'Има съвпадения сред институции, компании и договори.' : coverage;
+    hasQuery && !results.empty
+      ? 'Резултатите са групирани по вид: лица, институции, компании и договори.'
+      : coverage;
   // On the empty-query / no-results states no result <section> (each an h2) renders, so the Callout's
   // h3 would follow the h1 directly — an h1→h3 skip. Emit a preceding h2 in that case.
   const hasResults = results.groups.some((g) => g.total > 0);
@@ -145,7 +147,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
       <Breadcrumbs
         items={[
           { label: 'Начало', to: '/' },
-          { label: hasQuery ? `Търсене: „${typed}"` : 'Търсене' },
+          { label: hasQuery ? `Търсене: „${typed}“` : 'Търсене' },
         ]}
       />
       <main id="main">
@@ -161,12 +163,12 @@ export default function Search({ loaderData }: Route.ComponentProps) {
           </Form>
         </PageHeader>
 
-        {rewritten && <p className="muted">Търсено по думите: „{results.query}".</p>}
+        {rewritten && <p className="muted">Търсено по думите: „{results.query}“.</p>}
         {!hasQuery && typed !== '' && <p className="muted">Въведи поне две букви или цифри.</p>}
 
         {hasQuery && results.empty && (
           <p className="muted">
-            Нищо не намерихме за „{results.query}". Пробвай с име, <Abbr>ЕИК</Abbr> или{' '}
+            Нищо не намерихме за „{results.query}“. Пробвай с име, <Abbr>ЕИК</Abbr> или{' '}
             <Abbr>УНП</Abbr>.
           </p>
         )}
@@ -179,7 +181,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                 <h2 id={`r-${g.kind}`}>{g.label}</h2>
                 <span className="count">
                   {g.total > g.hits.length
-                    ? `над ${count(g.hits.length)} от ${count(g.total)}`
+                    ? `първите ${count(g.hits.length)} от ${count(g.total)}`
                     : count(g.total)}{' '}
                   {plural(g.total, 'съвпадение', 'съвпадения')}
                   {g.moreHref && (
@@ -237,12 +239,12 @@ export default function Search({ loaderData }: Route.ComponentProps) {
             </li>
             <li>
               Главни и малки букви, както и ударенията, нямат значение. Латинска буква в дума на
-              кирилица (например „мoст" с латинско „o") се разпознава; дума изцяло на латиница се
+              кирилица (например „мoст“ с латинско „o“) се разпознава; дума изцяло на латиница се
               търси както е написана.
             </li>
             <li>
-              Търси се по начало на дума — <code>стр</code> намира „<u>стр</u>оителство" и „
-              <u>Стр</u>абаг".
+              Търси се по начало на дума — <code>стр</code> намира „<u>стр</u>оителство“ и „
+              <u>Стр</u>абаг“.
             </li>
           </ul>
         </Callout>

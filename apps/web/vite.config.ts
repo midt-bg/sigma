@@ -17,6 +17,9 @@ export default defineConfig({
   // and stale HTML survived every redeploy until s-maxage expiry.
   define: {
     __SIGMA_DEPLOY_TAG__: JSON.stringify(Date.now().toString(36)),
+    // The commit a deploy ships (deploy.yml sets it), written into every page head so anyone can tell which
+    // build is live. Empty in local builds.
+    __SIGMA_VERSION__: JSON.stringify(process.env.SIGMA_SOURCE_COMMIT?.slice(0, 12) ?? ''),
   },
   plugins: [
     cloudflare({

@@ -1,6 +1,6 @@
 import { useId, type AnchorHTMLAttributes, type ReactNode } from 'react';
 import type { OwnershipKind } from '@sigma/api-contract';
-import { pct } from '@sigma/shared';
+import { decimal, pct } from '@sigma/shared';
 
 // Small editorial primitives shared across pages. Class definitions live in app.css (ported verbatim
 // from the mock); these just emit the markup.
@@ -236,8 +236,17 @@ export function Flag({
   return <span className={`flag${variant ? ` ${variant}` : ''}`}>{children}</span>;
 }
 
-// Inline percentage bar. `warn` paints the fill in the accent red (e.g. a dominant share).
-export function ShareBar({ ratio, warn }: { ratio: number; warn?: boolean }) {
+// Inline percentage bar. `warn` paints the fill in the accent red (e.g. a dominant share). `index` shows the
+// number as a 0–1 index (HHI), which is not a share of anything.
+export function ShareBar({
+  ratio,
+  warn,
+  index,
+}: {
+  ratio: number;
+  warn?: boolean;
+  index?: boolean;
+}) {
   const width = `${Math.min(100, Math.max(0, ratio * 100)).toFixed(1)}%`;
   return (
     <span className="share">
@@ -245,8 +254,10 @@ export function ShareBar({ ratio, warn }: { ratio: number; warn?: boolean }) {
         <i style={{ width }} />
       </span>
       <span className="share-num">
-        {pct(ratio)}
-        {warn && <span className="sr-only"> — висок дял</span>}
+        {index ? decimal(ratio) : pct(ratio)}
+        {warn && (
+          <span className="sr-only">{index ? ' — висока концентрация' : ' — висок дял'}</span>
+        )}
       </span>
     </span>
   );

@@ -54,6 +54,10 @@ export function Choropleth({ regions }: { regions: RegionSpend[] }) {
         ))}
         <span>повече</span>
       </div>
+      {/* The GISCO terms ask for this notice wherever the boundaries are shown. */}
+      <p className="small muted">
+        Граници: GISCO (Евростат), © EuroGeographics за административните граници.
+      </p>
     </div>
   );
 }

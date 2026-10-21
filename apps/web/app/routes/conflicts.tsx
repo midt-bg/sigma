@@ -62,7 +62,7 @@ const PER_PAGE = 100;
 // institution profile links here. A slug that names no institution is a 404, like every other slug on the
 // site. It is NOT matched against an ЕИК shape first: the source data leaves a few bodies with an id that
 // is not one (several ЕИК in a single field, a URL, a person's name), their profile pages are live, and
-// their „Свързани лица" button carries exactly that id. Dropping a filter we cannot parse would publish the
+// their „Свързани лица“ button carries exactly that id. Dropping a filter we cannot parse would publish the
 // WHOLE list of links under one institution's name — the filter either applies or the page refuses.
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -96,7 +96,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Ownership and sole management by default; the seats on collegial bodies only when asked (`?role=all`).
   const scoped = applyRoleScope(everyone, filters.role);
   // One row per person. The stake filter chooses between a person's declared part and registry part first, so
-  // „роля по Търговския регистър" lists the companies the register alone records; the other filters ask about
+  // „роля по Търговския регистър“ lists the companies the register alone records; the other filters ask about
   // the person, so they read the joined row.
   const people = mergePersonParts(scoped);
   const persons = sortConflictRows(
@@ -278,7 +278,8 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
                   ) : null}
                   {c.missingYears?.length ? (
                     <div className="small muted">
-                      СИГМА не го откри в годишната декларация за {c.missingYears.join(', ')} г.
+                      СИГМА не го откри в годишната декларация за {c.missingYears.join(', ')}
+                      &nbsp;г.
                     </div>
                   ) : null}
                 </div>
@@ -309,9 +310,9 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
     {
       key: 'signals',
       header: 'Признаци',
-      // The column states the facts the reader has no other column for, and says „—" when there are
+      // The column states the facts the reader has no other column for, and says „—“ when there are
       // none. Carrying the own-institution chip alone left it blank on 98% of the rows, which reads as
-      // a broken column rather than as „nothing to note here".
+      // a broken column rather than as „nothing to note here“.
       cell: (r) => {
         const disputed = r.companies?.some((c) => c.missingYears?.length);
         const chips = [
@@ -443,8 +444,8 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
             защото декларацията съществува именно за да е видимо дали публични пари стигат до
             дружество, свързано с човек с власт над тези пари.{' '}
             <strong>Името на близкия показваме само когато Търговският регистър го вписва</strong>,
-            а видът на връзката <strong>не се твърди</strong> — казваме само „свързано лице", не
-            „съпруг" или „дете". Връзката означава деклариран интерес, а <strong>не</strong>{' '}
+            а видът на връзката <strong>не се твърди</strong> — казваме само „свързано лице“, не
+            „съпруг“ или „дете“. Връзката означава деклариран интерес, а <strong>не</strong>{' '}
             нарушение или конфликт по закон. Повече:{' '}
             <Link to="/conflicts/methodology#shown">Методология → Какво показваме</Link>. Сигнал за
             неточност: <Link to="/conflicts/methodology#contest">Поправки</Link>.
