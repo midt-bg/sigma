@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import { getDb } from '@sigma/db';
 import {
   Link,
@@ -8,9 +7,7 @@ import {
   redirect,
   Scripts,
   ScrollRestoration,
-  useLocation,
   useNavigation,
-  useNavigationType,
   useRouteLoaderData,
 } from 'react-router';
 
@@ -25,6 +22,7 @@ import { getCoverageMeta } from './lib/coverage';
 import { serializeJsonForScript } from './lib/json-ld';
 import { errorCopy } from './lib/error-copy';
 import { withDbRetry } from './lib/retry';
+import { useRouteFocus } from './lib/route-focus';
 import stylesheet from './app.css?url';
 
 // The editorial design uses a system serif/mono/sans stack (see app.css @theme) — no webfont request.
@@ -152,31 +150,7 @@ function RouteProgress() {
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {
-  // After a client-side navigation, move focus to the main region so keyboard and
-  // screen-reader users aren't stranded on <body> mid-page (and the skip link stays
-  // reachable). Skip the first run so SSR/hydration and the initial load are untouched.
-  // Also skip when only search params changed (filter or sort update within the same
-  // page) — clicking a filter checkbox should not yank the user back to the top.
-  const location = useLocation();
-  const navigationType = useNavigationType();
-  const firstRender = useRef(true);
-  const prevPathname = useRef(location.pathname);
-  useEffect(() => {
-    const isFirst = firstRender.current;
-    firstRender.current = false;
-    const prevPath = prevPathname.current;
-    prevPathname.current = location.pathname;
-    if (isFirst) return;
-    if (location.pathname === prevPath) return;
-    const frame = window.requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLElement>('main h1') ?? document.getElementById('main');
-      if (el) {
-        el.setAttribute('tabindex', '-1');
-        el.focus({ preventScroll: navigationType === 'POP' });
-      }
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [location.key, navigationType]);
+  const routeAnnouncement = useRouteFocus();
 
   return (
     <>
@@ -193,6 +167,9 @@ export default function App({ loaderData }: Route.ComponentProps) {
       />
       <ScrollToTop />
       <AccessibilityWidget />
+      <p className="sr-only" aria-live="polite">
+        {routeAnnouncement}
+      </p>
     </>
   );
 }
