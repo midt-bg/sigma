@@ -1,8 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { useFetcher, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import { money } from '@sigma/shared';
-import type { SearchHit } from '@sigma/api-contract';
-import type { loader as suggestLoader } from '../routes/search.suggest';
+import type { SearchHit, SearchResults } from '@sigma/api-contract';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { personName } from '../lib/person-name';
 import { kindLabel } from '../lib/search-labels';
@@ -30,7 +29,8 @@ export function SmartSearch({
   inputRef: externalInputRef,
 }: SmartSearchProps) {
   const navigate = useNavigate();
-  const fetcher = useFetcher<typeof suggestLoader>();
+  const [suggested, setSuggested] = useState<{ q: string; results: SearchResults } | null>(null);
+  const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState(defaultValue);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -49,15 +49,31 @@ export function SmartSearch({
 
   const debounced = useDebouncedValue(query.trim(), DEBOUNCE_MS);
 
-  // Fetch suggestions when the settled query is long enough; clear out below the threshold.
+  // Fetch suggestions when the settled query is long enough, and only while the field is in use: a value
+  // prefilled from the page's `?q=` asks nothing until the visitor focuses or types. The plain JSON route,
+  // not a fetcher's `.data` twin: only the JSON response carries the edge-cache header, so a repeated
+  // prefix is answered by the edge instead of a new search in D1.
   useEffect(() => {
-    if (debounced.length < MIN_QUERY) return;
-    fetcher.load(`/search/suggest?q=${encodeURIComponent(debounced)}`);
-    // fetcher identity is stable across renders; depending on it would re-fire needlessly.
+    if (!open || debounced.length < MIN_QUERY || suggested?.q === debounced) return;
+    const controller = new AbortController();
+    setLoading(true);
+    fetch(`/search/suggest?q=${encodeURIComponent(debounced)}`, { signal: controller.signal })
+      .then((res) => (res.ok ? (res.json() as Promise<SearchResults>) : null))
+      .then((results) => results && setSuggested({ q: debounced, results }))
+      // Aborted, offline or throttled: no suggestions, and the form still submits to /search.
+      .catch(() => {})
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => {
+      controller.abort();
+      setLoading(false);
+    };
+    // `suggested` is read only to skip a repeat; depending on it would re-fire after every answer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debounced]);
+  }, [debounced, open]);
 
-  const results = debounced.length >= MIN_QUERY ? fetcher.data : undefined;
+  const results = debounced.length >= MIN_QUERY ? suggested?.results : undefined;
   const groups = results?.groups.filter((g) => g.hits.length > 0) ?? [];
   const flatHits = groups.flatMap((g) => g.hits);
   const hasResults = flatHits.length > 0;
@@ -66,10 +82,9 @@ export function SmartSearch({
   const optionCount = flatHits.length + (hasResults ? 1 : 0);
 
   const showList = open && debounced.length >= MIN_QUERY;
-  const loading = fetcher.state === 'loading';
 
   // Any change to the option set invalidates the highlighted row.
-  useEffect(() => setActiveIndex(-1), [debounced, fetcher.data]);
+  useEffect(() => setActiveIndex(-1), [debounced, suggested]);
 
   // Pointer-dismiss: closing on outside mousedown keeps it from fighting option clicks.
   useEffect(() => {

@@ -2,7 +2,7 @@
 // The live-search combobox: a WAI-ARIA combobox + listbox that also has to work with JS off. Everything
 // here is behaviour a keyboard or a screen reader depends on — which row is announced, what Enter does,
 // whether Escape reaches the drawer behind it — none of which the type checker can see. Rendered through
-// a real React Router data router so `useFetcher` and `useNavigate` resolve.
+// a real React Router data router so `useNavigate` resolves; the suggestions come from a stubbed fetch.
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -79,15 +79,16 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
-/** Mount the combobox over a real data router whose `/search/suggest` answers with `payload`. */
-async function mount(payload: SearchResults | null = TWO_GROUPS) {
-  const suggest = vi.fn(() => payload ?? results([]));
+/** Mount the combobox over a real data router; `fetch('/search/suggest?…')` answers with `payload`. */
+async function mount(payload: SearchResults | null = TWO_GROUPS, defaultValue?: string) {
+  const suggest = vi.fn(async (_url: string) => Response.json(payload ?? results([])));
+  vi.stubGlobal('fetch', suggest);
   router = createMemoryRouter(
     [
-      { path: '/', Component: () => <SmartSearch variant="hero" /> },
-      { path: '/search/suggest', loader: suggest },
+      { path: '/', Component: () => <SmartSearch variant="hero" defaultValue={defaultValue} /> },
       { path: '/search', Component: () => <p>страницата с резултати</p> },
       { path: '/persons/:id', Component: () => <p>профил</p> },
       { path: '/companies/:eik', Component: () => <p>компания</p> },
@@ -115,6 +116,7 @@ async function type(text: string) {
   await act(async () => {
     vi.advanceTimersByTime(200);
   });
+  await act(async () => {}); // let the stubbed fetch settle
 }
 
 async function press(key: string, init: KeyboardEventInit = {}) {
@@ -134,6 +136,31 @@ it('asks for nothing below two characters and keeps the listbox shut', async () 
   await type('ив');
   expect(suggest).toHaveBeenCalled();
   expect(input().getAttribute('aria-expanded')).toBe('true');
+});
+
+// The JSON route carries the edge-cache header; a fetcher's `.data` twin of it would not.
+it('asks the edge-cached JSON route, not the single-fetch twin', async () => {
+  const { suggest } = await mount();
+  await type('тест');
+  expect(suggest).toHaveBeenCalledTimes(1);
+  expect(suggest.mock.calls[0]![0]).toBe('/search/suggest?q=%D1%82%D0%B5%D1%81%D1%82');
+});
+
+// A results page passes its `?q=` in as the default: loading that page is not a question to answer.
+it('asks nothing for a prefilled value until the field is used', async () => {
+  const { suggest } = await mount(TWO_GROUPS, 'тест');
+  await act(async () => {
+    vi.advanceTimersByTime(200);
+  });
+  expect(suggest).not.toHaveBeenCalled();
+
+  await act(async () => input().focus());
+  await act(async () => {
+    vi.advanceTimersByTime(200);
+  });
+  await act(async () => {});
+  expect(suggest).toHaveBeenCalledTimes(1);
+  expect(options()).toHaveLength(4);
 });
 
 it('announces each suggestion as an option, grouped and labelled by kind', async () => {
