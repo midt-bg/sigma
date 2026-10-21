@@ -25,21 +25,21 @@ import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
 
 /**
- * Compose the muted sub-line under „Брой оферти". The AOP feed gives us the gross submitted count
+ * Compose the muted sub-line under „Брой оферти“. The AOP feed gives us the gross submitted count
  * (`bidsReceived`) plus three siblings — `bidsRejected`, `bidsSme`, `bidsNonEea`. Policy:
  *
- *   - `bidsRejected` — surface whenever populated, including 0. „0 отстранени" is informative as
- *     the explicit „nobody was disqualified" — it tells the reader the rejection field was
+ *   - `bidsRejected` — surface whenever populated, including 0. „0 отстранени“ is informative as
+ *     the explicit „nobody was disqualified“ — it tells the reader the rejection field was
  *     reported, not that data is missing.
- *   - `bidsSme`, `bidsNonEea` — surface only when > 0. A bare „0 от МСП" / „0 извън ЕИП" reads as
+ *   - `bidsSme`, `bidsNonEea` — surface only when > 0. A bare „0 от МСП“ / „0 извън ЕИП“ reads as
  *     noise on the majority of contracts where the bidder pool happened not to include those
  *     categories; the headline number already carries the full count.
  *   - NULL on any field — the source never published it for this contract; always hide.
  *
  * Examples (real-data shapes):
- *   - received=25, rejected=24, sme=18, non_eea=NULL → „1 допусната · 24 отстранени · 18 от МСП"
- *   - received=67, rejected=0,  sme=0,  non_eea=NULL → „67 допуснати · 0 отстранени"
- *   - received=8,  rejected=2,  sme=0,  non_eea=NULL → „6 допуснати · 2 отстранени"
+ *   - received=25, rejected=24, sme=18, non_eea=NULL → „1 допусната · 24 отстранени · 18 от МСП“
+ *   - received=67, rejected=0,  sme=0,  non_eea=NULL → „67 допуснати · 0 отстранени“
+ *   - received=8,  rejected=2,  sme=0,  non_eea=NULL → „6 допуснати · 2 отстранени“
  *   - received=N,  rejected=NULL, sme=NULL, non_eea=NULL → null (caller falls back to the source note)
  */
 function bidsBreakdown(c: ContractDetail): string | null {
@@ -56,7 +56,7 @@ function bidsBreakdown(c: ContractDetail): string | null {
 }
 
 /**
- * Annex „Основание" cell. ЦАИС ЕОП ships the amendment clause as one run-on legal block (median
+ * Annex „Основание“ cell. ЦАИС ЕОП ships the amendment clause as one run-on legal block (median
  * ~800 chars, up to ~6k) — too long for a table cell. Long texts collapse to a word-boundary
  * preview with a native <details> expander (works without JS) and open into clause paragraphs;
  * the wording itself is shown verbatim.
@@ -91,7 +91,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
       : '',
   });
   // GDPR/ЗЗЛД (#219 review): when the bidder is a sole-trader (ЕТ) / natural person, keep this contract
-  // page — which carries the „Сигнали за риск" box — out of search indexes, mirroring the noindex on
+  // page — which carries the „Сигнали за риск“ box — out of search indexes, mirroring the noindex on
   // sole-trader company profiles (company.tsx) and their exclusion from the sitemap. The contract stays
   // fully public on the site; only search-engine amplification of a named individual + risk label is
   // avoided.
@@ -150,7 +150,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
   const sourceFiles = eopSourceFiles(c.publishedAt);
   // Procurement subjects range from a few words to 200+ chars. Step the editorial h1 down by length
   // so long titles don't tower; the longest tier (`t-sm`) also line-clamps. Nothing is lost — the
-  // full subject is always shown below in „Подробности → Предмет".
+  // full subject is always shown below in „Подробности → Предмет“.
   const titleClass = c.subject.length > 140 ? 't-sm' : c.subject.length > 70 ? 't-md' : undefined;
   const betweenParties = `/contracts?authority=${c.authority.slug}&bidder=${c.bidder.slug}`;
 
@@ -218,7 +218,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
         <Section
           id="values"
           title="Стойности във времето"
-          hint='Договорът минава през няколко стойности: прогнозна (на възложителя), цена при подписване и текуща. Всички в евро. „Стойност" в списъците по подразбиране е текущата (изчистена) стойност.'
+          hint="Договорът минава през няколко стойности: прогнозна (на възложителя), цена при подписване и текуща. Всички в евро. „Стойност“ в списъците по подразбиране е текущата (изчистена) стойност."
         >
           <div className="value-history">
             <div className="vh">
@@ -316,7 +316,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     <tr key={`${a.documentNumber ?? 'amd'}-${i}`}>
                       <td data-label="Дата">{a.date ? longDate(a.date) : '—'}</td>
                       {/* #305 residual: an uncorrectable double-count — the source's value_after is the
-                          untrusted doubled figure, so show „—" and mark the row rather than a number we
+                          untrusted doubled figure, so show „—“ and mark the row rather than a number we
                           can't stand behind. A `restated` row is the opposite: СИГМА corrected the doubled
                           total from the основание text, so we show the corrected number and flag that we
                           rewrote it. */}
@@ -487,11 +487,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   ) : (
                     <span className="muted">не е посочен в данните</span>
                   ),
-                // Break the gross count down by status/category — surfaces what „Брой оферти" actually
+                // Break the gross count down by status/category — surfaces what „Брой оферти“ actually
                 // means (it's the gross submitted count, including rejections — see docs/etl.md
                 // and the staging columns at packages/db/migrations/0000_init.sql:363-365). Each clause
                 // only appears when the source published a non-zero value, so contracts without any
-                // rejection/SME data fall back to the original „самите оферти…" footnote.
+                // rejection/SME data fall back to the original „самите оферти…“ footnote.
                 sub: bidsBreakdown(c) ?? 'самите оферти и стойностите им ги няма в АОП',
               },
               {
@@ -666,7 +666,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             </p>
             <p className="small muted">
               Приблизителна позиция по предизчислени персентили на сектора, включващи и самия този
-              договор. Сравнението дава контекст на мащаба и не е оценка за нередност - голяма
+              договор. Сравнението дава контекст на мащаба и не е оценка за нередност — голяма
               поръчка може да е напълно обоснована. Използва различен метод от отчета за аномалии,
               затова числата може леко да се разминават.
             </p>
@@ -692,7 +692,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   opens the raw record in a new tab so the visitor doesn't lose the contract page.
                   `c.id` is already the percent-encoded slug (contractSlug output), so the href is
                   path-safe as-is — do not re-encode. The sub-line shows the same encoded path
-                  verbatim so copying the visible text yields a working URL — a decoded literal „/"
+                  verbatim so copying the visible text yields a working URL — a decoded literal „/“
                   would 404, the exact bug this PR fixes (review #221). */}
               <NewTabLink href={`/contracts/${c.id}.json`} rel="noopener">
                 JSON запис в СИГМА
@@ -704,10 +704,10 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           {sourceFiles.length > 0 && (
             <>
               <p className="small muted figure-sub">
-                Първични данни от ЦАИС ЕОП (отворени данни) за деня на публикуване —{' '}
-                {longDate(c.publishedAt!)}. Свалят се директно от storage.eop.bg, без копие в СИГМА;
-                всеки файл съдържа пълните данни за деня. Записът за този договор е във файла
-                „Договори".
+                Първични данни от ЦАИС ЕОП (отворени данни) за деня на публикуване (
+                {longDate(c.publishedAt!)}). Свалят се директно от storage.eop.bg, без копие в
+                СИГМА; всеки файл съдържа пълните данни за деня. Записът за този договор е във файла
+                „Договори“.
               </p>
               <ul className="linklist">
                 {sourceFiles.map((f) => (

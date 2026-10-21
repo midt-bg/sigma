@@ -22,7 +22,8 @@ export function coverageEndYear(asOf: string | null | undefined): number {
 }
 
 export function coverageRange(endYear: number | null | undefined): string {
-  return `${START_YEAR}–${endYear ?? FALLBACK_END_YEAR}`;
+  // A word joiner after the en dash: a line may not break inside the range.
+  return `${START_YEAR}–\u2060${endYear ?? FALLBACK_END_YEAR}`;
 }
 
 /** „2020–2026 (2026 г. частично)", or with a partial first year „2020–2026 (2020 и 2026 г. частично)". */
@@ -33,7 +34,7 @@ export function coveragePartialNote(
   const year = endYear ?? FALLBACK_END_YEAR;
   const partial =
     partialStartYear && partialStartYear !== String(year) ? `${partialStartYear} и ${year}` : year;
-  return `${coverageRange(year)} (${partial} г. частично)`;
+  return `${coverageRange(year)} (${partial}\u00a0г. частично)`;
 }
 
 export function yearOptions(endYear: number | null | undefined): string[] {

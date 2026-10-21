@@ -139,7 +139,7 @@ const columns: Column<PersonDeclaration>[] = [
         )}
         {d.discrepancies?.map((c) => (
           <p className="small declaration-discrepancy" key={`${c.eik}-${c.scope}`}>
-            <strong>Разминаване за {c.year} г.</strong>{' '}
+            <strong>Разминаване за {c.year}&nbsp;г.</strong>{' '}
             <Link to={`/companies/${c.eik}`}>{c.company}</Link>:{' '}
             {c.scope === 'family' ? 'дял на свързано лице' : 'собствен дял'}{' '}
             {c.listed
@@ -163,12 +163,12 @@ const columns: Column<PersonDeclaration>[] = [
         ))}
         {d.registryOmissions?.map((o) => (
           <p className="small declaration-discrepancy" key={`registry-${o.eik}-${o.role}`}>
-            <strong>Регистър срещу декларация за {d.year} г.</strong> Към 31.12.{d.year} лицето е
-            вписано в Търговския регистър като {ROLE_LABEL[o.role]} в{' '}
+            <strong>Регистър срещу декларация за {d.year}&nbsp;г.</strong> Към 31.12.{d.year} лицето
+            е вписано в Търговския регистър като {ROLE_LABEL[o.role]} в{' '}
             <Link to={`/companies/${o.eik}`}>{o.company}</Link> (вписване от {date(o.addedOn)}).{' '}
             {o.earlierYear
-              ? `Дружеството е посочено в декларацията за ${o.earlierYear} г.; в документите за ${d.year} г. СИГМА не го откри.`
-              : `СИГМА не откри дружеството в декларациите на лицето за ${d.year} г.`}{' '}
+              ? `Дружеството е посочено в декларацията за ${o.earlierYear}\u00a0г.; в документите за ${d.year}\u00a0г. СИГМА не го откри.`
+              : `СИГМА не откри дружеството в декларациите на лицето за ${d.year}\u00a0г.`}{' '}
             Сравнението е автоматично — възможно е различно изписване или различен отчетен период.
             Това не е установено нарушение.{' '}
             <Link to="/conflicts/methodology#contest">Възражение</Link>

@@ -289,7 +289,7 @@ describe('Declarations', () => {
     );
     const [family, own] = [...c.querySelectorAll('.declaration-discrepancy')];
     expect(family!.textContent).toBe(
-      'Разминаване за 2023 г. АЛФА ООД: дял на свързано лице не е посочен тук, но присъства в друга годишна декларация. Сравни документа · Сравни документа 2',
+      'Разминаване за 2023\u00a0г. АЛФА ООД: дял на свързано лице не е посочен тук, но присъства в друга годишна декларация. Сравни документа · Сравни документа 2',
     );
     expect(family!.querySelector('a[href="/companies/111111111"]')).not.toBeNull();
     expect(own!.textContent).toContain(

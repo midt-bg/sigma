@@ -549,8 +549,8 @@ export function PersonTimeline({
                           {[...new Set(disputed.map((o) => o.reportedYear))]
                             .filter(Boolean)
                             .sort()
-                            .join(', ')}{' '}
-                          г. дялът е посочен в един документ и липсва в друг. Връзката остава
+                            .join(', ')}
+                          &nbsp;г. дялът е посочен в един документ и липсва в друг. Връзката остава
                           видима; времевото съвпадение за тези години изисква отделно основание.{' '}
                           {[...new Set(disputed.map((o) => o.declarationId))].map((id) => {
                             const d = p.declarations.find((d) => d.id === id);
@@ -824,14 +824,14 @@ interface TimelineTip {
 const countPhrase = (n: number, one: string, many: string) => `${count(n)} ${plural(n, one, many)}`;
 const yearsLabel = (from: string, to: string) =>
   from.slice(0, 4) === to.slice(0, 4)
-    ? `${from.slice(0, 4)} г.`
-    : `${from.slice(0, 4)}–${to.slice(0, 4)} г.`;
+    ? `${from.slice(0, 4)}\u00a0г.`
+    : `${from.slice(0, 4)}–${to.slice(0, 4)}\u00a0г.`;
 
 function declarationTip(d: PersonDeclaration, context: string | undefined, disputed: boolean) {
   return (
     <>
       <strong className="time-tip-title">{declarationTypeLabel(d)}</strong>
-      {d.year && <span>За {d.year} г.</span>}
+      {d.year && <span>За {d.year}&nbsp;г.</span>}
       {d.institution && (
         <span>
           {d.institution}
@@ -869,12 +869,12 @@ function officeTip(institution: string, positions: string[], o: OfficeSpan) {
       <span>
         {o.knownStart
           ? `Встъпителна декларация ${date(o.knownStart)}`
-          : `Началото не е известно — първата декларация е за ${first} г.`}
+          : `Началото не е известно — първата декларация е за ${first}\u00a0г.`}
       </span>
       <span>
         {o.knownEnd
           ? `Финална декларация ${date(o.knownEnd)}`
-          : `Краят не е известен — последната декларация е за ${last} г.`}
+          : `Краят не е известен — последната декларация е за ${last}\u00a0г.`}
       </span>
       {(o.knownStart || o.knownEnd) && (
         <small className="muted">Декларацията се подава до месец след събитието.</small>
