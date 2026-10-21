@@ -395,7 +395,9 @@ td.rank {
     text-transform: uppercase;
     color: var(--ink-soft);
   }
+  /* Flush with the other rows: the table's first-column indent does not apply to a card. */
   .tbl-prose td:first-child {
+    padding-left: 0;
     font-weight: 600;
   }
 }
