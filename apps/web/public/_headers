@@ -5,3 +5,9 @@
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
   Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+  Cache-Control: public, max-age=31536000, immutable
+
+# The accessibility widget is copied as-is, without a content hash in its file names: an immutable year
+# would pin a stale copy in every browser after it changes.
+/assets/accessibility/*
+  ! Cache-Control

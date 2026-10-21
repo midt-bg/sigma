@@ -10,6 +10,10 @@ const HEAD =
 const TAIL = '</urlset>\n';
 const CHUNK = 5000;
 
+// Browsers and crawlers keep a sitemap for a day; the edge cache (apps/web/workers/app.ts stores only what
+// carries s-maxage) keeps it 6 h, so a repeated fetch does not re-read the whole corpus from D1.
+export const SITEMAP_CACHE_CONTROL = 'public, max-age=86400, s-maxage=21600';
+
 const CONTRACTS_PER_SITEMAP = 45000;
 
 function xmlEscape(s: string): string {
@@ -68,7 +72,7 @@ function streamUrls(
   return new Response(stream, {
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': SITEMAP_CACHE_CONTROL,
     },
   });
 }
@@ -177,7 +181,7 @@ export function streamContractSitemap(db: D1Database, origin: string, page: numb
   return new Response(stream, {
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': SITEMAP_CACHE_CONTROL,
     },
   });
 }

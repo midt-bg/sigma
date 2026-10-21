@@ -5,11 +5,12 @@ import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { rateLimitAssistantRoute } from './assistant-rate-limit';
 import { rateLimitConflictsRoute } from './conflicts-rate-limit';
 import { normalizedPathname } from './rate-limit';
-import { cacheKey } from './cache-key';
+import { cacheKey, canonicalRequest } from './cache-key';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
+import { claim, inFlight, withinCap } from './render-gate';
 import { withRequestLog } from './request-log';
 
 declare module 'react-router' {
@@ -43,6 +44,20 @@ const edgeCache = (caches as unknown as { default: Cache }).default;
 declare const __SIGMA_DEPLOY_TAG__: string | undefined;
 const DEPLOY_TAG =
   typeof __SIGMA_DEPLOY_TAG__ !== 'undefined' ? __SIGMA_DEPLOY_TAG__ : Date.now().toString(36);
+
+// The stored GET for `key`, as a HIT (security headers re-applied), or null.
+async function cachedResponse(key: Request): Promise<Response | null> {
+  const cached = await edgeCache.match(key);
+  if (!cached) return null;
+  const headers = new Headers(cached.headers);
+  applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
+  headers.set('X-Edge-Cache', 'HIT');
+  return new Response(cached.body, {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers,
+  });
+}
 
 function applySecurityHeaders(headers: Headers, security: Headers): void {
   for (const [key, value] of security) headers.set(key, value);
@@ -114,11 +129,23 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+// A HEAD is answered as the GET it describes, headers only: from the GET's cache entry when there is one,
+// and otherwise by rendering (and caching) that GET — never a separate, uncached run of the loaders.
 async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (request.method !== 'HEAD') return respond(request, env, ctx);
+  const response = await respond(new Request(request, { method: 'GET' }), env, ctx);
+  return new Response(null, response);
+}
+
+async function respond(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const httpsRedirect = redirectCleartextHttp(request, import.meta.env.PROD);
   if (httpsRedirect) return httpsRedirect;
 
   if (request.method === 'OPTIONS') return optionsResponse(import.meta.env.PROD);
+
+  // The loader sees only the query its route reads (app/lib/query-params.ts), the same query the cache
+  // key carries, so a junk or unknown value neither mints a new key nor renders into a shared one.
+  if (request.method === 'GET') request = canonicalRequest(request);
 
   const csvRateLimitResponse = await rateLimitCsvExport(request, env, import.meta.env.PROD);
   if (csvRateLimitResponse) return csvRateLimitResponse;
@@ -139,19 +166,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     !new URL(request.url).searchParams.has('_routes')
       ? cacheKey(request, DEPLOY_TAG)
       : null;
-  if (key) {
-    const cached = await edgeCache.match(key);
-    if (cached) {
-      const headers = new Headers(cached.headers);
-      applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
-      headers.set('X-Edge-Cache', 'HIT');
-      return new Response(cached.body, {
-        status: cached.status,
-        statusText: cached.statusText,
-        headers,
-      });
-    }
-  }
+  const hit = key && (await cachedResponse(key));
+  if (hit) return hit;
 
   const aggregationRateLimitResponse = await rateLimitAggregationRoute(
     request,
@@ -179,7 +195,38 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   );
   if (conflictsRateLimitResponse) return conflictsRateLimitResponse;
 
-  const response = await requestHandler(request, { cloudflare: { env, ctx } });
+  // The same miss is already rendering in this isolate: take its entry instead of a second D1 read. The
+  // check and the claim below run with no await between them, so of identical misses exactly one renders.
+  const pending = key && inFlight(key.url);
+  if (pending) {
+    await pending;
+    const stored = await cachedResponse(key);
+    if (stored) return stored;
+  }
+  const settle = key ? claim(key.url) : () => {};
+  let stored: Promise<unknown> = Promise.resolve();
+  try {
+    const response =
+      (await withinCap(() => requestHandler(request, { cloudflare: { env, ctx } }))) ??
+      new Response('Сайтът е претоварен. Опитайте отново след малко.', {
+        status: 503,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    const hardened = await finish(request, response, key, ctx);
+    stored = hardened.stored;
+    return hardened.response;
+  } finally {
+    // Waiting identical misses look the entry up once it is stored (or known not to be).
+    void stored.then(settle, settle);
+  }
+}
+
+async function finish(
+  request: Request,
+  response: Response,
+  key: Request | null,
+  ctx: ExecutionContext,
+): Promise<{ response: Response; stored: Promise<unknown> }> {
   // `response.ok` is load-bearing for cache correctness beyond "don't cache errors": cache-key.ts decodes
   // the path (collapsing `%2F` → `/`), so an encoded contract URL (200) and a bogus raw-slash form (404)
   // share ONE key. Because a non-ok response is never put, the 404 form can't poison the encoded entry
@@ -196,13 +243,15 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // Outside the production site (stage, dev, a workers.dev twin) every page is noindex, whatever it names.
   if (isNoindexNamesPath(request) || !isIndexedHost(request))
     hardened.headers.set('X-Robots-Tag', 'noindex');
-  if (cacheable) ctx.waitUntil(edgeCache.put(key, hardened.clone()));
+  const stored = cacheable ? edgeCache.put(key, hardened.clone()) : Promise.resolve();
+  ctx.waitUntil(stored);
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
-  // An overloaded D1 ends the request as a 503 (packages/db, retrying-d1.ts): say when to come back — a
-  // crawler backs off on it, where a 500 reads as a broken page. Never cached: only an ok response is put.
+  // An overloaded D1 ends the request as a 503 (packages/db, retrying-d1.ts), as does a shed render (above):
+  // say when to come back — a crawler backs off on it, where a 500 reads as a broken page. Never cached:
+  // only an ok response is put.
   if (hardened.status === 503) {
     hardened.headers.set('Retry-After', '30');
     hardened.headers.set('Cache-Control', 'no-store');
   }
-  return hardened;
+  return { response: hardened, stored };
 }

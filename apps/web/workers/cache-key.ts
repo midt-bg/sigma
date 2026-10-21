@@ -1,10 +1,27 @@
-// The cache key is built from the response-affecting query params only (CWE-349, issue #56); the set is
-// the shared source of truth in app/lib/query-params.ts (also used by withParams for links).
-import { CANONICAL_QUERY_PARAMS } from '../app/lib/query-params';
+// The cache key is built from the params that change the matched route's response only (CWE-349,
+// issue #56); the per-route lists are the shared source of truth in app/lib/query-params.ts.
+import { canonicalSearch } from '../app/lib/query-params';
+import { normalizedPathname } from './rate-limit';
+
+/**
+ * The request with only the query its route reads, so the loader renders exactly what the cache key
+ * describes: a junk or folded value can never be stored under the key of the canonical URL.
+ */
+export function canonicalRequest(request: Request): Request {
+  const url = new URL(request.url);
+  const search = canonicalSearch(normalizedPathname(request), url.searchParams);
+  // React Router's `_routes` (some loaders only) is not the page's query, but the loader must see it;
+  // app.ts never caches such a request.
+  for (const routes of url.searchParams.getAll('_routes')) search.append('_routes', routes);
+  const next = search.toString();
+  if (next === url.search.slice(1)) return request;
+  url.search = next;
+  return new Request(url.toString(), request);
+}
 
 export function cacheKey(request: Request, deployTag: string): Request {
   const url = new URL(request.url);
-  const params = new URLSearchParams();
+  const params = canonicalSearch(normalizedPathname(request), url.searchParams);
 
   try {
     // Decoding collapses `%2F` → `/`, so the encoded 200-form of a contract URL (percent-encoded slug,
@@ -16,12 +33,11 @@ export function cacheKey(request: Request, deployTag: string): Request {
   } catch {
     // Malformed percent-encoding should not break cache lookup; keep the raw path as the fallback.
   }
+  // Route matching ignores case and every first path segment is a static one: `/NETWORK` is `/network`.
+  // ponytail: deeper static segments (`/conflicts/METHODOLOGY`) keep their case; lowercase those per
+  // route if their variants ever matter.
+  url.pathname = url.pathname.replace(/^\/[^/]*/, (segment) => segment.toLowerCase());
 
-  for (const [key, value] of url.searchParams) {
-    if (CANONICAL_QUERY_PARAMS.has(key)) params.append(key, value);
-  }
-
-  params.sort();
   params.set('_dt', deployTag);
   url.search = params.toString();
 

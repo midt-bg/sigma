@@ -1,4 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MAX_RENDERING } from './render-gate';
+
+// Every request the stubbed React Router handler (the loaders) receives; while `held.gate` is set, every
+// render waits on it, as for a slow D1.
+const rendered = vi.hoisted(() => [] as Request[]);
+const held = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
 
 // Exercises the REAL edge-cache middleware in app.ts (handleRequest -> cacheKey -> edgeCache
 // match/put) without the SSR build or D1, to gate that app.ts actually keys the cache by cacheKey.
@@ -9,6 +15,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // must be in the cache key. The import thunk is never invoked, so no real build is loaded.
 vi.mock('react-router', () => ({
   createRequestHandler: () => async (request: Request) => {
+    rendered.push(request);
+    if (held.gate) await held.gate;
     const url = new URL(request.url);
     // A designated path returns 404, to exercise the response.ok cache-put gate (see the „non-ok" test).
     if (url.pathname === '/contracts/missing') {
@@ -23,9 +31,11 @@ vi.mock('react-router', () => ({
     const bids = url.searchParams.get('bids');
     const body = url.searchParams.has('_routes')
       ? `PARTIAL: ${url.searchParams.get('_routes')} only`
-      : bids === '1'
-        ? 'ROWS: single-bid only (2)'
-        : 'ROWS: all contracts (5)';
+      : url.pathname === '/' || url.pathname === '/competition'
+        ? `PAGE: ${url.pathname}${url.search}`
+        : bids === '1'
+          ? 'ROWS: single-bid only (2)'
+          : 'ROWS: all contracts (5)';
     return new Response(body, {
       status: 200,
       headers: {
@@ -91,19 +101,21 @@ beforeAll(async () => {
 
 beforeEach(() => {
   fakeCache.store.clear();
+  rendered.length = 0;
+  held.gate = null;
   vi.stubEnv('DEV', false);
 });
 
-async function get(url: string) {
+async function get(url: string, method = 'GET') {
   const waits: Promise<unknown>[] = [];
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void waits.push(p),
     passThroughOnException: () => {},
   };
-  const res = await worker.fetch(new Request(url), {}, ctx);
+  const res = await worker.fetch(new Request(url, { method }), {}, ctx);
   const body = await res.clone().text();
   await Promise.all(waits); // let edgeCache.put (ctx.waitUntil) settle before the next request
-  return { edge: res.headers.get('X-Edge-Cache'), body };
+  return { edge: res.headers.get('X-Edge-Cache'), body, status: res.status, headers: res.headers };
 }
 
 describe('app.ts edge cache middleware', () => {
@@ -116,6 +128,79 @@ describe('app.ts edge cache middleware', () => {
   it('caches per response — a repeated GET HITs', async () => {
     expect((await get('https://x/contracts')).edge).toBe('MISS');
     expect((await get('https://x/contracts')).edge).toBe('HIT');
+  });
+
+  it('a param the route does not read neither misses the cache nor reaches the loader', async () => {
+    expect((await get('https://x/')).edge).toBe('MISS');
+    const probe = await get('https://x/?q=unique-probe-1');
+    expect(probe.edge).toBe('HIT');
+    expect(probe.body).toBe('PAGE: /');
+    expect(rendered).toHaveLength(1);
+  });
+
+  it('renders the page from the same canonical query the key carries', async () => {
+    // The junk value is dropped before the loader, so the stored body is the one the key describes —
+    // and the next plain visitor gets it from the cache.
+    const junk = await get('https://x/competition?funding=bogus&sector=45&x=1');
+    expect(junk.edge).toBe('MISS');
+    expect(junk.body).toBe('PAGE: /competition?sector=45');
+    expect(new URL(rendered[0]!.url).search).toBe('?sector=45');
+    expect((await get('https://x/competition?sector=45')).edge).toBe('HIT');
+    expect(rendered).toHaveLength(1);
+  });
+
+  it('answers HEAD from the GET entry, headers only, without running the loaders', async () => {
+    expect((await get('https://x/network')).edge).toBe('MISS');
+    const head = await get('https://x/NETWORK', 'HEAD'); // route matching ignores case, so does the key
+    expect(head.edge).toBe('HIT');
+    expect(head.body).toBe('');
+    expect(rendered).toHaveLength(1);
+  });
+
+  it('fills the GET entry on a cold HEAD, so the next HEAD or GET is a HIT', async () => {
+    const cold = await get('https://x/contracts', 'HEAD');
+    expect(cold.edge).toBe('MISS');
+    expect(cold.body).toBe('');
+    expect(rendered[0]!.method).toBe('GET');
+    expect((await get('https://x/contracts', 'HEAD')).edge).toBe('HIT');
+    expect((await get('https://x/contracts')).body).toContain('all contracts');
+    expect(rendered).toHaveLength(1);
+  });
+
+  it('renders identical concurrent misses once and serves the rest from its entry', async () => {
+    let release!: () => void;
+    held.gate = new Promise((resolve) => (release = resolve));
+    const all = Promise.all(Array.from({ length: 5 }, () => get('https://x/competition')));
+    await vi.waitFor(() => expect(rendered).toHaveLength(1));
+    held.gate = null;
+    release();
+
+    const responses = await all;
+    expect(rendered).toHaveLength(1);
+    expect(responses.map((r) => r.edge).sort()).toEqual(['HIT', 'HIT', 'HIT', 'HIT', 'MISS']);
+    expect(new Set(responses.map((r) => r.body))).toEqual(new Set(['PAGE: /competition']));
+  });
+
+  it('sheds a render past the in-flight cap with a 503 the client is told to retry', async () => {
+    let release!: () => void;
+    held.gate = new Promise((resolve) => (release = resolve));
+    // Distinct pages, so none waits for another: each holds a render slot.
+    const busy = Array.from({ length: MAX_RENDERING }, (_, i) =>
+      get(`https://x/contracts?bidder=${i}`),
+    );
+    await vi.waitFor(() => expect(rendered).toHaveLength(MAX_RENDERING));
+
+    const shed = await get('https://x/contracts?bidder=over');
+    expect(shed.status).toBe(503);
+    expect(shed.headers.get('Retry-After')).toBe('30');
+    expect(shed.headers.get('Cache-Control')).toBe('no-store');
+    expect(rendered).toHaveLength(MAX_RENDERING);
+
+    held.gate = null;
+    release();
+    await Promise.all(busy);
+    // The slots are free again.
+    expect((await get('https://x/contracts?bidder=over')).edge).toBe('MISS');
   });
 
   it('never serves the ?bids=1 body for /contracts (CWE-349, #56)', async () => {
