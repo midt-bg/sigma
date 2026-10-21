@@ -275,7 +275,7 @@ td .chip {
 }
 .person-time-label small {
   display: block;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--muted);
   margin-top: 5px;
 }
@@ -294,7 +294,7 @@ td .chip {
   position: absolute;
   transform: translateX(-50%);
   font-family: var(--font-mono, monospace);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   top: 8px;
   color: var(--muted);
 }
@@ -404,7 +404,7 @@ td .chip {
   height: 24px;
   padding-inline: 3px;
   border-radius: 50%;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-family: var(--font-mono, monospace);
   text-decoration: none;
 }

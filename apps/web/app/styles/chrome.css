@@ -74,7 +74,7 @@
 .site-nav {
   display: flex;
   gap: var(--s-6);
-  font: 0.6875rem/1.3 var(--font-mono);
+  font: 0.75rem/1.3 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-mid);
@@ -152,7 +152,7 @@
   color: var(--ink-mid);
   cursor: pointer;
   min-height: 24px;
-  font: 500 0.6875rem/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -266,7 +266,7 @@
     border-bottom: 1px solid var(--rule);
   }
   .site-nav-head-label {
-    font: 500 0.6875rem/1 var(--font-mono);
+    font: 500 0.75rem/1 var(--font-mono);
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--ink-soft);
@@ -418,7 +418,7 @@
   color: var(--paper);
   padding: 10px var(--s-5);
   box-sizing: border-box;
-  font: 500 0.6875rem/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   cursor: pointer;
@@ -461,7 +461,7 @@
 .smart-search-group-label {
   margin: 0;
   padding: var(--s-3) var(--s-4) var(--s-1);
-  font: 500 0.625rem/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
@@ -484,7 +484,7 @@
 }
 .smart-search-option-kind {
   grid-column: 1;
-  font: 500 0.5625rem/1.3 var(--font-mono);
+  font: 500 0.75rem/1.3 var(--font-mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -504,21 +504,21 @@
 .smart-search-option-meta {
   display: block;
   color: var(--ink-mid);
-  font: 0.6875rem/1.3 var(--font-mono);
+  font: 0.75rem/1.3 var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .smart-search-option-amt {
   grid-column: 3;
-  font: 500 0.6875rem/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   color: var(--ink-mid);
   white-space: nowrap;
 }
 .smart-search-see-all {
   padding: 11px var(--s-4);
   border-top: 1px solid var(--rule);
-  font: 500 0.6875rem/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--accent);
@@ -559,7 +559,7 @@
   max-width: var(--max);
   margin: 0 auto;
   padding: 10px var(--gutter);
-  font: 0.6875rem/1.4 var(--font-mono);
+  font: 0.75rem/1.4 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -600,7 +600,7 @@ main.narrow {
   gap: var(--s-2);
   max-width: 100%;
   color: var(--accent);
-  font: 0.6875rem/1.3 var(--font-mono);
+  font: 0.75rem/1.3 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-weight: 500;
@@ -703,7 +703,7 @@ main.narrow {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--s-4);
-  font: 0.6875rem/1.5 var(--font-mono);
+  font: 0.75rem/1.5 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -743,7 +743,7 @@ main.narrow {
 }
 .site-footer .freshness {
   color: var(--ink-soft);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   letter-spacing: 0.14em;
 }
 

@@ -51,7 +51,7 @@
 .split aside .filter-group > h4,
 .split aside .filter-group > summary {
   font-family: var(--font-mono);
-  font-size: 0.6563rem;
+  font-size: 0.75rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-mid);
@@ -214,7 +214,7 @@
     cursor: pointer;
     min-height: 44px;
     font-family: var(--font-mono);
-    font-size: 0.6563rem;
+    font-size: 0.75rem;
     letter-spacing: 0.18em;
     text-transform: uppercase;
     color: var(--ink-mid);
@@ -324,7 +324,7 @@ html .a11y-tools__nav {
   display: flex;
   flex-wrap: wrap;
   gap: var(--s-4);
-  font: 0.6875rem/1.4 var(--font-mono);
+  font: 0.75rem/1.4 var(--font-mono);
   letter-spacing: 0.04em;
   color: var(--ink-soft);
   text-transform: uppercase;
@@ -368,7 +368,7 @@ details.row > summary {
   details.row > summary > :nth-child(3),
   details.row > summary > :nth-child(4) {
     grid-area: meta;
-    font: 0.6875rem/1.4 var(--font-mono);
+    font: 0.75rem/1.4 var(--font-mono);
     color: var(--ink-soft);
     letter-spacing: 0.04em;
   }
@@ -483,7 +483,7 @@ details.row .body .signal .why {
   border-right: 0;
 }
 .tile .kicker {
-  font: 500 0.6563rem/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
@@ -533,7 +533,7 @@ details.row .body .signal .why {
 }
 .lens-preview-title {
   margin-bottom: var(--s-2);
-  font: 500 0.6563rem/1.35 var(--font-mono);
+  font: 500 0.75rem/1.35 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -598,7 +598,7 @@ details.row .body .signal .why {
 }
 .lens-metrics dt {
   margin-bottom: 4px;
-  font: 500 0.6563rem/1.25 var(--font-mono);
+  font: 500 0.75rem/1.25 var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -642,7 +642,7 @@ details.row .body .signal .why {
   background: var(--ink);
   color: var(--paper);
   padding: 8px var(--s-4);
-  font: 500 0.6875rem/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   cursor: pointer;

@@ -83,7 +83,7 @@
 .tl-year {
   position: absolute;
   top: 0;
-  font: 0.6875rem/1 var(--font-mono);
+  font: 0.75rem/1 var(--font-mono);
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
 }
@@ -93,7 +93,7 @@
   align-items: center;
   gap: 6px;
   margin: 0;
-  font: 0.6875rem/1.4 var(--font-mono);
+  font: 0.75rem/1.4 var(--font-mono);
   color: var(--ink-soft);
 }
 

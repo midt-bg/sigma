@@ -10,24 +10,31 @@ const sheets = readdirSync(dir)
   .filter((f) => f.endsWith('.css'))
   .map((f) => ({ file: f, css: readFileSync(resolve(dir, f), 'utf8') }));
 
-// Every `font:` / `font-size:` declaration with a px value, tagged with the selector it sits in.
-function pxFontSizes(css: string) {
+// Every `font:` / `font-size:` declaration outside an SVG rule that matches `bad`, with its selector.
+function fontSizes(css: string, bad: (decl: string) => boolean) {
   const hits: string[] = [];
   for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const selector = m[1]!.trim();
     for (const decl of m[2]!.split(';')) {
-      if (/^\s*font(-size)?\s*:.*\dpx/.test(decl) && !/svg/.test(selector))
+      if (/^\s*font(-size)?\s*:/.test(decl) && !/svg/.test(selector) && bad(decl))
         hits.push(`${selector} { ${decl.trim()} }`);
     }
   }
   return hits;
 }
+const everySheet = (bad: (decl: string) => boolean) =>
+  sheets.flatMap(({ file, css }) => fontSizes(css, bad).map((h) => `${file}: ${h}`));
 
 describe('type scale', () => {
   it('sizes text in rem, not px, outside SVG', () => {
-    expect(sheets.flatMap(({ file, css }) => pxFontSizes(css).map((h) => `${file}: ${h}`))).toEqual(
-      [],
-    );
+    expect(everySheet((decl) => /\dpx/.test(decl))).toEqual([]);
+  });
+
+  // Captions, card labels, chips and column headers were 9–11 px; 12 px is the floor.
+  it('keeps no text below 12 px (0.75rem)', () => {
+    const below = (decl: string) =>
+      [...decl.matchAll(/(\d*\.?\d+)rem/g)].some((m) => Number(m[1]) < 0.75);
+    expect(everySheet(below)).toEqual([]);
   });
 
   it('enlarges text through the root font size, not zoom', () => {
