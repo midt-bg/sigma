@@ -16,7 +16,15 @@ export function StackedBar({
   const byCount = basis === 'contracts';
   const share = (s: ProcedureSlice) => (byCount ? s.contractSharePct : s.sharePct);
   const visible = slices.filter((s) => (byCount ? s.contracts > 0 : s.sharePct >= 0.0005));
-  if (visible.length === 0) return null;
+  // A section heading with nothing under it reads as a failed load (a company that won 0 €).
+  if (visible.length === 0)
+    return (
+      <p className="muted">
+        {byCount
+          ? 'Няма договори, от които да се изчисли разпределението.'
+          : 'Няма стойност, от която да се изчисли разпределението.'}
+      </p>
+    );
   const caption = (s: ProcedureSlice) =>
     byCount
       ? `${count(s.contracts)} ${plural(s.contracts, 'договор', 'договора')}`
