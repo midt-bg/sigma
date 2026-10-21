@@ -28,6 +28,10 @@ REGISTRY_PORTAL_URL = "https://portal.registryagency.bg/CR/api/Applications/Entr
 # The declarations run in the Container below (ADR-0045); the weekly cron starts them. The container
 # ships to the D1 these vars name — the renderer fills them per environment, like `database_name`.
 DECLARATIONS_ENABLED = "true"
+# How long the six-hourly writers stand aside for a live declarations run (docs/deploy.md). A weekly run on
+# a warm bucket takes one to two hours; a cold run here (an empty bucket) about a day and a half — raise
+# this for that deploy only. Not a secret: a hand-set secret of the same name would block the deploy.
+DECLARATIONS_STAND_ASIDE_MAX_HOURS = "8"
 DECLARATIONS_BUCKET = "sigma-declarations"
 SIGMA_D1_ID = "00000000-0000-0000-0000-000000000000"
 SIGMA_D1_NAME = "sigma"

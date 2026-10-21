@@ -49,9 +49,10 @@ import {
 export interface Env extends DeclarationEnv {
   DECLARATIONS?: DurableObjectNamespace<DeclarationContainer>;
   DECLARATIONS_ENABLED?: string;
-  /** How long the six-hourly writers stand aside for a live declarations run. Default 8 hours; raised
-   * for a first, cold run, which builds the corpus from an empty bucket. */
-  DECLARATIONS_STAND_ASIDE_HOURS?: string;
+  /** How long the six-hourly writers stand aside for a live declarations run: committed in wrangler.toml,
+   * 8 hours when absent or malformed; raised there for a cold run, which builds the corpus from an empty
+   * bucket. (The older DECLARATIONS_STAND_ASIDE_HOURS was a hand-set secret, and is no longer read.) */
+  DECLARATIONS_STAND_ASIDE_MAX_HOURS?: string;
   /** The operator's trigger for one declarations run; the weekly cron starts the same run. */
   DECLARATIONS_RUN?: Workflow;
   REBUILD_RUN?: Workflow;
@@ -897,8 +898,9 @@ export default {
     }
     // The bound is on the run's AGE, not on its health: a wedged run must not freeze procurement for
     // good. A first, cold run builds the whole corpus from an empty bucket and takes far longer than a
-    // weekly one on a warm bucket, so the bound is a setting — raised for that run, and only for it.
-    const standAsideHours = Number(env.DECLARATIONS_STAND_ASIDE_HOURS ?? '8');
+    // weekly one on a warm bucket, so the bound is a setting in wrangler.toml — raised for that run, and
+    // only for it.
+    const standAsideHours = Number(env.DECLARATIONS_STAND_ASIDE_MAX_HOURS ?? '8');
     const declarationsRunning =
       live?.state === 'running' &&
       Date.now() - live.startedAt <
