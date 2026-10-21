@@ -5,6 +5,7 @@ import {
   count,
   date,
   entityName,
+  isFutureDate,
   isNaturalPersonProfileName,
   longDate,
   money,
@@ -16,6 +17,7 @@ import {
   parseConsortiumMembers,
   signedMoney,
   signedPct,
+  todayIso,
   tradeRegisterLegalForm,
 } from './format';
 
@@ -120,6 +122,15 @@ describe('entityName', () => {
   });
   it('passes company names through as source truth', () => {
     expect(entityName('"СОФАРМА ТРЕЙДИНГ "АД', 'company')).toBe('"СОФАРМА ТРЕЙДИНГ "АД');
+  });
+});
+
+describe('isFutureDate', () => {
+  it('is true only for a date after today', () => {
+    expect(isFutureDate('2999-05-14')).toBe(true);
+    expect(isFutureDate(todayIso())).toBe(false);
+    expect(isFutureDate('2024-01-01')).toBe(false);
+    expect(isFutureDate(null)).toBe(false);
   });
 });
 

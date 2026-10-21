@@ -169,6 +169,19 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
               }
             />
 
+            {sort === 'value-asc' && (
+              <p className="small muted">
+                В тази подредба не са договорите с вероятно грешна стойност (⚠): с най-ниските суми
+                напред те биха запълнили първите страници с 0 €. Виж ги в останалите подредби.
+              </p>
+            )}
+            {sort === 'date-desc' && (
+              <p className="small muted">
+                В тази подредба не са договорите с дата на сключване в бъдещето — грешка в
+                източника. Виж ги в подредба „стари“.
+              </p>
+            )}
+
             {fOneOffer && (
               <p className="active-filters">
                 Показани са само договорите с <strong>една оферта</strong> ·{' '}

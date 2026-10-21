@@ -20,7 +20,7 @@ import type {
   SectorSpend,
 } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import { cleanName, entityName, isFutureDate, parseConsortiumMembers } from '@sigma/shared';
 import { contractCohort, getCpvCohortStats } from './cohort';
 import { listContracts } from './contracts';
 import { FRAMEWORK_AGREEMENT } from './framework';
@@ -623,7 +623,7 @@ export async function getContract(
     r.value_flag === 'annex_total_suspect' ||
     r.value_flag === 'review' ||
     r.value_flag === 'value_low';
-  const dateSuspect = r.date_flag === 'signed_after_publication';
+  const dateSuspect = r.date_flag === 'signed_after_publication' || isFutureDate(r.signed_at);
   // #307 — annex_total_suspect is a KNOWN exact 2× double-count in current_value. Its current_value_eur is
   // already NULL (excluded from aggregates), so the native fallback below would resurface the doubled figure
   // under an "unverified" label. Blank it instead: a known-wrong number is worse than an honest gap.

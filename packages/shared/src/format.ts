@@ -120,6 +120,16 @@ export function signedMoney(eur: number | null | undefined): string {
   return eur < 0 ? `${MINUS}${body}` : `+${body}`;
 }
 
+/** Today as `YYYY-MM-DD` (UTC). */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** A date after today: a signing date in the future is a typo in the source, not a fact. */
+export function isFutureDate(iso: string | null | undefined): boolean {
+  return !!iso && iso.slice(0, 10) > todayIso();
+}
+
 /** ISO date → `DD.MM.YYYY` (`2024-10-14` → `14.10.2024`). Tolerates a datetime prefix. */
 export function date(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;

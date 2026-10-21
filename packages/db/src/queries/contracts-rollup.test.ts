@@ -291,7 +291,8 @@ describe('listContracts on a sparse or empty filter', () => {
     const year = new Date().getUTCFullYear();
     const rows = rollup.sqlite
       .prepare(
-        `SELECT c.id, c.signed_at, c.amount_eur, c.eu_funded, c.bids_received, t.cpv_code, t.procedure_type
+        `SELECT c.id, c.signed_at, c.amount_eur, c.eu_funded, c.bids_received, t.cpv_code, t.procedure_type,
+                c.value_flag
          FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
          JOIN bidders b ON b.id = c.bidder_id`,
       )
@@ -303,7 +304,9 @@ describe('listContracts on a sparse or empty filter', () => {
       bids_received: number | null;
       cpv_code: string | null;
       procedure_type: string;
+      value_flag: string;
     }[];
+    const today = new Date().toISOString().slice(0, 10);
     const types = (p.procedureGroups ?? []).flatMap(
       (k) => PROCEDURE_GROUPS.find((g) => g.key === k)?.types ?? [],
     );
@@ -335,6 +338,9 @@ describe('listContracts on a sparse or empty filter', () => {
       if (p.eu === 'eu' && r.eu_funded !== 1) return false;
       if (p.eu === 'national' && !(r.eu_funded === null || r.eu_funded === 0)) return false;
       if (p.bids === 'one' && r.bids_received !== 1) return false;
+      // „стойност ↑“ leaves out the unverified values, „нови“ the signing dates in the future.
+      if (sort === 'value-asc' && r.value_flag === 'value_low') return false;
+      if (sort === 'date-desc' && (r.signed_at ?? '') > today) return false;
       return true;
     });
     const key = (r: (typeof rows)[number]): string | number =>

@@ -4,7 +4,7 @@
 
 import type { ContractListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cents, cleanName, entityName } from '@sigma/shared';
+import { cents, cleanName, entityName, todayIso } from '@sigma/shared';
 import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import { FRAMEWORK_AGREEMENT } from './framework';
@@ -65,6 +65,16 @@ const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = looku
   'date-desc': { expr: "COALESCE(c.signed_at, '')", dir: 'desc' },
   'date-asc': { expr: "COALESCE(c.signed_at, '9999-99')", dir: 'asc' },
 });
+
+// Rows a sort leaves out because their face value would lead it with noise: „стойност ↑“ would open with
+// hundreds of 0 € and near-0 € rows the site itself marks as unverified (value_low), „нови“ with a signing
+// date years in the future. Both stay in every other sort and in the totals; the list says so under the
+// sort bar. Each condition is a residual filter on the sort's own index walk, so the plan does not change.
+function sortExclusion(sort: ContractSort): { sql: string; params: unknown[] } | null {
+  if (sort === 'value-asc') return { sql: "c.value_flag <> 'value_low'", params: [] };
+  if (sort === 'date-desc') return { sql: `${SORTS['date-desc'].expr} <= ?`, params: [todayIso()] };
+  return null;
+}
 
 // Collapse an untrusted ?sort value to a known key (default otherwise). The query layer already
 // falls back internally, but callers must normalize before the value reaches a cache key (edge or
@@ -531,13 +541,20 @@ export async function listContracts(
     ? `${sort.expr} >= ?${bound.hi == null ? '' : ` AND ${sort.expr} < ?`}`
     : '';
   const boundParams = bound ? (bound.hi == null ? [bound.lo] : [bound.lo, bound.hi]) : [];
-  const conds = [filters.sql ? filters.sql.slice(7) : '', boundSql, ks.whereSql]
+  const exclusion = sortExclusion(sortKey);
+  const conds = [filters.sql ? filters.sql.slice(7) : '', exclusion?.sql, boundSql, ks.whereSql]
     .filter(Boolean)
     .join(' AND ');
   // A filter nothing matches has no page to read: walking the sort index for it reads all of it.
   let results: (ContractRow & { sort_value: string | number })[] = [];
   if (summary.total > 0) {
-    const pageParams = [...filters.params, ...boundParams, ...ks.params, pageSize + 1];
+    const pageParams = [
+      ...filters.params,
+      ...(exclusion?.params ?? []),
+      ...boundParams,
+      ...ks.params,
+      pageSize + 1,
+    ];
     let driver = await drivingFilter(db, p, filters, bound, summary.total, pageSize);
     // A driver binds its own ranges and the filter's values a second time: past D1's limit a wide selection
     // reads its page the plain way — slower, never a failed query.

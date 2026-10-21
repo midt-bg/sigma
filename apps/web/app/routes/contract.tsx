@@ -1,6 +1,7 @@
 import { data, Link } from 'react-router';
 import {
   count,
+  isFutureDate,
   isNaturalPersonProfileName,
   longDate,
   money,
@@ -513,8 +514,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     {longDate(c.signedAt)}{' '}
                     {c.dateSuspect && (
                       <span className="suspect">
-                        Възможна грешка в датата — договорът е подписан след публикуване на
-                        обявлението
+                        {isFutureDate(c.signedAt)
+                          ? 'Възможна грешка в датата — тя е в бъдещето'
+                          : 'Възможна грешка в датата — договорът е подписан след публикуване на обявлението'}
                       </span>
                     )}
                   </>
