@@ -136,6 +136,9 @@ served surface until the next data run ships — check the surface, not the comm
    Expect `suppressed`, or no row at all. Anything else means the ship did not carry the decision.
 3. **The page is gone**, allowing for cache: the link's page must 404 and the official's page must not
    list it. `publicCache(3600)` means a reader can still see it for up to an hour after the write — if it
-   is still there beyond that, the takedown did not land.
+   is still there beyond that, the takedown did not land. Not willing to wait the hour: a zone Purge
+   Everything on `midt.bg` or a web deploy clears it everywhere (purge by URL does not reach these entries;
+   docs/deploy.md, „Уговорка: остаряла страница и изчистване на кеша"). The first request after either
+   answers `X-Edge-Cache: MISS`.
 4. **It stays gone.** Re-run the next scheduled load and repeat step 2: the list is what makes a takedown
    survive a rebuild, and this is the only step that proves the survival rather than assuming it.
