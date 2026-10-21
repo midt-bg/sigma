@@ -164,7 +164,7 @@ describe('Declarations', () => {
     const source = cell(row, 'Декларация').querySelector('a')!;
     expect(source.getAttribute('href')).toBe('https://register.cacbg.bg/2024/d1.xml');
     expect(source.getAttribute('target')).toBe('_blank');
-    expect(source.textContent).toBe('Година 2023 ↗');
+    expect(source.textContent).toBe('Година 2023 ↗ (в нов раздел)');
     expect(cell(row, 'Декларация').textContent).toContain('Годишна · част II · интереси');
     expect(cell(row, 'Подадена на').textContent).toBe('12.05.2024');
     expect(cell(row, 'Дата на документа').textContent).toBe('10.05.2024');
@@ -202,7 +202,7 @@ describe('Declarations', () => {
     const row = c.querySelector('tbody tr')!;
     const source = cell(row, 'Декларация').querySelector('a')!;
     expect(source.hasAttribute('href')).toBe(false); // only an https source is linked
-    expect(source.textContent).toBe('Отвори декларацията ↗');
+    expect(source.textContent).toBe('Отвори декларацията ↗ (в нов раздел)');
     expect(cell(row, 'Подадена на').textContent).toBe('Няма данни');
     expect(cell(row, 'Дата на документа').textContent).toBe('Няма данни');
     expect(cell(row, 'Институция и длъжност').textContent).toBe('Неустановена институция');

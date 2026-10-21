@@ -4,7 +4,10 @@
 // inert while the drawer is open, so the return must happen after the drawer state is committed.
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { createMemoryRouter, RouterProvider } from 'react-router';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SiteHeader } from './SiteHeader';
 
@@ -124,6 +127,22 @@ describe('SiteHeader search drawer and layout', () => {
     expect(document.activeElement).toBe(searchToggle());
   });
 
+  // The search field closes its suggestions on the first Esc and marks the event handled; React
+  // listens on the document in the app, so stopPropagation() alone does not keep it from the drawer.
+  it('leaves the drawer open on an Esc the field already handled', () => {
+    openSearch();
+    const handled = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    handled.preventDefault();
+    act(() => {
+      document.activeElement!.dispatchEvent(handled);
+    });
+    expect(searchToggle().getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('closes the search drawer from its × and on a click outside it, not inside it', () => {
     openSearch();
     act(() => drawer().querySelector<HTMLInputElement>('input')!.click());
@@ -154,5 +173,21 @@ describe('SiteHeader search drawer and layout', () => {
     open();
     act(() => analytics.click());
     expect(toggle().getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
+// Both header buttons are wired up on hydration; without JavaScript they would be dead controls.
+describe('SiteHeader without JavaScript', () => {
+  it('links to the search page in place of the search button', () => {
+    const html = renderToString(<RouterProvider router={router} />);
+    expect(html).toMatch(/<noscript><a class="nav-search" href="\/search" aria-label="Търсене">/);
+  });
+
+  it('hides the buttons and shows the menu as links when scripting is off', () => {
+    const css = readFileSync(resolve(__dirname, '../styles/chrome.css'), 'utf8');
+    const noScript = css.slice(css.indexOf('@media (scripting: none)'));
+    expect(noScript).toMatch(/button\.nav-search\s*\{\s*display: none/);
+    expect(noScript).toMatch(/\.site-nav\s*\{[^}]*visibility: visible/);
+    expect(noScript).toMatch(/\.nav-toggle,[^{]*\{\s*display: none/);
   });
 });

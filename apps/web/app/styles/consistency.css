@@ -16,7 +16,7 @@
   margin-top: var(--s-6);
 }
 .section .section > h2 {
-  font-size: clamp(24px, 2.5vw, 32px);
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
   padding-bottom: var(--s-3);
   margin-bottom: var(--s-4);
 }
@@ -79,7 +79,7 @@ td .chip {
 .page-search label {
   display: block;
   margin-bottom: var(--s-2);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .page-search > div {
   display: flex;
@@ -116,7 +116,7 @@ td .chip {
 .profile-filters label {
   display: grid;
   gap: 6px;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .profile-filters input,
 .profile-filters select {
@@ -166,7 +166,7 @@ td .chip {
     margin-bottom: 4px;
   }
   .tbl-cards td.cell-title {
-    font-size: 19px;
+    font-size: 1.1875rem;
     line-height: 1.35;
   }
   .tbl-cards td .small {
@@ -208,7 +208,7 @@ td .chip {
 }
 .person-institutions {
   margin-top: var(--s-2);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.45;
 }
 .person-institutions ul {
@@ -223,7 +223,7 @@ td .chip {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 22px;
-  font-size: 12px;
+  font-size: 0.75rem;
   margin: 20px 0;
 }
 .person-time-legend > span {
@@ -269,13 +269,13 @@ td .chip {
 }
 .person-time-label {
   padding: 7px 22px 7px 0;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 .person-time-label small {
   display: block;
-  font-size: 11px;
+  font-size: 0.75rem;
   color: var(--muted);
   margin-top: 5px;
 }
@@ -294,7 +294,7 @@ td .chip {
   position: absolute;
   transform: translateX(-50%);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: 0.75rem;
   top: 8px;
   color: var(--muted);
 }
@@ -306,13 +306,13 @@ td .chip {
   background: none;
 }
 .time-institution .person-time-label {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .time-institution {
   padding-block: 6px;
 }
 .person-time-section {
-  font-size: 12px;
+  font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   margin: 22px 0 4px;
@@ -326,7 +326,7 @@ td .chip {
 }
 .time-company-heading {
   max-width: min(85ch, 100cqw);
-  font-size: 14px;
+  font-size: 0.875rem;
   padding: 7px 0 12px;
   overflow-wrap: anywhere;
 }
@@ -404,7 +404,7 @@ td .chip {
   height: 24px;
   padding-inline: 3px;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: 0.75rem;
   font-family: var(--font-mono, monospace);
   text-decoration: none;
 }
@@ -419,7 +419,7 @@ td .chip {
 }
 .person-time-notes {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 .person-time-notes p {
@@ -451,7 +451,7 @@ td .chip {
 /* The public stake of a company the person holds a seat in, under its name. */
 .time-public-stake {
   margin-top: 3px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-soft);
 }
 .person-time-controls {
@@ -460,15 +460,19 @@ td .chip {
   gap: 10px;
   align-items: center;
   margin: 12px 0;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .person-time-controls button {
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: 0.75rem;
   background: transparent;
   color: inherit;
   border: 1px solid #b8b3aa;
   cursor: pointer;
+}
+.person-time-controls button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .person-time-controls button:focus-visible {
   outline: 2px solid #b71916;
@@ -524,7 +528,7 @@ td .chip {
   border-radius: 50%;
   background: transparent;
   color: var(--muted);
-  font: 12px/1 sans-serif;
+  font: 0.75rem/1 sans-serif;
   cursor: pointer;
 }
 .help-trigger:hover,
@@ -545,7 +549,7 @@ td .chip {
   border: 1px solid #aaa59c;
   background: var(--paper, #faf8f2);
   color: var(--ink, #171511);
-  font: 14px/1.55 var(--font-sans, sans-serif);
+  font: 0.875rem/1.55 var(--font-sans, sans-serif);
   text-align: left;
   text-transform: none;
   letter-spacing: normal;
@@ -585,7 +589,7 @@ td .chip {
   background: var(--paper-warm);
 }
 .registry-ended h3 {
-  font-size: 18px;
+  font-size: 1.125rem;
   margin: 24px 0 16px;
 }
 .declarations tr[id],
@@ -689,7 +693,7 @@ td .chip {
 }
 .declarations .declaration-discrepancy {
   font-family: inherit;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.5;
   text-transform: none;
   letter-spacing: normal;
@@ -747,7 +751,7 @@ td .chip {
   top: 6px;
   height: 2px;
   min-width: 1px;
-  background: #9a948b;
+  background: #8a847b;
 }
 .time-procurement::after {
   content: '';
@@ -757,7 +761,7 @@ td .chip {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  border: 1px solid #9a948b;
+  border: 1px solid #8a847b;
   background: var(--paper, #faf8f2);
 }
 .time-procurement.tied {
@@ -787,7 +791,7 @@ td .chip {
 .time-symbol.procurement {
   width: 24px;
   height: 2px;
-  background: #9a948b;
+  background: #8a847b;
 }
 .time-symbol.announced {
   width: 24px;
@@ -797,9 +801,8 @@ td .chip {
 .time-tip {
   width: 300px;
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.45;
-  pointer-events: none;
 }
 .time-tip > * {
   display: block;
@@ -814,7 +817,7 @@ td .chip {
 }
 .time-tip-value {
   font-family: var(--font-mono, monospace);
-  font-size: 15px;
+  font-size: 0.9375rem;
   margin-bottom: 4px;
 }
 .time-tip-overlap {
@@ -840,7 +843,7 @@ td .chip {
   right: 7px;
   top: 0;
   bottom: 0;
-  background: #9a948b;
+  background: #8a847b;
 }
 .time-procurement.own.tied::before {
   background: #b71916;
@@ -869,4 +872,81 @@ td .chip {
   gap: 6px;
   margin-top: 4px;
   font-weight: 600;
+}
+
+/* ── Forced colours, print and the accessibility widget's colour themes ──────────────────────────
+   Forced colours (Windows High Contrast) repaint text and borders with the system palette and drop
+   backgrounds and shadows; print drops backgrounds by default. A state or a graphic that rests on
+   one of those gets something that survives. */
+@media (forced-colors: active) {
+  /* A transparent border is painted in forced colours, so every link and tab would look current. */
+  .tab-labels label {
+    border-bottom-style: none;
+    padding-bottom: calc(var(--s-2) + 2px);
+  }
+  /* The trigger is a white figure on a red disc; the forced palette paints the disc white. */
+  html .a11y-tools__button {
+    forced-color-adjust: none;
+  }
+  /* Bars, gauges and timeline marks are painted with background colour alone. */
+  .hbar > span,
+  .hbar-legend i,
+  .ebs-meter,
+  .ebs-meter *,
+  .share-bar,
+  .share-bar > i,
+  .time-role,
+  .time-procurement,
+  .time-symbol {
+    forced-color-adjust: none;
+  }
+  .ebs-meter,
+  .share-bar {
+    outline: 1px solid CanvasText;
+  }
+}
+@media (forced-colors: active) and (min-width: 961px) {
+  .site-nav a:not([aria-current='page']) {
+    border-bottom-style: none;
+    padding-bottom: 6px;
+  }
+}
+@media print {
+  .hbar > span,
+  .hbar-legend i,
+  .ebs-meter,
+  .ebs-meter *,
+  .share-bar,
+  .share-bar > i,
+  .time-role,
+  .time-procurement,
+  .time-symbol,
+  .source-cta {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+/* The widget's yellow and blue themes paint every background in the page colour, the trigger's disc
+   too, which leaves its white figure on a pale disc. */
+html.accessibility-yellow .a11y-tools__button,
+html.accessibility-blue .a11y-tools__button {
+  background-color: #000066 !important;
+}
+/* The widget's dark theme recolours HTML with `* { … !important }` but not SVG fills and strokes,
+   which stayed dark ink on its dark grey. The charts draw with the palette variables, so the theme
+   swaps the palette: light ink on the theme's own background, every value at least 3:1 on it. */
+html.accessibility-dark {
+  --paper: #3a3a3a;
+  --paper-warm: #3a3a3a;
+  --paper-deep: #3a3a3a;
+  --ink: #00ffe8;
+  --ink-mid: #8fd9d2;
+  --ink-soft: #b0b0b0;
+  --rule: #8a8a8a;
+  --rule-soft: #6a6a6a;
+  --accent: #ff8a80;
+  --accent-bg: #5a3a3a;
+}
+html.accessibility-dark .flow-svg .link {
+  fill-opacity: 0.45;
 }

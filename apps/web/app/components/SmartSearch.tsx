@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { money } from '@sigma/shared';
+import { count, money, plural } from '@sigma/shared';
 import type { SearchHit, SearchResults } from '@sigma/api-contract';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { personName } from '../lib/person-name';
@@ -94,8 +94,19 @@ export function SmartSearch({
 
   const showList = open && debounced.length >= MIN_QUERY && !refused;
 
-  // Any change to the option set invalidates the highlighted row.
-  useEffect(() => setActiveIndex(-1), [debounced, suggested]);
+  // Any change to the option set invalidates the highlighted row, and so does closing the list, or
+  // Enter on a reopened list would open a row the user no longer sees highlighted.
+  useEffect(() => setActiveIndex(-1), [debounced, suggested, showList]);
+
+  // Keep the row the arrows moved to in view: the list scrolls inside a capped box.
+  const keyboardMove = useRef(false);
+  useEffect(() => {
+    if (!keyboardMove.current || activeIndex < 0) return;
+    keyboardMove.current = false;
+    document.getElementById(optionId(activeIndex))?.scrollIntoView?.({ block: 'nearest' });
+    // optionId is derived from a stable useId.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex]);
 
   // Pointer-dismiss: closing on outside mousedown keeps it from fighting option clicks.
   useEffect(() => {
@@ -133,6 +144,7 @@ export function SmartSearch({
       return;
     }
     if (!showList || optionCount === 0) return;
+    keyboardMove.current = ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key);
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
@@ -206,6 +218,13 @@ export function SmartSearch({
         </button>
       </form>
 
+      <p className="sr-only" role="status">
+        {showList && !loading
+          ? hasResults
+            ? `${count(flatHits.length)} ${plural(flatHits.length, 'предложение', 'предложения')}`
+            : 'Няма съвпадения'
+          : ''}
+      </p>
       <div
         className={`smart-search-pop${showList ? ' is-open' : ''}`}
         // Hidden from AT until there's something to announce; inert when closed.

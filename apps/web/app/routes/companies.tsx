@@ -178,7 +178,7 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
         />
         <div className="split">
           <FilterRail groups={groups} sort={sort} clearHref="/companies" csvHref={csvHref} />
-          <section>
+          <section id="results" tabIndex={-1}>
             <ListControls
               base={sp}
               activeSort={sort}

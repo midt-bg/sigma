@@ -20,7 +20,7 @@
 .contract-row td.parties .who {
   color: var(--text-muted);
   font-weight: 400;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .contract-row td.subj {
   line-height: 1.4;
@@ -31,7 +31,7 @@
 .contract-row td.subj .unp {
   display: block;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-family: var(--font-mono);
   margin-top: 2px;
 }
@@ -40,7 +40,7 @@
   background: var(--accent-bg);
   border: 1px solid var(--accent);
   color: var(--accent);
-  font: 700 11px/1.5 var(--font-mono);
+  font: 700 0.75rem/1.5 var(--font-mono);
   padding: 0 6px;
   margin-left: 6px;
   vertical-align: middle;
@@ -48,7 +48,7 @@
   letter-spacing: 0.04em;
 }
 .contract-row td.meta {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
   line-height: 1.6;
 }
@@ -69,7 +69,7 @@
 }
 .risk-title {
   margin: 0 0 var(--s-3);
-  font: 500 13px/1.2 var(--font-mono);
+  font: 500 0.8125rem/1.2 var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--warning-strong);
@@ -84,7 +84,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font: 400 14px/1.5 var(--font-sans);
+  font: 400 0.875rem/1.5 var(--font-sans);
   color: var(--ink);
 }
 .risk-list li {
@@ -126,7 +126,7 @@
   display: inline-block;
   margin-top: var(--s-3);
   padding: 2px 8px;
-  font: 500 10.5px/1.5 var(--font-mono);
+  font: 500 0.75rem/1.5 var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   background: var(--warning-bg);
@@ -141,7 +141,7 @@
 }
 .value-alert-title {
   margin: 0 0 var(--s-3);
-  font: 500 13px/1.2 var(--font-mono);
+  font: 500 0.8125rem/1.2 var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--warning-strong);
@@ -185,7 +185,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  font: 10px/1.2 var(--font-mono);
+  font: 0.75rem/1.2 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -193,7 +193,7 @@
 }
 .value-history .vh .num {
   display: block;
-  font: 400 32px/1 var(--font-serif);
+  font: 400 2rem/1 var(--font-serif);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
   color: var(--ink);
@@ -201,14 +201,14 @@
 .value-history .vh .sub {
   display: block;
   margin-top: var(--s-2);
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
 }
 .value-history .vh .delta {
   display: block;
   margin-top: var(--s-2);
-  font: 11px/1.3 var(--font-mono);
+  font: 0.75rem/1.3 var(--font-mono);
   letter-spacing: 0.06em;
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
@@ -323,7 +323,7 @@
 }
 .results-group .head .count {
   color: var(--ink-mid);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .result {
   display: grid;
@@ -339,20 +339,20 @@
   background: var(--paper-warm);
 }
 .result .kind {
-  font: 700 11px/1.4 var(--font-mono);
+  font: 700 0.75rem/1.4 var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--ink-mid);
   padding-top: 2px;
 }
 .result .name {
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 700;
   line-height: 1.3;
   margin: 0 0 4px;
 }
 .result .meta {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--ink-mid);
   line-height: 1.5;
 }
@@ -368,17 +368,17 @@
 }
 .result .amt .num {
   font-weight: 700;
-  font-size: 15px;
+  font-size: 0.9375rem;
   display: block;
 }
 .result .amt .lab {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-mid);
   margin-top: 2px;
 }
 .results-group .footer {
   padding: var(--s-3) 0;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 @media (max-width: 720px) {
   .result {
@@ -394,14 +394,14 @@
 
 .doc-version {
   margin: var(--s-4) 0 0;
-  font: 12px/1.4 var(--font-mono);
+  font: 0.75rem/1.4 var(--font-mono);
   letter-spacing: 0.02em;
   color: var(--ink-soft);
 }
 .toc-title {
   margin: 0 0 var(--s-2);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 0.75rem;
   line-height: 1.3;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -414,7 +414,7 @@
   align-self: start;
   border-top: 4px solid var(--ink);
   padding-top: var(--s-3);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .toc h4 {
   margin: 0 0 var(--s-2);
@@ -457,7 +457,7 @@
   padding: var(--s-4) var(--s-5) var(--s-4) 0;
   border-top: 1px solid var(--rule);
   font-weight: 700;
-  font-size: 17px;
+  font-size: 1.0625rem;
 }
 .glossary > dd {
   padding: var(--s-4) 0;
@@ -468,7 +468,7 @@
 .glossary > dd .src {
   display: block;
   color: var(--ink-mid);
-  font-size: 13px;
+  font-size: 0.8125rem;
   margin-top: 4px;
   font-family: var(--font-mono);
 }
@@ -511,7 +511,7 @@
   position: absolute;
   left: 0;
   top: 14px;
-  font: 700 13px/1 var(--font-mono);
+  font: 700 0.8125rem/1 var(--font-mono);
   color: var(--ink-soft);
   letter-spacing: 0.04em;
 }
@@ -583,7 +583,7 @@
 
 /* Contract „кой с кого" figures: a prominent amount line + tight caption rows. */
 .figure-amount {
-  font-size: 18px;
+  font-size: 1.125rem;
   font-weight: 700;
   margin: 6px 0 2px;
 }
@@ -639,7 +639,7 @@
   margin: 10px 0 0;
   padding: 0;
   list-style: none;
-  font: 11px var(--font-mono, monospace);
+  font: 0.75rem var(--font-mono, monospace);
   color: var(--ink-soft, #555);
 }
 .net-legend li {
@@ -690,10 +690,6 @@
   stroke: var(--ink);
   stroke-width: 1.5;
 }
-.trend-svg .label {
-  font: 11px var(--font-mono, monospace);
-  fill: var(--ink-soft, #555);
-}
 .trend-svg .line-partial {
   fill: none;
   stroke: var(--ink);
@@ -705,9 +701,40 @@
   stroke: var(--ink);
   stroke-width: 1.5;
 }
-.trend-svg .label-partial {
-  font: 10px var(--font-mono, monospace);
-  fill: var(--ink-soft, #555);
+/* The words of the chart are HTML over the picture (TrendChart.tsx), sized in rem like the rest of
+   the page; their positions are percent of the drawing's box. */
+.trend-chart {
+  margin: 0;
+}
+.trend-plot {
+  position: relative;
+}
+.trend-peak {
+  margin-bottom: var(--s-2);
+  font: 0.75rem/1.4 var(--font-mono);
+  color: var(--ink-mid);
+}
+.trend-chart .label,
+.trend-chart .label-partial {
+  position: absolute;
+  font: 0.75rem/1.2 var(--font-mono);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.trend-chart .label-partial {
+  transform: translate(0, calc(-100% - 6px));
+}
+.trend-chart .label-partial.is-end {
+  transform: translate(-100%, calc(-100% - 6px));
+}
+.trend-axis {
+  position: relative;
+  height: 1.5em;
+  font: 0.75rem/1.2 var(--font-mono);
+}
+.trend-axis .label {
+  top: 0.25em;
+  transform: translateX(-50%);
 }
 
 /* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
@@ -728,7 +755,7 @@
   gap: 6px;
   width: fit-content;
   margin: 12px auto 0;
-  font: 11px var(--font-mono, monospace);
+  font: 0.75rem var(--font-mono, monospace);
   color: var(--ink-soft, #555);
 }
 .map-legend .swatch {
@@ -763,8 +790,9 @@
   stroke-dasharray: 2 4;
   stroke-linecap: round;
 }
+/* Quieter than the other ties but still 3:1 on the paper (WCAG 1.4.11): the width carries the value. */
 .tie-svg .tie-money {
-  stroke: #d8d6cf;
+  stroke: color-mix(in oklch, var(--ink) 44%, var(--paper));
 }
 /* A role the Trade Register records: a person — or a company — holding it at the company it points to.
    Faded once every such role has ended, so the history stays in the picture without reading as standing. */
@@ -841,7 +869,7 @@
   list-style: none;
   margin: var(--s-3) 0 0;
   padding: 0;
-  font: 11px/1.4 var(--font-mono);
+  font: 0.75rem/1.4 var(--font-mono);
   color: var(--ink-soft);
 }
 .tie-legend li {
@@ -863,7 +891,7 @@
   border-top-color: var(--accent);
 }
 .tie-key.tie-money {
-  border-top-color: #d8d6cf;
+  border-top-color: color-mix(in oklch, var(--ink) 44%, var(--paper));
 }
 .tie-key.tie-role {
   border-top-width: 1.5px;

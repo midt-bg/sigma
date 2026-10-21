@@ -1,6 +1,5 @@
 import { getDb } from '@sigma/db';
 import {
-  Link,
   Links,
   Meta,
   Outlet,
@@ -17,10 +16,9 @@ import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { ScrollToTop } from './components/ScrollToTop';
-import { PageHeader } from './components/PageHeader';
+import { ErrorPage } from './components/ErrorPage';
 import { getCoverageMeta } from './lib/coverage';
 import { serializeJsonForScript } from './lib/json-ld';
-import { errorCopy } from './lib/error-copy';
 import { withDbRetry } from './lib/retry';
 import { useRouteFocus } from './lib/route-focus';
 import stylesheet from './app.css?url';
@@ -176,30 +174,5 @@ export default function App({ loaderData }: Route.ComponentProps) {
 
 // Errors render inside the chrome so a 404/500 still looks like СИГМА and keeps the nav.
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
-  const { kicker, title, lede, documentTitle } = errorCopy(error);
-  const stack = import.meta.env.DEV && error instanceof Error ? error.stack : undefined;
-
-  return (
-    <>
-      {/* The boundary bypasses route `meta`, so set the document title here (React hoists it). */}
-      <title>{documentTitle}</title>
-      <a className="skip" href="#main">
-        Към съдържанието
-      </a>
-      <SiteHeader />
-      <main id="main">
-        <PageHeader kicker={kicker} title={title} lede={lede} />
-        <p className="muted">
-          <Link to="/">Начало</Link> · <Link to="/companies">Компании</Link> ·{' '}
-          <Link to="/authorities">Институции</Link> · <Link to="/contracts">Договори</Link>
-        </p>
-        {stack && (
-          <pre className="mono small error-stack">
-            <code>{stack}</code>
-          </pre>
-        )}
-      </main>
-      <SiteFooter />
-    </>
-  );
+  return <ErrorPage error={error} />;
 }

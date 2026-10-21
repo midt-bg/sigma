@@ -3,15 +3,19 @@
 // or drops a subtree; those are exactly the branches the page-level render tests never reach (they only
 // ever exercise whichever variant that page happens to use). Render each primitive both ways.
 import { act } from 'react';
+import { readdirSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  Abbr,
   Callout,
   Chip,
   Explanation,
   ExternalEikLink,
   Flag,
+  NewTabLink,
   OwnershipChip,
   RegistryCta,
   Section,
@@ -92,6 +96,46 @@ describe('ExternalEikLink', () => {
 
     const withClass = render(<ExternalEikLink eik="111" className="inline" />).querySelector('a')!;
     expect(withClass.className).toBe('external-eik-link inline');
+  });
+});
+
+describe('Abbr', () => {
+  it('spells out an abbreviation of the source or the law', () => {
+    const abbr = render(<Abbr>ЦАИС ЕОП</Abbr>).querySelector('abbr')!;
+    expect(abbr.textContent).toBe('ЦАИС ЕОП');
+    expect(abbr.title).toBe(
+      'Централизирана автоматизирана информационна система „Електронни обществени поръчки“',
+    );
+    expect(render(<Abbr>ЕИК</Abbr>).querySelector('abbr')!.title).toBe(
+      'Единен идентификационен код',
+    );
+  });
+});
+
+describe('NewTabLink', () => {
+  it('opens in a new tab safely and says so in words', () => {
+    const a = render(<NewTabLink href="https://example.org/">Източник</NewTabLink>).querySelector(
+      'a',
+    )!;
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(a.textContent).toBe('Източник (в нов раздел)');
+    const own = render(<NewTabLink href="/x.json" rel="noopener" />).querySelector('a')!;
+    expect(own.getAttribute('rel')).toBe('noopener');
+  });
+
+  // Only one place on the site writes target="_blank", so no new-tab link can forget the hint.
+  it('is the only way the app opens a new tab', () => {
+    const app = resolve(__dirname, '..');
+    const offenders = ['components', 'routes']
+      .flatMap((dir) =>
+        readdirSync(resolve(app, dir))
+          .filter((f) => f.endsWith('.tsx') && !f.includes('.test.'))
+          .map((f) => `${dir}/${f}`),
+      )
+      .filter((f) => f !== 'components/ui.tsx')
+      .filter((f) => readFileSync(resolve(app, f), 'utf8').includes('target="_blank"'));
+    expect(offenders).toEqual([]);
   });
 });
 

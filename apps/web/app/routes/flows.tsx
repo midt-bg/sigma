@@ -56,7 +56,6 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
         <Form
           method="get"
           className="flow-controls"
-          role="group"
           aria-label="Настройки на визуализацията"
           onChange={(e) => submit(e.currentTarget)}
         >
@@ -97,6 +96,9 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
               <option value="50">Топ 50 потока</option>
             </select>
           </label>
+          <noscript>
+            <button type="submit">Покажи</button>
+          </noscript>
         </Form>
 
         {/* Filters auto-submit on change; announce the swap for screen-reader users (WCAG 4.1.3). */}
@@ -178,6 +180,9 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
           >
             <div className="table-wrap tbl-cards">
               <table>
+                <caption className="sr-only">
+                  Топ {data.scope.top} потока между институции и компании, сума в евро
+                </caption>
                 <thead>
                   <tr>
                     <th scope="col">#</th>

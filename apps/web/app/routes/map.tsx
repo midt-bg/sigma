@@ -110,7 +110,6 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
         <Form
           method="get"
           className="flow-controls"
-          role="group"
           aria-label="Филтри на картата"
           onChange={(e) => submit(e.currentTarget)}
         >

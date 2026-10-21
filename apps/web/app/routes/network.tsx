@@ -79,7 +79,6 @@ export default function Network({ loaderData }: Route.ComponentProps) {
         <Form
           method="get"
           className="flow-controls"
-          role="group"
           aria-label="Избор на център"
           onChange={(e) => submit(e.currentTarget)}
         >
@@ -102,6 +101,9 @@ export default function Network({ loaderData }: Route.ComponentProps) {
               </optgroup>
             </select>
           </label>
+          <noscript>
+            <button type="submit">Покажи</button>
+          </noscript>
         </Form>
 
         <p className="sr-only" role="status">

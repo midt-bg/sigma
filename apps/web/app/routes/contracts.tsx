@@ -7,7 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { FilterRail, type FilterGroup } from '../components/FilterRail';
 import { ListControls } from '../components/ListControls';
 import { Pagination } from '../components/Pagination';
-import { Callout } from '../components/ui';
+import { Abbr, Callout } from '../components/ui';
 import {
   buildSectorGroup,
   contractListFilters,
@@ -140,7 +140,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
 
         <div className="split">
           <FilterRail groups={groups} sort={sort} clearHref="/contracts" csvHref={csvHref} />
-          <section>
+          <section id="results" tabIndex={-1}>
             <ListControls
               base={sp}
               activeSort={sort}
@@ -262,7 +262,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           </Link>
                           {c.euFunded && <span className="eu">ЕС</span>}
                           <span className="unp">
-                            УНП {c.unp}
+                            <Abbr>УНП</Abbr> {c.unp}
                             {c.isConsortium ? ' · обединение' : ''}
                             {c.bidderKind === 'framework_parties'
                               ? ' · страни по рамково споразумение'

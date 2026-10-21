@@ -71,6 +71,14 @@ const click = (input: HTMLInputElement) =>
   });
 
 describe('FilterRail', () => {
+  // The rail is 26–59 Tab stops on the list pages; the first one lets a keyboard user past it.
+  it('opens with a link past the filters to the results', async () => {
+    const c = await render([year], '/contracts');
+    const first = c.querySelector('aside a, aside input:not([type="hidden"]), aside summary')!;
+    expect(first.textContent).toBe('Към резултатите');
+    expect(first.getAttribute('href')).toBe('#results');
+  });
+
   it('applies a ticked box at once, keeping the search, the sort and the scope, and restarting the pages', async () => {
     await render(
       [year],

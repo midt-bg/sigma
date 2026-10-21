@@ -41,7 +41,7 @@
   justify-content: space-between;
   gap: var(--s-3);
   padding: var(--s-3) var(--s-2);
-  font: 15px/1.35 var(--font-sans);
+  font: 0.9375rem/1.35 var(--font-sans);
   text-decoration: none;
   color: var(--ink);
   overflow: hidden;
@@ -89,11 +89,11 @@
 }
 .so-portion-head {
   margin-bottom: 8px;
-  font: 15px/1.5 var(--font-sans);
+  font: 0.9375rem/1.5 var(--font-sans);
   color: var(--ink-mid);
 }
 .so-portion-pct {
-  font: 600 28px/1 var(--font-serif);
+  font: 600 1.75rem/1 var(--font-serif);
   letter-spacing: -0.01em;
   color: var(--accent);
   margin-right: 4px;
@@ -122,7 +122,7 @@
   margin-bottom: -1px;
   border-bottom: 2px solid transparent;
   color: var(--ink-soft);
-  font: 600 14px/1.2 var(--font-sans);
+  font: 600 0.875rem/1.2 var(--font-sans);
 }
 .tabset .tab-panel {
   display: none;
@@ -134,7 +134,9 @@
 #authority-recent:checked ~ .tab-labels label[for='authority-recent'],
 #authority-top:checked ~ .tab-labels label[for='authority-top'] {
   color: var(--ink);
+  border-bottom-style: solid; /* restores the underline that forced colours remove from the others */
   border-bottom-color: var(--accent);
+  padding-bottom: var(--s-2);
 }
 #so-recent:checked ~ .tab-panel[data-tab='recent'],
 #so-top:checked ~ .tab-panel[data-tab='top'],

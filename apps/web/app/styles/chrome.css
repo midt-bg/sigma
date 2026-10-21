@@ -74,7 +74,7 @@
 .site-nav {
   display: flex;
   gap: var(--s-6);
-  font: 11px/1.3 var(--font-mono);
+  font: 0.75rem/1.3 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-mid);
@@ -152,7 +152,7 @@
   color: var(--ink-mid);
   cursor: pointer;
   min-height: 24px;
-  font: 500 11px/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -266,7 +266,7 @@
     border-bottom: 1px solid var(--rule);
   }
   .site-nav-head-label {
-    font: 500 11px/1 var(--font-mono);
+    font: 500 0.75rem/1 var(--font-mono);
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--ink-soft);
@@ -275,7 +275,7 @@
     background: transparent;
     border: 0;
     color: var(--ink-mid);
-    font: 400 30px/1 var(--font-serif);
+    font: 400 1.875rem/1 var(--font-serif);
     padding: 0 4px;
     cursor: pointer;
   }
@@ -292,7 +292,7 @@
     align-items: center;
     gap: var(--s-3);
     padding: 15px var(--s-1);
-    font-size: 13px;
+    font-size: 0.8125rem;
     letter-spacing: 0.12em;
     border-bottom: 1px solid var(--rule-soft);
   }
@@ -303,7 +303,38 @@
   .site-nav a[aria-current='page']::before {
     content: '›';
     color: var(--accent);
-    font: 400 16px/1 var(--font-serif);
+    font: 400 1rem/1 var(--font-serif);
+  }
+}
+
+/* Without JavaScript the menu and search buttons are dead controls: hide them, show the menu as a
+   plain row of links, and let the <noscript> link in SiteHeader stand in for search. */
+@media (scripting: none) {
+  button.nav-search {
+    display: none;
+  }
+}
+@media (scripting: none) and (max-width: 960px) {
+  .nav-toggle,
+  .site-nav-head {
+    display: none;
+  }
+  .site-nav {
+    position: static;
+    order: 3;
+    flex: 1 0 100%;
+    flex-flow: row wrap;
+    gap: 0 var(--s-5);
+    width: auto;
+    padding: 0;
+    border-left: 0;
+    box-shadow: none;
+    transform: none;
+    visibility: visible;
+  }
+  .site-nav a {
+    padding: 6px 0;
+    border-bottom: 0;
   }
 }
 
@@ -346,7 +377,7 @@
   background: transparent;
   border: 0;
   color: var(--ink-mid);
-  font: 400 28px/1 var(--font-serif);
+  font: 400 1.75rem/1 var(--font-serif);
   cursor: pointer;
   padding: 0 var(--s-2);
   line-height: 1;
@@ -384,7 +415,7 @@
 .smart-search-prompt {
   grid-column: 1;
   color: var(--accent);
-  font: 400 28px/1 var(--font-serif);
+  font: 400 1.75rem/1 var(--font-serif);
   align-self: end;
   margin-bottom: 6px;
   user-select: none;
@@ -397,7 +428,7 @@
   border-bottom: 1px solid var(--ink);
   background: transparent;
   color: var(--ink);
-  font: 400 24px/1.2 var(--font-serif);
+  font: 400 1.5rem/1.2 var(--font-serif);
   letter-spacing: -0.01em;
   padding: 0 0 4px;
   outline: none;
@@ -418,7 +449,7 @@
   color: var(--paper);
   padding: 10px var(--s-5);
   box-sizing: border-box;
-  font: 500 11px/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   cursor: pointer;
@@ -430,10 +461,10 @@
   border-color: var(--accent);
 }
 .smart-search--drawer .smart-search-input {
-  font-size: 20px;
+  font-size: 1.25rem;
 }
 .smart-search--drawer .smart-search-prompt {
-  font-size: 24px;
+  font-size: 1.5rem;
 }
 
 /* Suggestions popover — anchored below the field, escapes the drawer via z-index. */
@@ -461,7 +492,7 @@
 .smart-search-group-label {
   margin: 0;
   padding: var(--s-3) var(--s-4) var(--s-1);
-  font: 500 10px/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
@@ -479,12 +510,16 @@
   padding: 8px var(--s-4);
   cursor: pointer;
 }
+/* The keyboard-highlighted option: the wash alone is 1.17:1, the outline is the 3:1 cue and survives
+   forced colours. */
 .smart-search-option.is-active {
   background: color-mix(in oklab, var(--accent) 9%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .smart-search-option-kind {
   grid-column: 1;
-  font: 500 9px/1.3 var(--font-mono);
+  font: 500 0.75rem/1.3 var(--font-mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -496,7 +531,7 @@
 .smart-search-option-title {
   display: block;
   color: var(--ink);
-  font: 400 15px/1.3 var(--font-serif);
+  font: 400 0.9375rem/1.3 var(--font-serif);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -504,21 +539,44 @@
 .smart-search-option-meta {
   display: block;
   color: var(--ink-mid);
-  font: 11px/1.3 var(--font-mono);
+  font: 0.75rem/1.3 var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .smart-search-option-amt {
   grid-column: 3;
-  font: 500 11px/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   color: var(--ink-mid);
   white-space: nowrap;
+}
+/* Below ~800 px the kind and the amount left the name 50–140 px, and the names were cut after a few
+   letters — the part that tells one suggestion from the next. Put kind and amount on a line of their
+   own and let the name wrap. */
+@media (max-width: 800px) {
+  .smart-search-option {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .smart-search-option-kind {
+    grid-row: 1;
+  }
+  .smart-search-option-amt {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .smart-search-option-body {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .smart-search-option-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 .smart-search-see-all {
   padding: 11px var(--s-4);
   border-top: 1px solid var(--rule);
-  font: 500 11px/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--accent);
@@ -530,7 +588,7 @@
 .smart-search-empty {
   padding: var(--s-3) var(--s-4);
   color: var(--ink-mid);
-  font: italic 14px/1.4 var(--font-serif);
+  font: italic 0.875rem/1.4 var(--font-serif);
 }
 
 @media (max-width: 760px) {
@@ -538,10 +596,10 @@
     grid-template-columns: auto 1fr;
   }
   .smart-search-prompt {
-    font-size: 20px;
+    font-size: 1.25rem;
   }
   .smart-search-input {
-    font-size: 16px;
+    font-size: 1rem;
   }
   .smart-search-submit {
     grid-column: 1 / -1;
@@ -559,7 +617,7 @@
   max-width: var(--max);
   margin: 0 auto;
   padding: 10px var(--gutter);
-  font: 11px/1.4 var(--font-mono);
+  font: 0.75rem/1.4 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -600,7 +658,7 @@ main.narrow {
   gap: var(--s-2);
   max-width: 100%;
   color: var(--accent);
-  font: 11px/1.3 var(--font-mono);
+  font: 0.75rem/1.3 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-weight: 500;
@@ -630,12 +688,12 @@ main.narrow {
    „Подробности → Предмет" row below. Tiers are chosen in routes/contract.tsx by subject length. */
 .page-header h1.t-md {
   max-width: 32ch;
-  font-size: clamp(26px, 3vw, 38px);
+  font-size: clamp(1.625rem, 3vw, 2.375rem);
   line-height: 1.12;
 }
 .page-header h1.t-sm {
   max-width: 40ch;
-  font-size: clamp(21px, 2.3vw, 30px);
+  font-size: clamp(1.3125rem, 2.3vw, 1.875rem);
   line-height: 1.18;
   display: -webkit-box;
   -webkit-line-clamp: 4;
@@ -645,7 +703,7 @@ main.narrow {
 .page-header .lede {
   margin: var(--s-5) 0 0;
   max-width: 60ch;
-  font: 400 clamp(15px, 1.4vw, 17px)/1.55 var(--font-sans);
+  font: 400 clamp(0.9375rem, 1.4vw, 1.0625rem)/1.55 var(--font-sans);
   color: var(--ink-mid);
 }
 /* Source CTA — solid, icon-led deep link to the procedure's documents on the public ЦАИС ЕОП
@@ -660,7 +718,7 @@ main.narrow {
   border: 1px solid var(--ink);
   background: var(--ink);
   color: var(--paper);
-  font: 500 12px/1 var(--font-mono);
+  font: 500 0.75rem/1 var(--font-mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   text-decoration: none;
@@ -683,7 +741,7 @@ main.narrow {
   flex: none;
 }
 .source-cta .cta-ext {
-  font-size: 13px;
+  font-size: 0.8125rem;
   opacity: 0.75;
 }
 
@@ -703,7 +761,7 @@ main.narrow {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--s-4);
-  font: 11px/1.5 var(--font-mono);
+  font: 0.75rem/1.5 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -743,7 +801,7 @@ main.narrow {
 }
 .site-footer .freshness {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: 0.75rem;
   letter-spacing: 0.14em;
 }
 
@@ -776,7 +834,7 @@ main.narrow {
   border-radius: 50%;
   background: var(--ink);
   color: var(--paper);
-  border: none;
+  border: 1px solid transparent;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -798,10 +856,13 @@ main.narrow {
   transform: translateY(0);
 }
 
+/* A transparent outline and border are invisible here but painted in forced colours, where the
+   background and the shadow ring are dropped. */
 .scroll-to-top:hover,
 .scroll-to-top:focus-visible {
   background: var(--accent);
-  outline: none;
+  outline: 2px solid transparent;
+  outline-offset: 3px;
 }
 .scroll-to-top:focus-visible {
   box-shadow:
@@ -824,6 +885,10 @@ main.narrow {
 }
 
 @media (max-width: 760px) {
+  /* Room under the last footer links, so they can scroll above the two stacked floating buttons. */
+  .site-footer-inner {
+    padding-bottom: 120px;
+  }
   .scroll-to-top {
     right: 22px;
     bottom: calc(76px + env(safe-area-inset-bottom, 0px));

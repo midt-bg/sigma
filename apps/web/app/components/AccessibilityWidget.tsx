@@ -3,6 +3,7 @@
 // what remains are catalogued in docs/accessibility.md ("Вградена приставка за достъпност —
 // наблюдения"). This wrapper only initialises it and installs survival CSS.
 import { useEffect } from 'react';
+import { useLocation } from 'react-router';
 
 type AccessibilityOptions = {
   parentSelector: string;
@@ -21,6 +22,7 @@ declare const accessibility: AccessibilityInitializer | undefined;
 declare global {
   interface Window {
     accessibility?: AccessibilityInitializer;
+    accessibilityRefreshHeadings?: () => void;
   }
 }
 
@@ -163,6 +165,12 @@ export function AccessibilityWidget() {
 
     return stop;
   }, []);
+
+  // The toolbar lists the page's headings once, at start; rebuild the list for each new page.
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.accessibilityRefreshHeadings?.();
+  }, [pathname]);
 
   return null;
 }

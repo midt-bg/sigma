@@ -710,10 +710,31 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     expect(observe).toHaveBeenCalledWith(canvas);
     expect(el.querySelector('.person-time-controls')?.textContent).toContain('2021–2026');
     const buttons = [...el.querySelectorAll<HTMLButtonElement>('.person-time-controls button')];
+    // It opens at the latest years, so „По-късно" has nowhere to go; at the start „По-рано" has not.
+    expect(buttons.map((b) => b.disabled)).toEqual([false, true]);
     act(() => buttons[0]!.click());
-    act(() => buttons[1]!.click());
     expect(scrollBy).toHaveBeenNthCalledWith(1, { left: -180 });
+    canvas.scrollLeft = 0;
+    act(() => canvas.dispatchEvent(new Event('scroll')));
+    expect(buttons.map((b) => b.disabled)).toEqual([true, false]);
+    act(() => buttons[1]!.click());
     expect(scrollBy).toHaveBeenNthCalledWith(2, { left: 180 });
+    // The label names the years in view: those right of the row labels and inside the canvas.
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      const at = (left: number, right = left) => ({ left, right, width: right - left }) as DOMRect;
+      if (this.id === 'person-time-canvas') return at(0, 300);
+      if (this.classList.contains('person-time-label')) return at(0, 100);
+      if (this.classList.contains('person-time-year'))
+        return at((Number(this.textContent) - 2021) * 60 + 70);
+      return at(0);
+    });
+    act(() => canvas.dispatchEvent(new Event('scroll')));
+    rect.mockRestore();
+    expect(el.querySelector('.person-time-controls span')!.textContent).toBe(
+      '2022–2024 от 2021–2026',
+    );
 
     expect(el.querySelector('.time-open')).not.toBeNull();
     expect(el.querySelector('[aria-label*="неустановено след"]')).not.toBeNull();
@@ -753,6 +774,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
 // The timeline as intervals. The band sits under every row of its company, the office is drawn from its
 // declarations, and each procurement is a span from its announcement to its signing.
 it('draws the overlap band, the office and each procurement from announcement to signing', () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   const eik = '123456789';
   const declaration = (id: string, year: string, type: string, declaredOn: string | null) => ({
     id,
@@ -913,8 +935,31 @@ it('draws the overlap band, the office and each procurement from announcement to
     expect(tip.querySelector('.time-tip-overlap')!.textContent).toBe(
       'Подписан по време на съвпадението',
     );
+    // The pointer can move from the mark onto the tip and read it there (WCAG 1.4.13)…
+    act(() => {
+      marks[0]!.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: tip }));
+      tip.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: marks[0] }));
+      vi.advanceTimersByTime(1000);
+    });
+    expect(el.querySelector('.time-tip')).toBe(tip);
+    // …and leaving the tip, or Esc, closes it.
+    act(() => {
+      tip.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+    });
+    expect(el.querySelector('.time-tip')).toBeNull();
+    act(() => {
+      marks[0]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(el.querySelector('.time-tip')).toBeNull();
+    act(() => {
+      marks[0]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
     act(() => {
       marks[0]!.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      vi.advanceTimersByTime(300);
     });
     expect(el.querySelector('.time-tip')).toBeNull();
     // The keyboard gets it too; an undated announcement and unknown offers say only what is known.
@@ -931,6 +976,7 @@ it('draws the overlap band, the office and each procurement from announcement to
       const text = el.querySelector('.time-tip')?.textContent ?? '';
       act(() => {
         target.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+        vi.advanceTimersByTime(300);
       });
       return text;
     };
@@ -961,6 +1007,7 @@ it('draws the overlap band, the office and each procurement from announcement to
     expect(band).not.toContain('Лицето е на длъжност');
     expect(el.querySelector('.time-tip')).toBeNull();
   } finally {
+    vi.useRealTimers();
     act(() => root.unmount());
     el.remove();
   }
