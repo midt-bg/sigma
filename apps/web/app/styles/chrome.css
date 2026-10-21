@@ -479,8 +479,12 @@
   padding: 8px var(--s-4);
   cursor: pointer;
 }
+/* The keyboard-highlighted option: the wash alone is 1.17:1, the outline is the 3:1 cue and survives
+   forced colours. */
 .smart-search-option.is-active {
   background: color-mix(in oklab, var(--accent) 9%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .smart-search-option-kind {
   grid-column: 1;
@@ -776,7 +780,7 @@ main.narrow {
   border-radius: 50%;
   background: var(--ink);
   color: var(--paper);
-  border: none;
+  border: 1px solid transparent;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -798,10 +802,13 @@ main.narrow {
   transform: translateY(0);
 }
 
+/* A transparent outline and border are invisible here but painted in forced colours, where the
+   background and the shadow ring are dropped. */
 .scroll-to-top:hover,
 .scroll-to-top:focus-visible {
   background: var(--accent);
-  outline: none;
+  outline: 2px solid transparent;
+  outline-offset: 3px;
 }
 .scroll-to-top:focus-visible {
   box-shadow:

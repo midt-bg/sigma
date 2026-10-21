@@ -870,3 +870,80 @@ td .chip {
   margin-top: 4px;
   font-weight: 600;
 }
+
+/* ── Forced colours, print and the accessibility widget's colour themes ──────────────────────────
+   Forced colours (Windows High Contrast) repaint text and borders with the system palette and drop
+   backgrounds and shadows; print drops backgrounds by default. A state or a graphic that rests on
+   one of those gets something that survives. */
+@media (forced-colors: active) {
+  /* A transparent border is painted in forced colours, so every link and tab would look current. */
+  .tab-labels label {
+    border-bottom-style: none;
+    padding-bottom: calc(var(--s-2) + 2px);
+  }
+  /* The trigger is a white figure on a red disc; the forced palette paints the disc white. */
+  html .a11y-tools__button {
+    forced-color-adjust: none;
+  }
+  /* Bars, gauges and timeline marks are painted with background colour alone. */
+  .hbar > span,
+  .hbar-legend i,
+  .ebs-meter,
+  .ebs-meter *,
+  .share-bar,
+  .share-bar > i,
+  .time-role,
+  .time-procurement,
+  .time-symbol {
+    forced-color-adjust: none;
+  }
+  .ebs-meter,
+  .share-bar {
+    outline: 1px solid CanvasText;
+  }
+}
+@media (forced-colors: active) and (min-width: 961px) {
+  .site-nav a:not([aria-current='page']) {
+    border-bottom-style: none;
+    padding-bottom: 6px;
+  }
+}
+@media print {
+  .hbar > span,
+  .hbar-legend i,
+  .ebs-meter,
+  .ebs-meter *,
+  .share-bar,
+  .share-bar > i,
+  .time-role,
+  .time-procurement,
+  .time-symbol,
+  .source-cta {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+/* The widget's yellow and blue themes paint every background in the page colour, the trigger's disc
+   too, which leaves its white figure on a pale disc. */
+html.accessibility-yellow .a11y-tools__button,
+html.accessibility-blue .a11y-tools__button {
+  background-color: #000066 !important;
+}
+/* The widget's dark theme recolours HTML with `* { … !important }` but not SVG fills and strokes,
+   which stayed dark ink on its dark grey. The charts draw with the palette variables, so the theme
+   swaps the palette: light ink on the theme's own background, every value at least 3:1 on it. */
+html.accessibility-dark {
+  --paper: #3a3a3a;
+  --paper-warm: #3a3a3a;
+  --paper-deep: #3a3a3a;
+  --ink: #00ffe8;
+  --ink-mid: #8fd9d2;
+  --ink-soft: #b0b0b0;
+  --rule: #8a8a8a;
+  --rule-soft: #6a6a6a;
+  --accent: #ff8a80;
+  --accent-bg: #5a3a3a;
+}
+html.accessibility-dark .flow-svg .link {
+  fill-opacity: 0.45;
+}

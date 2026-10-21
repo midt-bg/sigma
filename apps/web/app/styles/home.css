@@ -134,7 +134,9 @@
 #authority-recent:checked ~ .tab-labels label[for='authority-recent'],
 #authority-top:checked ~ .tab-labels label[for='authority-top'] {
   color: var(--ink);
+  border-bottom-style: solid; /* restores the underline that forced colours remove from the others */
   border-bottom-color: var(--accent);
+  padding-bottom: var(--s-2);
 }
 #so-recent:checked ~ .tab-panel[data-tab='recent'],
 #so-top:checked ~ .tab-panel[data-tab='top'],
