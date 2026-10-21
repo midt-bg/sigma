@@ -20,7 +20,7 @@ import { seoMeta } from '../lib/meta';
 import { personName } from '../lib/person-name';
 import { count, date, plural } from '@sigma/shared';
 import { RegistrySource } from '../components/RegistryRoles';
-import { registryUrl, Section } from '../components/ui';
+import { NewTabLink, registryUrl, Section } from '../components/ui';
 
 // One address for a person. The slug is either the identifier the Trade Register publishes for them (64 hex
 // characters) or the id their declarations resolved to (base64url); both lead to the same profile.
@@ -105,12 +105,7 @@ export default function Person({ loaderData }: Route.ComponentProps) {
             {
               key: 'eik',
               header: 'Партида',
-              cell: (r) => (
-                <a href={registryUrl(r.eik)} target="_blank" rel="noopener noreferrer">
-                  ЕИК {r.eik}
-                  <span className="sr-only"> (в нов раздел)</span>
-                </a>
-              ),
+              cell: (r) => <NewTabLink href={registryUrl(r.eik)}>ЕИК {r.eik}</NewTabLink>,
             },
             { key: 'fetchedAt', header: 'Извлечено на', cell: (r) => date(r.fetchedAt) },
           ]}

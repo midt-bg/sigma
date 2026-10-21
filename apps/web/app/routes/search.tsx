@@ -185,7 +185,10 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                   {g.moreHref && (
                     <>
                       {' '}
-                      · <Link to={g.moreHref}>виж всички</Link>
+                      ·{' '}
+                      <Link to={g.moreHref}>
+                        виж всички<span className="sr-only"> {g.label.toLowerCase()}</span>
+                      </Link>
                     </>
                   )}
                 </span>

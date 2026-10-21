@@ -5,7 +5,7 @@ import { getMethodologyStats, getDb, getPartialStartYear } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { Callout, Flag } from '../components/ui';
+import { Callout, Flag, NewTabLink } from '../components/ui';
 import { cached } from '../lib/cache';
 import { START_YEAR, coverageEndYear } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
@@ -473,13 +473,9 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   </p>
                   <span className="src">
                     →{' '}
-                    <a
-                      href="https://single-market-scoreboard.ec.europa.eu/business-framework-conditions/public-procurement_en"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
+                    <NewTabLink href="https://single-market-scoreboard.ec.europa.eu/business-framework-conditions/public-procurement_en">
                       single-market-scoreboard.ec.europa.eu
-                    </a>
+                    </NewTabLink>
                   </span>
                 </dd>
               </dl>
