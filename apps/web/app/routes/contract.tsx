@@ -16,7 +16,7 @@ import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
-import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
+import { Chip, Flag, Section, ExternalEikLink, NewTabLink } from '../components/ui';
 import { unverifiedValueNote } from '../lib/contractValue';
 import { RiskIndicators } from '../components/RiskIndicators';
 import { annexNeedsExpand, annexParagraphs, annexPreview } from '../lib/annexText';
@@ -188,10 +188,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             // tenderId (preserved on the parent tender as `eop_tender_id`), NOT the noticeId/document
             // number. The portal is a client-rendered SPA, so this is a clickable deep link, not a
             // scrapeable file list.
-            <a
+            <NewTabLink
               className="source-cta"
               href={`https://app.eop.bg/today/${c.eopTenderId}`}
-              target="_blank"
               rel="noopener"
             >
               <svg
@@ -210,7 +209,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <span className="cta-ext" aria-hidden="true">
                 ↗
               </span>
-            </a>
+            </NewTabLink>
           )}
         </PageHeader>
 
@@ -695,9 +694,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   path-safe as-is — do not re-encode. The sub-line shows the same encoded path
                   verbatim so copying the visible text yields a working URL — a decoded literal „/"
                   would 404, the exact bug this PR fixes (review #221). */}
-              <a href={`/contracts/${c.id}.json`} target="_blank" rel="noopener">
+              <NewTabLink href={`/contracts/${c.id}.json`} rel="noopener">
                 JSON запис в СИГМА
-              </a>
+              </NewTabLink>
               <span className="sub">машиночетим, всички полета — /contracts/{c.id}.json</span>
             </li>
           </ul>
@@ -715,9 +714,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   <li key={f.url}>
                     {/* Plain <a> to the public MinIO object — external host, opens in a new tab.
                         download is a hint only (ignored cross-origin), so large files open in-tab. */}
-                    <a href={f.url} target="_blank" rel="noopener" download>
+                    <NewTabLink href={f.url} rel="noopener" download>
                       {f.label} — storage.eop.bg
-                    </a>
+                    </NewTabLink>
                     <span className="sub">пълни данни за деня (JSON)</span>
                   </li>
                 ))}

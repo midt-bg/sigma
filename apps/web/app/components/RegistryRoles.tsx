@@ -4,7 +4,7 @@ import { count, date, pct } from '@sigma/shared';
 import { DataTable, type Column } from './DataTable';
 import { ROLE_LABEL } from '../lib/registry-roles';
 import { roleRowId } from '../lib/profile-navigation';
-import { Chip, OwnershipChip, registryUrl } from './ui';
+import { Chip, NewTabLink, OwnershipChip, registryUrl } from './ui';
 import { personName } from '../lib/person-name';
 
 // The Trade Register's roles as tables (ADR-0039): a company's management and ownership, and a person's roles
@@ -116,10 +116,7 @@ const partidaColumn: Column<PersonRole> = {
   header: 'Партида',
   cell: (r) => (
     <>
-      <a href={registryUrl(r.company.eik)} target="_blank" rel="noopener noreferrer">
-        ЕИК {r.company.eik}
-        <span className="sr-only"> (в нов раздел)</span>
-      </a>
+      <NewTabLink href={registryUrl(r.company.eik)}>ЕИК {r.company.eik}</NewTabLink>
       <div className="small muted">
         Извлечено на {r.fetchedAt ? date(r.fetchedAt) : 'неизвестна дата'}
       </div>
@@ -226,9 +223,7 @@ export function RegistrySource({ asOf, eik }: { asOf?: string | null; eik?: stri
       други публични данни. Справката има информационен характер и не е удостоверителен документ.{' '}
       {eik && (
         <>
-          <a href={registryUrl(eik)} target="_blank" rel="noopener noreferrer">
-            Оригинална партида<span className="sr-only"> (в нов раздел)</span>
-          </a>
+          <NewTabLink href={registryUrl(eik)}>Оригинална партида</NewTabLink>
           {' · '}
         </>
       )}

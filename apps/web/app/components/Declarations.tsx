@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { declarationRowId, revealProfileTarget } from '../lib/profile-navigation';
-import { Chip } from './ui';
+import { Chip, NewTabLink } from './ui';
 import type { PersonDeclaration } from '@sigma/api-contract';
 import { date } from '@sigma/shared';
 import { ROLE_LABEL } from '../lib/registry-roles';
@@ -73,13 +73,9 @@ const columns: Column<PersonDeclaration>[] = [
     isTitle: true,
     cell: (d) => (
       <>
-        <a
-          href={/^https:\/\//.test(d.url) ? d.url : undefined}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
+        <NewTabLink href={/^https:\/\//.test(d.url) ? d.url : undefined}>
           {d.year ? `Година ${d.year}` : 'Отвори декларацията'} ↗
-        </a>
+        </NewTabLink>
         <div className="small muted">{declarationTypeLabel(d)}</div>
         {d.type &&
           ['Initial', 'Entry', 'Inaugural', 'Assume', 'Vacate', 'Final'].includes(d.type) &&

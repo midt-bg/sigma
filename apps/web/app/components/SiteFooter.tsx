@@ -2,6 +2,7 @@ import { Link } from 'react-router';
 import { date } from '@sigma/shared';
 import { DATA_SOURCE_LICENSE } from '../lib/dataSource';
 import { coverageEndYear, coverageRange } from '../lib/coverage';
+import { NewTabLink } from './ui';
 
 // Single mono-caps line: source + coverage window + source and refresh dates.
 export function SiteFooter({
@@ -26,12 +27,7 @@ export function SiteFooter({
         <Link to="/accessibility">Достъпност</Link>
         <Link to="/privacy">Поверителност</Link>
         <Link to="/impressum">Импресум</Link>
-        <a
-          className="repo-link"
-          href="https://github.com/midt-bg/sigma"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
+        <NewTabLink className="repo-link" href="https://github.com/midt-bg/sigma">
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path
               fill="currentColor"
@@ -40,7 +36,7 @@ export function SiteFooter({
             />
           </svg>
           Отворен код
-        </a>
+        </NewTabLink>
       </div>
     </footer>
   );
