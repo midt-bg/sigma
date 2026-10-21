@@ -188,3 +188,27 @@ test('a rebuild-runner deploy writes nothing of the site, and a site deploy noth
   for (const s of siteSteps) assert.match(s.condition, /env\.SIGMA_COMPONENT == 'site'/, s.name);
   assert.match(yaml, /SIGMA_COMPONENT: \$\{\{ inputs\.component \|\| 'site' \}\}/);
 });
+
+test('the deploy hands the secrets only to the steps that call Cloudflare', async () => {
+  const { readFileSync } = await import('node:fs');
+  const yaml = readFileSync('.github/workflows/deploy.yml', 'utf8');
+  const [job, ...blocks] = yaml.slice(yaml.indexOf('\n  deploy:')).split('\n      - ');
+  assert.doesNotMatch(job, /secrets\./, 'no secret in the job env: pnpm install would see it');
+  const steps = blocks.map((block) =>
+    block
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('#'))
+      .join('\n'),
+  );
+  const calls = /wrangler|run deploy|d1-file\.sh|release-schema|ensure-r2|CLOUDFLARE_API_TOKEN/;
+  const salted = /deploy-preflight|SUPPRESSION_SALT/;
+  for (const body of steps) {
+    const name = body.split('\n')[0];
+    const secret = body.match(/\n {8}env: [&*](cloudflare\w*)/)?.[1];
+    if (/pnpm install|pnpm typecheck|must not reuse production/.test(body))
+      assert.equal(secret, undefined, name);
+    else if (salted.test(body)) assert.equal(secret, 'cloudflare_salt', name);
+    else if (calls.test(body)) assert.equal(secret, 'cloudflare', name);
+  }
+  assert.equal(yaml.match(/secrets\.CLOUDFLARE_API_TOKEN/g).length, 2, 'two anchors, no copies');
+});
