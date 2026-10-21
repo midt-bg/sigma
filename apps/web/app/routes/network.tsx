@@ -1,4 +1,4 @@
-import { Form, Link, useNavigation, useSubmit } from 'react-router';
+import { Link, useNavigation } from 'react-router';
 import {
   authorityIdFromSlug,
   bidderIdFromSlug,
@@ -8,22 +8,32 @@ import {
 } from '@sigma/db';
 import type { Route } from './+types/network';
 import { Breadcrumbs } from '../components/Breadcrumbs';
+import { FilterForm } from '../components/FilterForm';
 import { PageHeader } from '../components/PageHeader';
 import { DataTable } from '../components/DataTable';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { networkColumns, networkRows } from '../lib/entity-tables';
 import { Callout, Section } from '../components/ui';
 import { cached } from '../lib/cache';
+import { seoMeta } from '../lib/meta';
 
-export function meta(_: Route.MetaArgs) {
-  return [
-    { title: 'Мрежа на връзките — СИГМА' },
-    {
-      name: 'description',
-      content:
-        'Мрежата от връзки около една институция или фирма: преките контрагенти и техните следващи връзки, които разкриват клъстери. Изцяло върху наличните данни.',
-    },
-  ];
+// The centre is the page's subject: its name goes into the title, and the canonical URL carries the
+// normalised ?center (a:<eik> | c:<slug>) and nothing else.
+export function meta({ data, matches }: Route.MetaArgs) {
+  const center = data?.data.center;
+  return seoMeta({
+    matches,
+    path: center
+      ? `/network?center=${encodeURIComponent(centerToken(center)).replace('%3A', ':')}`
+      : '/network',
+    title: center ? `Мрежа на връзките около ${center.label} — СИГМА` : 'Мрежа на връзките — СИГМА',
+    description:
+      'Мрежата от връзки около една институция или фирма: преките контрагенти и техните следващи връзки, които разкриват клъстери. Изцяло върху наличните данни.',
+  });
+}
+
+function centerToken(center: { kind: string; slug: string }): string {
+  return `${center.kind === 'authority' ? 'a' : 'c'}:${center.slug}`;
 }
 
 export const headers = cached(1800);
@@ -56,11 +66,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 export default function Network({ loaderData }: Route.ComponentProps) {
   const { data } = loaderData;
-  const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
-  const centerValue = data.center
-    ? `${data.center.kind === 'authority' ? 'a' : 'c'}:${data.center.slug}`
-    : '';
+  const centerValue = data.center ? centerToken(data.center) : '';
+  // Most profile pages link here with a centre outside the short picker; a select whose value is not
+  // among its options shows the first one, i.e. another entity. The centre gets its own option.
+  const inPicker = [...data.centerOptions.authorities, ...data.centerOptions.companies].some(
+    (o) => o.value === centerValue,
+  );
 
   // Same rows and columns as the profile pages' network section (entity-tables): one definition, so
   // the endpoints link to their profiles everywhere rather than only where someone remembered to.
@@ -76,15 +88,11 @@ export default function Network({ loaderData }: Route.ComponentProps) {
           lede="Връзките около една институция или фирма: преките ѝ контрагенти и техните следващи връзки. Откроява клъстери, които общата схема на потоците не показва. Това е фокусирана околност, не целият граф."
         />
 
-        <Form
-          method="get"
-          className="flow-controls"
-          aria-label="Избор на център"
-          onChange={(e) => submit(e.currentTarget)}
-        >
+        <FilterForm label="Избор на център" values={{ center: centerValue }}>
           <label>
             Център:
             <select name="center" defaultValue={centerValue}>
+              {data.center && !inPicker && <option value={centerValue}>{data.center.label}</option>}
               <optgroup label="Институции">
                 {data.centerOptions.authorities.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -101,10 +109,7 @@ export default function Network({ loaderData }: Route.ComponentProps) {
               </optgroup>
             </select>
           </label>
-          <noscript>
-            <button type="submit">Покажи</button>
-          </noscript>
-        </Form>
+        </FilterForm>
 
         <p className="sr-only" role="status">
           {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}

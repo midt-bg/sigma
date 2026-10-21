@@ -1,25 +1,26 @@
-import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
+import { useNavigation, useSearchParams } from 'react-router';
 import type { TrendYear } from '@sigma/api-contract';
 import { count, money, pct, signedPct } from '@sigma/shared';
 import { getSpendingTrend, getDb } from '@sigma/db';
 import type { Route } from './+types/trends';
 import { Breadcrumbs } from '../components/Breadcrumbs';
+import { FilterForm, FundingSelect } from '../components/FilterForm';
 import { PageHeader } from '../components/PageHeader';
 import { DataTable, type Column } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
 import { Callout, Section } from '../components/ui';
 import { cached } from '../lib/cache';
+import { seoMeta } from '../lib/meta';
 import { singleSelectFilters } from '../lib/filters';
 
-export function meta(_: Route.MetaArgs) {
-  return [
-    { title: 'Тренд във времето — СИГМА' },
-    {
-      name: 'description',
-      content:
-        'Как се движат разходите за обществени поръчки във времето, по месеци и години, със сезонните пикове. Изцяло върху наличните данни.',
-    },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return seoMeta({
+    matches,
+    path: '/trends',
+    title: 'Тренд във времето — СИГМА',
+    description:
+      'Как се движат разходите за обществени поръчки във времето, по месеци и години, със сезонните пикове. Изцяло върху наличните данни.',
+  });
 }
 
 // Aggregates over the whole corpus that change only with a data refresh (every 6 h): a cold miss costs
@@ -38,7 +39,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export default function Trends({ loaderData }: Route.ComponentProps) {
   const { data, unknownSector } = loaderData;
   const [sp] = useSearchParams();
-  const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
   const sel = (k: string) => sp.get(k) ?? '';
 
@@ -74,11 +74,13 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
           lede="Как се движат разходите за обществени поръчки през годините. Месечната графика показва обема и типичните пикове в края на годината. Договорите без валидна дата на сключване не влизат в графиката."
         />
 
-        <Form
-          method="get"
-          className="flow-controls"
-          aria-label="Филтри на тренда"
-          onChange={(e) => submit(e.currentTarget)}
+        <FilterForm
+          label="Филтри на тренда"
+          values={{
+            g: sel('g'),
+            sector: unknownSector ? '' : sel('sector'),
+            funding: sel('funding'),
+          }}
         >
           <label>
             Стъпка:
@@ -98,18 +100,8 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
               ))}
             </select>
           </label>
-          <label>
-            Финансиране:
-            <select name="funding" defaultValue={sel('funding')}>
-              <option value="">Всякакво</option>
-              <option value="eu">Само с финансиране от ЕС</option>
-              <option value="national">Само без финансиране от ЕС</option>
-            </select>
-          </label>
-          <noscript>
-            <button type="submit">Покажи</button>
-          </noscript>
-        </Form>
+          <FundingSelect value={sel('funding')} />
+        </FilterForm>
 
         <p className="sr-only" role="status">
           {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
