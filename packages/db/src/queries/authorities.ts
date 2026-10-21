@@ -9,6 +9,7 @@ import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
+import { NAME_KEY, withNameKey } from './name-sort';
 import { toAuthorityListItem, typeLabel, type AuthorityTotalsRow } from './rows';
 import { searchMatchQuery } from './search';
 
@@ -41,7 +42,7 @@ const SORTS: Record<AuthoritySort, { col: string; dir: 'asc' | 'desc' }> = looku
   spent: { col: 'spent_eur', dir: 'desc' },
   count: { col: 'contracts', dir: 'desc' },
   avg: { col: 'avg_eur', dir: 'desc' },
-  name: { col: 'name', dir: 'asc' },
+  name: { col: NAME_KEY, dir: 'asc' }, // Bulgarian order, quotes ignored (name-sort.ts)
 });
 
 // Collapse an untrusted ?sort value to a known key before it reaches any cache key. See
@@ -141,7 +142,8 @@ export async function listAuthorities(
   });
   const conds = [ew.sql, ks.whereSql].filter(Boolean).join(' AND ');
 
-  const sql = `SELECT ${COLS}, ${sort.col} AS sort_value FROM ${src.from}${conds ? ' WHERE ' + conds : ''} ${ks.orderSql} LIMIT ?`;
+  const from = sort.col === NAME_KEY ? withNameKey(src.from) : src.from;
+  const sql = `SELECT ${COLS}, ${sort.col} AS sort_value FROM ${from}${conds ? ' WHERE ' + conds : ''} ${ks.orderSql} LIMIT ?`;
   const [pageRows, totalRow] = await Promise.all([
     db
       .prepare(sql)
