@@ -470,6 +470,10 @@ td .chip {
   border: 1px solid #b8b3aa;
   cursor: pointer;
 }
+.person-time-controls button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .person-time-controls button:focus-visible {
   outline: 2px solid #b71916;
   outline-offset: 2px;
@@ -799,7 +803,6 @@ td .chip {
   padding: 12px 14px;
   font-size: 0.8125rem;
   line-height: 1.45;
-  pointer-events: none;
 }
 .time-tip > * {
   display: block;

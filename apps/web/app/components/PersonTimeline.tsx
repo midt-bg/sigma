@@ -58,24 +58,62 @@ export function PersonTimeline({
   const scroll = useRef<HTMLDivElement>(null);
   const [scrollable, setScrollable] = useState(false);
   const [tip, setTip] = useState<TimelineTip | null>(null);
+  // Where the canvas is scrolled: the buttons are disabled at its ends, and the label names the years
+  // in view out of the whole range.
+  const [view, setView] = useState<TimelineView>({ atStart: false, atEnd: true, seen: '' });
   const intervals = p.timelineIntervals ?? null;
   const hasDeclarations = p.declarations.length > 0;
+  const updateView = () => {
+    const el = scroll.current;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    // The year axis starts after the row labels, which may stay in place while the canvas scrolls.
+    const from = Math.max(
+      box.left,
+      el.querySelector('.person-time-label')?.getBoundingClientRect().right ?? 0,
+    );
+    const seen = [...el.querySelectorAll('.person-time-year')]
+      .filter((y) => {
+        const r = y.getBoundingClientRect();
+        const centre = r.left + r.width / 2;
+        return centre >= from && centre <= box.right;
+      })
+      .map((y) => y.textContent);
+    setView({
+      atStart: el.scrollLeft <= 1,
+      atEnd: el.scrollLeft + el.clientWidth >= el.scrollWidth - 1,
+      seen: seen.length ? `${seen[0]}–${seen.at(-1)}` : '',
+    });
+  };
   useEffect(() => {
     const el = scroll.current;
     if (!el) return;
-    const update = () => setScrollable(el.scrollWidth > el.clientWidth + 1);
-    update();
+    const update = () => {
+      setScrollable(el.scrollWidth > el.clientWidth + 1);
+      updateView();
+    };
     el.scrollLeft = el.scrollWidth;
+    update();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
+    // updateView reads the DOM only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.name, years.length]);
+  // The tip is dismissed with Esc (WCAG 1.4.13): it can cover the neighbouring marks.
+  const hideTimer = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (!tip) return;
     const hide = () => setTip(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && hide();
     window.addEventListener('scroll', hide, { passive: true });
-    return () => window.removeEventListener('scroll', hide);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('scroll', hide);
+      document.removeEventListener('keydown', onKey);
+      window.clearTimeout(hideTimer.current);
+    };
   }, [tip]);
   if (!years.length && !companies.length) return null;
   const heldSeats = companies.some((c) => c.heldSeat);
@@ -92,6 +130,7 @@ export function PersonTimeline({
   // under the pointer on a long span and under the element on focus. It repeats for the eye what each
   // mark's own label already says to a screen reader; decorative spans are for the pointer only.
   const showTip = (el: Element, content: ReactNode, pointerX?: number) => {
+    window.clearTimeout(hideTimer.current);
     const box = el.getBoundingClientRect();
     const anchor = pointerX ?? box.left + box.width / 2;
     const left = Math.max(12, Math.min(anchor - 150, window.innerWidth - 312));
@@ -102,10 +141,15 @@ export function PersonTimeline({
     );
   };
   const hideTip = () => setTip(null);
+  // Leaving a mark gives the pointer a moment to reach the tip, which then stays while it is over it.
+  const hideTipSoon = () => {
+    window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(hideTip, 300);
+  };
   const tipProps = (content: () => ReactNode, focusable = true) => ({
     onMouseEnter: (event: ReactMouseEvent<HTMLElement>) =>
       showTip(event.currentTarget, content(), event.clientX),
-    onMouseLeave: hideTip,
+    onMouseLeave: hideTipSoon,
     ...(focusable
       ? {
           onFocus: (event: ReactFocusEvent<HTMLElement>) => showTip(event.currentTarget, content()),
@@ -355,11 +399,13 @@ export function PersonTimeline({
       {scrollable && (
         <div className="person-time-controls">
           <span>
+            {view.seen && view.seen !== `${years[0]}–${years.at(-1)}` && `${view.seen} от `}
             {years[0]}–{years.at(-1)}
           </span>
           <button
             type="button"
             aria-controls="person-time-canvas"
+            disabled={view.atStart}
             onClick={() =>
               scroll.current?.scrollBy({ left: -Math.max(180, scroll.current.clientWidth - 190) })
             }
@@ -369,6 +415,7 @@ export function PersonTimeline({
           <button
             type="button"
             aria-controls="person-time-canvas"
+            disabled={view.atEnd}
             onClick={() =>
               scroll.current?.scrollBy({ left: Math.max(180, scroll.current.clientWidth - 190) })
             }
@@ -384,7 +431,10 @@ export function PersonTimeline({
         role="region"
         aria-label="Обща времева линия, превъртай хоризонтално при нужда"
         tabIndex={0}
-        onScroll={hideTip}
+        onScroll={() => {
+          hideTip();
+          updateView();
+        }}
       >
         <div
           className="person-time"
@@ -740,6 +790,8 @@ export function PersonTimeline({
           className="help-popover time-tip"
           aria-hidden="true"
           style={{ left: tip.left, top: tip.top, bottom: tip.bottom }}
+          onMouseEnter={() => window.clearTimeout(hideTimer.current)}
+          onMouseLeave={hideTip}
         >
           {tip.content}
         </div>
@@ -758,6 +810,11 @@ export function PersonTimeline({
 }
 
 type ProcurementKind = 'tied' | 'announced' | 'context';
+interface TimelineView {
+  atStart: boolean;
+  atEnd: boolean;
+  seen: string;
+}
 interface TimelineTip {
   content: ReactNode;
   left: number;
