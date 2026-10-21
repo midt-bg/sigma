@@ -60,24 +60,6 @@
   .net-legend {
     display: none;
   }
-  /* Stack the filter controls into a clean vertical list on phones. The right edge stays clear of
-     the two floating buttons (accessibility, back to top), which otherwise sit on the selects at
-     first paint on 320–360 px screens. */
-  .flow-controls {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--s-3);
-    padding-right: 60px;
-  }
-  .flow-controls label {
-    justify-content: space-between;
-    width: 100%;
-  }
-  .flow-controls select {
-    flex: 0 0 auto;
-    min-width: 0;
-    max-width: 60%;
-  }
 }
 .flow-svg .node {
   fill: var(--ink);
@@ -142,8 +124,13 @@
   display: flex;
   gap: 6px;
   align-items: center;
+  max-width: 100%;
 }
+/* A select is as wide as its longest option (a CPV sector name runs to ~80 characters): let it shrink
+   to the column instead of pushing the page sideways. */
 .flow-controls select {
+  min-width: 0;
+  max-width: 100%;
   padding: 4px var(--s-2);
   font: 0.75rem var(--font-mono);
   border: 1px solid var(--ink-soft); /* a control boundary needs 3:1 (WCAG 1.4.11) */
@@ -151,6 +138,25 @@
   color: var(--ink);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+@media (max-width: 600px) {
+  /* Stack the filter controls into a clean vertical list on phones (after the base rules above, so
+     that it wins over them). The right edge stays clear of the two floating buttons (accessibility,
+     back to top), which otherwise sit on the selects at first paint on 320–360 px screens. */
+  .flow-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-3);
+    padding-right: 60px;
+  }
+  .flow-controls label {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .flow-controls select {
+    flex: 0 0 auto;
+    max-width: 60%;
+  }
 }
 .flow-controls .toggle {
   display: flex;
