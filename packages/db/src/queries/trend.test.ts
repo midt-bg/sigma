@@ -12,7 +12,7 @@ const SERIES = [
   { period: '2022-03', value_eur: 3000, contracts: 30 }, // gap at 2022-02
   { period: '2023-01', value_eur: 5000, contracts: 50 },
 ];
-const COVERAGE = { dated: 80, total: 100 };
+const COVERAGE = { dated: 80, total: 100, omitted: 20, omitted_eur: 700 };
 
 /** Which scoped fixture a call wants is in its bound arguments, not its SQL. */
 const scopedBy = <T>(binds: unknown[], authority: T, bidder: T, national: T): T =>
@@ -131,7 +131,7 @@ describe('getSpendingTrend', () => {
 
   it('reports coverage of contracts with a usable signing date', async () => {
     const { coverage, totalValueEur } = await getSpendingTrend(fake().db, {});
-    expect(coverage).toEqual({ dated: 80, total: 100, pct: 0.8 });
+    expect(coverage).toEqual({ dated: 80, total: 100, pct: 0.8, omitted: 20, omittedEur: 700 });
     expect(totalValueEur).toBe(9000); // 1000 + 3000 + 5000
   });
 
@@ -218,7 +218,26 @@ describe('getSpendingTrend — zero-spend prior year and empty coverage', () => 
     const byYear = new Map(years.map((y) => [y.year, y]));
     expect(byYear.get('2023')).toMatchObject({ valueEur: 0, yoyPct: -1 }); // (0 - 1000)/1000
     expect(byYear.get('2024')!.yoyPct).toBeNull(); // prev year is 0 → guarded
-    expect(coverage).toEqual({ dated: 0, total: 0, pct: 0 }); // total 0 → pct 0, no divide-by-zero
+    expect(coverage).toEqual({ dated: 0, total: 0, pct: 0, omitted: 0, omittedEur: 0 }); // total 0 → pct 0
+  });
+
+  it('gives no YoY over a sub-euro year that reads „0 €“', async () => {
+    const custom = fakeD1([
+      {
+        when: 'GROUP BY period',
+        all: [
+          { period: '2022', value_eur: 0.4, contracts: 1 },
+          { period: '2023', value_eur: 0, contracts: 0 },
+          { period: '2024', value_eur: 5000, contracts: 2 },
+        ],
+      },
+      { when: 'COUNT(*) AS total', first: null },
+      { when: 'SELECT as_of FROM home_totals', first: { as_of: null } },
+      { when: "facet = 'year'", all: [] },
+      { when: 'FROM sector_totals', all: [] },
+    ]);
+    const { years } = await getSpendingTrend(custom.db, { granularity: 'year' });
+    expect(years.map((y) => y.yoyPct)).toEqual([null, null, null]);
   });
 });
 
@@ -258,6 +277,6 @@ describe('getSpendingTrend — funding scope, sectors toggle, empty inputs', () 
     ]);
     const data = await getSpendingTrend(empty.db, {});
     expect(data.points).toEqual([]);
-    expect(data.coverage).toEqual({ dated: 0, total: 0, pct: 0 });
+    expect(data.coverage).toEqual({ dated: 0, total: 0, pct: 0, omitted: 0, omittedEur: 0 });
   });
 });
