@@ -580,8 +580,11 @@ details.row .body .signal .why {
   margin: var(--s-2) 0 var(--s-3);
   border-bottom: 1px solid var(--rule-soft);
 }
-.lens-chart .trend-svg {
-  max-height: 150px;
+/* 150 px high at the chart's 788 × 240 aspect ratio: cap the width, so the words laid over the
+   drawing stay on it. */
+.lens-chart .trend-chart {
+  max-width: 492px;
+  margin-inline: auto;
 }
 .lens-map {
   margin: var(--s-2) auto var(--s-3);

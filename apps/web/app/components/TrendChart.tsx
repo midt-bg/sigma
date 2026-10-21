@@ -1,9 +1,12 @@
 import type { TrendPoint } from '@sigma/api-contract';
+import { money, monthYear } from '@sigma/shared';
 
 // Server-rendered area + line of spend over time (no chart JS, like SankeyDiagram). The accessible
-// data is the per-year table beside it; this SVG is a visual summary (role="img" + aria-label) with
-// year labels on the x-axis. Single oklch series matching the palette.
-const PAD_B = 22; // room under the line for year labels
+// data is the per-year table beside it; this SVG is a visual summary (role="img" + aria-label).
+// Single oklch series matching the palette. The words — the year axis and the „частично" notes —
+// are HTML laid over the picture, not SVG text: SVG text shrinks with the drawing (to 4–7 px on a
+// phone) and does not grow with zoom or a larger default font, HTML text in rem does both.
+const PAD_B = 6;
 const PAD_T = 28;
 
 export function TrendChart({
@@ -51,58 +54,79 @@ export function TrendChart({
     .map((p, i) => ({ i, year: p.period.slice(0, 4) }))
     .filter((t, idx) => granularity === 'year' || points[idx]!.period.endsWith('-01'));
 
+  // A monthly series has no table of its own (the tables are per year), so its peak month is named
+  // in words, both on screen and in the picture's accessible name.
+  const peak = points.reduce((a, b) => (b.valueEur > a.valueEur ? b : a));
+  const peakText =
+    granularity === 'month' && peak.valueEur > 0
+      ? `Най-висок месец: ${monthYear(peak.period)} — ${money(peak.valueEur)}`
+      : null;
   // viewBox carries 14px of horizontal bleed on each side so the first and last year labels, which are
-  // centred on the edge ticks, are not clipped.
+  // centred on the edge ticks, are not clipped. The HTML labels are placed in percent of that box.
+  const left = (i: number) => `${(((x(i) + 14) / (W + 28)) * 100).toFixed(2)}%`;
+  const top = (i: number) => `${((y(points[i]!.valueEur) / H) * 100).toFixed(2)}%`;
   return (
-    <svg
-      className="trend-svg"
-      viewBox={`-14 0 ${W + 28} ${H}`}
-      role="img"
-      aria-label="Разходи за обществени поръчки във времето"
-    >
-      {ticks.map((t) => (
-        <line key={`g${t.i}`} x1={x(t.i)} y1={PAD_T} x2={x(t.i)} y2={H - PAD_B} className="grid" />
-      ))}
-      {hasSolid && <path className="area" d={area} />}
-      {hasSolid && <path className="line" d={line} />}
-      {hasHead && (
-        <>
-          <path className="line-partial" d={headDashed} />
-          <circle className="dot-partial" cx={x(0)} cy={y(points[0]!.valueEur)} r={3} />
-          <text
-            className="label-partial"
-            x={x(0)}
-            y={y(points[0]!.valueEur) - 7}
-            textAnchor="start"
+    <figure className="trend-chart">
+      {peakText && <figcaption className="trend-peak">{peakText}</figcaption>}
+      <div className="trend-plot">
+        <svg
+          className="trend-svg"
+          viewBox={`-14 0 ${W + 28} ${H}`}
+          role="img"
+          aria-label={`Разходи за обществени поръчки във времето${peakText ? `. ${peakText}` : ''}`}
+        >
+          {ticks.map((t) => (
+            <line
+              key={`g${t.i}`}
+              x1={x(t.i)}
+              y1={PAD_T}
+              x2={x(t.i)}
+              y2={H - PAD_B}
+              className="grid"
+            />
+          ))}
+          {hasSolid && <path className="area" d={area} />}
+          {hasSolid && <path className="line" d={line} />}
+          {hasHead && (
+            <>
+              <path className="line-partial" d={headDashed} />
+              <circle className="dot-partial" cx={x(0)} cy={y(points[0]!.valueEur)} r={3} />
+            </>
+          )}
+          {hasPartial && (
+            <>
+              <path className="line-partial" d={dashed} />
+              <circle
+                className="dot-partial"
+                cx={x(partialIdx)}
+                cy={y(points[partialIdx]!.valueEur)}
+                r={3}
+              />
+            </>
+          )}
+        </svg>
+        {hasHead && (
+          <span className="label-partial" aria-hidden="true" style={{ left: left(0), top: top(0) }}>
+            частично
+          </span>
+        )}
+        {hasPartial && (
+          <span
+            className="label-partial is-end"
+            aria-hidden="true"
+            style={{ left: left(partialIdx), top: top(partialIdx) }}
           >
             частично
-          </text>
-        </>
-      )}
-      {hasPartial && (
-        <>
-          <path className="line-partial" d={dashed} />
-          <circle
-            className="dot-partial"
-            cx={x(partialIdx)}
-            cy={y(points[partialIdx]!.valueEur)}
-            r={3}
-          />
-          <text
-            className="label-partial"
-            x={x(partialIdx)}
-            y={y(points[partialIdx]!.valueEur) - 7}
-            textAnchor="end"
-          >
-            частично
-          </text>
-        </>
-      )}
-      {ticks.map((t) => (
-        <text key={`t${t.i}`} x={x(t.i)} y={H - 6} textAnchor="middle" className="label">
-          {t.year}
-        </text>
-      ))}
-    </svg>
+          </span>
+        )}
+      </div>
+      <div className="trend-axis" aria-hidden="true">
+        {ticks.map((t) => (
+          <span key={`t${t.i}`} className="label" style={{ left: left(t.i) }}>
+            {t.year}
+          </span>
+        ))}
+      </div>
+    </figure>
   );
 }
