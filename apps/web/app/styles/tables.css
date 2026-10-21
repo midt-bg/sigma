@@ -5,6 +5,9 @@
 
 /* Fin treatment */
 .table-wrap {
+  /* Positioned, so that an absolutely positioned descendant (a screen-reader-only hint in a cell)
+     is clipped by this scroll box and does not widen the page. */
+  position: relative;
   overflow: auto;
   border-top: 1px solid var(--ink);
   border-bottom: 1px solid var(--ink);
@@ -190,6 +193,29 @@ td.rank {
 /* Secondary columns stay at every width: between 601 and 760 px (a 1440 px window at 200 % zoom,
    an A4 printout) hiding them dropped the date, the procedure and the basis of a link; the table
    wrapper scrolls instead, and at 600 px and below each is a labelled line of its card. */
+/* Tablets and narrow laptop windows (the page gutter is wide from 760 px, the filter rail takes a
+   column from 961 px): a list must fit its box, or the value column is cut and „1,31 млрд." reads
+   „1,31 м". Headers may wrap, cells are a little tighter, and a long word in a text cell (a name, a
+   subject) breaks — at a syllable where it can — instead of setting the table's minimum width. The
+   rank and the numbers stay whole; a chip breaks only between its words. */
+@media (min-width: 601px) and (max-width: 1279px) {
+  .tbl-cards thead th,
+  .tbl-cards thead th.num {
+    white-space: normal;
+  }
+  .tbl-cards thead th,
+  .tbl-cards tbody td {
+    padding-right: 10px;
+  }
+  .tbl-cards tbody td:not(.num):not(.money):not(.cell-rank) {
+    overflow-wrap: anywhere;
+    hyphens: auto;
+  }
+  .tbl-cards td .chip {
+    overflow-wrap: normal;
+    hyphens: manual;
+  }
+}
 @media (max-width: 600px) {
   table {
     font-size: 0.75rem;
@@ -392,8 +418,23 @@ td.rank {
     text-transform: uppercase;
     color: var(--ink-soft);
   }
+  /* Flush with the other rows: the table's first-column indent does not apply to a card. */
   .tbl-prose td:first-child {
+    padding-left: 0;
     font-weight: 600;
+  }
+}
+
+/* A ranking with a share bar (/competition) keeps every column on a tablet: the bar narrows and its
+   percentage drops under it, so the row fits the box and the value column stays in view. */
+@media (min-width: 601px) and (max-width: 960px) {
+  .tbl-cards .share {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 4px;
+  }
+  .tbl-cards .share-bar {
+    width: 48px;
   }
 }
 

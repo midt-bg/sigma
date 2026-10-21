@@ -90,7 +90,10 @@ export function PersonTimeline({
       setScrollable(el.scrollWidth > el.clientWidth + 1);
       updateView(el);
     };
-    el.scrollLeft = el.scrollWidth;
+    // Open on the latest years only where the row labels stay pinned beside them (wider than 600 px,
+    // styles/consistency.css). On a phone the labels scroll with the strips, so the end would show
+    // marks without a word of whose they are — start at the labels instead.
+    if (window.matchMedia?.('(min-width: 601px)').matches) el.scrollLeft = el.scrollWidth;
     update();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(update);

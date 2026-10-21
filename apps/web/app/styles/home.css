@@ -62,14 +62,15 @@
   background: var(--rule-soft);
   border-bottom-color: var(--ink-soft);
 }
+/* The name is the only label of a bar and several begin with the same words, so it wraps rather than
+   being cut with „…". */
 .rb-name {
   position: relative;
   z-index: 1;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  hyphens: auto;
 }
 .ranked-bars a:hover .rb-name {
   text-decoration: underline;

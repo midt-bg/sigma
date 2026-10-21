@@ -198,12 +198,12 @@ describe('PersonProfile', () => {
     const graph = section('network')!;
     expect(graph.querySelector('svg a[href="/companies/111111111"]')).not.toBeNull();
     // The graph's accessible twin states the same tie as a table row.
-    expect(graph.querySelector('.sr-only caption')!.textContent).toBe('Дружества на лицето');
+    expect(graph.querySelector('.tie-table caption')!.textContent).toBe('Дружества на лицето');
     expect(
-      [...graph.querySelectorAll('.sr-only tbody tr')].map((r) =>
+      [...graph.querySelectorAll('.tie-table tbody tr')].map((r) =>
         [...r.querySelectorAll('td')].map((td) => td.textContent),
       ),
-    ).toEqual([['Анна Петрова', 'управител', 'АЛФА ООД', '']]);
+    ).toEqual([['Анна Петрова', 'управител', 'АЛФА ООД', '—']]);
     expect(graph.textContent).not.toContain('извън схемата');
 
     expect(section('roles')!.querySelector('a[href="/companies/111111111"]')!.textContent).toBe(

@@ -132,7 +132,11 @@ describe('/network graph', () => {
       edges: [{ from: 'auth:000000001', to: 'eik:222222222', valueEur: 10, contracts: 1 }],
     });
     expect(container.querySelector('#graph')).not.toBeNull();
-    expect(container.textContent).toContain('Връзки в графа');
+    // On a phone the graph section is hidden whole; the table's heading does not name the graph.
+    expect(container.querySelector('#graph')!.closest('section')!.classList).toContain(
+      'diagram-only',
+    );
+    expect(container.textContent).toContain('Списък на връзките');
     expect(container.textContent).not.toContain('Няма достатъчно връзки');
   });
 

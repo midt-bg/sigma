@@ -318,7 +318,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           {tieLayout ? (
             <>
               <TieGraph layout={tieLayout} />
-              <div className="sr-only">
+              <div className="tie-table">
                 <DataTable
                   columns={tieColumns}
                   rows={tieRows(ties)}
@@ -339,6 +339,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
         >
           <div className="table-wrap tbl-cards">
             <table>
+              <caption className="sr-only">Топ изпълнители</caption>
               <thead>
                 <tr>
                   <th scope="col">#</th>

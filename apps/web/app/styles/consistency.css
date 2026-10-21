@@ -25,6 +25,18 @@
   text-wrap: pretty;
   max-width: 100%;
 }
+/* On a phone a long upper-case word („ИНФРАСТРУКТУРА") is wider than the column at 36 px and was cut
+   anywhere, leaving a letter alone on a line: the title scales down with the screen, and a word that
+   still does not fit breaks at a syllable with a hyphen. Card titles too. */
+@media (max-width: 600px) {
+  .page-header h1:not(.t-md):not(.t-sm) {
+    font-size: clamp(1.75rem, 9vw, 2.25rem);
+  }
+  .page-header h1,
+  .tbl-cards td.cell-title {
+    hyphens: auto;
+  }
+}
 .cc-interest {
   gap: var(--s-3);
   margin-bottom: var(--s-4);
@@ -949,4 +961,40 @@ html.accessibility-dark {
 }
 html.accessibility-dark .flow-svg .link {
   fill-opacity: 0.45;
+}
+
+/* Print: the page, not the screen controls. The floating accessibility button printed over the first
+   paragraph, and the menu, search, scroll hints and the scroll-to-top button mean nothing on paper. */
+@media print {
+  .site-nav,
+  .site-actions,
+  .nav-backdrop,
+  .search-drawer,
+  .skip,
+  .smart-search-form,
+  .flow-scroll-hint,
+  .filter-rail-summary,
+  .filter-rail-toggle,
+  .scroll-to-top,
+  .accessibility-controls {
+    display: none !important;
+  }
+  .site-footer {
+    padding-bottom: 0;
+  }
+  /* Text and rules in ink, without the warm paper tint the printer would otherwise drop unevenly. */
+  body {
+    background: #fff;
+    color: #000;
+  }
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+  }
+  tr,
+  .tile,
+  .callout {
+    break-inside: avoid;
+  }
 }

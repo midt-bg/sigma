@@ -119,6 +119,7 @@ export default function Network({ loaderData }: Route.ComponentProps) {
           <>
             <Section
               id="graph"
+              className="diagram-only"
               title={
                 <>
                   Връзки около <em>{data.center.label}</em>
@@ -129,12 +130,12 @@ export default function Network({ loaderData }: Route.ComponentProps) {
               <NetworkGraph data={data} />
             </Section>
 
-            <Section id="links" title="Връзки в графа">
+            <Section id="links" title="Списък на връзките">
               <DataTable
                 columns={networkColumns}
                 rows={rows}
                 getKey={(r) => `${r.from}-${r.to}`}
-                caption="Връзки в графа"
+                caption="Списък на връзките"
               />
             </Section>
           </>

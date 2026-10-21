@@ -275,6 +275,9 @@ describe('/authorities/:eik — the profile', () => {
     expect(section('what')!.textContent).toContain('… още CPV категории');
     expect(section('top-contractors')!.textContent).toContain('обединение');
     expect(section('top-contractors')!.textContent).toContain('още 5 изпълнители');
+    expect(section('top-contractors')!.querySelector('caption')?.textContent).toBe(
+      'Топ изпълнители',
+    );
     expect(section('network')!.querySelector('svg')).not.toBeNull();
   });
 

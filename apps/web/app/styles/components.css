@@ -8,6 +8,8 @@
 .facts .row {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) 1.6fr;
+  /* The small mono label sits on the value's baseline, not ~3 px above it. */
+  align-items: baseline;
   gap: var(--s-4);
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--rule-soft);
@@ -483,9 +485,10 @@ tbody td,
     grid-template-columns: 1fr 1fr;
   }
   /* The figure does not wrap, so on the narrowest phones it stops growing with enlarged text
-     instead of pushing the page sideways. */
+     instead of pushing the page sideways, and below 400 px it shrinks with the screen so that
+     „55,7 млрд. €" stays inside a 320 px half-cell. */
   .totals .num {
-    font-size: min(1.5rem, 7.5vw);
+    font-size: min(1.5rem, 6vw);
   }
 }
 
