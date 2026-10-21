@@ -5,6 +5,9 @@
 
 /* Fin treatment */
 .table-wrap {
+  /* Positioned, so that an absolutely positioned descendant (a screen-reader-only hint in a cell)
+     is clipped by this scroll box and does not widen the page. */
+  position: relative;
   overflow: auto;
   border-top: 1px solid var(--ink);
   border-bottom: 1px solid var(--ink);
