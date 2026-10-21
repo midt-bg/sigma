@@ -20,6 +20,7 @@ import { ErrorPage } from './components/ErrorPage';
 import { getCoverageMeta } from './lib/coverage';
 import { serializeJsonForScript } from './lib/json-ld';
 import { canonicalPathname } from './lib/canonical-path';
+import { sigmaVersion } from './lib/meta';
 import { withDbRetry } from './lib/retry';
 import { useRouteFocus } from './lib/route-focus';
 import stylesheet from './app.css?url';
@@ -107,6 +108,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta property="og:type" content="website" />
         <meta property="og:site_name" content="СИГМА" />
         <meta property="og:locale" content="bg_BG" />
+        {sigmaVersion() && <meta name="sigma-version" content={sigmaVersion()} />}
         {imageUrl && (
           <>
             <meta property="og:image" content={imageUrl} />
