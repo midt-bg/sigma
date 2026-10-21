@@ -77,10 +77,10 @@ describe('/methodology', () => {
     );
   });
 
-  it('cites the edition of the merger guidelines its concentration mark comes from', () => {
+  it('cites the edition of the merger guidelines and writes thresholds with a decimal comma', () => {
     const t = text();
     expect(t).toContain('2010');
-    expect(t).not.toContain('0.25');
+    expect(t).not.toMatch(/0\.25|1\.2 ×/);
   });
 
   it('reads the live figures and the partial first year, and says both years are partial', async () => {
