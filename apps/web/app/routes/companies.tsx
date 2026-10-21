@@ -1,6 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, money, moneyBare, parseConsortiumMembers, plural } from '@sigma/shared';
-import { getCompanyFacets, listCompanies, getDb } from '@sigma/db';
+import { getCompanyFacets, listCompanies, getDb, normalizeCompanySort } from '@sigma/db';
 import type { CompanyListItem } from '@sigma/api-contract';
 import type { Route } from './+types/companies';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -71,7 +71,7 @@ function subtitle(c: CompanyListItem) {
 export default function Companies({ loaderData }: Route.ComponentProps) {
   const { page, facets, coverage } = loaderData;
   const [sp] = useSearchParams();
-  const sort = sp.get('sort') ?? 'won';
+  const sort = normalizeCompanySort(sp.get('sort'));
   const nav = pageNav({
     base: sp,
     total: page.total,

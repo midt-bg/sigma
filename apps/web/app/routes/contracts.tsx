@@ -1,6 +1,12 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, date, money, moneyBare, plural } from '@sigma/shared';
-import { contractsSummary, getContractFacets, listContracts, getDb } from '@sigma/db';
+import {
+  contractsSummary,
+  getContractFacets,
+  listContracts,
+  getDb,
+  normalizeContractSort,
+} from '@sigma/db';
 import type { Route } from './+types/contracts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -67,7 +73,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export default function Contracts({ loaderData }: Route.ComponentProps) {
   const { result, facets } = loaderData;
   const [sp] = useSearchParams();
-  const sort = sp.get('sort') ?? 'value-desc';
+  const sort = normalizeContractSort(sp.get('sort'));
   const nav = pageNav({
     base: sp,
     total: result.total,
