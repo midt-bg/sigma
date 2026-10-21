@@ -1,4 +1,11 @@
 /**
+ * Vendored from the ИО АД accessibility toolbar v1.0.2, with local accessibility fixes (see
+ * docs/accessibility.md, „Вградена приставка за достъпност"): one trigger button with aria-expanded
+ * opens the panel (Esc or leaving it closes it), the closed panel is out of the tab order, the toggles
+ * report aria-pressed, the theme buttons' names contain their visible „C", both navs are named in the
+ * page language, the click handlers sit on the buttons, and a skip link focuses its target without
+ * making it a tab stop or scrolling it to the middle.
+ *
  * @param {object} opts - options object
  * opts.parentSelector - selector to get parent to inject tool into
  *
@@ -105,6 +112,7 @@ const accessibility = async (opts) => {
     html.classList.toggle('font-resize');
     body.classList.toggle('font-resize');
     localStorage.setItem('accesibility.fontSize', Number(body.classList.contains('font-resize')));
+    syncPressed();
     document.querySelector('.a11y__item--increase').querySelector('span').textContent =
       body.classList.contains('font-resize')
         ? translations[lng]?.fontDown
@@ -118,6 +126,7 @@ const accessibility = async (opts) => {
       'accesibility.dyslectic',
       Number(body.classList.contains('dyslectic-font')),
     );
+    syncPressed();
   };
 
   const themeChange = (theme) => {
@@ -127,6 +136,7 @@ const accessibility = async (opts) => {
     if (theme) {
       html.classList.add('accessibility-' + theme);
     }
+    syncPressed();
   };
   let textOnly = { v: 0 };
   const textVersion = () => {
@@ -148,7 +158,27 @@ const accessibility = async (opts) => {
       hideSelectorsElements.map((e) => (e.style.display = ''));
       textVersionOffCallbacks.filter((cb) => typeof cb === 'function').map((cb) => cb());
     }
+    syncPressed();
   };
+
+  // aria-pressed mirrors what is on: the active theme (none = the original) and the on/off toggles.
+  // The font-size button is left out — its label already flips between „увеличи" and „намали".
+  function syncPressed() {
+    const pressed = {
+      'a11y__btn--yellow': html.classList.contains('accessibility-yellow'),
+      'a11y__btn--dark': html.classList.contains('accessibility-dark'),
+      'a11y__btn--blue': html.classList.contains('accessibility-blue'),
+      'a11y__btn--clear': !/\baccessibility-(yellow|dark|blue)\b/.test(html.className),
+      'a11y__item--dyslexic': body.classList.contains('dyslectic-font'),
+      'a11y__item--textonly': Boolean(textOnly.v),
+    };
+    for (const cls in pressed) {
+      const button = document.querySelector(`.${cls}`);
+      const target =
+        button && button.tagName === 'BUTTON' ? button : button?.querySelector('button');
+      target?.setAttribute('aria-pressed', String(pressed[cls]));
+    }
+  }
 
   const reset = () => {
     themeChange(null);
@@ -163,6 +193,7 @@ const accessibility = async (opts) => {
     lc.map((e) => {
       localStorage.removeItem('accesibility.' + e);
     });
+    syncPressed();
   };
   const getSettings = () => {
     Number(localStorage.getItem('accesibility.fontSize')) && increaseFontSize();
@@ -214,9 +245,8 @@ const accessibility = async (opts) => {
     'nav',
     {
       class: 'a11y-tools__nav',
-      'aria-hidden': false,
-      'aria-label': 'accessibility skip content navigation',
-      tabIndex: 0,
+      id: 'a11y-tools-panel',
+      'aria-label': translations[lng].accessMenu,
     },
     ef(
       'ul',
@@ -233,9 +263,10 @@ const accessibility = async (opts) => {
             'aria-label': translations[lng].changeContrast,
           },
           ...themeButtonsData.map(([c, t, f]) =>
+            // The visible „C" is part of the name (WCAG 2.5.3), so „C" can be spoken to press it.
             ef(
               'button',
-              { class: c, 'aria-label': t, event: { type: 'click', callback: f } },
+              { class: c, 'aria-label': `C – ${t}`, event: { type: 'click', callback: f } },
               ef('span', { 'aria-hidden': true }, 'C'),
             ),
           ),
@@ -244,8 +275,12 @@ const accessibility = async (opts) => {
       ...buttonsData.map(([c, t, f]) =>
         ef(
           'li',
-          { class: c, event: { type: 'click', callback: f } },
-          ef('button', { class: 'a11y__item__button' }, ef('span', {}, t)),
+          { class: c },
+          ef(
+            'button',
+            { class: 'a11y__item__button', event: { type: 'click', callback: f } },
+            ef('span', {}, t),
+          ),
         ),
       ),
       ef(
@@ -256,25 +291,43 @@ const accessibility = async (opts) => {
     ),
   );
 
+  // One tab stop: the trigger. The panel is out of the tab order until the trigger opens it.
+  const trigger = ef(
+    'button',
+    {
+      type: 'button',
+      class: 'a11y-tools__button',
+      'aria-expanded': 'false',
+      'aria-controls': 'a11y-tools-panel',
+    },
+    ef('span', { class: 'sr-only' }, translations[lng]?.accessMenu),
+  );
   const controlPanel = ef(
     'div',
-    { class: 'accessibility-controls a11y-tools', tabIndex: 0 },
-    ef(
-      'button',
-      {
-        class: 'a11y-tools__button',
-        'aria-label': translations[lng]?.showAccessMenu,
-        tabIndex: -1,
-      },
-      ef('div', { class: 'sr-only' }, translations[lng]?.accessMenu),
-    ),
+    { class: 'accessibility-controls a11y-tools' },
+    trigger,
     controlPanelNav,
   );
+  const setOpen = (open) => {
+    controlPanel.classList.toggle('is-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+  };
+  trigger.addEventListener('click', () =>
+    setOpen(trigger.getAttribute('aria-expanded') !== 'true'),
+  );
+  controlPanel.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || trigger.getAttribute('aria-expanded') !== 'true') return;
+    setOpen(false);
+    trigger.focus();
+  });
+  controlPanel.addEventListener('focusout', (ev) => {
+    if (!controlPanel.contains(ev.relatedTarget)) setOpen(false);
+  });
   parent.insertAdjacentElement('afterbegin', controlPanel);
 
   const leftContent = ef(
     'nav',
-    { class: 'accessibility-content' },
+    { class: 'accessibility-content', 'aria-label': translations[lng].skipLinks },
     ef(
       'ul',
       { class: 'innerUl' },
@@ -312,9 +365,11 @@ const accessibility = async (opts) => {
       const el = e.dataset.target
         ? document.querySelector(e.dataset.target)
         : document.querySelectorAll(linkSelector)[i];
-      el.tabIndex = 0;
-      el.focus();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      // -1, not 0: the target takes focus without becoming a tab stop; scroll its start into view,
+      // not its middle (a tall <main> would land the reader far down the page).
+      el.tabIndex = -1;
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
       el.addEventListener('blur', () => {
         el.removeAttribute('tabIndex');
@@ -322,4 +377,5 @@ const accessibility = async (opts) => {
     });
   });
   getSettings();
+  syncPressed();
 };

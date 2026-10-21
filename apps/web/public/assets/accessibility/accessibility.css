@@ -94,12 +94,20 @@ html.accessibility-textOnly iframe {
   transition: all 0.3s;
 }
 
-.a11y-tools:focus .a11y-tools__nav,
-.a11y-tools:focus-within .a11y-tools__nav,
+/* Local fix: the panel opens from the trigger (.is-open), on hover, or while focus is inside it —
+   not merely because the trigger has focus — and it is hidden while closed, so its buttons are not
+   tab stops behind the edge of the screen. */
+.a11y-tools.is-open .a11y-tools__nav,
 .a11y-tools__nav:focus-within {
   width: auto;
   height: auto;
   margin-right: 0;
+  visibility: visible;
+}
+
+.a11y-tools__button:focus-visible {
+  outline: 3px solid #000;
+  outline-offset: 2px;
 }
 
 .a11y-tools__button {
@@ -390,9 +398,9 @@ html.accessibility-textOnly iframe {
   border-bottom: 1px solid white;
 }
 
-.a11y-tools__button:hover + .a11y-tools__nav,
-.a11y-tools__button:focus + .a11y-tools__nav {
+.a11y-tools__button:hover + .a11y-tools__nav {
   margin-right: 0;
+  visibility: visible;
   -webkit-transition: all 0.5s ease;
   transition: all 0.5s ease;
 }
@@ -400,6 +408,7 @@ html.accessibility-textOnly iframe {
 .a11y-tools__nav {
   width: 300px;
   margin-right: -300px;
+  visibility: hidden;
   background-color: #bfc4c3;
   color: white;
   -webkit-transition: all 0.5s ease;
@@ -407,6 +416,7 @@ html.accessibility-textOnly iframe {
 }
 .a11y-tools__nav:hover {
   margin-right: 0;
+  visibility: visible;
 }
 .a11y-tools__nav nav {
   outline: none;
