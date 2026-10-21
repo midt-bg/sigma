@@ -3,7 +3,7 @@ import { Form, Link, useLocation, useNavigation, useRevalidator, useSubmit } fro
 import { revealProfileTarget } from '../lib/profile-navigation';
 import type { PersonActivity as Activity, PersonContractRow } from '@sigma/db';
 import { contractSlug } from '@sigma/db';
-import { count, money, date } from '@sigma/shared';
+import { count, money, date, plural } from '@sigma/shared';
 import { Section, Chip } from './ui';
 import { DataTable, type Column } from './DataTable';
 
@@ -249,7 +249,7 @@ export function PersonActivity({
         </Form>
         <div className="profile-summary">
           <span>
-            <strong>{count(a.total)}</strong> {a.total === 1 ? 'договор' : 'договора'}
+            <strong>{count(a.total)}</strong> {plural(a.total, 'договор', 'договора')}
           </span>
           <span>
             <strong>{money(a.valueEur)}</strong> обща стойност

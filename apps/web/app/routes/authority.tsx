@@ -204,6 +204,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               years={trend.years}
               granularity={trend.granularity}
               caption="Стойност на договорите по години"
+              omitted={{ contracts: trend.coverage.omitted, valueEur: trend.coverage.omittedEur }}
             />
           </Section>
 
@@ -223,7 +224,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                 ratingLabel={
                   singleOfferRating ? RATING_LABEL[singleOfferRating] : SMALL_SAMPLE_LABEL
                 }
-                detail={`${count(ct.singleOffer)} от ${count(ct.contracts)} договора · ${money(ct.singleOfferValueEur)} от ${money(ct.valueEur)} по стойност (${pct(ct.singleOfferValueShare)})`}
+                detail={`${count(ct.singleOffer)} от ${count(ct.contracts)} ${plural(ct.contracts, 'договор', 'договора')} · ${money(ct.singleOfferValueEur)} от ${money(ct.valueEur)} по стойност (${pct(ct.singleOfferValueShare)})`}
               />
             ) : (
               <p className="muted">Няма договори с известен брой оферти.</p>
@@ -239,7 +240,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                 ratingLabel={
                   directAwardRating ? RATING_LABEL[directAwardRating] : SMALL_SAMPLE_LABEL
                 }
-                detail={`${count(procedure.nonCompetitiveContracts)} от ${count(procedure.classifiedContracts)} класифицирани договора (без ${UNCLASSIFIED_LIST})`}
+                detail={`${count(procedure.nonCompetitiveContracts)} от ${count(procedure.classifiedContracts)} класифицирани ${plural(procedure.classifiedContracts, 'договор', 'договора')} (без ${UNCLASSIFIED_LIST})`}
               />
             ) : (
               <div className="ebs">
@@ -295,7 +296,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           <Section
             id="how"
             title="Как купува"
-            hint={`Брой договори по вид процедура — всички ${count(mixContracts)} договора на институцията, със и без стойност. Делът „пряко възлагане“ в „Конкуренция“ е от класифицираните сред тях.`}
+            hint={`Брой договори по вид процедура — всички ${count(mixContracts)} ${plural(mixContracts, 'договор', 'договора')} на институцията, със и без стойност. Делът „пряко възлагане“ в „Конкуренция“ е от класифицираните сред тях.`}
           >
             <StackedBar slices={a.procedureMix} basis="contracts" />
           </Section>
@@ -382,7 +383,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           {a.moreContractors > 0 && (
             <p className="small muted mt-s3">
               <Link to={`/contracts?authority=${a.eik}`}>
-                … още {count(a.moreContractors)} изпълнители — виж всички договори →
+                … още {count(a.moreContractors)}{' '}
+                {plural(a.moreContractors, 'изпълнител', 'изпълнители')} — виж всички договори →
               </Link>
             </p>
           )}

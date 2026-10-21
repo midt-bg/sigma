@@ -377,6 +377,7 @@ describe('streamContractsCsv', () => {
     rowid: 1,
     authority_eik: '123456789',
     contractor_eik: '111111111',
+    value_flag: 'ok',
   };
 
   it('streams a BOM header then one CSV row per contract with the raw (unescaped) id', async () => {
@@ -386,7 +387,7 @@ describe('streamContractsCsv', () => {
     expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]); // UTF-8 BOM
     const csv = new TextDecoder().decode(bytes);
     expect(csv.split('\n')[0]).toBe(
-      'id,unp,subject,authority,authority_eik,contractor,contractor_eik,kind,sector_code,procedure,signed_at,value_eur,eu_funded,bids_received,framework_ceiling_eur',
+      'id,unp,subject,authority,authority_eik,contractor,contractor_eik,kind,sector_code,procedure,signed_at,value_eur,eu_funded,bids_received,framework_ceiling_eur,value_flag',
     );
     expect(csv).toContain('UNP-1');
     expect(csv).toContain('123456789'); // authority_eik column
@@ -404,9 +405,19 @@ describe('streamContractsCsv', () => {
     const lines = (await streamContractsCsv(csvDb([[agreement, order], []]).db, {}).text())
       .split('\n')
       .filter(Boolean);
-    // trailing columns: …,value_eur,eu_funded,bids_received,framework_ceiling_eur
-    expect(lines[1]).toMatch(/,,0,3,1000000$/); // no summed value; the ceiling stands apart
-    expect(lines[2]).toMatch(/,2000,0,3,$/); // an order under it is an ordinary, summed contract
+    // trailing columns: …,value_eur,eu_funded,bids_received,framework_ceiling_eur,value_flag
+    expect(lines[1]).toMatch(/,,0,3,1000000,ok$/); // no summed value; the ceiling stands apart
+    expect(lines[2]).toMatch(/,2000,0,3,,ok$/); // an order under it is an ordinary, summed contract
+  });
+
+  it('rounds money to the cent and carries the value-quality flag the site shows', async () => {
+    const converted = { ...csvRow, amount_eur: 32138.785068231904, value_flag: 'ok' };
+    const unverified = { ...csvRow, amount_eur: 0.0051129, value_flag: 'value_low' };
+    const lines = (await streamContractsCsv(csvDb([[converted, unverified], []]).db, {}).text())
+      .split('\n')
+      .filter(Boolean);
+    expect(lines[1]).toMatch(/,32138\.79,0,3,,ok$/);
+    expect(lines[2]).toMatch(/,0\.01,0,3,,value_low$/);
   });
 
   it('emits only the header when the filtered set is empty', async () => {

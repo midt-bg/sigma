@@ -13,11 +13,14 @@
 // it, so the two sinks cannot drift. Kept as defense-in-depth — today the only value reaching the
 // JSON-LD is the request origin (which `new URL()` cannot make carry `</script>`), but this keeps the
 // sink safe for any DB/user-derived field added later.
-export function serializeJsonForScript(value: unknown): string {
+export function serializeJsonForScript(
+  value: unknown,
+  replacer?: (key: string, value: unknown) => unknown,
+): string {
   // JSON.stringify returns `undefined` (not a string) for `undefined`, a function, or a symbol \u2014 a
   // later `.replace` on it would throw. Emit valid JSON (`null`) instead, so the helper is safe for
   // any value even though today's callers always pass an object.
-  const json = JSON.stringify(value);
+  const json = JSON.stringify(value, replacer);
   if (json === undefined) return 'null';
   return json
     .replace(/</g, '\\u003c')

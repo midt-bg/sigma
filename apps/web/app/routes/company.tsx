@@ -276,7 +276,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             c.contracts > 0 && { term: 'Общо спечелено', value: money(c.wonEur) },
             !!jointContracts?.length && {
               term: 'Съвместно изпълнение',
-              value: `${count(jointContracts.length)} договора`,
+              value: `${count(jointContracts.length)} ${plural(jointContracts.length, 'договор', 'договора')}`,
               sub: 'Индивидуалният дял от стойността не е установен.',
             },
             c.contracts > 0 && { term: 'Брой договори', value: count(c.contracts) },
@@ -415,6 +415,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                 years={trend.years}
                 granularity={trend.granularity}
                 caption="Спечелено по години"
+                omitted={{ contracts: trend.coverage.omitted, valueEur: trend.coverage.omittedEur }}
                 split
               />
             </Section>
@@ -430,38 +431,48 @@ export default function Company({ loaderData }: Route.ComponentProps) {
 
               <Section
                 id="bids"
-                title="Брой оферти на спечелените търгове"
-                hint="Колко оферти е имало на спечелените от компанията търгове (там, където данните го показват)."
+                title="Брой оферти по спечелените договори"
+                hint="Колко оферти е имало по спечелените от компанията договори (там, където данните го показват)."
               >
                 <table>
-                  <caption className="sr-only">Брой оферти на спечелените търгове</caption>
+                  <caption className="sr-only">Брой оферти по спечелените договори</caption>
                   <thead className="sr-only">
                     <tr>
                       <th scope="col">Брой оферти</th>
-                      <th scope="col">Брой търгове</th>
+                      <th scope="col">Брой договори</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
                       <td>1 оферта</td>
-                      <td className="money">{count(c.bids.one)} търга</td>
+                      <td className="money">
+                        {count(c.bids.one)} {plural(c.bids.one, 'договор', 'договора')}
+                      </td>
                     </tr>
                     <tr>
                       <td>2 оферти</td>
-                      <td className="money">{count(c.bids.two)} търга</td>
+                      <td className="money">
+                        {count(c.bids.two)} {plural(c.bids.two, 'договор', 'договора')}
+                      </td>
                     </tr>
                     <tr>
                       <td>3 оферти</td>
-                      <td className="money">{count(c.bids.three)} търга</td>
+                      <td className="money">
+                        {count(c.bids.three)} {plural(c.bids.three, 'договор', 'договора')}
+                      </td>
                     </tr>
                     <tr>
                       <td>4 и повече оферти</td>
-                      <td className="money">{count(c.bids.fourPlus)} търга</td>
+                      <td className="money">
+                        {count(c.bids.fourPlus)} {plural(c.bids.fourPlus, 'договор', 'договора')}
+                      </td>
                     </tr>
                     {c.bids.unknown > 0 && (
                       <tr>
                         <td className="muted">няма данни</td>
-                        <td className="money muted">{count(c.bids.unknown)} търга</td>
+                        <td className="money muted">
+                          {count(c.bids.unknown)} {plural(c.bids.unknown, 'договор', 'договора')}
+                        </td>
                       </tr>
                     )}
                   </tbody>
@@ -518,7 +529,8 @@ export default function Company({ loaderData }: Route.ComponentProps) {
               {c.moreAuthorities > 0 && (
                 <p className="small muted mt-s3">
                   <Link to={`/contracts?bidder=${c.slug}`}>
-                    … още {count(c.moreAuthorities)} институции — виж всички договори →
+                    … още {count(c.moreAuthorities)}{' '}
+                    {plural(c.moreAuthorities, 'институция', 'институции')} — виж всички договори →
                   </Link>
                 </p>
               )}

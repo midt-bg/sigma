@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cents,
   cleanName,
   count,
   date,
   entityName,
+  isFutureDate,
   isNaturalPersonProfileName,
   longDate,
   money,
@@ -15,6 +17,7 @@ import {
   parseConsortiumMembers,
   signedMoney,
   signedPct,
+  todayIso,
   tradeRegisterLegalForm,
 } from './format';
 
@@ -86,6 +89,8 @@ describe('count / pct', () => {
     expect(signedPct(-0.0001)).toBe('0%');
     expect(signedPct(-0.233)).toBe('−23,3%');
     expect(signedPct(0.05)).toBe('+5%');
+    expect(pct(16.653)).toBe(`1${NBSP}665,3%`);
+    expect(signedPct(-13.587)).toBe(`−1${NBSP}358,7%`);
   });
   it('signs monetary deltas like signedPct (+ positive, U+2212 negative, no sign on zero)', () => {
     expect(signedMoney(187_000_000)).toBe(`+187${NBSP}млн.`);
@@ -120,11 +125,30 @@ describe('entityName', () => {
   });
 });
 
+describe('isFutureDate', () => {
+  it('is true only for a date after today', () => {
+    expect(isFutureDate('2999-05-14')).toBe(true);
+    expect(isFutureDate(todayIso())).toBe(false);
+    expect(isFutureDate('2024-01-01')).toBe(false);
+    expect(isFutureDate(null)).toBe(false);
+  });
+});
+
+describe('cents', () => {
+  it('rounds an export amount to the cent and keeps a missing value missing', () => {
+    expect(cents(32138.785068231904)).toBe(32138.79);
+    expect(cents(0.0051129)).toBe(0.01);
+    expect(cents(-1200.004)).toBe(-1200);
+    expect(cents(null)).toBeNull();
+  });
+});
+
 describe('plural', () => {
-  it('picks the Bulgarian count word (1, 21 → singular; 11, 2, 17 → plural)', () => {
+  it('uses singular only after the numeral 1', () => {
     expect(plural(1, 'договор', 'договора')).toBe('договор');
-    expect(plural(21, 'договор', 'договора')).toBe('договор');
-    expect(plural(11, 'договор', 'договора')).toBe('договора'); // 11 is the exception
+    expect(plural(21, 'договор', 'договора')).toBe('договора');
+    expect(plural(101, 'договор', 'договора')).toBe('договора');
+    expect(plural(11, 'договор', 'договора')).toBe('договора');
     expect(plural(2, 'съвпадение', 'съвпадения')).toBe('съвпадения');
     expect(plural(17, 'съвпадение', 'съвпадения')).toBe('съвпадения');
     expect(plural(0, 'съвпадение', 'съвпадения')).toBe('съвпадения');

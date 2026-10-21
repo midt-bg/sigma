@@ -6,7 +6,7 @@ import type {
   CompetitionPair,
 } from '@sigma/api-contract';
 import { EU_SCOREBOARD } from '@sigma/config';
-import { count, money, pct } from '@sigma/shared';
+import { count, money, pct, plural } from '@sigma/shared';
 import { getCompetition, getDb } from '@sigma/db';
 import type { Route } from './+types/competition';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -171,7 +171,10 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
   const totals: Total[] = [
     { num: pct(data.totals.singleOfferShare), label: 'дял договори с една оферта' },
     { num: pct(data.procedure.nonCompetitiveShare), label: 'дял пряко възлагане (без обявление)' },
-    { num: count(data.totals.singleOffer), label: 'договора с една оферта' },
+    {
+      num: count(data.totals.singleOffer),
+      label: `${plural(data.totals.singleOffer, 'договор', 'договора')} с една оферта`,
+    },
     { num: pct(data.totals.singleOfferValueShare), label: 'дял от стойността с една оферта' },
   ];
 
@@ -251,9 +254,9 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
         <TotalsStrip totals={totals} label="Обобщение на конкуренцията" />
         <p className="small muted">
           Делът с една оферта — по брой и по стойност — е от договорите с известен брой оферти (
-          {count(data.totals.contracts)} договора за {money(data.totals.valueEur)}); стойността е
-          сумата на положителните суми. Без филтри това е същото число като на началната страница и
-          в „Анализи“.
+          {count(data.totals.contracts)} {plural(data.totals.contracts, 'договор', 'договора')} за{' '}
+          {money(data.totals.valueEur)}); стойността е сумата на положителните суми. Без филтри това
+          е същото число като на началната страница и в „Анализи“.
         </p>
 
         <Section

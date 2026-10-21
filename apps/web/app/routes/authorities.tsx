@@ -1,5 +1,5 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, money, moneyBare } from '@sigma/shared';
+import { count, money, moneyBare, plural } from '@sigma/shared';
 import { getAuthorityFacets, listAuthorities, getDb } from '@sigma/db';
 import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
@@ -140,7 +140,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Институции' }]} />
       <main id="main">
         <PageHeader
-          kicker={`${count(page.total)} възложители`}
+          kicker={`${count(page.total)} ${plural(page.total, 'възложител', 'възложители')}`}
           title="Институции"
           lede="Всяка институция, възложила поне един договор. Подреди ги по обща стойност на договорите, по брой договори или по средна стойност. Филтрите остават в адреса."
         />
@@ -160,7 +160,8 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
               count={
                 <>
                   Показани са <strong>{page.items.length}</strong> от{' '}
-                  <strong>{count(page.total)}</strong> институции
+                  <strong>{count(page.total)}</strong>{' '}
+                  {plural(page.total, 'институция', 'институции')}
                 </>
               }
             />

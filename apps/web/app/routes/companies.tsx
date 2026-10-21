@@ -1,5 +1,5 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, money, moneyBare, parseConsortiumMembers } from '@sigma/shared';
+import { count, money, moneyBare, parseConsortiumMembers, plural } from '@sigma/shared';
 import { getCompanyFacets, listCompanies, getDb } from '@sigma/db';
 import type { CompanyListItem } from '@sigma/api-contract';
 import type { Route } from './+types/companies';
@@ -172,7 +172,7 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Компании' }]} />
       <main id="main">
         <PageHeader
-          kicker={`${count(page.total)} изпълнители`}
+          kicker={`${count(page.total)} ${plural(page.total, 'изпълнител', 'изпълнители')}`}
           title="Компании"
           lede="Всяка компания, която е спечелила поне един договор по обществена поръчка. По подразбиране е подреден по общата стойност на спечелените договори."
         />
@@ -192,7 +192,7 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
               count={
                 <>
                   Показани са <strong>{page.items.length}</strong> от{' '}
-                  <strong>{count(page.total)}</strong> компании
+                  <strong>{count(page.total)}</strong> {plural(page.total, 'компания', 'компании')}
                 </>
               }
             />

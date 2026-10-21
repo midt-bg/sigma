@@ -34,6 +34,8 @@ interface PeriodRow {
 interface CoverageRow {
   dated: number;
   total: number;
+  omitted: number;
+  omitted_eur: number;
 }
 
 // Shared value + sector/funding scope (the date window lives only on the series query).
@@ -86,7 +88,8 @@ export async function getSpendingTrend(
   const periodLen = granularity === 'year' ? 4 : 7; // substr length: 'YYYY' vs 'YYYY-MM'
   const s = scope(p);
 
-  const seriesWhere = [YEAR_KNOWN, 'c.signed_at >= ?', "c.signed_at <= date('now')", ...s.where];
+  const window = [YEAR_KNOWN, 'c.signed_at >= ?', "c.signed_at <= date('now')"];
+  const seriesWhere = [...window, ...s.where];
   const [series, coverageRow, sectors, asOfRow, startPartialYear] = await Promise.all([
     db
       .prepare(
@@ -102,10 +105,13 @@ export async function getSpendingTrend(
       .prepare(
         `SELECT
            COALESCE(SUM(CASE WHEN ${YEAR_KNOWN} THEN 1 ELSE 0 END), 0) AS dated,
-           COUNT(*) AS total
+           COUNT(*) AS total,
+           -- What the series leaves out (no usable date, or one outside its window), so a table can say it.
+           COALESCE(SUM(CASE WHEN ${window.join(' AND ')} THEN 0 ELSE 1 END), 0) AS omitted,
+           COALESCE(SUM(CASE WHEN ${window.join(' AND ')} THEN 0 ELSE c.amount_eur END), 0) AS omitted_eur
          FROM contracts c ${s.join} WHERE ${s.where.join(' AND ')}`,
       )
-      .bind(...s.params)
+      .bind(START, START, ...s.params)
       .first<CoverageRow>(),
     includeSectors ? sectorOptions(db) : Promise.resolve([]),
     db.prepare('SELECT as_of FROM home_totals WHERE id = 1').first<{ as_of: string | null }>(),
@@ -159,7 +165,8 @@ export async function getSpendingTrend(
       // No YoY for a partial year, nor AGAINST one: the partial final year reads as a false collapse, and
       // the year after the partial first year as a false boom (2021 „+290 %" over a 2020 still filling).
       yoyPct:
-        partial || !prev || prev.valueEur <= 0 || isPartial(prevYear!)
+        // Nor over a base that reads „0 €“: a sub-euro year would turn into „−100 %“ or „+9 999 %“.
+        partial || !prev || Math.round(prev.valueEur) <= 0 || isPartial(prevYear!)
           ? null
           : (cur.valueEur - prev.valueEur) / prev.valueEur,
       partial,
@@ -174,7 +181,13 @@ export async function getSpendingTrend(
     years,
     sectors,
     totalValueEur: points.reduce((sum, pt) => sum + pt.valueEur, 0),
-    coverage: { dated, total, pct: total > 0 ? dated / total : 0 },
+    coverage: {
+      dated,
+      total,
+      pct: total > 0 ? dated / total : 0,
+      omitted: coverageRow?.omitted ?? 0,
+      omittedEur: coverageRow?.omitted_eur ?? 0,
+    },
     scope: { sector: p.sector ?? null, funding: p.funding ?? 'all', granularity },
   };
 }

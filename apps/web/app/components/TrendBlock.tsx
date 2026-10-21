@@ -1,4 +1,5 @@
 import type { TrendPoint, TrendYear } from '@sigma/api-contract';
+import { count, money, plural } from '@sigma/shared';
 import { DataTable } from './DataTable';
 import { TrendChart } from './TrendChart';
 import { trendYearColumns } from '../lib/entity-tables';
@@ -13,6 +14,7 @@ export function TrendBlock({
   granularity,
   caption,
   split = false,
+  omitted,
 }: {
   points: TrendPoint[];
   years: TrendYear[];
@@ -20,12 +22,22 @@ export function TrendBlock({
   caption: string;
   /** Chart and table side by side (full-width sections) instead of stacked (half-width ones). */
   split?: boolean;
+  /** Contracts the series leaves out, stated under the table so it adds up to the profile total. */
+  omitted?: { contracts: number; valueEur: number };
 }) {
   if (points.length === 0 || years.length === 0) {
     return <p className="muted">Няма договори с валидна дата за времева графика.</p>;
   }
   const table = (
-    <DataTable columns={trendYearColumns} rows={years} getKey={(r) => r.year} caption={caption} />
+    <>
+      <DataTable columns={trendYearColumns} rows={years} getKey={(r) => r.year} caption={caption} />
+      {!!omitted?.contracts && (
+        <p className="small muted">
+          Без валидна дата (липсва, преди 2020 г. или в бъдещето): {count(omitted.contracts)}{' '}
+          {plural(omitted.contracts, 'договор', 'договора')}, {money(omitted.valueEur)}.
+        </p>
+      )}
+    </>
   );
   if (points.length < 2) return table;
   return (

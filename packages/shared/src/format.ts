@@ -22,11 +22,20 @@ const MONTHS_BG = [
   'декември',
 ];
 
-/** Format a number to `dp` decimals with a comma decimal sep; optionally drop a trailing „,0". */
+/** Format a number to `dp` decimals with a comma decimal sep and NBSP-grouped thousands; optionally
+ *  drop a trailing „,0". */
 function dec(n: number, dp: number, stripZeros: boolean): string {
   let s = n.toFixed(dp);
   if (stripZeros && s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
-  return s.replace('.', ',');
+  const [int, frac] = s.split('.');
+  const grouped = int!.replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
+  return frac == null ? grouped : `${grouped},${frac}`;
+}
+
+/** EUR rounded to the cent for exports (CSV/JSON): sub-cent digits of a BGN→EUR conversion carry no
+ *  meaning. null stays null — a missing value is never a 0. */
+export function cents(eur: number | null): number | null {
+  return eur == null ? null : Math.round(eur * 100) / 100;
 }
 
 function rounded(n: number, dp: number): number {
@@ -109,6 +118,16 @@ export function signedMoney(eur: number | null | undefined): string {
   const body = moneyBare(Math.abs(eur));
   if (Math.round(Math.abs(eur)) === 0) return body; // no sign on zero
   return eur < 0 ? `${MINUS}${body}` : `+${body}`;
+}
+
+/** Today as `YYYY-MM-DD` (UTC). */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** A date after today: a signing date in the future is a typo in the source, not a fact. */
+export function isFutureDate(iso: string | null | undefined): boolean {
+  return !!iso && iso.slice(0, 10) > todayIso();
 }
 
 /** ISO date → `DD.MM.YYYY` (`2024-10-14` → `14.10.2024`). Tolerates a datetime prefix. */
@@ -222,12 +241,12 @@ export function entityName(
 }
 
 /**
- * Bulgarian count word: returns `one` when n ends in 1 but not 11 (1, 21, 101… → договор), else
- * `many` (2, 11, 17… → договора). Returns ONLY the word — format the number separately with count().
+ * Bulgarian count word: returns `one` only for the numeral 1, else `many` (including 21 and 101).
+ * Returns ONLY the word — format the number separately with count().
  * Use as plural(n, 'договор', 'договора') / plural(n, 'съвпадение', 'съвпадения').
  */
 export function plural(n: number, one: string, many: string): string {
-  return n % 10 === 1 && n % 100 !== 11 ? one : many;
+  return n === 1 ? one : many;
 }
 
 /**

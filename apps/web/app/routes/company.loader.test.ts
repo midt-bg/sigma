@@ -33,7 +33,7 @@ const trend = {
   years: [],
   sectors: [],
   totalValueEur: 0,
-  coverage: { dated: 0, total: 0, pct: 0 },
+  coverage: { dated: 0, total: 0, pct: 0, omitted: 0, omittedEur: 0 },
   scope: { sector: null, funding: 'all', granularity: 'year' },
 };
 

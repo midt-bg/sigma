@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Link, useLocation } from 'react-router';
-import { count, date, money, pct } from '@sigma/shared';
+import { count, date, money, pct, plural } from '@sigma/shared';
 import type { PersonDeclaration, PersonRole } from '@sigma/api-contract';
 import { contractSlug, type TimelineContracts, type TimelineProcurement } from '@sigma/db';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
@@ -659,7 +659,7 @@ export function PersonTimeline({
                                 <Link
                                   to={contractHref(c.eik, r.year, 'tied')}
                                   className="time-contract eligible"
-                                  aria-label={`${r.year}: ${plural(r.tied, 'договор', 'договора')}, подписани в година с декларация за длъжността, докато лицето е свързано с ${c.name}`}
+                                  aria-label={`${r.year}: ${countPhrase(r.tied, 'договор', 'договора')}, подписани в година с декларация за длъжността, докато лицето е свързано с ${c.name}`}
                                   {...tipProps(() => contractsTip(r, c.name, 'tied'))}
                                 >
                                   {count(r.tied)}
@@ -669,7 +669,7 @@ export function PersonTimeline({
                                 <Link
                                   to={contractHref(c.eik, r.year, 'untied')}
                                   className="time-contract context"
-                                  aria-label={`${r.year}: ${plural(r.contracts - r.tied, 'договор', 'договора')} извън съвпадението на длъжността и връзката с ${c.name}`}
+                                  aria-label={`${r.year}: ${countPhrase(r.contracts - r.tied, 'договор', 'договора')} извън съвпадението на длъжността и връзката с ${c.name}`}
                                   {...tipProps(() => contractsTip(r, c.name, 'untied'))}
                                 >
                                   {count(r.contracts - r.tied)}
@@ -697,7 +697,7 @@ export function PersonTimeline({
                                               {b.name}
                                             </Link>{' '}
                                             · {count(b.contracts)}{' '}
-                                            {b.contracts === 1 ? 'договор' : 'договора'} ·{' '}
+                                            {plural(b.contracts, 'договор', 'договора')} ·{' '}
                                             {money(b.valueEur)}
                                           </li>
                                         ))}
@@ -765,7 +765,7 @@ interface TimelineTip {
   bottom?: number;
 }
 
-const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;
+const countPhrase = (n: number, one: string, many: string) => `${count(n)} ${plural(n, one, many)}`;
 const yearsLabel = (from: string, to: string) =>
   from.slice(0, 4) === to.slice(0, 4)
     ? `${from.slice(0, 4)} г.`
@@ -854,8 +854,8 @@ function contractsTip(r: TimelineContracts, company: string, part: 'tied' | 'unt
       <strong className="time-tip-title">
         {r.year} ·{' '}
         {part === 'tied'
-          ? `${plural(r.tied, 'договор', 'договора')} в съвпадение`
-          : `${plural(r.contracts - r.tied, 'договор', 'договора')} извън съвпадението`}
+          ? `${countPhrase(r.tied, 'договор', 'договора')} в съвпадение`
+          : `${countPhrase(r.contracts - r.tied, 'договор', 'договора')} извън съвпадението`}
       </strong>
       <span>{company}</span>
       {part === 'tied' && (
@@ -864,7 +864,7 @@ function contractsTip(r: TimelineContracts, company: string, part: 'tied' | 'unt
         </span>
       )}
       <span>
-        Всички за годината: {plural(r.contracts, 'договор', 'договора')} · {money(r.valueEur)}
+        Всички за годината: {countPhrase(r.contracts, 'договор', 'договора')} · {money(r.valueEur)}
       </span>
       <small className="muted">Кликни за списъка с договорите</small>
     </>
@@ -913,7 +913,7 @@ function procurementTip(pr: TimelineProcurement, kind: ProcurementKind, own: boo
       )}
       <span>
         {pr.announcedAt
-          ? `Обявена ${date(pr.announcedAt)} → подписан ${date(pr.signedAt)} · ${plural(days!, 'ден', 'дни')}`
+          ? `Обявена ${date(pr.announcedAt)} → подписан ${date(pr.signedAt)} · ${countPhrase(days!, 'ден', 'дни')}`
           : `Подписан ${date(pr.signedAt)}`}
       </span>
       {pr.bids != null && (
