@@ -15,7 +15,7 @@ export async function rateLimitSearchRoute(
     request,
     env.SEARCH_RATE_LIMITER,
     isProd,
-    'Too many search requests',
+    'Твърде много търсения за кратко време. Опитай пак след минута.',
     'SEARCH_RATE_LIMITER',
   );
 }
