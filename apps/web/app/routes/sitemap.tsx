@@ -1,4 +1,4 @@
-import { contractSitemapPages, getDb } from '@sigma/db';
+import { SITEMAP_CACHE_CONTROL, contractSitemapPages, getDb } from '@sigma/db';
 import type { Route } from './+types/sitemap';
 import { withDataSource } from '../lib/dataSource';
 
@@ -20,7 +20,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     new Response(body, {
       headers: {
         'Content-Type': 'application/xml; charset=utf-8',
-        'Cache-Control': 'public, max-age=86400',
+        'Cache-Control': SITEMAP_CACHE_CONTROL,
       },
     }),
   );

@@ -1,3 +1,4 @@
+import { SITEMAP_CACHE_CONTROL } from '@sigma/db';
 import type { Route } from './+types/sitemap-pages';
 import { withDataSource } from '../lib/dataSource';
 
@@ -48,7 +49,7 @@ export function loader({ request }: Route.LoaderArgs) {
     new Response(body, {
       headers: {
         'Content-Type': 'application/xml; charset=utf-8',
-        'Cache-Control': 'public, max-age=86400',
+        'Cache-Control': SITEMAP_CACHE_CONTROL,
       },
     }),
   );
