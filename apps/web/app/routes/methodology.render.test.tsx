@@ -20,10 +20,10 @@ const loaderData = {
     authorities: 40,
     bidders: 300,
     suspect: 2,
-    asOf: '2026-09-30',
+    asOf: '2026-09-30' as string | null,
     refreshedAt: '2026-10-01',
   },
-  firstDate: '2020-01-02',
+  firstDate: '2020-01-02' as string | null,
   lastDate: '2026-09-30',
   coverage: { bids: 0.8, eu: 0.3, duration: 0.5, lot: 0.4 },
   sectors: 45,
@@ -37,7 +37,7 @@ const loaderData = {
     missing: 4,
     framework: 6,
   },
-  partialStartYear: null,
+  partialStartYear: null as string | null,
 };
 
 function text(data: typeof loaderData = loaderData): string {
@@ -93,5 +93,16 @@ describe('/methodology', () => {
   it('is indexed under its own title', () => {
     const tags = meta({ matches: [] } as never) as Array<{ title?: string }>;
     expect(tags.some((t) => t.title === 'Методология и речник — СИГМА')).toBe(true);
+  });
+
+  it('writes no dates and the default first year when the corpus has none yet', () => {
+    const t = text({
+      ...loaderData,
+      totals: { ...loaderData.totals, asOf: null, refreshedAt: null as never },
+      firstDate: null,
+      partialStartYear: '2026',
+    });
+    expect(t).not.toMatch(/Издание 2|последен договор|данни обновени|обновени на/);
+    expect(t).toMatch(/2020\sг\. — 2026\sг\. \(2026\sг\. частично\)/);
   });
 });
