@@ -86,6 +86,9 @@ describe('/persons/:id — source records', () => {
     await mount({ sources });
     expect(container.querySelector('.kicker')?.textContent).toBe('Търговски регистър');
     expect(container.querySelector('h1')?.textContent).toBe('Източникови записи');
+    expect(container.querySelector('nav.crumbs a[href="/conflicts"]')?.textContent).toBe(
+      'Свързани лица',
+    );
     expect(container.textContent).toContain(
       'Наличните сведения не са достатъчни за обединяване в общ профил.',
     );
@@ -143,6 +146,9 @@ describe('/persons/:id — archived declarations', () => {
 
     expect(container.querySelector('.kicker')?.textContent).toBe('Декларации от източника');
     expect(container.querySelector('h1')?.textContent).toBe('Иван Петров Тестов');
+    expect(container.querySelector('nav.crumbs a[href="/conflicts"]')?.textContent).toBe(
+      'Свързани лица',
+    );
     expect(container.querySelector('#declarations')?.textContent).toContain('Всички декларации');
     expect(container.querySelector('#declaration-test-declaration')).not.toBeNull();
     expect(container.querySelector('.profile-nav')).toBeNull();
@@ -172,6 +178,9 @@ describe('/persons/:id — split destinations', () => {
 
     expect(container.querySelector('.kicker')?.textContent).toBe('Длъжностни лица');
     expect(container.querySelector('h1')?.textContent).toBe('Профили и декларации');
+    expect(container.querySelector('nav.crumbs a[href="/conflicts"]')?.textContent).toBe(
+      'Свързани лица',
+    );
     const rows = [...container.querySelectorAll('main li')];
     expect(rows).toHaveLength(2);
     expect(rows[0]!.textContent).toContain('Обединен профил · 1 декларация');
