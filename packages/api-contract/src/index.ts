@@ -424,7 +424,8 @@ export interface FlowPair {
 
 /** A Sankey node, positioned by the loader (the mock ships zero chart JS; geometry is server-side). */
 export interface SankeyNode {
-  label: string;
+  label: string; // drawn next to the bar; cut with „…" when long
+  name: string; // the full name, for the link's accessible name and the tooltip
   valueEur: number;
   side: 'authority' | 'company';
   x: number;

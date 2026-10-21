@@ -150,6 +150,8 @@ describe('getFlows — funding scope and label truncation', () => {
     const node = data.sankey.nodes.find((n) => n.side === 'authority')!;
     expect(node.label.length).toBeLessThanOrEqual(30);
     expect(node.label.endsWith('…')).toBe(true);
+    // The full name stays on the node for the link's accessible name and the tooltip.
+    expect(node.name).toBe(longName);
   });
 });
 

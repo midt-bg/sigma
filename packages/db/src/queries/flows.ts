@@ -116,6 +116,7 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
     aPos.set(id, { y: ay, h, off: ay, index: i });
     nodes.push({
       label: truncate(authAgg.get(id)!.name),
+      name: authAgg.get(id)!.name,
       valueEur: authAgg.get(id)!.value,
       side: 'authority',
       x: A_X,
@@ -134,6 +135,7 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
     cPos.set(id, { y: cy, h, off: cy, index: i });
     nodes.push({
       label: truncate(entityName(agg.name, agg.kind)),
+      name: entityName(agg.name, agg.kind),
       valueEur: agg.value,
       side: 'company',
       x: C_X,
