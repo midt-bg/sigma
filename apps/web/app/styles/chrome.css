@@ -885,6 +885,10 @@ main.narrow {
 }
 
 @media (max-width: 760px) {
+  /* Room under the last footer links, so they can scroll above the two stacked floating buttons. */
+  .site-footer-inner {
+    padding-bottom: 120px;
+  }
   .scroll-to-top {
     right: 22px;
     bottom: calc(76px + env(safe-area-inset-bottom, 0px));
