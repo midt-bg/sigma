@@ -6,15 +6,16 @@
     "dyslexic": "За хора с дислексия",
     "text": "Текстова версия",
     "yellow": "Жълта тема",
-    "dark": "тъмна тема",
-    "blue": "синя тема",
-    "default": "оригинална тема",
+    "dark": "Тъмна тема",
+    "blue": "Синя тема",
+    "default": "Оригинална тема",
     "showAccessMenu": "покажи меню за достъпност",
     "accessMenu": "Меню за достъпност",
     "toNav": "КЪМ НАВИГАЦИЯТА",
     "toMain": "КЪМ ОСНОВНОТО СЪДЪРЖАНИЕ",
     "changeContrast": "ПРОМЕНИ КОНТРАСТА",
-    "logoText": "© Информационно обслужване АД"
+    "logoText": "© Информационно обслужване АД",
+    "skipLinks": "Бързи връзки"
   },
   "en": {
     "reset": "reset",
@@ -30,6 +31,7 @@
     "accessMenu": "Accessibility menu",
     "toNav": "TO NAVIGATION",
     "toMain": "TO MAIN CONTENT",
-    "changeContrast": "CHANGE CONTRAST"
+    "changeContrast": "CHANGE CONTRAST",
+    "skipLinks": "Quick links"
   }
 }

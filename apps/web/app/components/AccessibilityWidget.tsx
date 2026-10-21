@@ -1,7 +1,7 @@
 // The accessibility toolbar is a vendored third-party script (Информационно обслужване АД) under
-// public/assets/accessibility/. It has minor keyboard/ARIA rough edges this wrapper can't change
-// without forking the script; they are catalogued in docs/accessibility.md ("Вградена приставка за
-// достъпност — наблюдения"). This wrapper only initialises it and installs survival CSS.
+// public/assets/accessibility/, kept as a local fork of v1.0.2 with keyboard/ARIA fixes; the fixes and
+// what remains are catalogued in docs/accessibility.md ("Вградена приставка за достъпност —
+// наблюдения"). This wrapper only initialises it and installs survival CSS.
 import { useEffect } from 'react';
 
 type AccessibilityOptions = {
