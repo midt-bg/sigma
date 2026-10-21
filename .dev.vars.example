@@ -7,3 +7,6 @@
 
 # Web worker privacy-preserving request log IP HMAC key.
 LOG_IP_KEY=dev-only-log-ip-key-change-me
+
+# AI assistant (BgGPT). Leave empty: without it /assistant/chat answers 503 and nothing paid runs.
+# BGGPT_API_KEY=
