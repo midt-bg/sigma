@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { cleanName } from '@sigma/shared';
+import { d1FromSqlite } from '@sigma/test-support';
 import { listAuthorities } from './queries/authorities';
 import { listCompanies } from './queries/companies';
 import { NAME_KEY, withNameKey } from './queries/name-sort';
@@ -21,18 +22,6 @@ function servedDb(): DatabaseSync {
     .sort())
     db.exec(readFileSync(resolve(migrations, f), 'utf8'));
   return db;
-}
-
-// Just enough of the D1 binding for the list queries.
-function d1(db: DatabaseSync): D1Database {
-  return {
-    prepare: (sql: string) => ({
-      bind: (...params: unknown[]) => ({
-        all: async () => ({ results: db.prepare(sql).all(...(params as never[])) }),
-        first: async () => db.prepare(sql).get(...(params as never[])) ?? null,
-      }),
-    }),
-  } as unknown as D1Database;
 }
 
 const COMPANIES = [
@@ -66,15 +55,15 @@ describe('name sort key', () => {
   it('orders companies А→Я regardless of case, quotes, punctuation and a leading ЕТ/ДЗЗД', async () => {
     const db = servedDb();
     seedCompanies(db, COMPANIES);
-    const page = await listCompanies(d1(db), { sort: 'name', pageSize: 50 });
+    const page = await listCompanies(d1FromSqlite(db), { sort: 'name', pageSize: 50 });
     expect(page.items.map((c) => c.name)).toEqual(IN_ORDER.map(cleanName));
   });
 
   it('pages through the name order with the keyset cursor', async () => {
     const db = servedDb();
     seedCompanies(db, COMPANIES);
-    const first = await listCompanies(d1(db), { sort: 'name', pageSize: 4 });
-    const second = await listCompanies(d1(db), {
+    const first = await listCompanies(d1FromSqlite(db), { sort: 'name', pageSize: 4 });
+    const second = await listCompanies(d1FromSqlite(db), {
       sort: 'name',
       pageSize: 4,
       cursor: first.nextCursor,
@@ -89,18 +78,20 @@ describe('name sort key', () => {
        VALUES (?, ?, 1, 1, 1, 1)`,
     );
     ['ОБЩИНА - БЕЛА', 'Община Вега', 'ОБЩИНА АЛФА'].forEach((n, i) => ins.run(`auth:${i}`, n));
-    const page = await listAuthorities(d1(db), { sort: 'name' });
+    const page = await listAuthorities(d1FromSqlite(db), { sort: 'name' });
     expect(page.items.map((a) => a.name)).toEqual(['ОБЩИНА АЛФА', 'ОБЩИНА - БЕЛА', 'Община Вега']);
   });
 
   it('runs on the scoped aggregate of a sector filter too', async () => {
     const db = servedDb();
-    await expect(listCompanies(d1(db), { sort: 'name', sectors: ['45'] })).resolves.toMatchObject({
+    await expect(
+      listCompanies(d1FromSqlite(db), { sort: 'name', sectors: ['45'] }),
+    ).resolves.toMatchObject({
       items: [],
     });
-    await expect(listAuthorities(d1(db), { sort: 'name', sectors: ['45'] })).resolves.toMatchObject(
-      { items: [] },
-    );
+    await expect(
+      listAuthorities(d1FromSqlite(db), { sort: 'name', sectors: ['45'] }),
+    ).resolves.toMatchObject({ items: [] });
   });
 
   it('caps the key so a cursor built on it stays short', () => {

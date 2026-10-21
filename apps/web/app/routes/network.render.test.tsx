@@ -42,7 +42,12 @@ async function render(d: NetworkData) {
   });
 }
 
-const select = () => container.querySelector<HTMLSelectElement>('select[name="center"]')!;
+// HTMLSelectElement's remove(index) clashes with Element's remove() in this lib.dom.
+const select = () =>
+  container.querySelector('select[name="center"]') as unknown as Pick<
+    HTMLSelectElement,
+    'value' | 'selectedOptions' | 'options'
+  >;
 
 describe('/network centre', () => {
   it('selects the centre by its own name when it is not in the picker', async () => {

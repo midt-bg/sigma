@@ -49,15 +49,18 @@ async function render(url = '/viz') {
   });
 }
 
-const select = () => container.querySelector<HTMLSelectElement>('select[name="sector"]')!;
+// HTMLSelectElement's remove(index) clashes with Element's remove() in this lib.dom, so the select is
+// typed by what the test touches.
+type Select = Pick<HTMLSelectElement, 'value' | 'dispatchEvent'>;
+const select = () => container.querySelector('select[name="sector"]') as unknown as Select;
 const search = () => container.querySelector('output')!.textContent;
 
-async function key(el: HTMLElement, k: string) {
+async function key(el: Pick<Element, 'dispatchEvent'>, k: string) {
   await act(async () => {
     el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
   });
 }
-async function choose(el: HTMLSelectElement, value: string) {
+async function choose(el: Select, value: string) {
   await act(async () => {
     el.value = value;
     el.dispatchEvent(new Event('change', { bubbles: true }));
