@@ -77,12 +77,14 @@ SELECT
             -- value_after), not signing. Anchor to signing OR a legitimately-grown prior total (prev not
             -- itself a double); a single ≥2× step violates ЗОП чл.116 wherever it sits (see normalize-raw.sql).
             AND (
-              ABS(dedup.value_before - rc.signing_value) < 0.01 * rc.signing_value
+              ABS(dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - rc.signing_value * (CASE COALESCE(NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                < 0.01 * rc.signing_value * (CASE COALESCE(NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
               OR EXISTS (
                 SELECT 1 FROM raw_amendments prev
                 WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
                   AND prev.value_after > 0
-                  AND ABS(prev.value_after - dedup.value_before) < 0.01 * dedup.value_before
+                  AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                    < 0.01 * dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
                   -- ...and that prior total was itself reached legitimately (prev not a ≥2× double).
                   AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
               )
@@ -95,12 +97,16 @@ SELECT
                   SELECT 1 FROM raw_amendments prev
                   WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
                     AND prev.value_after > 0
-                    AND ABS(prev.value_after - dedup.value_before) < 0.01 * dedup.value_before
+                    AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                      < 0.01 * dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
                 )
               )
             )
-            AND COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
-              = COALESCE(NULLIF(rc.currency, ''), 'BGN')
+            -- Same currency, or lev and euro across the changeover: the comparisons above go through the
+            -- fixed peg, so a euro annex on a lev contract is weighed in the same money.
+            AND (COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
+                   = COALESCE(NULLIF(rc.currency, ''), 'BGN')
+                 OR (dedup.currency IN ('BGN', 'EUR') AND COALESCE(NULLIF(rc.currency, ''), 'BGN') IN ('BGN', 'EUR')))
         )
        THEN 1 ELSE 0 END
 FROM dedup

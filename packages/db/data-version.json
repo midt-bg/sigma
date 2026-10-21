@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "computedBy": [
     "scripts/normalize-raw.sql",
     "scripts/refresh-slice.sql",
