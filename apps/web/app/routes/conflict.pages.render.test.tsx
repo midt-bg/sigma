@@ -227,12 +227,12 @@ describe('/persons/:id — render', () => {
       ],
     });
     const note = container.querySelector('.declaration-discrepancy')!;
-    expect(note.textContent).toContain('Регистър срещу декларация за 2021 г.');
+    expect(note.textContent).toContain('Регистър срещу декларация за 2021\u00a0г.');
     expect(note.textContent).toContain('едноличен собственик на капитала');
     expect(note.textContent).toContain('ГАМА ЕООД');
     // What the comparison found, not a hypothesis about the declarant: no „пропуск", no „не е посочено".
     expect(note.textContent).toContain(
-      'СИГМА не откри дружеството в декларациите на лицето за 2021 г.',
+      'СИГМА не откри дружеството в декларациите на лицето за 2021\u00a0г.',
     );
     expect(note.textContent).toContain('Сравнението е автоматично');
     expect(note.textContent).toContain('Това не е установено нарушение.');
@@ -272,7 +272,7 @@ describe('/persons/:id — render', () => {
     });
     const note = container.querySelector('.declaration-discrepancy')!;
     expect(note.textContent).toContain(
-      'Дружеството е посочено в декларацията за 2021 г.; в документите за 2023 г. СИГМА не го откри.',
+      'Дружеството е посочено в декларацията за 2021\u00a0г.; в документите за 2023\u00a0г. СИГМА не го откри.',
     );
     expect(note.textContent).not.toContain('СИГМА не откри дружеството');
     expect(note.textContent).toContain('Това не е установено нарушение.');
@@ -451,7 +451,7 @@ describe('/conflicts/methodology — render', () => {
     // rung 1 — the joint-stock bar and its reason (the „11 акции" trap), for a stake only: a declared
     // management is checked on the body that runs the company
     expect(t).toContain('Дял в акционерно дружество');
-    expect(t).toContain('не е публична');
+    expect(t).toContain('регистърът не вписва акционерите на АД');
     expect(t).toContain('декларираното управление се проверява по органа на управление');
     // the seat in the organization a person files for as a member of its bodies is an office
     expect(t).toContain('подава декларация именно като член на тези органи');
@@ -478,6 +478,20 @@ describe('/conflicts/methodology — render', () => {
     const t = text();
     expect(t).toContain('Задържани, не показани');
     expect(t).not.toMatch(/близо 400|408 млн|регистърът стане достъпен|уникалността му/);
+  });
+
+  it('words certainty by the rules of section 3 and names the columns the list serves', async () => {
+    // The page said only exact matches are published while section 3 accepts stems and name variants, and
+    // it described a „Публични средства" column the list no longer has.
+    await mount(ConflictMethodology as never, {});
+    const t = text();
+    expect(t).toContain('изведени детерминистично по правилата в т. 3');
+    expect(t).not.toContain('точни съвпадения');
+    for (const column of ['Стойност в периода', 'Обща стойност', 'Общ брой договори', 'Признаци'])
+      expect(t).toContain(`„${column}“`);
+    expect(t).not.toMatch(/Публични средства|€X от €Y|Дял при възложителите|доказано на нула/);
+    // the stake of a relative is a legal duty to declare, not a hint of concealment
+    expect(t).not.toContain('укриването');
   });
 
   it('states the three libel rails in plain language', async () => {
