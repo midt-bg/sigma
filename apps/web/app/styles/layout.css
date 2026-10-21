@@ -108,6 +108,7 @@
   line-height: 1.35;
   color: var(--ink);
   cursor: pointer;
+  overflow-wrap: anywhere;
 }
 .split aside label.check input {
   accent-color: var(--accent);
@@ -164,8 +165,11 @@
   block-size: 24px;
   margin: 0;
 }
+/* A long one-word label wraps rather than running into its count when the reader widens letter
+   and word spacing (WCAG 1.4.12). */
 .split aside .filter-subgroup-label {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .split aside .filter-subgroup > summary .small.muted {
   flex-shrink: 0;
@@ -180,12 +184,10 @@
    ≤960px (when .split stacks to one column): the rail collapses behind a tappable „Филтри"
    label backed by an off-screen checkbox. All rules are scoped to the classes, so absent
    markup is a no-op. (A native <details> can't be force-opened by CSS, hence the checkbox.) */
+/* On desktop the toggle does nothing, so it is not rendered at all: an invisible tab stop is lost
+   focus for a keyboard user and a dead control for a screen reader. */
 .filter-rail-toggle {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
+  display: none;
 }
 .filter-rail-summary {
   display: none;
@@ -206,6 +208,14 @@
     padding: var(--s-2) 0;
   }
   /* Stacked rail collapses behind the „Филтри" toggle; the off-screen checkbox drives it. */
+  .filter-rail-toggle {
+    display: block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
   .filter-rail-summary {
     display: flex;
     align-items: center;

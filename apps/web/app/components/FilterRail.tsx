@@ -85,6 +85,11 @@ export function FilterRail({
   };
   return (
     <aside className="filter-rail" aria-label="Филтри">
+      {/* The rail is dozens of Tab stops; this lets a keyboard user past it. Every page that shows
+          the rail marks its result list id="results". */}
+      <a className="skip" href="#results">
+        Към резултатите
+      </a>
       {/* The rail is always visible on desktop. When the layout stacks to one column it collapses
           behind the „Филтри" label, toggled by an off-screen checkbox — a CSS-only disclosure
           (see app.css), so it needs no JS and renders identically on the server and the client. */}
