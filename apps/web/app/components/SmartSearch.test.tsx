@@ -314,6 +314,37 @@ it('says so when nothing matches, without offering a row to select', async () =>
   expect(input().getAttribute('aria-activedescendant')).toBe(null);
 });
 
+// The previous text's rows must not stay on screen, or be opened with Enter, while the next text is asked.
+it('replaces the previous answer with „Търсене…“ as soon as the text changes', async () => {
+  await mount();
+  await type('тест');
+  expect(options()).toHaveLength(4);
+
+  let answer!: (r: Response) => void;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+  );
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      input(),
+      'тестxyz',
+    );
+    input().dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(options()).toHaveLength(0);
+  expect(container.querySelector('.smart-search-empty')?.textContent).toBe('Търсене…');
+  await press('ArrowDown');
+  expect(input().getAttribute('aria-activedescendant')).toBe(null);
+
+  await act(async () => {
+    vi.advanceTimersByTime(200);
+  });
+  expect(options()).toHaveLength(0);
+  await act(async () => answer(Response.json(results([]))));
+  expect(container.querySelector('.smart-search-empty')?.textContent).toContain('Няма съвпадения');
+});
+
 // Over its own budget the suggest route answers 429. The page stays; the box shows no list for that text —
 // not the previous text's suggestions and not „no matches" — and the form still goes to /search.
 it('shows no list, stale or empty, when the suggestions are refused', async () => {
