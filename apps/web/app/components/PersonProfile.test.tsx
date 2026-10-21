@@ -203,7 +203,7 @@ describe('PersonProfile', () => {
       [...graph.querySelectorAll('.sr-only tbody tr')].map((r) =>
         [...r.querySelectorAll('td')].map((td) => td.textContent),
       ),
-    ).toEqual([['Анна Петрова', 'управител', 'АЛФА ООД', '']]);
+    ).toEqual([['Анна Петрова', 'управител', 'АЛФА ООД', '—']]);
     expect(graph.textContent).not.toContain('извън схемата');
 
     expect(section('roles')!.querySelector('a[href="/companies/111111111"]')!.textContent).toBe(

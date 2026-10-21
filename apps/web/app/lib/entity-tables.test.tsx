@@ -225,7 +225,7 @@ describe('tieColumns', () => {
     const basis = [...table.querySelectorAll('tbody td')]
       .filter((td) => td.getAttribute('data-label') === 'Основание')
       .map((td) => td.textContent);
-    expect(basis).toEqual(['', 'виж свързаните лица']);
+    expect(basis).toEqual(['—', 'виж свързаните лица']);
     expect(table.querySelector('a[href="/companies/1#declared-people"]')).not.toBeNull();
   });
 });
