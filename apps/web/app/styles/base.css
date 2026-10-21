@@ -12,7 +12,7 @@ body {
 body {
   background: var(--paper);
   color: var(--ink);
-  font: 15px/1.5 var(--font-sans);
+  font: 0.9375rem/1.5 var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -36,15 +36,17 @@ a:focus {
 }
 
 /* ── Accessibility widget · font-increase ─────────────────────────────
-   The ИО АД widget toggles `.font-resize` on <body> and enlarges it by
-   percentage. Sigma's type scale is fixed px (and clamp/vw) throughout,
-   which ignores an inherited %% bump, so the control had almost no
-   visible effect. Translate the toggle into a real page zoom so every
-   element — px or not — scales uniformly. (Override lives here, not in
-   the pinned vendored accessibility.css.) */
+   The ИО АД widget toggles `.font-resize` on <html> and <body> and bumps both by a percentage
+   (200 % on phones). The type scale is in rem, so one bump on the root is enough: enlarge the root
+   by a quarter of the reader's own default size and cancel the second bump on <body>, which would
+   otherwise compound with it. Text grows, the layout reflows; no `zoom`, which displaced fixed
+   panels and popovers and made narrow pages scroll sideways. (Override lives here, not in the
+   pinned vendored accessibility.css.) */
+html.font-resize {
+  font-size: 125%;
+}
 html body.font-resize {
-  zoom: 1.25;
-  font-size: 15px; /* cancel the widget's %% bump; the zoom does the scaling */
+  font-size: 0.9375rem;
 }
 
 h1,
@@ -59,21 +61,21 @@ h5 {
   letter-spacing: -0.02em;
 }
 h1 {
-  font-size: clamp(36px, 4.4vw, 56px);
+  font-size: clamp(2.25rem, 4.4vw, 3.5rem);
   line-height: 1.02;
   letter-spacing: -0.025em;
 }
 h2 {
-  font-size: clamp(28px, 3.2vw, 40px);
+  font-size: clamp(1.75rem, 3.2vw, 2.5rem);
   line-height: 1.05;
 }
 h3 {
-  font-size: clamp(20px, 2vw, 26px);
+  font-size: clamp(1.25rem, 2vw, 1.625rem);
   line-height: 1.2;
 }
 h4 {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 0.6875rem;
   line-height: 1.3;
   letter-spacing: 0.14em;
   text-transform: uppercase;
