@@ -1,5 +1,5 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, date, money, moneyBare } from '@sigma/shared';
+import { count, date, money, moneyBare, plural } from '@sigma/shared';
 import { contractsSummary, getContractFacets, listContracts, getDb } from '@sigma/db';
 import type { Route } from './+types/contracts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -133,7 +133,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Договори' }]} />
       <main id="main">
         <PageHeader
-          kicker={`${count(result.total)} договора${fOneOffer ? ' с една оферта' : ''}`}
+          kicker={`${count(result.total)} ${plural(result.total, 'договор', 'договора')}${fOneOffer ? ' с една оферта' : ''}`}
           title="Договори"
           lede="Всеки сключен договор по обществена поръчка. Всяко обобщение другаде в платформата — обща сума за институция, за компания или поток между двете — се свежда точно до този списък. Филтрите остават в адреса."
         />
@@ -153,7 +153,8 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
               ]}
               count={
                 <>
-                  Намерени <strong>{count(result.total)}</strong> договора ·{' '}
+                  Намерени <strong>{count(result.total)}</strong>{' '}
+                  {plural(result.total, 'договор', 'договора')} ·{' '}
                   <strong>{money(result.valueEur)}</strong>
                   {result.suspect > 0 && (
                     <>

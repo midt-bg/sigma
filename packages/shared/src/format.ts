@@ -222,12 +222,12 @@ export function entityName(
 }
 
 /**
- * Bulgarian count word: returns `one` when n ends in 1 but not 11 (1, 21, 101… → договор), else
- * `many` (2, 11, 17… → договора). Returns ONLY the word — format the number separately with count().
+ * Bulgarian count word: returns `one` only for the numeral 1, else `many` (including 21 and 101).
+ * Returns ONLY the word — format the number separately with count().
  * Use as plural(n, 'договор', 'договора') / plural(n, 'съвпадение', 'съвпадения').
  */
 export function plural(n: number, one: string, many: string): string {
-  return n % 10 === 1 && n % 100 !== 11 ? one : many;
+  return n === 1 ? one : many;
 }
 
 /**

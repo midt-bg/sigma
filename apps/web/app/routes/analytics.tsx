@@ -6,7 +6,7 @@ import {
   getSpendingTrend,
   getDb,
 } from '@sigma/db';
-import { count, money, pct } from '@sigma/shared';
+import { count, money, pct, plural } from '@sigma/shared';
 import type { ReactNode } from 'react';
 import type { Route } from './+types/analytics';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -107,7 +107,10 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                               {flow.authorityName} → {flow.bidderDisplayName}
                             </span>
                             <span className="lens-value">{money(flow.wonEur)}</span>
-                            <span className="lens-meta">{count(flow.contracts)} договора</span>
+                            <span className="lens-meta">
+                              {count(flow.contracts)}{' '}
+                              {plural(flow.contracts, 'договор', 'договора')}
+                            </span>
                           </li>
                         ))}
                       </ul>

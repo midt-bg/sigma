@@ -10,7 +10,7 @@ import type {
   SankeyNode,
   SankeyRibbon,
 } from '@sigma/api-contract';
-import { cleanName, entityName, money } from '@sigma/shared';
+import { cleanName, count, entityName, money, plural } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 import { sectorOptions } from './sectors';
 
@@ -167,7 +167,7 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
     const ax = A_X + BAR_W;
     return {
       d: `M${ax},${a0.toFixed(1)} C${MID_X},${a0.toFixed(1)} ${MID_X},${c0.toFixed(1)} ${C_X},${c0.toFixed(1)} L${C_X},${c1.toFixed(1)} C${MID_X},${c1.toFixed(1)} ${MID_X},${a1.toFixed(1)} ${ax},${a1.toFixed(1)} Z`,
-      title: `${authorityName} → ${bidderDisplayName}: ${money(p.won_eur)} · ${p.contracts} договора`,
+      title: `${authorityName} → ${bidderDisplayName}: ${money(p.won_eur)} · ${count(p.contracts)} ${plural(p.contracts, 'договор', 'договора')}`,
       fromName: authorityName,
       toName: bidderDisplayName,
       valueEur: p.won_eur,

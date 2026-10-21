@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { COMPETITION_MIN_CONTRACTS } from '@sigma/config';
-import { count, date, money, pct } from '@sigma/shared';
+import { count, date, money, pct, plural } from '@sigma/shared';
 import { getMethodologyStats, getDb, getPartialStartYear } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -199,8 +199,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 <div className="row">
                   <dt>Брой записи</dt>
                   <dd>
-                    {count(t.contracts)} договора и обособени позиции, {count(t.authorities)}{' '}
-                    институции, {count(t.bidders)} компании, общо{' '}
+                    {count(t.contracts)} {plural(t.contracts, 'договор', 'договора')} и обособени
+                    позиции, {count(t.authorities)}{' '}
+                    {plural(t.authorities, 'институция', 'институции')}, {count(t.bidders)}{' '}
+                    {plural(t.bidders, 'компания', 'компании')}, общо{' '}
                     <strong>{money(t.valueEur)}</strong>
                     {t.asOf ? ` до ${date(t.asOf)}` : ''}.
                     {t.refreshedAt ? ` Данните са обновени на ${date(t.refreshedAt)}.` : ''}
@@ -226,9 +228,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     </p>
                     <ul>
                       <li>
-                        <strong>Вероятно грешна стойност</strong> — {count(vv.value_low)} договора:
-                        нула, отрицателна или под 1 000 € и под 5% от прогнозата (обикновено
-                        единична цена в полето за стойност). В сумите — както е подадена.
+                        <strong>Вероятно грешна стойност</strong> — {count(vv.value_low)}{' '}
+                        {plural(vv.value_low, 'договор', 'договора')}: нула, отрицателна или под 1
+                        000 € и под 5% от прогнозата (обикновено единична цена в полето за
+                        стойност). В сумите — както е подадена.
                       </li>
                       <li>
                         <strong>Заменена с прогнозната</strong> — {count(vv.value_suspect)}:
@@ -261,9 +264,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                       </li>
                     </ul>
                     <p>
-                      Без забележка са {count(vv.ok)} договора. „Вероятно грешна или липсваща
-                      стойност“ в списъка с договори и на страниците на институции и фирми е първата
-                      група заедно с договорите без използваема стойност.
+                      Без забележка са {count(vv.ok)} {plural(vv.ok, 'договор', 'договора')}.
+                      „Вероятно грешна или липсваща стойност“ в списъка с договори и на страниците
+                      на институции и фирми е първата група заедно с договорите без използваема
+                      стойност.
                     </p>
                   </dd>
                 </div>

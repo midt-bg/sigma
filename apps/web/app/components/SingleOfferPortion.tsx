@@ -1,4 +1,4 @@
-import { count, money, pct } from '@sigma/shared';
+import { count, money, pct, plural } from '@sigma/shared';
 
 export function SingleOfferPortion({
   valueEur,
@@ -34,7 +34,8 @@ export function SingleOfferPortion({
       <p className="small muted so-portion-cap">
         {hasCounts && (
           <>
-            {count(singleOffer)} от {count(contracts)} договора ·{' '}
+            {count(singleOffer)} от {count(contracts)} {plural(contracts, 'договор', 'договора')}{' '}
+            ·{' '}
           </>
         )}
         {money(valueEur)} от {money(totalEur)}

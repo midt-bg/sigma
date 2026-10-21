@@ -534,7 +534,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 term: 'Срок за изпълнение',
                 value:
                   c.durationDays != null ? (
-                    `${count(c.durationDays)} дни`
+                    `${count(c.durationDays)} ${plural(c.durationDays, 'ден', 'дни')}`
                   ) : (
                     <span className="muted">липсва за този запис</span>
                   ),
