@@ -209,6 +209,11 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                         Границите на областите на картата — GISCO (Евростат), © EuroGeographics за
                         административните граници.
                       </li>
+                      <li>
+                        Шрифтът ADYS в лентата за достъпност (
+                        <NewTabLink href="https://adysfont.com/">adysfont.com</NewTabLink>) — лиценз
+                        CC BY-ND 4.0, вграден без промени.
+                      </li>
                     </ul>
                   </dd>
                 </div>
