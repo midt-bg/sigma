@@ -48,6 +48,10 @@
   margin: var(--s-7) 0;
 }
 .totals .cell {
+  /* The label is the <dt> and comes first in the DOM; the number stays on top. */
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
   padding: var(--s-6) var(--s-6) var(--s-6) 0;
   border-right: 1px solid var(--rule);
   min-width: 0;

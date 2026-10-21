@@ -89,6 +89,21 @@ describe('TrendBlock', () => {
     expect(c.querySelectorAll('tbody tr').length).toBe(1);
   });
 
+  it('makes the table wrapper a labelled tab stop, since a narrow section can clip the columns', () => {
+    const c = render(
+      <TrendBlock
+        points={[point('2023', 100)]}
+        years={[year('2023', 100)]}
+        granularity="year"
+        caption="Разходи по години"
+      />,
+    );
+    const wrap = c.querySelector('.table-wrap')!;
+    expect(wrap.getAttribute('role')).toBe('region');
+    expect(wrap.getAttribute('aria-label')).toBe('Разходи по години');
+    expect(wrap.getAttribute('tabindex')).toBe('0');
+  });
+
   it('draws the chart next to the table when asked to split, and above it otherwise', () => {
     const props = {
       points: [point('2022', 50), point('2023', 100)],

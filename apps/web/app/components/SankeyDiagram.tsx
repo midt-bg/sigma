@@ -8,6 +8,8 @@ type LinkedNode = SankeyNode & { href?: string };
 // Renders the loader-computed Sankey as a static SVG (no chart JS). Authority bars (left) → company
 // bars (right), ribbon thickness ∝ flow value. Scrolls horizontally on narrow screens (.flow-scroll)
 // rather than shrinking labels into illegibility. Paired with the top-N table for the actual links.
+// The bars are links, so the SVG is a labelled group of links, not an image (an image's children are
+// presentational and would hide them); the ribbons and column captions are decoration for it.
 export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
   // The loader lays the geometry out in a fixed user-space height (sized for the Top-20 view), so
   // the „Топ 50" view (≈35 bars/side) crams its bars and collides labels. Stretch the geometry
@@ -33,17 +35,21 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
         <svg
           className="flow-svg"
           viewBox={viewBox}
-          role="img"
+          role="group"
           aria-label="Поток на средства от институции към компании"
         >
-          <text x="135" y="12" textAnchor="end" className="cap">
+          <text x="135" y="12" textAnchor="end" className="cap" aria-hidden="true">
             Институции
           </text>
-          <text x="565" y="12" className="cap">
+          <text x="565" y="12" className="cap" aria-hidden="true">
             Компании
           </text>
 
-          <g fillRule="evenodd" transform={vScale === 1 ? undefined : `scale(1 ${vScale})`}>
+          <g
+            aria-hidden="true"
+            fillRule="evenodd"
+            transform={vScale === 1 ? undefined : `scale(1 ${vScale})`}
+          >
             {layout.ribbons.map((r) => (
               <path className="link" d={r.d} key={`${r.fromName}-${r.toName}-${r.valueEur}`}>
                 <title>{r.title}</title>
@@ -65,7 +71,7 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
             const body = (
               <>
                 <rect className={`node ${n.side}`} x={n.x} y={y} width={n.width} height={height}>
-                  <title>{`${n.label}: ${money(n.valueEur)}`}</title>
+                  <title>{`${n.name}: ${money(n.valueEur)}`}</title>
                 </rect>
                 {showLabel && (
                   <>
@@ -94,7 +100,7 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
                 key={`${n.side}-${n.label}-${n.x}-${n.y}`}
                 href={n.href}
                 className="node-link"
-                aria-label={`${n.label} (${kind}): ${money(n.valueEur)}`}
+                aria-label={`${n.name} (${kind}): ${money(n.valueEur)}`}
               >
                 {body}
               </a>

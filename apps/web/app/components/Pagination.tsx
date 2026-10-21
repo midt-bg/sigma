@@ -14,7 +14,7 @@ export function Pagination({
 }) {
   return (
     <nav className="paging" aria-label="Навигация по страници">
-      <div>
+      <div className="paging-status">
         Страница <strong>{fmtCount(nav.page)}</strong> от <strong>{fmtCount(nav.pageCount)}</strong>{' '}
         · по {pageSize} на страница{unit ? ` (${unit})` : ''}
       </div>

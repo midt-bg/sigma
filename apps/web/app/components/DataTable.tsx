@@ -23,6 +23,7 @@ export function DataTable<Row>({
   caption,
   getKey,
   getRowId,
+  scrollable = false,
 }: {
   columns: Column<Row>[];
   rows: Row[];
@@ -31,10 +32,16 @@ export function DataTable<Row>({
   caption?: string;
   getKey: (row: Row, index: number) => string | number;
   getRowId?: (row: Row) => string;
+  /** The wrapper may clip the table (a narrow column): make it a labelled tab stop so the keyboard can
+   *  scroll it. Off by default — a wrapper whose cells hold links is already reachable through them. */
+  scrollable?: boolean;
 }) {
   const labelOf = (c: Column<Row>) => (typeof c.header === 'string' ? c.header : undefined);
   return (
-    <div className={`table-wrap tbl-${variant}${className ? ` ${className}` : ''}`}>
+    <div
+      className={`table-wrap tbl-${variant}${className ? ` ${className}` : ''}`}
+      {...(scrollable && { role: 'region', 'aria-label': caption, tabIndex: 0 })}
+    >
       <table>
         {caption && <caption className="sr-only">{caption}</caption>}
         <thead>

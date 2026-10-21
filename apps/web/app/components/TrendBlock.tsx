@@ -30,7 +30,14 @@ export function TrendBlock({
   }
   const table = (
     <>
-      <DataTable columns={trendYearColumns} rows={years} getKey={(r) => r.year} caption={caption} />
+      {/* Half-width sections can clip the four columns at tablet widths, and the rows hold no links. */}
+      <DataTable
+        columns={trendYearColumns}
+        rows={years}
+        getKey={(r) => r.year}
+        caption={caption}
+        scrollable
+      />
       {!!omitted?.contracts && (
         <p className="small muted">
           Без валидна дата (липсва, преди 2020 г. или в бъдещето): {count(omitted.contracts)}{' '}
