@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 test('renders distinct refresh and registry Workflow names', async () => {
@@ -233,4 +234,68 @@ test('the rebuild runner renders with the environment’s names and the shipped 
     rendered,
     /"sigma-declarations"|"sigma-rebuild-cutover"|^name = "sigma-rebuild-runner"$/m,
   );
+});
+
+function renderWeb(env, configText) {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-wrangler-render-web-'));
+  const config = join(dir, 'wrangler.jsonc');
+  writeFileSync(config, configText ?? readFileSync('apps/web/wrangler.jsonc', 'utf8'));
+  const run = spawnSync(process.execPath, ['scripts/wrangler-render.mjs', config], {
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH, SIGMA_D1_ID: '11111111-2222-4333-8444-555555555555', ...env },
+  });
+  const out = join(dir, 'wrangler.deploy.jsonc');
+  return { run, read: () => readFileSync(out, 'utf8') };
+}
+
+function limiterIds(text) {
+  const obj = JSON.parse(text.replace(/^\s*\/\/.*$/gm, '').replace(/,(\s*[}\]])/g, '$1'));
+  return Object.fromEntries(
+    obj.unsafe.bindings.filter((b) => b.type === 'ratelimit').map((b) => [b.name, b.namespace_id]),
+  );
+}
+
+test('production keeps the committed rate-limit ids; Stage and dev each get their own', () => {
+  const committed = limiterIds(readFileSync('apps/web/wrangler.jsonc', 'utf8'));
+  const production = renderWeb({ SIGMA_SHIP_ENV: 'production' });
+  assert.equal(production.run.status, 0, production.run.stderr);
+  assert.deepEqual(limiterIds(production.read()), committed);
+
+  const seen = new Set(Object.values(committed));
+  for (const env of ['staging', 'dev']) {
+    const rendered = renderWeb({ SIGMA_SHIP_ENV: env, SIGMA_WEB_NAME: `sigma-${env}` });
+    assert.equal(rendered.run.status, 0, rendered.run.stderr);
+    const ids = limiterIds(rendered.read());
+    assert.deepEqual(Object.keys(ids).sort(), Object.keys(committed).sort());
+    for (const id of Object.values(ids)) {
+      assert.ok(!seen.has(id), `${env} reuses namespace_id ${id}`);
+      seen.add(id);
+    }
+  }
+});
+
+test('refuses an unknown environment and a limiter without an id for it', () => {
+  const unknown = renderWeb({ SIGMA_SHIP_ENV: 'prod' });
+  assert.notEqual(unknown.run.status, 0);
+  assert.match(unknown.run.stderr, /SIGMA_SHIP_ENV must be production/);
+
+  const extra = renderWeb(
+    { SIGMA_SHIP_ENV: 'staging' },
+    readFileSync('apps/web/wrangler.jsonc', 'utf8').replace(
+      '"bindings": [',
+      '"bindings": [{ "name": "NEW_RATE_LIMITER", "type": "ratelimit", "namespace_id": "1099" },',
+    ),
+  );
+  assert.notEqual(extra.run.status, 0);
+  assert.match(extra.run.stderr, /no staging namespace_id for rate-limit binding NEW_RATE_LIMITER/);
+});
+
+test('refuses a web config without the fail-closed conflicts limiter', () => {
+  const config = readFileSync('apps/web/wrangler.jsonc', 'utf8').replace(
+    '"name": "CONFLICTS_RATE_LIMITER"',
+    '"name": "OTHER_RATE_LIMITER"',
+  );
+  const rendered = renderWeb({}, config);
+  assert.equal(rendered.run.status, 1);
+  assert.match(rendered.run.stderr, /missing rate-limit binding CONFLICTS_RATE_LIMITER/);
 });
