@@ -519,6 +519,29 @@
   color: var(--ink-mid);
   white-space: nowrap;
 }
+/* Below ~800 px the kind and the amount left the name 50–140 px, and the names were cut after a few
+   letters — the part that tells one suggestion from the next. Put kind and amount on a line of their
+   own and let the name wrap. */
+@media (max-width: 800px) {
+  .smart-search-option {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .smart-search-option-kind {
+    grid-row: 1;
+  }
+  .smart-search-option-amt {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .smart-search-option-body {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .smart-search-option-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
 .smart-search-see-all {
   padding: 11px var(--s-4);
   border-top: 1px solid var(--rule);
