@@ -4,7 +4,9 @@
  * opens the panel (Esc or leaving it closes it), the closed panel is out of the tab order, the toggles
  * report aria-pressed, the theme buttons' names contain their visible „C", both navs are named in the
  * page language, the click handlers sit on the buttons, and a skip link focuses its target without
- * making it a tab stop or scrolling it to the middle.
+ * making it a tab stop or scrolling it to the middle. The original theme removes the stored theme
+ * instead of storing "null", and the list of headings can be rebuilt after a client-side navigation
+ * (window.accessibilityRefreshHeadings).
  *
  * @param {object} opts - options object
  * opts.parentSelector - selector to get parent to inject tool into
@@ -131,7 +133,9 @@ const accessibility = async (opts) => {
 
   const themeChange = (theme) => {
     const classlist = ['accessibility-yellow', 'accessibility-dark', 'accessibility-blue'];
-    localStorage.setItem('accesibility.theme', theme);
+    // The original theme is no theme: drop the key rather than storing the string "null".
+    if (theme) localStorage.setItem('accesibility.theme', theme);
+    else localStorage.removeItem('accesibility.theme');
     classlist.map((e) => html.classList.remove(e));
     if (theme) {
       html.classList.add('accessibility-' + theme);
@@ -198,8 +202,9 @@ const accessibility = async (opts) => {
   const getSettings = () => {
     Number(localStorage.getItem('accesibility.fontSize')) && increaseFontSize();
     Number(localStorage.getItem('accesibility.dyslectic')) && toggleDyslexicFont(false);
-    localStorage.getItem('accesibility.theme') &&
-      themeChange(localStorage.getItem('accesibility.theme'));
+    // Earlier versions stored the original theme as the string "null".
+    const theme = localStorage.getItem('accesibility.theme');
+    theme && theme !== 'null' && themeChange(theme);
     Number(localStorage.getItem('accesibility.textOnly')) && textVersion();
   };
   const buttonsData = [
@@ -325,6 +330,17 @@ const accessibility = async (opts) => {
   });
   parent.insertAdjacentElement('afterbegin', controlPanel);
 
+  // The links to the page's headings. A client-side navigation swaps the headings without reloading
+  // the script, so the site's wrapper calls window.accessibilityRefreshHeadings after each one.
+  const headingList = ef('ul', {});
+  const renderHeadingLinks = () =>
+    headingList.replaceChildren(
+      ...[...document.querySelectorAll(linkSelector)].map((e) =>
+        ef('li', {}, ef('a', { href: '#' }, e.textContent)),
+      ),
+    );
+  renderHeadingLinks();
+  window.accessibilityRefreshHeadings = renderHeadingLinks;
   const leftContent = ef(
     'nav',
     { class: 'accessibility-content', 'aria-label': translations[lng].skipLinks },
@@ -341,40 +357,34 @@ const accessibility = async (opts) => {
         { 'data-target': mainSelector, class: 'a11y-def-click' },
         ef('a', { href: '#' }, translations[lng].toMain),
       ),
-      ef(
-        'li',
-        { class: 'ally-click' },
-        ef(
-          'ul',
-          {},
-          ...[...document.querySelectorAll(linkSelector)].map((e) =>
-            ef('li', {}, ef('a', { href: '#' }, e.textContent)),
-          ),
-        ),
-      ),
+      ef('li', { class: 'ally-click' }, headingList),
     ),
   );
   parent.insertAdjacentElement('afterbegin', leftContent);
-  [
-    ...document.querySelector('.ally-click').querySelectorAll('li'),
-    ...document.querySelectorAll('.a11y-def-click'),
-  ].map((e, i) => {
+  const jumpTo = (el) => {
+    if (!el) return;
+    // -1, not 0: the target takes focus without becoming a tab stop; scroll its start into view,
+    // not its middle (a tall <main> would land the reader far down the page).
+    el.tabIndex = -1;
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    el.addEventListener('blur', () => {
+      el.removeAttribute('tabIndex');
+    });
+  };
+  document.querySelectorAll('.a11y-def-click').forEach((e) => {
     e.addEventListener('click', (ev) => {
       ev.preventDefault();
-
-      const el = e.dataset.target
-        ? document.querySelector(e.dataset.target)
-        : document.querySelectorAll(linkSelector)[i];
-      // -1, not 0: the target takes focus without becoming a tab stop; scroll its start into view,
-      // not its middle (a tall <main> would land the reader far down the page).
-      el.tabIndex = -1;
-      el.focus({ preventScroll: true });
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-      el.addEventListener('blur', () => {
-        el.removeAttribute('tabIndex');
-      });
+      jumpTo(document.querySelector(e.dataset.target));
     });
+  });
+  // One listener for the heading links, which are rebuilt: the n-th link goes to the n-th heading.
+  headingList.addEventListener('click', (ev) => {
+    const li = ev.target.closest('li');
+    if (!li) return;
+    ev.preventDefault();
+    jumpTo(document.querySelectorAll(linkSelector)[[...headingList.children].indexOf(li)]);
   });
   getSettings();
   syncPressed();
