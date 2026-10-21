@@ -168,7 +168,8 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
                 SUM(CASE WHEN bids_received = 2 THEN 1 ELSE 0 END) AS two,
                 SUM(CASE WHEN bids_received = 3 THEN 1 ELSE 0 END) AS three,
                 SUM(CASE WHEN bids_received >= 4 THEN 1 ELSE 0 END) AS four_plus,
-                SUM(CASE WHEN bids_received IS NULL THEN 1 ELSE 0 END) AS unknown,
+                -- 0 offers on an awarded contract is a source gap, not a count: „няма данни“, so the buckets add up.
+                SUM(CASE WHEN bids_received IS NULL OR bids_received < 1 THEN 1 ELSE 0 END) AS unknown,
                 ${VALUE_LOW_SUM} AS value_low
          FROM contracts c WHERE bidder_id = ? AND amount_eur IS NOT NULL`,
         )
