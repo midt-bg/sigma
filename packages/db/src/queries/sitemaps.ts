@@ -24,6 +24,25 @@ function xmlEscape(s: string): string {
     .replace(/>/g, '&gt;');
 }
 
+// Some crawlers drop a URL over 2,048 characters; a few name-keyed company slugs (consortium names)
+// are longer. Their pages still work, they are just not listed.
+export const MAX_SITEMAP_URL_CHARS = 2048;
+
+// One <url> entry, or '' when the URL cannot be listed. The slugs keep the characters a path allows
+// raw, Cyrillic included; a sitemap <loc> is a URI, so everything outside printable ASCII (and the
+// few ASCII characters a URI never carries raw) is percent-encoded. Existing %XX escapes stay.
+function urlEntry(origin: string, path: string, lastmodTag: string): string {
+  let encoded: string;
+  try {
+    encoded = path.replace(/[^\x21-\x7E]|["<>\\^`{|}]/gu, encodeURIComponent);
+  } catch {
+    return ''; // a lone surrogate cannot be encoded
+  }
+  const url = origin + encoded;
+  if (url.length > MAX_SITEMAP_URL_CHARS) return '';
+  return `<url><loc>${xmlEscape(url)}</loc>${lastmodTag}</url>\n`;
+}
+
 // W3C <lastmod> from a stored ISO date (tolerates a datetime suffix); '' when none usable.
 function lastmod(iso: string | null | undefined): string {
   const m = iso && /^(\d{4}-\d{2}-\d{2})/.exec(iso);
@@ -88,9 +107,12 @@ export function streamAuthoritySitemap(db: D1Database, origin: string): Response
       .bind(after, CHUNK)
       .all<{ authority_id: string; last_date: string | null }>();
     const fallback = await asOf;
-    const slugs = results.map(
-      (r) =>
-        `<url><loc>${xmlEscape(origin)}/authorities/${xmlEscape(r.authority_id.replace(/^auth:/, ''))}</loc>${lastmod(r.last_date ?? fallback)}</url>\n`,
+    const slugs = results.map((r) =>
+      urlEntry(
+        origin,
+        `/authorities/${r.authority_id.replace(/^auth:/, '')}`,
+        lastmod(r.last_date ?? fallback),
+      ),
     );
     const last = results[results.length - 1];
     return { slugs, next: results.length < CHUNK || !last ? null : last.authority_id };
@@ -115,9 +137,12 @@ export function streamCompanySitemap(db: D1Database, origin: string): Response {
     const fallback = await asOf;
     const slugs = results
       .filter((r) => !isNaturalPersonProfileName(r.name, r.legal_form))
-      .map(
-        (r) =>
-          `<url><loc>${xmlEscape(origin)}/companies/${xmlEscape(companySlug(r.bidder_id))}</loc>${lastmod(r.last_date ?? fallback)}</url>\n`,
+      .map((r) =>
+        urlEntry(
+          origin,
+          `/companies/${companySlug(r.bidder_id)}`,
+          lastmod(r.last_date ?? fallback),
+        ),
       );
     const last = results[results.length - 1];
     return { slugs, next: results.length < CHUNK || !last ? null : last.bidder_id };
@@ -164,9 +189,12 @@ export function streamContractSitemap(db: D1Database, origin: string, page: numb
       }
       const block = results
         .filter((r) => !isNaturalPersonProfileName(r.bidder_name ?? '', r.legal_form))
-        .map(
-          (r) =>
-            `<url><loc>${xmlEscape(origin)}/contracts/${xmlEscape(contractSlug(r.id))}</loc>${lastmod(r.signed_at ?? r.published_at ?? fallback)}</url>\n`,
+        .map((r) =>
+          urlEntry(
+            origin,
+            `/contracts/${contractSlug(r.id)}`,
+            lastmod(r.signed_at ?? r.published_at ?? fallback),
+          ),
         )
         .join('');
       controller.enqueue(enc.encode(block));

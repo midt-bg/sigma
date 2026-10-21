@@ -70,14 +70,14 @@ const authId = (i: number) => `auth:${String(i).padStart(6, '0')}`;
 const bidderId = (i: number) => `eik:${String(1000000000 + i)}`;
 
 describe('streamAuthoritySitemap', () => {
-  it('strips XML-invalid C0 controls and escapes the URL', async () => {
+  it('percent-encodes XML-invalid C0 controls and escapes the URL', async () => {
     const db = fakeDb({
       authorities: [{ authority_id: 'auth:1234<&>', last_date: '2026-05-31' }],
       asOf: '2026-06-01',
     });
     const xml = await streamAuthoritySitemap(db, 'https://example.test').text();
     expect(xml).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/);
-    expect(xml).toContain('https://example.test/authorities/1234&lt;&amp;&gt;');
+    expect(xml).toContain('https://example.test/authorities/12%0134%3C&amp;%3E');
     expect(xml).toContain('<lastmod>2026-05-31</lastmod>');
     expect(xml.startsWith('<?xml')).toBe(true);
     expect(xml.endsWith('</urlset>\n')).toBe(true);
@@ -129,6 +129,22 @@ describe('streamCompanySitemap', () => {
     expect(xml.match(/<url>/g) ?? []).toHaveLength(1);
   });
 
+  it('leaves out a company whose URL would pass 2,048 characters', async () => {
+    const db = fakeDb({
+      companies: [
+        {
+          bidder_id: `name:${'ТЕСТ ГРУП ЕООД; '.repeat(60)}`,
+          name: 'ТЕСТ ГРУП ЕООД',
+          last_date: null,
+        },
+        { bidder_id: 'eik:111111111', name: 'АЛФА ТЕСТ ООД', last_date: null },
+      ],
+    });
+    const xml = await streamCompanySitemap(db, 'https://x.test').text();
+    expect(xml.match(/<url>/g) ?? []).toHaveLength(1);
+    expect(xml).toContain('/companies/111111111');
+  });
+
   it('falls back to the dataset as_of when a company has no last_date', async () => {
     const db = fakeDb({
       companies: [{ bidder_id: 'eik:103267194', name: 'ТЕСТ ООД', last_date: null }],
@@ -159,6 +175,15 @@ describe('streamCompanySitemap', () => {
 });
 
 describe('streamContractSitemap', () => {
+  it('percent-encodes non-ASCII in <loc> and keeps the existing escapes', async () => {
+    const db = fakeDb({
+      contracts: [{ rid: 1, id: 'c:e:1:ДЗ-1/2', signed_at: '2026-03-01', published_at: null }],
+    });
+    const xml = await streamContractSitemap(db, 'https://x.test', 1).text();
+    expect(xml).toContain('<loc>https://x.test/contracts/e:1:%D0%94%D0%97-1%2F2</loc>');
+    expect(xml).not.toMatch(/<loc>[^<]*[^\x21-\x7E]/);
+  });
+
   it('emits contract URLs for a page and closes with the tail', async () => {
     const db = fakeDb({
       contracts: [
