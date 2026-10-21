@@ -483,9 +483,10 @@ tbody td,
     grid-template-columns: 1fr 1fr;
   }
   /* The figure does not wrap, so on the narrowest phones it stops growing with enlarged text
-     instead of pushing the page sideways. */
+     instead of pushing the page sideways, and below 400 px it shrinks with the screen so that
+     „55,7 млрд. €" stays inside a 320 px half-cell. */
   .totals .num {
-    font-size: min(1.5rem, 7.5vw);
+    font-size: min(1.5rem, 6vw);
   }
 }
 
