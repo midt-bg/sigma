@@ -121,6 +121,13 @@ hr {
   margin: var(--s-7) 0;
 }
 
+/* An abbreviation with its expansion: a quiet dotted underline says there is more on hover. */
+abbr[title] {
+  text-decoration: underline dotted 1px;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
 code,
 .mono {
   font-family: var(--font-mono);

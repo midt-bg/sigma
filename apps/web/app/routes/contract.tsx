@@ -16,7 +16,7 @@ import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
-import { Chip, Flag, Section, ExternalEikLink, NewTabLink } from '../components/ui';
+import { Abbr, Chip, Flag, Section, ExternalEikLink, NewTabLink } from '../components/ui';
 import { unverifiedValueNote } from '../lib/contractValue';
 import { RiskIndicators } from '../components/RiskIndicators';
 import { annexNeedsExpand, annexParagraphs, annexPreview } from '../lib/annexText';
@@ -167,7 +167,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker={
             <>
-              УНП {c.unp}
+              <Abbr>УНП</Abbr> {c.unp}
               {c.contractNumber && <> · Договор № {c.contractNumber}</>}
               {c.lotLabel && <> · обособена позиция {c.lotLabel}</>}
             </>

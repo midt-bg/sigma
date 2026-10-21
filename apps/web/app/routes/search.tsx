@@ -7,7 +7,7 @@ import type { Route } from './+types/search';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { kindLabel } from '../lib/search-labels';
-import { Callout, Chip, OwnershipChip } from '../components/ui';
+import { Abbr, Callout, Chip, OwnershipChip } from '../components/ui';
 import { cached } from '../lib/cache';
 import { personName } from '../lib/person-name';
 
@@ -151,7 +151,9 @@ export default function Search({ loaderData }: Route.ComponentProps) {
           lede={lede}
         >
           <Form method="get" className="page-search" role="search">
-            <label htmlFor="page-query">Търси по име, ЕИК, договор или преписка</label>
+            <label htmlFor="page-query">
+              Търси по име, <Abbr>ЕИК</Abbr>, договор или преписка
+            </label>
             <div>
               <input
                 id="page-query"
@@ -167,7 +169,8 @@ export default function Search({ loaderData }: Route.ComponentProps) {
 
         {hasQuery && results.empty && (
           <p className="muted">
-            Нищо не намерихме за „{results.query}". Пробвай с име, ЕИК или УНП.
+            Нищо не намерихме за „{results.query}". Пробвай с име, <Abbr>ЕИК</Abbr> или{' '}
+            <Abbr>УНП</Abbr>.
           </p>
         )}
 

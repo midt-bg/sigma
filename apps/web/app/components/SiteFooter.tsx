@@ -1,8 +1,7 @@
 import { Link } from 'react-router';
 import { date } from '@sigma/shared';
-import { DATA_SOURCE_LICENSE } from '../lib/dataSource';
 import { coverageEndYear, coverageRange } from '../lib/coverage';
-import { NewTabLink } from './ui';
+import { Abbr, NewTabLink } from './ui';
 
 // Single mono-caps line: source + coverage window + source and refresh dates.
 export function SiteFooter({
@@ -19,7 +18,8 @@ export function SiteFooter({
     <footer className="site-footer" role="contentinfo">
       <div className="site-footer-inner">
         <span>
-          {DATA_SOURCE_LICENSE} · {range}
+          Източник (CC-BY 4.0): <Abbr>АОП</Abbr> / <Abbr>ЦАИС ЕОП</Abbr> — отворени данни
+          (storage.eop.bg) · {range}
           {asOf ? ` · последен договор ${date(asOf)}` : ''}
           {refreshedAt ? ` · данни обновени ${date(refreshedAt)}` : ''}
         </span>

@@ -8,7 +8,7 @@ import { SmartSearch } from '../components/SmartSearch';
 import { TotalsStrip } from '../components/TotalsStrip';
 import { RankedBars } from '../components/RankedBars';
 import { SingleOfferPortion } from '../components/SingleOfferPortion';
-import { OwnershipChip } from '../components/ui';
+import { Abbr, OwnershipChip } from '../components/ui';
 import { ANALYTICS_LENSES } from '../lib/analytics-lenses';
 import { cached } from '../lib/cache';
 import { coverageEndYear, coveragePartialNote, coverageRange } from '../lib/coverage';
@@ -196,7 +196,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                         <span className="flag soft">обединение</span>
                       ) : (
                         <>
-                          {c.eik ? `ЕИК ${c.eik}` : 'непотвърден ЕИК'}
+                          {c.eik ? (
+                            <>
+                              <Abbr>ЕИК</Abbr> {c.eik}
+                            </>
+                          ) : (
+                            <>
+                              непотвърден <Abbr>ЕИК</Abbr>
+                            </>
+                          )}
                           {c.sector ? ` · ${c.sector.short}` : ''}
                         </>
                       )}
@@ -301,8 +309,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <h3 className="mb-8">Какво показва СИГМА</h3>
             <p>
               СИГМА — Система за Интегриран Граждански Мониторинг и Анализ — обединява публични
-              данни от Регистъра на обществените поръчки (АОП / ЦАИС ЕОП): кой какво възлага, на
-              кого и за колко. Зад всяко число тук стоят конкретните договори, които го формират.
+              данни от Регистъра на обществените поръчки (<Abbr>АОП</Abbr> / <Abbr>ЦАИС ЕОП</Abbr>):
+              кой какво възлага, на кого и за колко. Зад всяко число тук стоят конкретните договори,
+              които го формират.
             </p>
           </div>
           <div>

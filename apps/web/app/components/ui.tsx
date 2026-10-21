@@ -158,6 +158,23 @@ export function RegistryCta({ eik }: { eik: string }) {
   );
 }
 
+// The abbreviations of the data source and the law, spelled out for a reader who does not know them
+// (WCAG 3.1.4) and for a screen reader, which otherwise spells them letter by letter.
+const ABBREVIATIONS: Record<string, string> = {
+  ЕИК: 'Единен идентификационен код',
+  УНП: 'Уникален номер на преписката',
+  АОП: 'Агенция по обществени поръчки',
+  'ЦАИС ЕОП': 'Централизирана автоматизирана информационна система „Електронни обществени поръчки“',
+  ЗОП: 'Закон за обществените поръчки',
+  CPV: 'Общ терминологичен речник за обществените поръчки (Common Procurement Vocabulary)',
+  'DOJ/FTC': 'Министерство на правосъдието и Федерална търговска комисия на САЩ',
+  МИДТ: 'Министерство на иновациите и дигиталната трансформация',
+};
+
+export function Abbr({ children }: { children: string }) {
+  return <abbr title={ABBREVIATIONS[children]}>{children}</abbr>;
+}
+
 /** A link that opens in a new tab and says so to a screen reader, as every such link on the site does.
  *  `rel` defaults to noopener noreferrer; a caller may pass its own. */
 export function NewTabLink({ children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
