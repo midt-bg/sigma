@@ -111,9 +111,12 @@ tbody td .small.muted {
 tbody tr:hover td {
   background: var(--paper-warm);
 }
+/* The padding is outside the line box: it changes no layout, but takes a one-line link's hit area
+   from 16 to 24 px high (WCAG 2.5.8). */
 tbody td a {
   color: var(--ink);
   text-decoration: none;
+  padding-block: 4px;
 }
 tbody td a:hover {
   color: var(--accent);
