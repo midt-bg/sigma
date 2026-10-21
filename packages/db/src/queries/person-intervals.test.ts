@@ -5,7 +5,12 @@
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
-import { getTimelineIntervals, overlapBands, type DaySpan } from './person-intervals';
+import {
+  getTimelineIntervals,
+  overlapBands,
+  TIMELINE_SUBJECT_CHARS,
+  type DaySpan,
+} from './person-intervals';
 
 let db: DatabaseSync | undefined;
 afterEach(() => {
@@ -180,4 +185,16 @@ it('ignores a role it cannot place in time, and ties a declarant the register do
   // Without a registry identity the person has no roles: only the declared stake ties them.
   const { bands } = await getTimelineIntervals(fixture(), null, ['official', 'alias']);
   expect(Object.keys(bands)).toEqual(['222222222']);
+});
+
+it('clips a long subject: the mark needs a label, the contract page has the whole text', async () => {
+  const d1 = fixture();
+  db!.exec(
+    `UPDATE contracts SET contract_subject = '${'Ремонт на път '.repeat(30)}' WHERE id = 'c2'`,
+  );
+  const { procurements } = await getTimelineIntervals(d1, 'person', ['official', 'alias']);
+  const long = procurements.find((p) => p.id === 'c2')!;
+  expect(long.subject!.length).toBeLessThanOrEqual(TIMELINE_SUBJECT_CHARS);
+  expect(long.subject!.endsWith('…')).toBe(true);
+  expect(procurements.find((p) => p.id === 'c0')!.subject).toBe('Договор 0');
 });

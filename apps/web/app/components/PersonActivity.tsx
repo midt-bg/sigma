@@ -93,6 +93,9 @@ export function PersonActivity({
       </Section>
     );
   }
+  const allAuthoritiesQuery = new URLSearchParams(location.search);
+  allAuthoritiesQuery.set('authorities', 'all');
+  const allAuthoritiesHref = `${location.pathname}?${allAuthoritiesQuery}#contract-authorities`;
   const pageHref = (page: number) => {
     const q = new URLSearchParams(location.search);
     q.set('page', String(page));
@@ -148,6 +151,13 @@ export function PersonActivity({
               rows={a.byAuthority}
               getKey={(r) => r.id}
             />
+            {a.byAuthorityTotal > a.byAuthority.length && (
+              <p className="small">
+                <Link to={allAuthoritiesHref} preventScrollReset>
+                  Покажи всички {count(a.byAuthorityTotal)} възложители
+                </Link>
+              </p>
+            )}
           </Section>
         </div>
       )}

@@ -2,7 +2,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import { d1FromSqlite, throwingD1 } from '@sigma/test-support';
 import { OFFICE_ORGANIZATIONS } from '@sigma/shared';
-import { getPersonActivity, getRegistryIdentity, getRegistryOfficials } from './person-activity';
+import {
+  BY_AUTHORITY_SHOWN,
+  getPersonActivity,
+  getRegistryIdentity,
+  getRegistryOfficials,
+} from './person-activity';
 import { getPersonTimeline } from './person-timeline';
 let db: DatabaseSync;
 afterEach(() => db?.close());
@@ -615,4 +620,28 @@ it('leaves out the contracts of a company in which the person holds a seat with 
     '111111111',
   ]);
   expect(stake.total).toBe(all.total);
+});
+it('lists the largest buyers in „По възложители" and all of them on ?authorities=all', async () => {
+  const d1 = fixture();
+  const values = Array.from({ length: BY_AUTHORITY_SHOWN + 5 }, (_, i) => i);
+  db.exec(
+    values
+      .map(
+        (i) => `INSERT INTO authorities VALUES('auth:x${i}','Община Тест ${i}');
+        INSERT INTO tenders VALUES('tx${i}','Предмет','auth:x${i}');
+        INSERT INTO contracts VALUES('x${i}','Предмет','eik:111111111','tx${i}','2022-06-0${(i % 9) + 1}',${1000 + i});`,
+      )
+      .join('\n'),
+  );
+  const top = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(top.byAuthority).toHaveLength(BY_AUTHORITY_SHOWN);
+  expect(top.byAuthorityTotal).toBeGreaterThan(BY_AUTHORITY_SHOWN);
+  expect(top.byAuthority[0]!.valueEur).toBeGreaterThanOrEqual(top.byAuthority[1]!.valueEur!);
+  const all = await getPersonActivity(
+    d1FromSqlite(db),
+    'person',
+    ['official'],
+    new URLSearchParams('authorities=all'),
+  );
+  expect(all.byAuthority).toHaveLength(top.byAuthorityTotal);
 });
