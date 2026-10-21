@@ -8,6 +8,8 @@
 .facts .row {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) 1.6fr;
+  /* The small mono label sits on the value's baseline, not ~3 px above it. */
+  align-items: baseline;
   gap: var(--s-4);
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--rule-soft);
