@@ -6,7 +6,7 @@ import {
   getSpendingTrend,
   getDb,
 } from '@sigma/db';
-import { count, money, pct, plural } from '@sigma/shared';
+import { count, decimal, money, pct, plural } from '@sigma/shared';
 import type { ReactNode } from 'react';
 import type { Route } from './+types/analytics';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -193,7 +193,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                         <Link to={`/authorities/${competition.topConcentration.slug}`}>
                           {competition.topConcentration.name}
                         </Link>{' '}
-                        (индекс {pct(competition.topConcentration.hhi)})
+                        (индекс {decimal(competition.topConcentration.hhi)})
                       </p>
                     )}
                   </div>

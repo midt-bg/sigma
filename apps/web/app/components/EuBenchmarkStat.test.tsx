@@ -14,9 +14,9 @@ const props = {
 describe('EuBenchmarkStat', () => {
   it('fills the meter in the accent only for a verdict over the EU threshold', () => {
     const html = renderToStaticMarkup(
-      <EuBenchmarkStat {...props} rating="bad" ratingLabel="над прага на ЕС" />,
+      <EuBenchmarkStat {...props} rating="bad" ratingLabel="над референтната стойност на ЕС" />,
     );
-    expect(html).toContain('над прага на ЕС');
+    expect(html).toContain('над референтната стойност на ЕС');
     expect(html).toContain('class="warn"');
   });
 
@@ -25,11 +25,11 @@ describe('EuBenchmarkStat', () => {
       <EuBenchmarkStat
         {...props}
         rating={null}
-        ratingLabel="твърде малко договори за сравнение с праговете на ЕС (под 20)"
+        ratingLabel="твърде малко договори за сравнение с референтните стойности на ЕС (под 20)"
       />,
     );
     expect(html).toContain('твърде малко договори');
-    expect(html).not.toContain('над прага на ЕС');
+    expect(html).not.toContain('над референтната стойност на ЕС');
     expect(html).not.toContain('class="warn"');
   });
 });
