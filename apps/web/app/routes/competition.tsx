@@ -191,7 +191,6 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
         <Form
           method="get"
           className="flow-controls"
-          role="group"
           aria-label="Филтри на анализа"
           onChange={(e) => submit(e.currentTarget)}
         >

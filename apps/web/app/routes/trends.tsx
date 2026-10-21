@@ -77,7 +77,6 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
         <Form
           method="get"
           className="flow-controls"
-          role="group"
           aria-label="Филтри на тренда"
           onChange={(e) => submit(e.currentTarget)}
         >
