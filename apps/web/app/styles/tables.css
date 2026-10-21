@@ -184,12 +184,9 @@ td.rank {
 
 /* ── Responsive: tablets ──────────────────────────────────────────────────── */
 
-/* Hide secondary columns on narrow viewports to keep the row legible */
-@media (max-width: 760px) {
-  .col-secondary {
-    display: none;
-  }
-}
+/* Secondary columns stay at every width: between 601 and 760 px (a 1440 px window at 200 % zoom,
+   an A4 printout) hiding them dropped the date, the procedure and the basis of a link; the table
+   wrapper scrolls instead, and at 600 px and below each is a labelled line of its card. */
 @media (max-width: 600px) {
   table {
     font-size: 0.75rem;
@@ -214,7 +211,7 @@ td.rank {
    never needs horizontal scrolling. Two shapes: numeric "cards" and text
    "prose". */
 @media (max-width: 600px) {
-  /* Bring back the column we hide on tablets — as a labeled line, it fits fine */
+  /* A secondary column as a labelled line of the card */
   .tbl-cards .col-secondary {
     display: flex;
   }
