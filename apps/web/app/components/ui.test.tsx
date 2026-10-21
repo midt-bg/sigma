@@ -9,6 +9,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  Abbr,
   Callout,
   Chip,
   Explanation,
@@ -95,6 +96,19 @@ describe('ExternalEikLink', () => {
 
     const withClass = render(<ExternalEikLink eik="111" className="inline" />).querySelector('a')!;
     expect(withClass.className).toBe('external-eik-link inline');
+  });
+});
+
+describe('Abbr', () => {
+  it('spells out an abbreviation of the source or the law', () => {
+    const abbr = render(<Abbr>ЦАИС ЕОП</Abbr>).querySelector('abbr')!;
+    expect(abbr.textContent).toBe('ЦАИС ЕОП');
+    expect(abbr.title).toBe(
+      'Централизирана автоматизирана информационна система „Електронни обществени поръчки“',
+    );
+    expect(render(<Abbr>ЕИК</Abbr>).querySelector('abbr')!.title).toBe(
+      'Единен идентификационен код',
+    );
   });
 });
 

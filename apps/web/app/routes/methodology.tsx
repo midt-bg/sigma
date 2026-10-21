@@ -5,7 +5,7 @@ import { getMethodologyStats, getDb, getPartialStartYear } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { Callout, Flag, NewTabLink } from '../components/ui';
+import { Abbr, Callout, Flag, NewTabLink } from '../components/ui';
 import { cached } from '../lib/cache';
 import { START_YEAR, coverageEndYear } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
@@ -69,7 +69,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
     ['Финансиране от ЕС (да/не)', 'Обявление', 'has', 'да', 'info'],
     [
       'Вид на институцията',
-      'Вид на възложителя (ЗОП); групирането е приблизително',
+      'Вид на възложителя (по Закона за обществените поръчки); групирането е приблизително',
       'has',
       'да',
       'info',
@@ -145,8 +145,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   колко.
                 </li>
                 <li>
-                  <strong>Компании</strong> — изпълнителите, ключът е ЕИК. Колко е спечелила всяка,
-                  от кого, в какъв сектор.
+                  <strong>Компании</strong> — изпълнителите, ключът е <Abbr>ЕИК</Abbr>. Колко е
+                  спечелила всяка, от кого, в какъв сектор.
                 </li>
                 <li>
                   <strong>Договори</strong> — основната единица. Всяко обобщение се свежда до
@@ -174,8 +174,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 <div className="row">
                   <dt>Първичен източник</dt>
                   <dd>
-                    Регистър на обществените поръчки (АОП / ЦАИС ЕОП) — отворени данни от
-                    storage.eop.bg.
+                    Регистър на обществените поръчки (<Abbr>АОП</Abbr> / <Abbr>ЦАИС ЕОП</Abbr>) —
+                    отворени данни от storage.eop.bg.
                   </dd>
                 </div>
                 <div className="row">
@@ -191,9 +191,9 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 <div className="row">
                   <dt>Покрити сектори</dt>
                   <dd>
-                    <strong>Всички сектори.</strong> Секторът се определя еднозначно от CPV кода
-                    (раздел = първите две цифри); налични са всичките {loaderData.sectors} раздела
-                    на CPV.
+                    <strong>Всички сектори.</strong> Секторът се определя еднозначно от{' '}
+                    <Abbr>CPV</Abbr> кода (раздел = първите две цифри); налични са всичките{' '}
+                    {loaderData.sectors} раздела на CPV.
                   </dd>
                 </div>
                 <div className="row">
@@ -301,7 +301,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 </li>
                 <li>
                   <strong>Стандартизирани имена, оригинални идентификатори.</strong> Имената се
-                  привеждат в каноничен вид; ЕИК и УНП се запазват буквално.
+                  привеждат в каноничен вид; ЕИК и <Abbr>УНП</Abbr> се запазват буквално.
                 </li>
                 <li>
                   <strong>СИГМА не тълкува, а показва.</strong> Класирания, дялове и съотношения са
@@ -441,8 +441,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     Индекс на Херфиндал-Хиршман върху разпределението на парите на един възложител
                     между неговите изпълнители: близо до 0 значи разпръснато между много фирми, а 1
                     значи всичко отива към една. Стойностите над 0.25 се маркират като висока
-                    концентрация (ориентир по DOJ/FTC). Изчислена величина, зад която стоят
-                    конкретните договори.
+                    концентрация (ориентир по <Abbr>DOJ/FTC</Abbr>). Изчислена величина, зад която
+                    стоят конкретните договори.
                   </p>
                   <span className="src">→ сума от квадратите на дяловете на доставчиците</span>
                 </dd>

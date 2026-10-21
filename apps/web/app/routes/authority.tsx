@@ -31,7 +31,7 @@ import { layoutTies } from '../lib/tie-layout.server';
 import { TieGraph } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
-import { ShareBar, Chip, Section, RegistryCta } from '../components/ui';
+import { Abbr, ShareBar, Chip, Section, RegistryCta } from '../components/ui';
 import { cached } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
@@ -135,7 +135,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                   · <Chip>{a.typeLabel}</Chip>
                 </>
               )}
-              {' · '}ЕИК&nbsp;{a.eik}
+              {' · '}
+              <Abbr>ЕИК</Abbr>&nbsp;{a.eik}
             </>
           }
           title={a.name}
