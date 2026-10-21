@@ -307,6 +307,37 @@
   }
 }
 
+/* Without JavaScript the menu and search buttons are dead controls: hide them, show the menu as a
+   plain row of links, and let the <noscript> link in SiteHeader stand in for search. */
+@media (scripting: none) {
+  button.nav-search {
+    display: none;
+  }
+}
+@media (scripting: none) and (max-width: 960px) {
+  .nav-toggle,
+  .site-nav-head {
+    display: none;
+  }
+  .site-nav {
+    position: static;
+    order: 3;
+    flex: 1 0 100%;
+    flex-flow: row wrap;
+    gap: 0 var(--s-5);
+    width: auto;
+    padding: 0;
+    border-left: 0;
+    box-shadow: none;
+    transform: none;
+    visibility: visible;
+  }
+  .site-nav a {
+    padding: 6px 0;
+    border-bottom: 0;
+  }
+}
+
 /* Honour reduced-motion: the drawer and backdrop snap rather than slide/fade. */
 @media (prefers-reduced-motion: reduce) {
   .site-nav,

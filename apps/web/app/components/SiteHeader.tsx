@@ -21,6 +21,21 @@ const NAV: NavItem[] = [
   { to: '/methodology', label: 'Методология' },
 ];
 
+const SEARCH_ICON = (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.75" />
+    <line
+      x1="15.4"
+      y1="15.4"
+      x2="20"
+      y2="20"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
 function pathMatches(pathname: string, base: string): boolean {
   return pathname === base || pathname.startsWith(`${base}/`);
 }
@@ -28,7 +43,8 @@ function pathMatches(pathname: string, base: string): boolean {
 // Masthead: serif brand + mono nav. The search icon opens a drawer below the mast; on mobile the
 // nav collapses into a slide-in drawer with a dimmed backdrop. All interaction is React state — no
 // external script — so the strict CSP needs no script allowance beyond the framework nonce. SSR
-// renders everything closed; the handlers wire up on hydration.
+// renders everything closed; the handlers wire up on hydration. Without JavaScript the two buttons
+// would do nothing: the menu is then shown as a plain row of links and search is a link to /search.
 export function SiteHeader() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -207,27 +223,16 @@ export function SiteHeader() {
               aria-controls={drawerId}
               onClick={() => setSearchOpen((v) => !v)}
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <circle
-                  cx="10.5"
-                  cy="10.5"
-                  r="6.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                />
-                <line
-                  x1="15.4"
-                  y1="15.4"
-                  x2="20"
-                  y2="20"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                  strokeLinecap="round"
-                />
-              </svg>
+              {SEARCH_ICON}
               <span className="nav-search-text">Търсене</span>
             </button>
+            {/* Without JavaScript the button opens nothing (it is hidden then, chrome.css); the
+                search page is a plain form. */}
+            <noscript>
+              <a className="nav-search" href="/search" aria-label="Търсене">
+                {SEARCH_ICON}
+              </a>
+            </noscript>
             <button
               ref={navToggleRef}
               className="nav-toggle"

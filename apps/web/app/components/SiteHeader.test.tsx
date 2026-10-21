@@ -4,7 +4,10 @@
 // inert while the drawer is open, so the return must happen after the drawer state is committed.
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { createMemoryRouter, RouterProvider } from 'react-router';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SiteHeader } from './SiteHeader';
 
@@ -170,5 +173,21 @@ describe('SiteHeader search drawer and layout', () => {
     open();
     act(() => analytics.click());
     expect(toggle().getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
+// Both header buttons are wired up on hydration; without JavaScript they would be dead controls.
+describe('SiteHeader without JavaScript', () => {
+  it('links to the search page in place of the search button', () => {
+    const html = renderToString(<RouterProvider router={router} />);
+    expect(html).toMatch(/<noscript><a class="nav-search" href="\/search" aria-label="Търсене">/);
+  });
+
+  it('hides the buttons and shows the menu as links when scripting is off', () => {
+    const css = readFileSync(resolve(__dirname, '../styles/chrome.css'), 'utf8');
+    const noScript = css.slice(css.indexOf('@media (scripting: none)'));
+    expect(noScript).toMatch(/button\.nav-search\s*\{\s*display: none/);
+    expect(noScript).toMatch(/\.site-nav\s*\{[^}]*visibility: visible/);
+    expect(noScript).toMatch(/\.nav-toggle,[^{]*\{\s*display: none/);
   });
 });
