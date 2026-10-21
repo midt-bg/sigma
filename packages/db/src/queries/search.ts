@@ -4,7 +4,13 @@
 // because the tokenizer splits them the same way on both sides.
 
 import type { EntityKind, OwnershipKind, SearchHit, SearchResults } from '@sigma/api-contract';
-import { cleanName, entityName, parseConsortiumMembers, searchTokens } from '@sigma/shared';
+import {
+  cleanName,
+  companyNameStem,
+  entityName,
+  parseConsortiumMembers,
+  searchTokens,
+} from '@sigma/shared';
 import { hrefForEntity } from './identity';
 
 export type SearchKind = 'official' | 'person' | 'authority' | 'company' | 'contract';
@@ -157,6 +163,19 @@ const hitsSql = (withConflict: boolean): string => `SELECT search_index.ref, sea
  WHERE search_index.kind = ? AND search_index MATCH ?
  ORDER BY rank LIMIT ?`;
 
+// bm25 alone ties a company with consortium strings and name-keyed fragments that carry the same words,
+// so the canonical company could drop out of the six shown. Company hits are drawn from a wider pool of
+// the best-ranked rows and re-ordered: the name equal to the query (legal form and quotes aside) first,
+// then rows with a valid ЕИК, then bm25.
+const COMPANY_POOL = 50;
+
+function rankCompanies(rows: HitRow[], query: string): HitRow[] {
+  const stem = companyNameStem(query);
+  const key = (r: HitRow) =>
+    (stem && companyNameStem(r.title) === stem ? 0 : 2) + (r.eik_valid === 1 ? 0 : 1);
+  return [...rows].sort((a, b) => key(a) - key(b)); // stable: bm25 order within a tier
+}
+
 export const SEARCH_HITS_SQL = hitsSql(true);
 export const SEARCH_HITS_SQL_NO_CONFLICT = hitsSql(false);
 
@@ -209,7 +228,12 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           bestRank: Infinity,
         };
       }
-      const { results } = await db.prepare(hitsSql).bind(g.kind, match, g.limit).all<HitRow>();
+      const isCompanyGroup = g.kind === 'company';
+      const { results: pool } = await db
+        .prepare(hitsSql)
+        .bind(g.kind, match, isCompanyGroup ? COMPANY_POOL : g.limit)
+        .all<HitRow>();
+      const results = isCompanyGroup ? rankCompanies(pool, query).slice(0, g.limit) : pool;
       const hits: SearchHit[] = results.map((r) => {
         const href = hrefForEntity(g.kind, r.ref);
         const isCompany = g.kind === 'company';
@@ -247,7 +271,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           moreHref: total > hits.length && g.path ? searchMoreHref(g.kind, query) : null,
         },
         // Best (lowest bm25) rank in the group = its top row, for the relevance gate below.
-        bestRank: results.length ? results[0]!.rank : Infinity,
+        bestRank: pool.length ? pool[0]!.rank : Infinity,
       };
     }),
   );
