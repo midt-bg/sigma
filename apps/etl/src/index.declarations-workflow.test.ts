@@ -84,6 +84,11 @@ it('the weekly cron starts only the declarations; every other tick refreshes pro
     { ...env, DECLARATIONS_ENABLED: 'false' } as Env,
   );
   expect(startRun).toHaveBeenCalledOnce();
+  // Stage runs the same schedule half an hour later: the minute does not decide which tick it is.
+  await worker.scheduled({ cron: '30 3 * * 1' } as never, env);
+  expect(startRun).toHaveBeenCalledTimes(2);
+  await worker.scheduled({ cron: '30 */6 * * *' } as never, env);
+  expect(create).toHaveBeenCalledTimes(4);
   log.mockRestore();
 });
 

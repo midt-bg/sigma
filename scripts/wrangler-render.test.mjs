@@ -135,7 +135,7 @@ const ETL = `name = "sigma-etl"
 [triggers]
 crons = ["0 */6 * * *", "0 3 * * 1"]
 `;
-async function renderEtl(schedule) {
+async function renderEtl(schedule, minute) {
   const dir = mkdtempSync(join(tmpdir(), 'sigma-wrangler-render-'));
   const config = join(dir, 'wrangler.toml');
   writeFileSync(config, ETL);
@@ -153,10 +153,13 @@ async function renderEtl(schedule) {
     delete process.env[k];
   if (schedule === undefined) delete process.env.SIGMA_ETL_SCHEDULE;
   else process.env.SIGMA_ETL_SCHEDULE = schedule;
+  if (minute === undefined) delete process.env.SIGMA_ETL_CRON_MINUTE;
+  else process.env.SIGMA_ETL_CRON_MINUTE = minute;
   try {
     await import(`./wrangler-render.mjs?test=${Date.now()}-${Math.random()}`);
   } finally {
     delete process.env.SIGMA_ETL_SCHEDULE;
+    delete process.env.SIGMA_ETL_CRON_MINUTE;
   }
   return readFileSync(join(dir, 'wrangler.deploy.toml'), 'utf8');
 }
@@ -170,6 +173,22 @@ test('a parked ETL deploys without Cron Triggers and keeps its name', async () =
 test('the ETL keeps its crons unless parked', async () => {
   for (const schedule of [undefined, '', 'on'])
     assert.match(await renderEtl(schedule), /crons = \["0 \*\/6 \* \* \*", "0 3 \* \* 1"\]/);
+});
+
+test('a cron minute shifts every cron and nothing else; parking still wins', async () => {
+  assert.match(await renderEtl(undefined, '30'), /crons = \["30 \*\/6 \* \* \*", "30 3 \* \* 1"\]/);
+  assert.match(await renderEtl(undefined, ''), /crons = \["0 \*\/6 \* \* \*", "0 3 \* \* 1"\]/);
+  assert.match(await renderEtl('off', '30'), /\[triggers\]\ncrons = \[\]/);
+  for (const bad of ['60', '-1', '3O', '*/5'])
+    await assert.rejects(() => renderEtl(undefined, bad), /SIGMA_ETL_CRON_MINUTE must be a minute/);
+});
+
+test('the deploy offsets the crons of staging only', () => {
+  const yaml = readFileSync('.github/workflows/deploy.yml', 'utf8');
+  assert.match(
+    yaml,
+    /SIGMA_ETL_CRON_MINUTE: \$\{\{ needs\.detect\.outputs\.env == 'staging' && '30' \|\| '' \}\}/,
+  );
 });
 
 test('a schedule that is neither on nor off is refused', async () => {

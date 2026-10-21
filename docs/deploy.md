@@ -460,8 +460,13 @@ Workflow-а `sigma-refresh`; големите догонвания остава�
 за pipeline-а — в [`docs/etl.md`](etl.md).
 
 > По-ранните pipeline-и през `data.egov.bg` (OCDS) и админ-експорта на АОП са изведени от употреба;
-> единственият текущ източник е EOP MinIO (`storage.eop.bg`). Обмислете разместване на staging
-> графика (напр. `30 */6 * * *`), за да не удря източника в същата минута като prod.
+> единственият текущ източник е EOP MinIO (`storage.eop.bg`).
+
+Staging тръгва половин час след production: деплоят на `staging` задава `SIGMA_ETL_CRON_MINUTE=30` и
+[scripts/wrangler-render.mjs](../scripts/wrangler-render.mjs) подменя минутата на всеки cron
+(`30 */6 * * *`, `30 3 * * 1`), така че двете среди не удрят източниците (EOP, регистъра, декларациите)
+в една и съща минута. Production остава с графика от `wrangler.toml`. `scheduled` разпознава неделния
+тик без минутата.
 
 ## Декларациите: контейнер в Cloudflare
 
