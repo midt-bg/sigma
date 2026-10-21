@@ -56,12 +56,11 @@ afterEach(() => {
   cacheStore.put.mockClear();
 });
 
-// The four limited single-fetch twins, each exercised through the full pipeline.
+// The limited single-fetch twins, each exercised through the full pipeline.
 const twins: Array<{ name: string; method: string; url: string }> = [
   { name: 'search', method: 'GET', url: 'http://local/search.data?q=eon' },
   { name: 'aggregation /companies', method: 'GET', url: 'http://local/companies.data' },
   { name: 'aggregation /authorities', method: 'GET', url: 'http://local/authorities.data' },
-  { name: 'csv', method: 'GET', url: 'http://local/contracts.csv.data' },
   { name: 'assistant', method: 'POST', url: 'http://local/assistant/chat.data' },
 ];
 
@@ -77,6 +76,16 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
       expect(rrLoader, `${url} must not reach the loader`).not.toHaveBeenCalled();
     });
   }
+
+  it('refuses the CSV export’s .data twin with a 404, under the limit too, before the loader', async () => {
+    const req = new Request('http://local/contracts.csv.data', {
+      headers: { 'CF-Connecting-IP': '203.0.113.96' },
+    });
+    const res = await workerFetch(req, env(underLimit), ctx);
+
+    expect(res.status).toBe(404);
+    expect(rrLoader).not.toHaveBeenCalled();
+  });
 
   it('lets an under-limit /search.data twin through to the loader (no over-blocking)', async () => {
     const req = new Request('http://local/search.data?q=eon', {

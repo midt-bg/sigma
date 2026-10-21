@@ -59,21 +59,6 @@ describe('rateLimitCsvExport', () => {
     expect(limit).toHaveBeenCalledWith({ key: '203.0.113.21' });
   });
 
-  it('limits the single-fetch /contracts.csv.data twin the same as /contracts.csv (#184)', async () => {
-    const { limiter, limit } = rateLimiter(false);
-
-    const response = await rateLimitCsvExport(
-      new Request('http://local/contracts.csv.data', {
-        headers: { 'CF-Connecting-IP': '203.0.113.22' },
-      }),
-      { CSV_RATE_LIMITER: limiter },
-      false,
-    );
-
-    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.22' });
-    expect(response?.status).toBe(429);
-  });
-
   it('returns a hardened 429 when the limiter rejects the key', async () => {
     const { limiter, limit } = rateLimiter(false);
 
@@ -136,6 +121,21 @@ describe('rateLimitCsvExport', () => {
     );
 
     expect(response).toBeNull();
+    expect(limit).not.toHaveBeenCalled();
+  });
+});
+
+describe('the single-fetch twin of a CSV export', () => {
+  it('is a 404 before the limiter and the router', async () => {
+    const { limiter, limit } = rateLimiter(true);
+    for (const path of ['/contracts.csv.data', '/companies.csv.data', '/authorities.CSV.data']) {
+      const response = await rateLimitCsvExport(
+        new Request(`http://local${path}?q=x`),
+        { CSV_RATE_LIMITER: limiter },
+        true,
+      );
+      expect(response?.status, path).toBe(404);
+    }
     expect(limit).not.toHaveBeenCalled();
   });
 });
