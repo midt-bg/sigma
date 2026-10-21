@@ -87,7 +87,7 @@ describe('/search', () => {
           typeof meta
         >[0])[0] as { title: string }
       ).title;
-    expect(title('тест')).toBe('Търсене: „тест" — СИГМА');
+    expect(title('тест')).toBe('Търсене: „тест“ — СИГМА');
     expect(title()).toBe('Търсене — СИГМА');
   });
 
@@ -101,7 +101,7 @@ describe('/search', () => {
   it('says so when nothing matched, and spells out the identifiers it suggests', async () => {
     const c = await render({ query: 'няма', groups: [], empty: true });
     const p = c.querySelector('p.muted')!;
-    expect(p.textContent).toBe('Нищо не намерихме за „няма". Пробвай с име, ЕИК или УНП.');
+    expect(p.textContent).toBe('Нищо не намерихме за „няма“. Пробвай с име, ЕИК или УНП.');
     expect([...p.querySelectorAll('abbr')].map((a) => a.title)).toEqual([
       'Единен идентификационен код',
       'Уникален номер на преписката',
@@ -120,7 +120,7 @@ describe('/search', () => {
     });
     const more = [...c.querySelectorAll('.results-group .count a')].map((a) => a.textContent);
     expect(more).toEqual(['виж всички институции', 'виж всички компании', 'виж всички договори']);
-    expect(c.querySelector('.results-group .count')!.textContent).toContain('над 1 от 25');
+    expect(c.querySelector('.results-group .count')!.textContent).toContain('първите 1 от 25');
   });
 
   it('marks the query terms and shows what each kind of hit carries', async () => {
@@ -176,7 +176,7 @@ describe('/search', () => {
       expect(search).toHaveBeenCalledWith(expect.anything(), 'ремонт на път');
       expect(input().value).toBe('Ремонт, на ПЪТ 5 А');
       expect(el.querySelector('h1')!.textContent).toBe('Ремонт, на ПЪТ 5 А');
-      expect(el.textContent).toContain('Търсено по думите: „ремонт на път"');
+      expect(el.textContent).toContain('Търсено по думите: „ремонт на път“');
     });
 
     it('adds no note when only letter case differs', async () => {
@@ -196,7 +196,7 @@ describe('/search', () => {
       const title = meta({
         data: { typed: 'Мост', results: { query: 'мост', groups: [], empty: true } },
       } as never)[0] as { title: string };
-      expect(title.title).toBe('Търсене: „Мост" — СИГМА');
+      expect(title.title).toBe('Търсене: „Мост“ — СИГМА');
     });
   });
 });
