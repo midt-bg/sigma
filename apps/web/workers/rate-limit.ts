@@ -35,8 +35,28 @@ export function normalizedPathname(request: Request): string {
   }
 }
 
+// One client is one IPv4 address, but a whole IPv6 /64: a single host is routinely handed a /64 and can
+// rotate through it, so keying the full address would give it 2^64 separate budgets.
 export function rateLimitKey(request: Request): string {
-  return request.headers.get('CF-Connecting-IP')?.trim() || RATE_LIMIT_FALLBACK_KEY;
+  const address = request.headers.get('CF-Connecting-IP')?.trim();
+  if (!address) return RATE_LIMIT_FALLBACK_KEY;
+  return address.includes(':') ? (ipv6Prefix64(address) ?? address) : address;
+}
+
+function ipv6Prefix64(address: string): string | null {
+  let canonical: string;
+  try {
+    // The URL parser validates the address and writes it in canonical form: lowercase hextets without
+    // leading zeros, at most one `::`.
+    canonical = new URL(`http://[${address}]/`).hostname.slice(1, -1);
+  } catch {
+    return null;
+  }
+  const [head, tail] = canonical.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const words = [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right];
+  return `${words.slice(0, 4).join(':')}::/64`;
 }
 
 export interface RateLimitOptions {
