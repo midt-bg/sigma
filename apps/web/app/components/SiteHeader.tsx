@@ -99,7 +99,9 @@ export function SiteHeader() {
         }
         return;
       }
-      if (e.key !== 'Escape') return;
+      // An Escape the search field already used to close its suggestions is not also for the drawer.
+      // React listens on the document too, so its stopPropagation() does not keep it from here.
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
       if (searchOpen) {
         setSearchOpen(false);
         searchToggleRef.current?.focus();
