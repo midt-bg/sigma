@@ -6,6 +6,7 @@ import { CPV_SECTORS } from '@sigma/config';
 // ROUTE_QUERY_PARAMS below narrows it to what each route reads.
 export const CANONICAL_QUERY_PARAMS = new Set([
   'authority',
+  'authorities', // =all: every buyer in a person's „По възложители" table
   'basis', // evidence basis in the unified person contract list
   'bidder',
   'bids', // single-bid filter — changes the result set + totals
