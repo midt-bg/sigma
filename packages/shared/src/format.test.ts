@@ -4,6 +4,7 @@ import {
   cleanName,
   count,
   date,
+  decimal,
   entityName,
   isFutureDate,
   isNaturalPersonProfileName,
@@ -53,6 +54,16 @@ describe('money', () => {
   });
   it('keeps a sign for negative deltas', () => {
     expect(money(-1500)).toBe(`−2${NBSP}хил.${NBSP}€`);
+  });
+});
+
+describe('decimal', () => {
+  it('writes an index with a decimal comma and „—" when absent', () => {
+    expect(decimal(0.989)).toBe('0,99');
+    expect(decimal(0.25)).toBe('0,25');
+    expect(decimal(-0.5, 1)).toBe('−0,5');
+    expect(decimal(null)).toBe('—');
+    expect(decimal(Number.NaN)).toBe('—');
   });
 });
 

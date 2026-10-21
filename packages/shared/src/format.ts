@@ -137,6 +137,12 @@ export function date(iso: string | null | undefined): string {
   return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
 }
 
+/** A plain decimal with a decimal comma, e.g. an index `0,42`. „—" for null/NaN. */
+export function decimal(n: number | null | undefined, dp = 2): string {
+  if (n == null || !Number.isFinite(n)) return EM_DASH;
+  return `${n < 0 ? MINUS : ''}${dec(Math.abs(n), dp, false)}`;
+}
+
 /** ISO date → `октомври 2024` (hand-rolled month names, no Intl). */
 export function monthYear(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;

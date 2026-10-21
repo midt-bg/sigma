@@ -198,6 +198,13 @@ describe('ShareBar', () => {
     expect(warned.querySelector('.share-bar')!.className).toBe('share-bar warn');
     expect(warned.querySelector('.sr-only')!.textContent).toContain('висок дял');
   });
+
+  it('shows a concentration index as an index, not as a share', () => {
+    // HHI 0,99 is not „99% — висок дял“ of anything.
+    const hhi = render(<ShareBar ratio={0.989} warn index />);
+    expect(hhi.querySelector('.share-num')!.textContent).toBe('0,99 — висока концентрация');
+    expect(hhi.textContent).not.toMatch(/%|дял/);
+  });
 });
 
 describe('Callout', () => {

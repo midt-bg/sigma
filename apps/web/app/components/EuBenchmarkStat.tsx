@@ -56,7 +56,7 @@ export function EuBenchmarkStat({
         </span>
       </div>
       <p className="small muted ebs-thresholds">
-        Прагове на ЕС: целево ≤ {pct(good)} · високо ≥ {pct(bad)}
+        Референтни стойности на ЕС: целево ≤ {pct(good)} · високо ≥ {pct(bad)}
       </p>
       <p className="small muted ebs-detail">{detail}</p>
     </div>

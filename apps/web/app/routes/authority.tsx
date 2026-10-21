@@ -96,7 +96,7 @@ const UNCLASSIFIED_LIST =
 const RATING_LABEL: Record<IndicatorRating, string> = {
   good: 'в нормата на ЕС',
   mid: 'над целевата стойност на ЕС',
-  bad: 'над прага на ЕС',
+  bad: 'над референтната стойност на ЕС',
 };
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
@@ -212,7 +212,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           <Section
             id="single-offer"
             title="Конкуренция"
-            hint="Дял на договорите само с една оферта и дял пряко възлагане (без обявление), спрямо праговете на ЕС."
+            hint="Дял на договорите само с една оферта и дял пряко възлагане (без обявление), спрямо референтните стойности на ЕС."
           >
             {ct.contracts > 0 ? (
               <EuBenchmarkStat
@@ -250,8 +250,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               </div>
             )}
             <p className="small muted mt-8">
-              Праговете са външен ориентир на Европейската комисия (Single Market Scoreboard), не
-              оценка на конкретна процедура.{' '}
+              Референтните стойности са външен ориентир на Европейската комисия (Single Market
+              Scoreboard), не оценка на конкретна процедура.{' '}
               <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
             </p>
           </Section>
