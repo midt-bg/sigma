@@ -25,6 +25,18 @@
   text-wrap: pretty;
   max-width: 100%;
 }
+/* On a phone a long upper-case word („ИНФРАСТРУКТУРА") is wider than the column at 36 px and was cut
+   anywhere, leaving a letter alone on a line: the title scales down with the screen, and a word that
+   still does not fit breaks at a syllable with a hyphen. Card titles too. */
+@media (max-width: 600px) {
+  .page-header h1:not(.t-md):not(.t-sm) {
+    font-size: clamp(1.75rem, 9vw, 2.25rem);
+  }
+  .page-header h1,
+  .tbl-cards td.cell-title {
+    hyphens: auto;
+  }
+}
 .cc-interest {
   gap: var(--s-3);
   margin-bottom: var(--s-4);
