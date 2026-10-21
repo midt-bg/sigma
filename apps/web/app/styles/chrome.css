@@ -252,6 +252,9 @@
   .site-nav.is-open {
     transform: translateX(0);
     visibility: visible;
+    /* Visible at once on open, so focus can move into the drawer; on close it stays visible until
+       the slide-out ends. */
+    transition-duration: 0.3s, 0s;
   }
 
   .site-nav-head {
