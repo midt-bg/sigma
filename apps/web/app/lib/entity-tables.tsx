@@ -42,7 +42,7 @@ export const trendYearColumns: Column<TrendYear>[] = [
     key: 'yoy',
     header: 'Спрямо предходната',
     align: 'num',
-    cell: (r) => (r.yoyPct == null ? '' : signedPct(r.yoyPct)),
+    cell: (r) => signedPct(r.yoyPct),
   },
 ];
 
@@ -71,7 +71,7 @@ export const tieColumns: Column<TieRow>[] = [
     key: 'basis',
     header: 'Основание',
     secondary: true,
-    cell: (r) => (r.href ? <Link to={r.href}>виж свързаните лица</Link> : ''),
+    cell: (r) => (r.href ? <Link to={r.href}>виж свързаните лица</Link> : '—'),
   },
 ];
 

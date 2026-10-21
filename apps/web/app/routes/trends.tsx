@@ -60,7 +60,7 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
       key: 'yoy',
       header: 'Спрямо предходната',
       align: 'num',
-      cell: (r) => (r.yoyPct == null ? '' : signedPct(r.yoyPct)),
+      cell: (r) => signedPct(r.yoyPct),
     },
   ];
 

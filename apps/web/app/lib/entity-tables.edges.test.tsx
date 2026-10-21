@@ -10,7 +10,7 @@ const trendCells = (r: TrendYear) =>
   trendYearColumns.map((c) => renderToStaticMarkup(<>{c.cell(r, 0)}</>));
 
 describe('trendYearColumns', () => {
-  it('marks the incomplete year and leaves its change blank', () => {
+  it('marks the incomplete year and shows a dash for its change, as elsewhere on the site', () => {
     const [year, , , yoy] = trendCells({
       year: '2026',
       valueEur: 1_000,
@@ -19,7 +19,7 @@ describe('trendYearColumns', () => {
       partial: true,
     });
     expect(year).toBe('2026<span class="muted"> (частично)</span>');
-    expect(yoy).toBe('');
+    expect(yoy).toBe('—');
   });
 
   it('signs the change against the previous year', () => {
