@@ -382,6 +382,7 @@ describe('servedCsvExport', () => {
     expect(response.status).not.toBe(206);
     expect(response.headers.get('X-Csv-Cache')).toBe('MISS');
     expect(response.headers.get('X-Data-Source')).toBe(DATA_SOURCE);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*'); // open data, any origin
     expect(response.headers.get('Content-Type')).toBe(CSV_CONTENT_TYPE);
     expect(response.headers.get('Content-Range')).toBeNull();
     expect(await response.text()).toBe(CSV_BODY);
@@ -410,6 +411,7 @@ describe('servedCsvExport', () => {
     expect(response.status).not.toBe(206);
     expect(response.headers.get('Content-Range')).toBeNull();
     expect(response.headers.get('X-Csv-Cache')).toBe('HIT');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
     expect(await response.text()).toBe(CSV_BODY);
     expect(hitStream).not.toHaveBeenCalled();
     expect(r2.createMultipartUpload).not.toHaveBeenCalled();

@@ -4,6 +4,7 @@
 
 import type { AuthorityListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS } from '@sigma/config';
+import { cents } from '@sigma/shared';
 import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
@@ -233,7 +234,7 @@ export function streamAuthoritiesCsv(db: D1Database, p: AuthorityListParams): Re
       r.type_group,
       r.settlement,
       r.region,
-      r.spent_eur,
+      cents(r.spent_eur),
       r.contracts,
       r.suppliers,
       Math.round(r.avg_eur),

@@ -4,6 +4,7 @@
 
 import type { CompanyListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, ENTITY_TYPES } from '@sigma/config';
+import { cents } from '@sigma/shared';
 import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
@@ -259,7 +260,7 @@ export function streamCompaniesCsv(db: D1Database, p: CompanyListParams): Respon
       r.name,
       r.kind,
       r.settlement,
-      r.won_eur,
+      cents(r.won_eur),
       r.contracts,
       r.authorities,
       r.primary_sector,
