@@ -19,6 +19,7 @@ import { ScrollToTop } from './components/ScrollToTop';
 import { ErrorPage } from './components/ErrorPage';
 import { getCoverageMeta } from './lib/coverage';
 import { serializeJsonForScript } from './lib/json-ld';
+import { canonicalPathname } from './lib/canonical-path';
 import { withDbRetry } from './lib/retry';
 import { useRouteFocus } from './lib/route-focus';
 import stylesheet from './app.css?url';
@@ -39,12 +40,12 @@ export const links: Route.LinksFunction = () => [
 
 // One cheap read for the chrome: coverage and refresh metadata shown in the footer on every page.
 export async function loader({ context, request }: Route.LoaderArgs) {
-  // Canonicalise away a trailing slash so `/companies/` (which otherwise silently renders the list
-  // and triggers a hydration mismatch) becomes `/companies`. Root loader runs for every route.
+  // Canonicalise the path: `/companies/` (which otherwise silently renders the list and triggers a
+  // hydration mismatch), `/Companies` and an upper-case person id redirect to the one canonical URL.
+  // Root loader runs for every route.
   const url = new URL(request.url);
-  if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
-    throw redirect(url.pathname.replace(/\/+$/, '') + url.search, 301);
-  }
+  const pathname = canonicalPathname(url.pathname);
+  if (pathname !== url.pathname) throw redirect(pathname + url.search, 301);
   // Wrapped like the leaf loaders: this chrome read runs on every route, so a transient D1 fault
   // here would 500 the whole page (incl. the entity pages this PR targets) without the retry.
   const coverage = await withDbRetry(() => getCoverageMeta(getDb(context.cloudflare.env)));
