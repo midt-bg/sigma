@@ -7,6 +7,11 @@
 - [`runbooks/related-persons-suppression.md`](runbooks/related-persons-suppression.md) — оперативен наръчник за сваляне/поправка на връзка от свързани лица (версиониран списък с HMAC-отпечатък, спешна процедура, ротация на salt-а).
 - [`runbooks/release-rollback.md`](runbooks/release-rollback.md) — връщане назад след пускане: спиране на ходовете, паркиране на ETL без график, `wrangler rollback`, превключване обратно или Time Travel, изчистване на кеша.
 - [`runbooks/production-cutover.md`](runbooks/production-cutover.md) — пускане с изграждане на празния слот и превключване: настройките, временният Worker за изграждане, проверката на слота, превключването в тих прозорец и времената.
+- [`runbooks/README.md`](runbooks/README.md) — индекс на оперативните наръчници.
+- [`runbooks/refresh-failure.md`](runbooks/refresh-failure.md) — паднало обновяване на поръчките или разминаване в сумите: проверка, кога се лекува само, пълно преизчисление на rollup-ите.
+- [`runbooks/registry-stale.md`](runbooks/registry-stale.md) — `registry_feed_stale`: как се чете състоянието на дневните проходи по Търговския регистър и какво се прави.
+- [`runbooks/d1-overload.md`](runbooks/d1-overload.md) — 503 при претоварена D1: как работи пътят, откъде идва натоварването и какво се прави.
+- [`runbooks/secret-rotation.md`](runbooks/secret-rotation.md) — смяна на deploy token-а, солта за отпечатъците и ключа на дневника на заявките.
 - [`core-scope.md`](core-scope.md) — доменният модел и **речникът на данните**: таблици, rollup-и, `value_flag`/`date_flag`, семантиката на `amount_eur`.
 - [`etl.md`](etl.md) — ETL pipeline-ът и open-data емисията на ЦАИС ЕОП (`storage.eop.bg`): зареждане, опресняване и производни таблици.
 - [`etl-pipeline-state.md`](etl-pipeline-state.md) — анализ на текущото състояние на ETL pipeline-а.
