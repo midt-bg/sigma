@@ -1,6 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, money, moneyBare, plural } from '@sigma/shared';
-import { getAuthorityFacets, listAuthorities, getDb } from '@sigma/db';
+import { getAuthorityFacets, listAuthorities, getDb, normalizeAuthoritySort } from '@sigma/db';
 import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -55,7 +55,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
   const { page, facets, coverage } = loaderData;
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
-  const sort = sp.get('sort') ?? 'spent';
+  const sort = normalizeAuthoritySort(sp.get('sort'));
   const nav = pageNav({
     base: sp,
     total: page.total,

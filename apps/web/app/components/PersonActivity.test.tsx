@@ -139,3 +139,33 @@ it('reveals filters from the timeline, but applies manual changes and resets wit
     router.dispose();
   }
 });
+
+it('offers all buyers when „По възложители" shows only the largest', async () => {
+  const activity = {
+    ...emptyActivity,
+    total: 30,
+    byAuthority: [{ id: 'auth:1', name: 'Община Тест', contracts: 30, valueEur: 1000 }],
+    byAuthorityTotal: 25,
+  };
+  const router = createMemoryRouter(
+    [{ path: '/', Component: () => <PersonActivity activity={activity} hasDeclarations /> }],
+    { initialEntries: ['/?company=111111111'] },
+  );
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />));
+    const link = [...container.querySelectorAll('a')].find((a) =>
+      a.textContent?.startsWith('Покажи всички'),
+    );
+    expect(link?.textContent).toBe('Покажи всички 25 възложители');
+    expect(link?.getAttribute('href')).toBe(
+      '/?company=111111111&authorities=all#contract-authorities',
+    );
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    router.dispose();
+  }
+});

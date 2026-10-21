@@ -6,6 +6,7 @@ import { CPV_SECTORS } from '@sigma/config';
 // ROUTE_QUERY_PARAMS below narrows it to what each route reads.
 export const CANONICAL_QUERY_PARAMS = new Set([
   'authority',
+  'authorities', // =all: every buyer in a person's „По възложители" table
   'basis', // evidence basis in the unified person contract list
   'bidder',
   'bids', // single-bid filter — changes the result set + totals
@@ -39,7 +40,7 @@ const CONTRACTS = [...LIST, 'authority', 'bidder', 'bids', 'procedure', 'value']
 const COMPANIES = [...LIST, 'count', 'kind'];
 const AUTHORITIES = [...LIST, 'type'];
 const EXPLORER = ['funding', 'sector', 'top', 'year'];
-const PERSON = ['authority', 'basis', 'company', 'page', 'view', 'year'];
+const PERSON = ['authorities', 'authority', 'basis', 'company', 'page', 'view', 'year'];
 
 // The params each route reads, keyed by the route path (lowercase, no `.data`, no trailing slash).
 // A route that is not listed reads none: `/?q=…` or `/analytics?p=…` would otherwise mint a fresh cache

@@ -1,4 +1,4 @@
-import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
+import { Link, useNavigation, useSearchParams } from 'react-router';
 import type {
   CompetitionAuthority,
   CompetitionConcentration,
@@ -10,23 +10,24 @@ import { count, money, pct, plural } from '@sigma/shared';
 import { getCompetition, getDb } from '@sigma/db';
 import type { Route } from './+types/competition';
 import { Breadcrumbs } from '../components/Breadcrumbs';
+import { FilterForm, FundingSelect } from '../components/FilterForm';
 import { PageHeader } from '../components/PageHeader';
 import { DataTable, type Column } from '../components/DataTable';
 import { TotalsStrip, type Total } from '../components/TotalsStrip';
 import { Callout, Chip, Section, ShareBar } from '../components/ui';
 import { cached } from '../lib/cache';
+import { seoMeta } from '../lib/meta';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 import { singleSelectFilters } from '../lib/filters';
 
-export function meta(_: Route.MetaArgs) {
-  return [
-    { title: 'Конкуренция — СИГМА' },
-    {
-      name: 'description',
-      content:
-        'Къде конкуренцията при обществените поръчки е най-слаба: дял на договорите с една оферта, дял пряко възлагане (без обявление) и концентрация на доставчиците, спрямо праговете на ЕС. Неутрални показатели, всеки проследим до договорите.',
-    },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return seoMeta({
+    matches,
+    path: '/competition',
+    title: 'Конкуренция — СИГМА',
+    description:
+      'Къде конкуренцията при обществените поръчки е най-слаба: дял на договорите с една оферта, дял пряко възлагане (без обявление) и концентрация на доставчиците, спрямо праговете на ЕС. Неутрални показатели, всеки проследим до договорите.',
+  });
 }
 
 // Aggregates over the whole corpus that change only with a data refresh (every 6 h): a cold miss costs
@@ -164,7 +165,6 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
   const { data, coverage, years, unknownSector, unknownYear } = loaderData;
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
-  const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
   const sel = (k: string) => sp.get(k) ?? '';
 
@@ -188,11 +188,14 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
           lede="Къде конкуренцията е най-слаба: дял на договорите с една-единствена оферта, дял на пряко възложените (без обявление) и колко концентрирани са доставчиците по възложител — съпоставени с праговете на ЕС. Това са неутрални показатели: висок дял е сигнал за слаба конкуренция, не доказателство за нарушение. Зад всяко число стоят конкретните договори."
         />
 
-        <Form
-          method="get"
-          className="flow-controls"
-          aria-label="Филтри на анализа"
-          onChange={(e) => submit(e.currentTarget)}
+        <FilterForm
+          label="Филтри на анализа"
+          values={{
+            sector: unknownSector ? '' : sel('sector'),
+            year: unknownYear ? '' : sel('year'),
+            funding: sel('funding'),
+            top: sel('top'),
+          }}
         >
           <label>
             Сектор:
@@ -216,14 +219,7 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
               ))}
             </select>
           </label>
-          <label>
-            Финансиране:
-            <select name="funding" defaultValue={sel('funding')}>
-              <option value="">Всякакво</option>
-              <option value="eu">Само с финансиране от ЕС</option>
-              <option value="national">Само без финансиране от ЕС</option>
-            </select>
-          </label>
+          <FundingSelect value={sel('funding')} />
           <label>
             Брой:
             <select name="top" defaultValue={sel('top')}>
@@ -231,10 +227,7 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
               <option value="50">Топ 50</option>
             </select>
           </label>
-          <noscript>
-            <button type="submit">Покажи</button>
-          </noscript>
-        </Form>
+        </FilterForm>
 
         <p className="sr-only" role="status">
           {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}

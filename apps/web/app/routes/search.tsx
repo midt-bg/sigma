@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Form, Link } from 'react-router';
-import { count, money, plural, searchTokens } from '@sigma/shared';
+import { count, MAX_QUERY_CHARS, money, plural, searchTokens } from '@sigma/shared';
 import { CYRILLIC, MAX_QUERY_TOKENS, deHomoglyph, search, getDb } from '@sigma/db';
 import type { SearchHit } from '@sigma/api-contract';
 import type { Route } from './+types/search';
@@ -12,7 +12,7 @@ import { cached } from '../lib/cache';
 import { personName } from '../lib/person-name';
 
 export function meta({ data }: Route.MetaArgs) {
-  const q = data?.results.query ?? '';
+  const q = data?.results.query ? data.typed : '';
   return [
     { title: q ? `Търсене: „${q}" — СИГМА` : 'Търсене — СИГМА' },
     { name: 'robots', content: 'noindex' },
@@ -37,9 +37,11 @@ function cappedQuery(q: string): string {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const q = cappedQuery(new URL(request.url).searchParams.get('q') ?? '');
-  const results = await search(getDb(context.cloudflare.env), q);
-  return { results };
+  // What the visitor typed stays in the field and the heading; the normalised terms (lower-cased,
+  // punctuation and one-letter words dropped, capped) are what is searched, and the page says so.
+  const typed = (new URL(request.url).searchParams.get('q') ?? '').slice(0, MAX_QUERY_CHARS).trim();
+  const results = await search(getDb(context.cloudflare.env), cappedQuery(typed));
+  return { results, typed };
 }
 
 function escapeRe(s: string) {
@@ -119,11 +121,13 @@ function companyMeta(hit: SearchHit, re: RegExp | null): ReactNode {
 }
 
 export default function Search({ loaderData }: Route.ComponentProps) {
-  const { results } = loaderData;
+  const { results, typed } = loaderData;
   const tokens = normalizedTerms(results.query, MAX_HIGHLIGHT_TOKENS);
   const highlightRe =
     tokens.length > 0 ? new RegExp(`(${tokens.map(escapeRe).join('|')})`, 'giu') : null;
   const hasQuery = results.query.trim().length > 0;
+  // Shown when the searched terms differ from the typed text by more than letter case.
+  const rewritten = hasQuery && typed.toLocaleLowerCase('bg') !== results.query;
 
   // What the search covers — a description, shown as the lede on the empty-query and no-results
   // states (never as a claim that matches were found). On a query that did match, the lede leads
@@ -141,31 +145,24 @@ export default function Search({ loaderData }: Route.ComponentProps) {
       <Breadcrumbs
         items={[
           { label: 'Начало', to: '/' },
-          { label: hasQuery ? `Търсене: „${results.query}"` : 'Търсене' },
+          { label: hasQuery ? `Търсене: „${typed}"` : 'Търсене' },
         ]}
       />
       <main id="main">
-        <PageHeader
-          kicker="Резултати от търсене"
-          title={hasQuery ? results.query : 'Търсене'}
-          lede={lede}
-        >
+        <PageHeader kicker="Резултати от търсене" title={hasQuery ? typed : 'Търсене'} lede={lede}>
           <Form method="get" className="page-search" role="search">
             <label htmlFor="page-query">
               Търси по име, <Abbr>ЕИК</Abbr>, договор или преписка
             </label>
             <div>
-              <input
-                id="page-query"
-                type="search"
-                name="q"
-                defaultValue={results.query}
-                key={results.query}
-              />
+              <input id="page-query" type="search" name="q" defaultValue={typed} key={typed} />
               <button type="submit">Търси</button>
             </div>
           </Form>
         </PageHeader>
+
+        {rewritten && <p className="muted">Търсено по думите: „{results.query}".</p>}
+        {!hasQuery && typed !== '' && <p className="muted">Въведи поне две букви или цифри.</p>}
 
         {hasQuery && results.empty && (
           <p className="muted">
@@ -239,8 +236,9 @@ export default function Search({ loaderData }: Route.ComponentProps) {
               компанията.
             </li>
             <li>
-              Главни и малки букви, както и ударенията, нямат значение. Кирилица и латиница се
-              разпознават еднакво.
+              Главни и малки букви, както и ударенията, нямат значение. Латинска буква в дума на
+              кирилица (например „мoст" с латинско „o") се разпознава; дума изцяло на латиница се
+              търси както е написана.
             </li>
             <li>
               Търси се по начало на дума — <code>стр</code> намира „<u>стр</u>оителство" и „

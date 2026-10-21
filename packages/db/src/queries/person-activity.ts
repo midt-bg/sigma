@@ -22,6 +22,8 @@ export interface PersonContractRow {
   duringOfficeYear: boolean;
   declarationBasis: number; // 1 = own stake, 2 = related person's stake, 3 = both
 }
+export const BY_AUTHORITY_SHOWN = 20;
+
 export interface PersonActivity {
   contracts: PersonContractRow[];
   page: number;
@@ -38,7 +40,10 @@ export interface PersonActivity {
   yearOptions: string[];
   filterCounts: Record<'company' | 'authority' | 'year' | 'basis', Record<string, number>>;
   years: { year: string; contracts: number; valueEur: number | null }[];
+  // The table „По възложители" shows the BY_AUTHORITY_SHOWN largest unless ?authorities=all: a
+  // person tied to big suppliers can have hundreds, and every row was inlined into the page.
   byAuthority: { id: string; name: string; contracts: number; valueEur: number | null }[];
+  byAuthorityTotal: number;
   filters: { company: string; authority: string; year: string; basis: string };
 }
 export async function getRegistryIdentity(
@@ -311,7 +316,11 @@ export async function getPersonActivity(
       basis: basisCounts.results[0]!,
     },
     years: years.results,
-    byAuthority: byAuthority.results,
+    byAuthority:
+      search.get('authorities') === 'all'
+        ? byAuthority.results
+        : byAuthority.results.slice(0, BY_AUTHORITY_SHOWN),
+    byAuthorityTotal: byAuthority.results.length,
     filters,
   };
 }

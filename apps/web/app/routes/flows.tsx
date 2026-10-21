@@ -1,8 +1,9 @@
-import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
+import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, moneyBare } from '@sigma/shared';
 import { getFlows, getDb } from '@sigma/db';
 import type { Route } from './+types/flows';
 import { Breadcrumbs } from '../components/Breadcrumbs';
+import { FilterForm, FundingSelect } from '../components/FilterForm';
 import { PageHeader } from '../components/PageHeader';
 import { SankeyDiagram } from '../components/SankeyDiagram';
 import { Callout, Section } from '../components/ui';
@@ -39,7 +40,6 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
   const { data, coverage, years, unknownSector, unknownYear } = loaderData;
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
-  const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
   const sel = (k: string) => sp.get(k) ?? '';
 
@@ -53,11 +53,14 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
           lede="От институциите възложители (вляво) към компаниите изпълнители (вдясно). Колкото по-дебел е потокът, толкова по-голяма е общата стойност (в евро) на договорите между двете страни."
         />
 
-        <Form
-          method="get"
-          className="flow-controls"
-          aria-label="Настройки на визуализацията"
-          onChange={(e) => submit(e.currentTarget)}
+        <FilterForm
+          label="Настройки на визуализацията"
+          values={{
+            sector: unknownSector ? '' : sel('sector'),
+            year: unknownYear ? '' : sel('year'),
+            funding: sel('funding'),
+            top: sel('top') || '20',
+          }}
         >
           <label>
             Сектор:
@@ -81,14 +84,7 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
               ))}
             </select>
           </label>
-          <label>
-            Финансиране:
-            <select name="funding" defaultValue={sel('funding')}>
-              <option value="">Всички</option>
-              <option value="eu">Само с финансиране от ЕС</option>
-              <option value="national">Само с национално финансиране</option>
-            </select>
-          </label>
+          <FundingSelect value={sel('funding')} />
           <label>
             Топ:
             <select name="top" defaultValue={sel('top') || '20'}>
@@ -96,10 +92,7 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
               <option value="50">Топ 50 потока</option>
             </select>
           </label>
-          <noscript>
-            <button type="submit">Покажи</button>
-          </noscript>
-        </Form>
+        </FilterForm>
 
         {/* Filters auto-submit on change; announce the swap for screen-reader users (WCAG 4.1.3). */}
         <p className="sr-only" role="status">

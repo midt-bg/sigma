@@ -284,10 +284,13 @@ export function pageNav(opts: {
   const { base, total, pageSize, nextCursor, prevCursor } = opts;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   // ?page is a display/rank marker; real data is cursor-driven. Without a cursor the rows are the
-  // first page, so force page 1. Otherwise clamp to the valid range to avoid impossible "N от M".
-  const page = !base.get('cursor')
-    ? 1
-    : Math.min(Math.max(1, Math.floor(Number(base.get('page') ?? '1')) || 1), pageCount);
+  // first page, so force page 1. The same holds when there is no previous page: the cursor was
+  // malformed, stale or bound to another sort and the list fell back to its start, or a „before" walk
+  // reached it. Otherwise clamp to the valid range to avoid impossible "N от M".
+  const page =
+    !base.get('cursor') || !prevCursor
+      ? 1
+      : Math.min(Math.max(1, Math.floor(Number(base.get('page') ?? '1')) || 1), pageCount);
   return {
     page,
     pageCount,

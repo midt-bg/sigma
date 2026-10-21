@@ -219,6 +219,21 @@ describe('pageNav', () => {
     expect(nav.nextHref).not.toBeNull();
   });
 
+  it('labels the rows page 1 when the cursor was rejected and the list fell back to its start', () => {
+    // A malformed, stale or other-sort cursor is ignored by the query: the rows are the first page and
+    // no Prev cursor comes back. „Страница 7" with ranks from 151 would be a lie.
+    const nav = pageNav({
+      base: sp('cursor=garbage&page=7'),
+      total: 17504,
+      pageSize: 25,
+      nextCursor: 'after:x',
+      prevCursor: null,
+    });
+    expect(nav.page).toBe(1);
+    expect(nav.prevHref).toBeNull();
+    expect(nav.nextHref).toContain('page=2');
+  });
+
   it('disables Next on the true last page (cursor exhausted) but keeps Prev live', () => {
     // total 17504 / 25 = 701 pages; on page 701 the keyset emits no nextCursor. Prev must survive
     // (AC: no regression to keyset Prev/Next, #53).

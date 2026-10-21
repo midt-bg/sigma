@@ -24,5 +24,6 @@ export const emptyActivity: PersonActivity = {
     basis: { all: 0, matched: 0, context: 0, role: 0, declaration: 0, self: 0, family: 0 },
   },
   byAuthority: [],
+  byAuthorityTotal: 0,
   filters: { company: '', authority: '', year: '', basis: 'all' },
 };
