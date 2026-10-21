@@ -50,6 +50,12 @@ const layout: SankeyLayout = {
   ],
 };
 
+function render(l: SankeyLayout) {
+  const host = document.createElement('div');
+  host.innerHTML = renderToStaticMarkup(<SankeyDiagram layout={l} />);
+  return host.querySelector('svg')!;
+}
+
 describe('SankeyDiagram', () => {
   it('exposes the bars as named links in a group, not inside an image', () => {
     const host = document.createElement('div');
@@ -65,5 +71,25 @@ describe('SankeyDiagram', () => {
       expect.stringContaining('ТЕСТ ГРУП ЕООД'),
     ]);
     expect(links[0]!.querySelector('title')!.textContent).toContain(longName);
+  });
+
+  it('draws an unlinked node as plain text and drops the label of a short bar', () => {
+    const [auth, comp] = layout.nodes;
+    const svg = render({
+      ...layout,
+      nodes: [
+        { ...auth!, href: undefined },
+        { ...comp!, height: 10 },
+      ],
+    });
+    expect(svg.querySelectorAll('a')).toHaveLength(1);
+    expect(svg.querySelector('g:not([aria-hidden]) .node-label')!.textContent).toBe(auth!.label);
+    expect(svg.querySelector('a .node-label')).toBeNull();
+  });
+
+  it('stretches the height for a long column and falls back on a malformed viewBox', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ ...layout.nodes[1]!, name: `К${i}` }));
+    expect(render({ ...layout, nodes: many }).getAttribute('viewBox')).toBe('0 0 700 800');
+    expect(render({ ...layout, viewBox: 'x' }).getAttribute('viewBox')).toBe('0 0 700 400');
   });
 });

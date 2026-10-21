@@ -13,11 +13,12 @@ import { SiteHeader } from './SiteHeader';
 let container: HTMLDivElement;
 let root: Root;
 let router: ReturnType<typeof createMemoryRouter>;
+let onWide: ((e: { matches: boolean }) => void) | undefined;
 
 beforeEach(() => {
   window.matchMedia = vi.fn().mockImplementation(() => ({
     matches: false,
-    addEventListener: vi.fn(),
+    addEventListener: (_: string, cb: (e: { matches: boolean }) => void) => (onWide = cb),
     removeEventListener: vi.fn(),
   }));
   container = document.createElement('div');
@@ -103,5 +104,55 @@ describe('SiteHeader nav drawer', () => {
     act(() => links()[2]!.click());
     expect(toggle().getAttribute('aria-expanded')).toBe('false');
     expect(focus).not.toHaveBeenCalled();
+  });
+});
+
+describe('SiteHeader search drawer and layout', () => {
+  const searchToggle = () => container.querySelector<HTMLButtonElement>('button.nav-search')!;
+  const drawer = () => container.querySelector<HTMLElement>('.search-drawer')!;
+  const openSearch = () => {
+    searchToggle().focus();
+    act(() => searchToggle().click());
+  };
+
+  it('opens the search drawer with focus in the field and closes it on Esc', () => {
+    openSearch();
+    expect(searchToggle().getAttribute('aria-expanded')).toBe('true');
+    expect(drawer().contains(document.activeElement)).toBe(true);
+    key({ key: 'Escape' });
+    expect(searchToggle().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(searchToggle());
+  });
+
+  it('closes the search drawer from its × and on a click outside it, not inside it', () => {
+    openSearch();
+    act(() => drawer().querySelector<HTMLInputElement>('input')!.click());
+    expect(searchToggle().getAttribute('aria-expanded')).toBe('true');
+    act(() => document.body.click());
+    expect(searchToggle().getAttribute('aria-expanded')).toBe('false');
+
+    openSearch();
+    act(() => container.querySelector<HTMLButtonElement>('.search-drawer-close')!.click());
+    expect(searchToggle().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(searchToggle());
+  });
+
+  it('ignores other keys and closes the nav drawer when the layout turns wide', () => {
+    open();
+    expect(key({ key: 'a' }).defaultPrevented).toBe(false);
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    act(() => onWide!({ matches: false }));
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    act(() => onWide!({ matches: true }));
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('marks „Анализи" current on an analytics page and closes the drawer when it is followed', async () => {
+    await act(() => router.navigate('/analytics'));
+    const analytics = links().find((a) => a.textContent === 'Анализи')!;
+    expect(analytics.getAttribute('aria-current')).toBe('page');
+    open();
+    act(() => analytics.click());
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
   });
 });
