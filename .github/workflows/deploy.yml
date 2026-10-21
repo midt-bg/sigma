@@ -92,6 +92,8 @@ jobs:
       SIGMA_DECLARATIONS_BUCKET: ${{ vars.SIGMA_DECLARATIONS_BUCKET }}
       # The environment the declarations container declares when it ships (assertD1TargetAuthorized).
       SIGMA_SHIP_ENV: ${{ needs.detect.outputs.env }}
+      # Stage's ETL runs half an hour after production's, so the two never hit the sources in the same minute.
+      SIGMA_ETL_CRON_MINUTE: ${{ needs.detect.outputs.env == 'staging' && '30' || '' }}
       # The container's takedown-list keying (ADR-0031); the salt is a step secret (`&cloudflare_salt`).
       SUPPRESSION_KEY_VERSION: ${{ vars.SUPPRESSION_KEY_VERSION || '1' }}
       SIGMA_D1_NAME: ${{ vars.SIGMA_D1_NAME }}
