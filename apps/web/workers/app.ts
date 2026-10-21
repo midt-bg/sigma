@@ -7,7 +7,12 @@ import { normalizedPathname } from './rate-limit';
 import { cacheKey, canonicalRequest } from './cache-key';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
-import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
+import {
+  optionsResponse,
+  redirectCleartextHttp,
+  redirectToCanonicalPath,
+  setAllowHeader,
+} from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
 import { claim, inFlight, withinCap } from './render-gate';
 import { withRequestLog } from './request-log';
@@ -139,6 +144,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 async function respond(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const httpsRedirect = redirectCleartextHttp(request, import.meta.env.PROD);
   if (httpsRedirect) return httpsRedirect;
+  const canonicalRedirect = redirectToCanonicalPath(request, import.meta.env.PROD);
+  if (canonicalRedirect) return canonicalRedirect;
 
   if (request.method === 'OPTIONS') return optionsResponse(import.meta.env.PROD);
 
