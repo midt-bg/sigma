@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CPV_SECTORS } from '@sigma/config';
+import { CPV_SECTORS, PROCEDURE_GROUPS } from '@sigma/config';
 import {
   authorityListFilters,
   buildSectorGroup,
@@ -85,15 +85,47 @@ describe('getMulti', () => {
     expect(values.length).toBeLessThanOrEqual(50);
   });
 
-  it('preserves outlier year values while capping floods', () => {
-    const params = new URLSearchParams();
-    params.set('year', ['2016', ...Array.from({ length: 100 }, (_, i) => `y${i}`)].join(','));
+  it('keeps outlier years and the unknown bucket, drops non-years and caps floods', () => {
+    expect(getMulti(new URLSearchParams('year=2016,unknown,y2024,12345,20,2025'), 'year')).toEqual([
+      '2016',
+      'unknown',
+      '2025',
+    ]);
+    const flood = new URLSearchParams({
+      year: Array.from({ length: 80 }, (_, i) => String(1950 + i)).join(','),
+    });
+    expect(getMulti(flood, 'year')).toHaveLength(16);
+  });
 
-    const years = getMulti(params, 'year');
+  it('keeps only known procedure groups and at most seven authority types', () => {
+    expect(getMulti(new URLSearchParams('procedure=open,bogus,direct'), 'procedure')).toEqual([
+      'open',
+      'direct',
+    ]);
+    const types = new URLSearchParams({
+      type: Array.from({ length: 30 }, (_, i) => `t${i}`).join(','),
+    });
+    expect(getMulti(types, 'type')).toHaveLength(7);
+  });
 
-    expect(years).toContain('2016');
-    expect(years).toHaveLength(MAX_MULTI_VALUES);
-    expect(years.length).toBeLessThanOrEqual(50);
+  // D1 binds at most 100 parameters per query. Every multi-value list at its widest, as a crafted URL
+  // could ask — the list query binds each value once, plus a handful of scalars.
+  it('keeps the widest contract and authority filter sets under D1’s bound-parameter limit', () => {
+    const all = new URLSearchParams({
+      year: Array.from({ length: 80 }, (_, i) => String(1950 + i)).join(','),
+      sector: CPV_SECTORS.map((s) => s.code).join(','),
+      procedure: [...PROCEDURE_GROUPS.map((g) => g.key), 'x'].join(','),
+      type: Array.from({ length: 30 }, (_, i) => `t${i}`).join(','),
+    });
+    const c = contractListFilters(all);
+    const types = c.procedureGroups.flatMap(
+      (k) => PROCEDURE_GROUPS.find((g) => g.key === k)?.types ?? [],
+    );
+    // + unknown-year, value bucket (2), authority, bidder, q, sort bound (2), cursor (3), LIMIT.
+    expect(c.years.length + c.sectors.length + types.length + 12).toBeLessThanOrEqual(100);
+    const a = authorityListFilters(all);
+    // + primary sector, q, cursor (3), LIMIT.
+    expect(a.years.length + a.sectors.length + a.types.length + 6).toBeLessThanOrEqual(100);
   });
 
   it('drops invalid oversized sector values before they reach SQL filters', () => {

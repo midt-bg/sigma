@@ -29,7 +29,10 @@ export function SmartSearch({
   inputRef: externalInputRef,
 }: SmartSearchProps) {
   const navigate = useNavigate();
-  const [suggested, setSuggested] = useState<{ q: string; results: SearchResults } | null>(null);
+  // `results: null` — the route refused or failed for this text (throttled, offline, an error).
+  const [suggested, setSuggested] = useState<{ q: string; results: SearchResults | null } | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState(defaultValue);
   const [open, setOpen] = useState(false);
@@ -54,14 +57,19 @@ export function SmartSearch({
   // not a fetcher's `.data` twin: only the JSON response carries the edge-cache header, so a repeated
   // prefix is answered by the edge instead of a new search in D1.
   useEffect(() => {
-    if (!open || debounced.length < MIN_QUERY || suggested?.q === debounced) return;
+    // A refused text is asked again once the field is used again (focus or typing).
+    if (!open || debounced.length < MIN_QUERY) return;
+    if (suggested?.q === debounced && suggested.results !== null) return;
     const controller = new AbortController();
     setLoading(true);
     fetch(`/search/suggest?q=${encodeURIComponent(debounced)}`, { signal: controller.signal })
       .then((res) => (res.ok ? (res.json() as Promise<SearchResults>) : null))
-      .then((results) => results && setSuggested({ q: debounced, results }))
-      // Aborted, offline or throttled: no suggestions, and the form still submits to /search.
-      .catch(() => {})
+      // Throttled (429), offline or an error: no suggestions for this text, and the form still submits
+      // to /search. An abort only means a newer text replaced it.
+      .catch(() => null)
+      .then((results) => {
+        if (!controller.signal.aborted) setSuggested({ q: debounced, results });
+      })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
@@ -73,7 +81,10 @@ export function SmartSearch({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced, open]);
 
-  const results = debounced.length >= MIN_QUERY ? suggested?.results : undefined;
+  // While a new text is asked, the previous answer stays on screen; a refusal for the current text shows
+  // no list at all — not a stale one, and not „no matches“.
+  const refused = suggested?.q === debounced && suggested.results === null;
+  const results = debounced.length >= MIN_QUERY ? (suggested?.results ?? undefined) : undefined;
   const groups = results?.groups.filter((g) => g.hits.length > 0) ?? [];
   const flatHits = groups.flatMap((g) => g.hits);
   const hasResults = flatHits.length > 0;
@@ -81,7 +92,7 @@ export function SmartSearch({
   const seeAllIndex = hasResults ? flatHits.length : -1;
   const optionCount = flatHits.length + (hasResults ? 1 : 0);
 
-  const showList = open && debounced.length >= MIN_QUERY;
+  const showList = open && debounced.length >= MIN_QUERY && !refused;
 
   // Any change to the option set invalidates the highlighted row.
   useEffect(() => setActiveIndex(-1), [debounced, suggested]);

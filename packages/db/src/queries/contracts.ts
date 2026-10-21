@@ -329,6 +329,8 @@ async function rollupSummary(
  * of the index for every page. Past this many rows a page is read from candidates instead (drivingFilter).
  */
 const WALK_BUDGET = 4000;
+/** D1 binds at most this many parameters in one statement. */
+const D1_MAX_BOUND_PARAMS = 100;
 
 /** The successor of a code's last character: [code, next) holds exactly the strings that start with it. */
 const prefixEnd = (code: string) =>
@@ -535,17 +537,15 @@ export async function listContracts(
   // A filter nothing matches has no page to read: walking the sort index for it reads all of it.
   let results: (ContractRow & { sort_value: string | number })[] = [];
   if (summary.total > 0) {
-    const driver = await drivingFilter(db, p, filters, bound, summary.total, pageSize);
+    const pageParams = [...filters.params, ...boundParams, ...ks.params, pageSize + 1];
+    let driver = await drivingFilter(db, p, filters, bound, summary.total, pageSize);
+    // A driver binds its own ranges and the filter's values a second time: past D1's limit a wide selection
+    // reads its page the plain way — slower, never a failed query.
+    if (driver && driver.params.length + pageParams.length > D1_MAX_BOUND_PARAMS) driver = null;
     const sql = `${driver ? `WITH cand AS MATERIALIZED (${driver.sql})` : ''}${SELECT}, ${sort.expr} AS sort_value ${driver ? FROM_CANDIDATES : FROM}${conds ? ' WHERE ' + conds : ''} ${ks.orderSql} LIMIT ?`;
     ({ results } = await db
       .prepare(sql)
-      .bind(
-        ...(driver?.params ?? []),
-        ...filters.params,
-        ...boundParams,
-        ...ks.params,
-        pageSize + 1,
-      )
+      .bind(...(driver?.params ?? []), ...pageParams)
       .all<ContractRow & { sort_value: string | number }>());
   }
 

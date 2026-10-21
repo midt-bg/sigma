@@ -15,7 +15,7 @@ export async function rateLimitCsvExport(
     request,
     env.CSV_RATE_LIMITER,
     isProd,
-    'Too many CSV export requests',
+    'Твърде много изтегляния на CSV за кратко време. Опитай пак след минута.',
     'CSV_RATE_LIMITER',
   );
 }

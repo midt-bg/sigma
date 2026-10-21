@@ -64,6 +64,7 @@ wrangler deploy --config build/server/wrangler.deploy.json      # изпраща
 | `SIGMA_REBUILD_WORKFLOW_NAME` | *(незададена → `sigma-rebuild`)* | `sigma-rebuild-stage` | render → rebuild `[[workflows]] name` |
 | `SIGMA_DECLARATIONS_BUCKET` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → `r2_buckets[].bucket_name` и `DECLARATIONS_BUCKET` на etl worker-а |
 | `SUPPRESSION_SALT` / `SUPPRESSION_KEY_VERSION` | prod salt / версия | staging salt / версия | секрети на etl worker-а за контейнера на декларациите |
+| `SIGMA_SHIP_ENV` | `production` (committ-натите `namespace_id`) | `staging` | render → `namespace_id` на rate-limit binding-ите на web worker-а (собствен набор за staging и dev, защото id-тата са общи за акаунта) и `SIGMA_SHIP_ENV` на etl worker-а |
 
 > Секретите на etl worker-а се поставят в последната стъпка на деплоя, след самото качване. Между двете
 > има кратък прозорец, в който cron тик би заварил worker-а без токен. Ходът тогава не тръгва и в лога
@@ -567,7 +568,10 @@ worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); ко
   свързва (`CSV_CACHE`) за кеширане на CSV експорта — и двата са env-рендерирани (`SIGMA_D1_*` /
   `SIGMA_CSV_CACHE_NAME`), така че staging и production никога не споделят storage. CSV експортите не
   се кешират на ръба и са защитени от Workers Rate Limiting binding-а `CSV_RATE_LIMITER` (10/60s);
-  cache miss-овете на `/companies` и `/authorities` са защитени от `AGG_RATE_LIMITER` (30/60s).
+  cache miss-овете на началната страница, `/companies`, `/authorities`, `/contracts` (и всеки договор с
+  неговия `.json`), `/flows`, `/network`, `/map`, `/trends`, `/analytics`, `/competition` и списъка
+  `/conflicts` са защитени от `AGG_RATE_LIMITER` (30/60s). Страниците на отделните лица (`/persons/*`) са
+  малки, кеширани четения и нямат лимит.
 - **Бележки по поправки в сигурността.** Route matching-ът на worker-а нормализира декодирани/малки
   пътища и маха завършващите наклонени черти, така че `/contracts.csv/` достига същия CSV limiter gate
   като `/contracts.csv`, а `/companies/` / `/authorities/` достигат същия агрегационен gate като

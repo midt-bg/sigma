@@ -88,9 +88,9 @@ describe('app.ts — around the router', () => {
     expect(rr.handler).not.toHaveBeenCalled();
   });
 
-  it('throttles a person page after the cache miss and before its loader runs', async () => {
-    const res = await run(`https://sigma.test/persons/${'a'.repeat(64)}.data`, {
-      CONFLICTS_RATE_LIMITER: overLimit,
+  it('throttles a heavy page after the cache miss and before its loader runs', async () => {
+    const res = await run('https://sigma.test/conflicts.data?q=x', {
+      AGG_RATE_LIMITER: overLimit,
     });
     expect(res.status).toBe(429);
     expect(res.headers.get('Retry-After')).toBe('60');

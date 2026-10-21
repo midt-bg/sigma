@@ -4,7 +4,24 @@ interface AggregationRateLimitEnv {
   AGG_RATE_LIMITER?: RateLimit;
 }
 
-const AGGREGATION_PATHS = new Set(['/companies', '/authorities']);
+// The pages whose loaders scan or aggregate large tables. A cache HIT never gets here (app.ts checks the edge
+// cache first), so this budget is spent only by misses — and a unique query string forces a miss every
+// time. `/_root` is the home page's single-fetch twin (`/_root.data`).
+const AGGREGATION_PATHS = new Set([
+  '/',
+  '/_root',
+  '/companies',
+  '/authorities',
+  '/contracts',
+  '/flows',
+  '/network',
+  '/map',
+  '/trends',
+  '/analytics',
+  '/competition',
+  // The related-persons list reads every published link and filters them in the Worker.
+  '/conflicts',
+]);
 
 export async function rateLimitAggregationRoute(
   request: Request,
@@ -17,14 +34,14 @@ export async function rateLimitAggregationRoute(
     request,
     env.AGG_RATE_LIMITER,
     isProd,
-    'Too many aggregation requests',
+    'Твърде много отворени страници за кратко време. Опитай пак след минута.',
     'AGG_RATE_LIMITER',
   );
 }
 
 function isAggregationRequest(request: Request): boolean {
-  return (
-    (request.method === 'GET' || request.method === 'HEAD') &&
-    AGGREGATION_PATHS.has(normalizedPathname(request))
-  );
+  if (request.method !== 'GET' && request.method !== 'HEAD') return false;
+  const path = normalizedPathname(request);
+  // A contract's page and its .json twin.
+  return AGGREGATION_PATHS.has(path) || path.startsWith('/contracts/');
 }

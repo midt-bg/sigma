@@ -269,6 +269,23 @@ it('says so when nothing matches, without offering a row to select', async () =>
   expect(input().getAttribute('aria-activedescendant')).toBe(null);
 });
 
+// Over its own budget the suggest route answers 429. The page stays; the box shows no list for that text —
+// not the previous text's suggestions and not „no matches" — and the form still goes to /search.
+it('shows no list, stale or empty, when the suggestions are refused', async () => {
+  await mount();
+  await type('тест');
+  expect(options()).toHaveLength(4);
+
+  const refused = vi.fn(async (_url: string) => new Response('Твърде много', { status: 429 }));
+  vi.stubGlobal('fetch', refused);
+  await type('тестове');
+  expect(refused).toHaveBeenCalledTimes(1);
+  expect(options()).toHaveLength(0);
+  expect(input().getAttribute('aria-expanded')).toBe('false');
+  expect(pop().hasAttribute('hidden')).toBe(true);
+  expect(container.querySelector('form')!.getAttribute('action')).toBe('/search');
+});
+
 // With JS off the listbox never renders, so the plain form is the whole feature.
 it('is a real GET form to /search even before any of this runs', async () => {
   await mount();

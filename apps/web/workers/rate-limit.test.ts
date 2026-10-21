@@ -99,17 +99,46 @@ describe('normalizedPathname', () => {
 // Cover both the GET/POST body path AND the HEAD no-body path so the method branch is exercised.
 describe('rateLimitExceededResponse', () => {
   it('returns a 429 with the body and hardened headers for a non-HEAD request', async () => {
-    const res = rateLimitExceededResponse(req(), true, 'Too many requests');
+    const res = rateLimitExceededResponse(req(), true, 'Опитай пак след минута.');
     expect(res.status).toBe(429);
     expect(res.headers.get('Retry-After')).toBe('60');
     expect(res.headers.get('Content-Type')).toContain('text/plain');
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
-    expect(await res.text()).toBe('Too many requests');
+    expect(await res.text()).toBe('Опитай пак след минута.');
+  });
+
+  it('answers a page request with a Bulgarian HTML page', async () => {
+    const pageHeaders: Record<string, string>[] = [
+      { Accept: 'text/html,application/xhtml+xml' },
+      { 'Sec-Fetch-Dest': 'document' },
+    ];
+    for (const headers of pageHeaders) {
+      const res = rateLimitExceededResponse(
+        new Request('http://local/contracts', { headers }),
+        true,
+        'Опитай пак след минута.',
+      );
+      expect(res.headers.get('Content-Type')).toContain('text/html');
+      expect(res.headers.get('Retry-After')).toBe('60');
+      const html = await res.text();
+      expect(html).toContain('<html lang="bg">');
+      expect(html).toContain('<h1>Твърде много заявки</h1>');
+      expect(html).toContain('Опитай пак след минута.');
+    }
+  });
+
+  it('keeps plain text for a data request even when it accepts HTML', async () => {
+    const res = rateLimitExceededResponse(
+      new Request('http://local/contracts.data', { headers: { Accept: 'text/html' } }),
+      true,
+      'Опитай пак след минута.',
+    );
+    expect(res.headers.get('Content-Type')).toContain('text/plain');
   });
 
   it('omits the body and Content-Type for a HEAD request but keeps status + headers', async () => {
     const head = new Request('http://local/x', { method: 'HEAD' });
-    const res = rateLimitExceededResponse(head, true, 'Too many requests');
+    const res = rateLimitExceededResponse(head, true, 'Опитай пак след минута.');
     expect(res.status).toBe(429);
     expect(res.headers.get('Retry-After')).toBe('60');
     expect(res.headers.get('Content-Type')).toBeNull();
@@ -125,7 +154,7 @@ describe('rateLimitUnavailableResponse', () => {
     expect(res.headers.get('Retry-After')).toBe('60');
     expect(res.headers.get('Content-Type')).toContain('text/plain');
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
-    expect(await res.text()).toBe('Rate limiting unavailable');
+    expect(await res.text()).toBe('Сайтът е зает в момента. Опитай пак след минута.');
   });
 
   it('omits the body and Content-Type for a HEAD request but keeps status + headers', async () => {
@@ -142,5 +171,13 @@ describe('rateLimitKey', () => {
   it('keys on CF-Connecting-IP and falls back when absent', () => {
     expect(rateLimitKey(req('198.51.100.9'))).toBe('198.51.100.9');
     expect(rateLimitKey(new Request('http://local/x'))).toBe('unknown-client');
+  });
+
+  it('keys IPv6 on its /64, however the address is written', () => {
+    expect(rateLimitKey(req('2001:db8:1234:5678::1'))).toBe('2001:db8:1234:5678::/64');
+    expect(rateLimitKey(req('2001:0DB8:1234:5678:ffff:0:0:2'))).toBe('2001:db8:1234:5678::/64');
+    expect(rateLimitKey(req('2001:db8::1'))).toBe('2001:db8:0:0::/64');
+    expect(rateLimitKey(req('2001:db8:1234:5679::1'))).toBe('2001:db8:1234:5679::/64');
+    expect(rateLimitKey(req('fe80::1:2:3:4'))).toBe('fe80:0:0:0::/64');
   });
 });

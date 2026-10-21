@@ -47,6 +47,8 @@
     // this, further run_sql calls are refused. Tune to a few × the largest scannable table.
     "D1_ROWS_READ_BUDGET": "5000000",
   },
+  // The namespace_ids below are production's. They are account-wide, so every other environment gets its
+  // own set from scripts/wrangler-render.mjs (by SIGMA_SHIP_ENV); a new limiter needs an id there too.
   "unsafe": {
     "bindings": [
       {
@@ -72,6 +74,15 @@
         "simple": { "limit": 20, "period": 60 },
       },
       {
+        // The search box's suggestions (/search/suggest): one request per settled pause while typing, so a
+        // roomier budget of its own — people behind one office or mobile NAT share it. Edge-cache hits
+        // never reach it. namespace_id 1007.
+        "name": "SUGGEST_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1007",
+        "simple": { "limit": 60, "period": 60 },
+      },
+      {
         // Per-IP throttle for POST /assistant/chat — each call runs embeddings + the BgGPT agent loop
         // (review #80). Tight, since it is far costlier than a page view. A global (account-wide) budget
         // / circuit-breaker is a launch-gate TODO: BGGPT_RATE_LIMIT_RPM (below) is declared for it but
@@ -83,17 +94,6 @@
         // so the assistant takes 1005.
         "namespace_id": "1005",
         "simple": { "limit": 10, "period": 60 },
-      },
-      {
-        // Per-IP throttle for the /conflicts* subtree (personal-names surface + its .data twins). Higher
-        // than the aggregation limit because a single page view triggers a follow-up .data fetch and the
-        // leaderboard's cache HITs bypass this entirely — only distinct uncached URLs (the scrape pattern)
-        // consume it. 40/min throttles enumerating ~1000 official slugs to a crawl without touching normal
-        // browsing. namespace_id 1006 (1001–1005 taken; 1004 = /health per #118).
-        "name": "CONFLICTS_RATE_LIMITER",
-        "type": "ratelimit",
-        "namespace_id": "1006",
-        "simple": { "limit": 40, "period": 60 },
       },
     ],
   },

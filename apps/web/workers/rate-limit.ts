@@ -35,8 +35,28 @@ export function normalizedPathname(request: Request): string {
   }
 }
 
+// One client is one IPv4 address, but a whole IPv6 /64: a single host is routinely handed a /64 and can
+// rotate through it, so keying the full address would give it 2^64 separate budgets.
 export function rateLimitKey(request: Request): string {
-  return request.headers.get('CF-Connecting-IP')?.trim() || RATE_LIMIT_FALLBACK_KEY;
+  const address = request.headers.get('CF-Connecting-IP')?.trim();
+  if (!address) return RATE_LIMIT_FALLBACK_KEY;
+  return address.includes(':') ? (ipv6Prefix64(address) ?? address) : address;
+}
+
+function ipv6Prefix64(address: string): string | null {
+  let canonical: string;
+  try {
+    // The URL parser validates the address and writes it in canonical form: lowercase hextets without
+    // leading zeros, at most one `::`.
+    canonical = new URL(`http://[${address}]/`).hostname.slice(1, -1);
+  } catch {
+    return null;
+  }
+  const [head, tail] = canonical.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const words = [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right];
+  return `${words.slice(0, 4).join(':')}::/64`;
 }
 
 export interface RateLimitOptions {
@@ -111,33 +131,50 @@ function logRateLimitDegrade(
 
 /** 503 for a fail-closed limiter whose binding is missing or errored — distinct from a 429 throttle. */
 export function rateLimitUnavailableResponse(request: Request, isProd: boolean): Response {
-  const headers = new Headers({ 'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS) });
-  if (request.method !== 'HEAD') headers.set('Content-Type', 'text/plain; charset=utf-8');
-  for (const [key, value] of baseSecurityHeaders(isProd)) headers.set(key, value);
-
-  return new Response(request.method === 'HEAD' ? null : 'Rate limiting unavailable', {
-    status: 503,
-    headers,
-  });
+  return limitResponse(
+    request,
+    isProd,
+    503,
+    'Сайтът е зает в момента',
+    'Сайтът е зает в момента. Опитай пак след минута.',
+  );
 }
 
+/** 429 with the caller's message (Bulgarian, the site's language). */
 export function rateLimitExceededResponse(
   request: Request,
   isProd: boolean,
   body: string,
 ): Response {
-  const headers = new Headers({
-    'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS),
-  });
+  return limitResponse(request, isProd, 429, 'Твърде много заявки', body);
+}
 
-  if (request.method !== 'HEAD') {
-    headers.set('Content-Type', 'text/plain; charset=utf-8');
-  }
-
+// A page request (a browser opening the address) gets a small HTML page in the site's language; anything
+// else — a .data/.csv/.json fetch, a script — the same words as plain text. HEAD gets the headers only.
+function limitResponse(
+  request: Request,
+  isProd: boolean,
+  status: 429 | 503,
+  title: string,
+  message: string,
+): Response {
+  const headers = new Headers({ 'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS) });
+  const html = isPageRequest(request);
+  if (request.method !== 'HEAD')
+    headers.set('Content-Type', `${html ? 'text/html' : 'text/plain'}; charset=utf-8`);
   for (const [key, value] of baseSecurityHeaders(isProd)) headers.set(key, value);
 
-  return new Response(request.method === 'HEAD' ? null : body, {
-    status: 429,
-    headers,
-  });
+  const body = html
+    ? `<!doctype html><html lang="bg"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${title} — СИГМА</title></head><body><main><h1>${title}</h1><p>${message}</p><p><a href="/">Към началото</a></p></main></body></html>`
+    : message;
+  return new Response(request.method === 'HEAD' ? null : body, { status, headers });
+}
+
+function isPageRequest(request: Request): boolean {
+  if (request.method !== 'GET') return false;
+  if (/\.(?:csv|data|json)$/i.test(new URL(request.url).pathname)) return false;
+  return (
+    request.headers.get('Sec-Fetch-Dest') === 'document' ||
+    (request.headers.get('Accept') ?? '').toLowerCase().includes('text/html')
+  );
 }
