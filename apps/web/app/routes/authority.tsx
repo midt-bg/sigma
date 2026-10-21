@@ -204,6 +204,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               years={trend.years}
               granularity={trend.granularity}
               caption="Стойност на договорите по години"
+              omitted={{ contracts: trend.coverage.omitted, valueEur: trend.coverage.omittedEur }}
             />
           </Section>
 

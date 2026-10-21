@@ -669,7 +669,9 @@ export interface TrendData {
   years: TrendYear[]; // per-year summary with year-over-year change
   sectors: SectorRef[]; // options for the sector select
   totalValueEur: number;
-  coverage: { dated: number; total: number; pct: number }; // contracts with a usable signing date
+  /** Contracts with a usable signing date; `omitted`/`omittedEur` — those the series leaves out (no
+   *  usable date, or one before its start or in the future), so a table can reconcile with its total. */
+  coverage: { dated: number; total: number; pct: number; omitted: number; omittedEur: number };
   scope: {
     sector: string | null;
     funding: 'all' | 'eu' | 'national';

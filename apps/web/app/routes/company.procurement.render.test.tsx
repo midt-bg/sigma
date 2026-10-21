@@ -105,7 +105,7 @@ const trend: TrendData = {
   ],
   sectors: [],
   totalValueEur: 320_000,
-  coverage: { dated: 8, total: 8, pct: 1 },
+  coverage: { dated: 8, total: 8, pct: 1, omitted: 0, omittedEur: 0 },
   scope: { sector: null, funding: 'all', granularity: 'year' },
 };
 

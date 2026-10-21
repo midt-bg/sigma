@@ -41,6 +41,33 @@ function render(el: React.ReactElement) {
 }
 
 describe('TrendBlock', () => {
+  it('states what the table leaves out, so it adds up to the profile total', () => {
+    const c = render(
+      <TrendBlock
+        points={[point('2024', 100)]}
+        years={[year('2024', 100)]}
+        granularity="year"
+        caption="Разходи по години"
+        omitted={{ contracts: 1, valueEur: 40 }}
+      />,
+    );
+    expect(c.textContent).toContain('Без валидна дата');
+    expect(c.textContent).toContain('1 договор, 40\u00a0€');
+  });
+
+  it('adds no line when nothing is left out', () => {
+    const c = render(
+      <TrendBlock
+        points={[point('2024', 100)]}
+        years={[year('2024', 100)]}
+        granularity="year"
+        caption="Разходи по години"
+        omitted={{ contracts: 0, valueEur: 0 }}
+      />,
+    );
+    expect(c.textContent).not.toContain('Без валидна дата');
+  });
+
   it('says so when there is nothing dated, rather than rendering an empty table', () => {
     const c = render(
       <TrendBlock points={[]} years={[]} granularity="year" caption="Разходи по години" />,
