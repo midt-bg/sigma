@@ -153,7 +153,8 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
               ]}
               count={
                 <>
-                  Намерени <strong>{count(result.total)}</strong>{' '}
+                  {plural(result.total, 'Намерен', 'Намерени')}{' '}
+                  <strong>{count(result.total)}</strong>{' '}
                   {plural(result.total, 'договор', 'договора')} ·{' '}
                   <strong>{money(result.valueEur)}</strong>
                   {result.suspect > 0 && (
