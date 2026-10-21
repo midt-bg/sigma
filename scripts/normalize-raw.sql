@@ -987,8 +987,8 @@ FROM (
           -- so one step cannot legally more than double a contract — the ≥2× single step IS the defect
           -- signal, wherever it sits in the chain. Scope: value_after in [2×,10×) a base that value_before
           -- ties to a KNOWN prior total — signing_value OR a preceding annex's value_after (the multi-annex
-          -- case) — same currency. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
-          -- mis-key is #299's annex_suspect above; cross-currency doubles are an FX artefact ('review');
+          -- case) — same currency, or lev and euro at the peg. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
+          -- mis-key is #299's annex_suspect above; other cross-currency doubles are an FX artefact;
           -- and the ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a
           -- doubled annex later superseded by a correct one is NOT flagged.
           WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
@@ -1002,12 +1002,14 @@ FROM (
               -- OR a legitimately-grown prior total (a prior annex that was itself not a double), while a
               -- single ≥2× step (ЗОП чл.116 caps one amendment at +50%) is the defect wherever it sits.
               AND am.value_before > 0 AND (
-                ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                ABS(am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - c.signing_value * (CASE COALESCE(NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                  < 0.01 * c.signing_value * (CASE COALESCE(NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
                 OR EXISTS (
                   SELECT 1 FROM raw_amendments prev
                   WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
                     AND prev.value_after > 0
-                    AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                    AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                      < 0.01 * am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
                     -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
                     -- so a compounding chain where every step doubles is left untouched, not restated.
                     AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
@@ -1024,7 +1026,8 @@ FROM (
                     SELECT 1 FROM raw_amendments prev
                     WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
                       AND prev.value_after > 0
-                      AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                      AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                        < 0.01 * am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
                   )
                 )
               )
@@ -1035,8 +1038,11 @@ FROM (
               AND (am.value_delta IS NULL
                    OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
               AND ABS(am.value_after - c.current_value) < 0.01
-              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
-                = COALESCE(NULLIF(c.currency, ''), 'BGN')
+              -- Same currency, or lev and euro across the changeover: the comparisons above go through the
+              -- fixed peg, so a euro annex on a lev contract is weighed in the same money.
+              AND (COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                     = COALESCE(NULLIF(c.currency, ''), 'BGN')
+                   OR (am.currency IN ('BGN', 'EUR') AND COALESCE(NULLIF(c.currency, ''), 'BGN') IN ('BGN', 'EUR')))
           ) THEN 'annex_total_suspect'
           -- #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and
           -- does NOT propagate down a chain. When a PRIOR annex was double-count corrected (value_after was
@@ -1447,8 +1453,8 @@ SELECT 1,
           -- so one step cannot legally more than double a contract — the ≥2× single step IS the defect
           -- signal, wherever it sits in the chain. Scope: value_after in [2×,10×) a base that value_before
           -- ties to a KNOWN prior total — signing_value OR a preceding annex's value_after (the multi-annex
-          -- case) — same currency. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
-          -- mis-key is #299's annex_suspect above; cross-currency doubles are an FX artefact ('review');
+          -- case) — same currency, or lev and euro at the peg. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
+          -- mis-key is #299's annex_suspect above; other cross-currency doubles are an FX artefact;
           -- and the ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a
           -- doubled annex later superseded by a correct one is NOT flagged.
           WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
@@ -1462,12 +1468,14 @@ SELECT 1,
               -- OR a legitimately-grown prior total (a prior annex that was itself not a double), while a
               -- single ≥2× step (ЗОП чл.116 caps one amendment at +50%) is the defect wherever it sits.
               AND am.value_before > 0 AND (
-                ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                ABS(am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - c.signing_value * (CASE COALESCE(NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                  < 0.01 * c.signing_value * (CASE COALESCE(NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
                 OR EXISTS (
                   SELECT 1 FROM raw_amendments prev
                   WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
                     AND prev.value_after > 0
-                    AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                    AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                      < 0.01 * am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
                     -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
                     -- so a compounding chain where every step doubles is left untouched, not restated.
                     AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
@@ -1484,7 +1492,8 @@ SELECT 1,
                     SELECT 1 FROM raw_amendments prev
                     WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
                       AND prev.value_after > 0
-                      AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                      AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
+                        < 0.01 * am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
                   )
                 )
               )
@@ -1495,8 +1504,11 @@ SELECT 1,
               AND (am.value_delta IS NULL
                    OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
               AND ABS(am.value_after - c.current_value) < 0.01
-              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
-                = COALESCE(NULLIF(c.currency, ''), 'BGN')
+              -- Same currency, or lev and euro across the changeover: the comparisons above go through the
+              -- fixed peg, so a euro annex on a lev contract is weighed in the same money.
+              AND (COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                     = COALESCE(NULLIF(c.currency, ''), 'BGN')
+                   OR (am.currency IN ('BGN', 'EUR') AND COALESCE(NULLIF(c.currency, ''), 'BGN') IN ('BGN', 'EUR')))
           ) THEN 'annex_total_suspect'
           -- #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and
           -- does NOT propagate down a chain. When a PRIOR annex was double-count corrected (value_after was

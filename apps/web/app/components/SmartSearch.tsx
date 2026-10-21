@@ -33,7 +33,6 @@ export function SmartSearch({
   const [suggested, setSuggested] = useState<{ q: string; results: SearchResults | null } | null>(
     null,
   );
-  const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState(defaultValue);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -61,7 +60,6 @@ export function SmartSearch({
     if (!open || debounced.length < MIN_QUERY) return;
     if (suggested?.q === debounced && suggested.results !== null) return;
     const controller = new AbortController();
-    setLoading(true);
     fetch(`/search/suggest?q=${encodeURIComponent(debounced)}`, { signal: controller.signal })
       .then((res) => (res.ok ? (res.json() as Promise<SearchResults>) : null))
       // Throttled (429), offline or an error: no suggestions for this text, and the form still submits
@@ -69,22 +67,19 @@ export function SmartSearch({
       .catch(() => null)
       .then((results) => {
         if (!controller.signal.aborted) setSuggested({ q: debounced, results });
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
       });
-    return () => {
-      controller.abort();
-      setLoading(false);
-    };
+    return () => controller.abort();
     // `suggested` is read only to skip a repeat; depending on it would re-fire after every answer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced, open]);
 
-  // While a new text is asked, the previous answer stays on screen; a refusal for the current text shows
-  // no list at all — not a stale one, and not „no matches“.
-  const refused = suggested?.q === debounced && suggested.results === null;
-  const results = debounced.length >= MIN_QUERY ? (suggested?.results ?? undefined) : undefined;
+  // Only the answer for the text now in the field is shown: from the first keystroke until its own answer
+  // arrives the list says „Търсене…“, so no row of the previous text can be opened. A refusal for the
+  // current text shows no list at all — not a stale one, and not „no matches“.
+  const current = query.trim();
+  const loading = suggested?.q !== current;
+  const refused = !loading && suggested.results === null;
+  const results = current.length >= MIN_QUERY && !loading ? suggested.results! : undefined;
   const groups = results?.groups.filter((g) => g.hits.length > 0) ?? [];
   const flatHits = groups.flatMap((g) => g.hits);
   const hasResults = flatHits.length > 0;
@@ -92,11 +87,11 @@ export function SmartSearch({
   const seeAllIndex = hasResults ? flatHits.length : -1;
   const optionCount = flatHits.length + (hasResults ? 1 : 0);
 
-  const showList = open && debounced.length >= MIN_QUERY && !refused;
+  const showList = open && current.length >= MIN_QUERY && !refused;
 
   // Any change to the option set invalidates the highlighted row, and so does closing the list, or
   // Enter on a reopened list would open a row the user no longer sees highlighted.
-  useEffect(() => setActiveIndex(-1), [debounced, suggested, showList]);
+  useEffect(() => setActiveIndex(-1), [current, suggested, showList]);
 
   // Keep the row the arrows moved to in view: the list scrolls inside a capped box.
   const keyboardMove = useRef(false);

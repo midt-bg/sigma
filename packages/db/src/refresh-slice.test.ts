@@ -1275,7 +1275,11 @@ describe('refresh-slice EOP base derivation', () => {
 
       const valueSql = `SELECT value_flag, ROUND(amount_eur, 2) AS amount_eur
         FROM contracts WHERE contract_number = 'CONTRACT-FX-FLAG'`;
-      expect(sqliteJson(fullDb, valueSql)).toEqual([{ value_flag: 'review', amount_eur: 20000 }]);
+      // A euro annex doubling its own base on a lev contract is a doubled annex like a lev one: the contract
+      // falls back to its signing value (10 000 BGN at the peg), on both paths.
+      expect(sqliteJson(fullDb, valueSql)).toEqual([
+        { value_flag: 'annex_total_suspect', amount_eur: 5112.92 },
+      ]);
       expect(sqliteJson(sliceDb, valueSql)).toEqual(sqliteJson(fullDb, valueSql));
     } finally {
       rmSync(dir, { recursive: true, force: true });
