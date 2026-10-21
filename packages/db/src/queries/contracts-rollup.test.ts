@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
-import { PROCEDURE_GROUPS } from '@sigma/config';
+import { CPV_SECTORS, PROCEDURE_GROUPS } from '@sigma/config';
 import {
   contractsSummary,
   listContracts,
@@ -400,6 +400,24 @@ describe('listContracts on a sparse or empty filter', () => {
       Object.values(paths).every((n) => n > 0),
       JSON.stringify(paths),
     ).toBe(true);
+  });
+
+  // D1 refuses a statement with more than 100 bound parameters (SQLite here does not). The widest lists
+  // the web parser lets through, on a sparse filter whose value-sorted page would otherwise be driven.
+  it('binds at most 100 parameters per statement for the widest filter lists', async () => {
+    const p: ContractListParams = {
+      years: ['2016', ...Array.from({ length: 15 }, (_, i) => String(2000 + i))],
+      sectors: CPV_SECTORS.map((s) => s.code),
+      procedureGroups: PROCEDURE_GROUPS.map((g) => g.key),
+      eu: 'national',
+      bids: 'one',
+    };
+    for (const sort of ['value-desc', 'value-asc', 'date-desc'] as const) {
+      rollup.sql.length = 0;
+      expect(await forward(rollup.db, { ...p, sort })).toEqual(oracle(p, sort));
+      for (const sql of rollup.sql)
+        expect(sql.split('?').length - 1, sql.slice(0, 80)).toBeLessThanOrEqual(100);
+    }
   });
 
   it('returns the same pages with the rollup as the live list does', async () => {

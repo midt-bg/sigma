@@ -2,7 +2,7 @@
 // view has a shareable, reproducible address (a methodology principle). Formatting helpers live in
 // @sigma/shared; this module is only about reading/writing the URL.
 
-import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
+import { CPV_CATEGORIES, CPV_SECTORS, PROCEDURE_GROUPS, categoryForDivision } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
 import { normalizeAuthoritySort, normalizeCompanySort, normalizeContractSort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
@@ -12,10 +12,18 @@ import { CANONICAL_QUERY_PARAMS } from './query-params';
 export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25 } as const;
 export const MAX_MULTI_VALUES = 50;
 
+// Each value is a bound parameter and D1 takes at most 100 per query. The lists' sector (≤ 45 known),
+// procedure (≤ 7 groups, 21 types) and these caps keep the widest list query under it. Sixteen years is
+// far more than the coverage window offers; there are seven authority types.
+const MAX_VALUES: Record<string, number> = { year: 16, type: 7 };
+
 const KNOWN_SECTORS = new Set(CPV_SECTORS.map((s) => s.code));
+const KNOWN_PROCEDURES = new Set<string>(PROCEDURE_GROUPS.map((g) => g.key));
 
 function allowedMulti(key: string, value: string): boolean {
   if (key === 'sector') return KNOWN_SECTORS.has(value);
+  if (key === 'procedure') return KNOWN_PROCEDURES.has(value);
+  if (key === 'year') return value === 'unknown' || /^\d{4}$/.test(value);
   return true;
 }
 
@@ -28,7 +36,7 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
     .filter(Boolean);
   return Array.from(new Set(all))
     .filter((v) => allowedMulti(key, v))
-    .slice(0, MAX_MULTI_VALUES);
+    .slice(0, MAX_VALUES[key] ?? MAX_MULTI_VALUES);
 }
 
 /**
