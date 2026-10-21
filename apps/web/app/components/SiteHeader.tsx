@@ -46,16 +46,31 @@ export function SiteHeader() {
   const searchToggleRef = useRef<HTMLButtonElement>(null);
   const navToggleRef = useRef<HTMLButtonElement>(null);
   const navCloseRef = useRef<HTMLButtonElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  // Set when the drawer is closed by its own controls (×, Esc, backdrop), not by following a link.
+  const returnNavFocus = useRef(false);
 
   // Focus the field when the search drawer opens.
   useEffect(() => {
     if (searchOpen) inputRef.current?.focus({ preventScroll: true });
   }, [searchOpen]);
 
-  // Move focus into the nav drawer when it opens (keyboard users land on the close control).
+  // Move focus into the nav drawer when it opens (keyboard users land on the close control), and back
+  // to „Меню" when it closes. Both run after the commit: the toggle sits in `.site-actions`, which is
+  // inert while the drawer is open, so focusing it any earlier is a silent no-op.
   useEffect(() => {
-    if (navOpen) navCloseRef.current?.focus({ preventScroll: true });
+    if (navOpen) {
+      navCloseRef.current?.focus({ preventScroll: true });
+    } else if (returnNavFocus.current) {
+      returnNavFocus.current = false;
+      navToggleRef.current?.focus();
+    }
   }, [navOpen]);
+
+  const closeNav = () => {
+    returnNavFocus.current = true;
+    setNavOpen(false);
+  };
 
   // Lock body scroll behind the open nav drawer so the dimmed page doesn't scroll under it.
   useEffect(() => {
@@ -67,19 +82,29 @@ export function SiteHeader() {
     };
   }, [navOpen]);
 
-  // Esc closes whichever surface is open (and returns focus to the control that opened it).
+  // Esc closes whichever surface is open (and returns focus to the control that opened it). While the
+  // nav drawer is open, Tab and Shift+Tab cycle inside it instead of walking the page behind it.
   useEffect(() => {
     if (!searchOpen && !navOpen) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Tab' && navOpen && navRef.current) {
+        const items = [...navRef.current.querySelectorAll<HTMLElement>('button, a[href]')];
+        const first = items[0];
+        const last = items[items.length - 1];
+        const active = document.activeElement;
+        const edge = e.shiftKey ? first : last;
+        if (active === edge || !navRef.current.contains(active)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first)?.focus();
+        }
+        return;
+      }
       if (e.key !== 'Escape') return;
       if (searchOpen) {
         setSearchOpen(false);
         searchToggleRef.current?.focus();
       }
-      if (navOpen) {
-        setNavOpen(false);
-        navToggleRef.current?.focus();
-      }
+      if (navOpen) closeNav();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -105,11 +130,6 @@ export function SiteHeader() {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  const closeNav = () => {
-    setNavOpen(false);
-    navToggleRef.current?.focus();
-  };
-
   return (
     <>
       <header className="site-header" role="banner">
@@ -125,6 +145,7 @@ export function SiteHeader() {
             <span className="brand-sub">Платформа за прозрачност на обществените поръчки</span>
           </Link>
           <nav
+            ref={navRef}
             className={`site-nav${navOpen ? ' is-open' : ''}`}
             id={navId}
             aria-label="Главна навигация"
