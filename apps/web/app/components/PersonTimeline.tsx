@@ -63,9 +63,7 @@ export function PersonTimeline({
   const [view, setView] = useState<TimelineView>({ atStart: false, atEnd: true, seen: '' });
   const intervals = p.timelineIntervals ?? null;
   const hasDeclarations = p.declarations.length > 0;
-  const updateView = () => {
-    const el = scroll.current;
-    if (!el) return;
+  const updateView = (el: HTMLElement) => {
     const box = el.getBoundingClientRect();
     // The year axis starts after the row labels, which may stay in place while the canvas scrolls.
     const from = Math.max(
@@ -90,7 +88,7 @@ export function PersonTimeline({
     if (!el) return;
     const update = () => {
       setScrollable(el.scrollWidth > el.clientWidth + 1);
-      updateView();
+      updateView(el);
     };
     el.scrollLeft = el.scrollWidth;
     update();
@@ -98,8 +96,6 @@ export function PersonTimeline({
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
-    // updateView reads the DOM only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.name, years.length]);
   // The tip is dismissed with Esc (WCAG 1.4.13): it can cover the neighbouring marks.
   const hideTimer = useRef<number | undefined>(undefined);
@@ -431,9 +427,9 @@ export function PersonTimeline({
         role="region"
         aria-label="Обща времева линия, превъртай хоризонтално при нужда"
         tabIndex={0}
-        onScroll={() => {
+        onScroll={(e) => {
           hideTip();
-          updateView();
+          updateView(e.currentTarget);
         }}
       >
         <div
