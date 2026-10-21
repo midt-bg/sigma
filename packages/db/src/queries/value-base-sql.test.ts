@@ -157,6 +157,21 @@ describe('a company whose negative rows outweigh the rest', () => {
   });
 });
 
+describe('a company profile offer buckets', () => {
+  it('files 0 offers on an awarded contract under „няма данни“, so the buckets add up', async () => {
+    const { sqlite, db } = realDb();
+    sqlite.exec(`
+      INSERT INTO contracts
+        (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur)
+      VALUES ('c:zero-bids', 't:A45', 'eik:200000001', 10, 'EUR', '2024-01-07', 0, 'ok', 10);
+    `);
+    sqlite.exec(precompute);
+
+    const company = (await getCompany(db, 'eik:200000001'))!;
+    expect(company.bids).toEqual({ one: 3, two: 0, three: 0, fourPlus: 0, unknown: 1 });
+  });
+});
+
 describe('the home companies figure', () => {
   it('counts the companies the list shows, not the bucket of winners with no identity', async () => {
     const { sqlite, db } = realDb();
