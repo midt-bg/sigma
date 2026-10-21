@@ -4,7 +4,7 @@
 
 import type { ContractListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
+import { cents, cleanName, entityName } from '@sigma/shared';
 import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import { FRAMEWORK_AGREEMENT } from './framework';
@@ -708,6 +708,8 @@ const CSV_COLUMNS = [
   'bids_received',
   // The record of a framework agreement has an empty value_eur on purpose: this is its ceiling instead.
   'framework_ceiling_eur',
+  // The same quality verdict as the JSON's value.flag: `ok`, or why the value is not to be trusted.
+  'value_flag',
 ] as const;
 
 interface CsvRow extends ContractRow {
@@ -750,10 +752,11 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       r.cpv_code ? r.cpv_code.slice(0, 2) : '',
       procedureGroup(r.procedure_type).label,
       r.signed_at,
-      r.amount_eur,
+      cents(r.amount_eur),
       r.eu_funded === 1 ? '1' : '0',
       r.bids_received,
-      r.framework === FRAMEWORK_AGREEMENT ? r.signing_value_eur : null,
+      r.framework === FRAMEWORK_AGREEMENT ? cents(r.signing_value_eur) : null,
+      r.value_flag,
     ],
     'sigma-contracts.csv',
   );

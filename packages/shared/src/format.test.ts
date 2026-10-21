@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cents,
   cleanName,
   count,
   date,
@@ -119,6 +120,15 @@ describe('entityName', () => {
   });
   it('passes company names through as source truth', () => {
     expect(entityName('"СОФАРМА ТРЕЙДИНГ "АД', 'company')).toBe('"СОФАРМА ТРЕЙДИНГ "АД');
+  });
+});
+
+describe('cents', () => {
+  it('rounds an export amount to the cent and keeps a missing value missing', () => {
+    expect(cents(32138.785068231904)).toBe(32138.79);
+    expect(cents(0.0051129)).toBe(0.01);
+    expect(cents(-1200.004)).toBe(-1200);
+    expect(cents(null)).toBeNull();
   });
 });
 

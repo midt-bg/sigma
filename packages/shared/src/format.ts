@@ -32,6 +32,12 @@ function dec(n: number, dp: number, stripZeros: boolean): string {
   return frac == null ? grouped : `${grouped},${frac}`;
 }
 
+/** EUR rounded to the cent for exports (CSV/JSON): sub-cent digits of a BGN→EUR conversion carry no
+ *  meaning. null stays null — a missing value is never a 0. */
+export function cents(eur: number | null): number | null {
+  return eur == null ? null : Math.round(eur * 100) / 100;
+}
+
 function rounded(n: number, dp: number): number {
   return Number(n.toFixed(dp));
 }
