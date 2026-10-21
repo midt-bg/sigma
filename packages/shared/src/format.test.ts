@@ -86,6 +86,8 @@ describe('count / pct', () => {
     expect(signedPct(-0.0001)).toBe('0%');
     expect(signedPct(-0.233)).toBe('−23,3%');
     expect(signedPct(0.05)).toBe('+5%');
+    expect(pct(16.653)).toBe(`1${NBSP}665,3%`);
+    expect(signedPct(-13.587)).toBe(`−1${NBSP}358,7%`);
   });
   it('signs monetary deltas like signedPct (+ positive, U+2212 negative, no sign on zero)', () => {
     expect(signedMoney(187_000_000)).toBe(`+187${NBSP}млн.`);
