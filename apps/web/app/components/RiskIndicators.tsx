@@ -1,6 +1,6 @@
 import type { ContractDetail } from '@sigma/api-contract';
 import { Link } from 'react-router';
-import { pct } from '@sigma/shared';
+import { isFutureDate, pct } from '@sigma/shared';
 import { evaluateRiskIndicators } from '../lib/riskLogic';
 import { unverifiedValueNote } from '../lib/contractValue';
 
@@ -16,7 +16,10 @@ export function RiskIndicators({ contract }: { contract: ContractDetail }) {
   const valueNote = unverifiedValueNote(contract.value);
   const anomaly = [
     valueNote && valueNote.title.charAt(0).toLowerCase() + valueNote.title.slice(1),
-    contract.dateSuspect && 'договорът е подписан след датата си на публикуване',
+    contract.dateSuspect &&
+      (isFutureDate(contract.signedAt)
+        ? 'датата на подписване е в бъдещето'
+        : 'договорът е подписан след датата си на публикуване'),
   ]
     .filter(Boolean)
     .join('; ');
