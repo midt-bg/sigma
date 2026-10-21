@@ -29,7 +29,9 @@ export function meta(_: Route.MetaArgs) {
   ];
 }
 
-export const headers = cached(1800);
+// Aggregates over the whole corpus that change only with a data refresh (every 6 h): a cold miss costs
+// seconds of D1 work, so the edge keeps the page for the whole refresh interval.
+export const headers = cached(21600);
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);
