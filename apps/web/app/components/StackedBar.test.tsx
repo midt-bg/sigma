@@ -37,9 +37,14 @@ function render(slices: ProcedureSlice[], basis?: 'value' | 'contracts') {
 }
 
 describe('StackedBar', () => {
-  it('renders nothing when every slice is below the visible threshold', () => {
-    expect(render([]).textContent).toBe('');
-    expect(render([slice({ sharePct: 0.0004 })]).querySelector('.hbar')).toBeNull();
+  it('says why there is no bar when every slice is below the visible threshold', () => {
+    expect(render([]).textContent).toBe('Няма стойност, от която да се изчисли разпределението.');
+    const c = render([slice({ sharePct: 0.0004 })]);
+    expect(c.querySelector('.hbar')).toBeNull();
+    expect(c.textContent).toContain('Няма стойност');
+    expect(render([slice({ contracts: 0 })], 'contracts').textContent).toBe(
+      'Няма договори, от които да се изчисли разпределението.',
+    );
   });
 
   it('draws visible slices, clamps their widths and repeats their labels in the legend', () => {
