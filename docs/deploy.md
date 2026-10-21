@@ -64,6 +64,7 @@ wrangler deploy --config build/server/wrangler.deploy.json      # изпраща
 | `SIGMA_REBUILD_WORKFLOW_NAME` | *(незададена → `sigma-rebuild`)* | `sigma-rebuild-stage` | render → rebuild `[[workflows]] name` |
 | `SIGMA_DECLARATIONS_BUCKET` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → `r2_buckets[].bucket_name` и `DECLARATIONS_BUCKET` на etl worker-а |
 | `SUPPRESSION_SALT` / `SUPPRESSION_KEY_VERSION` | prod salt / версия | staging salt / версия | секрети на etl worker-а за контейнера на декларациите |
+| `SIGMA_SHIP_ENV` | `production` (committ-натите `namespace_id`) | `staging` | render → `namespace_id` на rate-limit binding-ите на web worker-а (собствен набор за staging и dev, защото id-тата са общи за акаунта) и `SIGMA_SHIP_ENV` на etl worker-а |
 
 > Секретите на etl worker-а се поставят в последната стъпка на деплоя, след самото качване. Между двете
 > има кратък прозорец, в който cron тик би заварил worker-а без токен. Ходът тогава не тръгва и в лога

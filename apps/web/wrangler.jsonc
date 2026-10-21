@@ -47,6 +47,8 @@
     // this, further run_sql calls are refused. Tune to a few × the largest scannable table.
     "D1_ROWS_READ_BUDGET": "5000000",
   },
+  // The namespace_ids below are production's. They are account-wide, so every other environment gets its
+  // own set from scripts/wrangler-render.mjs (by SIGMA_SHIP_ENV); a new limiter needs an id there too.
   "unsafe": {
     "bindings": [
       {

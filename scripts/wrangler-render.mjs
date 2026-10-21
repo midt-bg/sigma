@@ -27,12 +27,38 @@ const SENTINELS = {
 // ASSISTANT_RATE_LIMITER is the most important to assert: unlike the others (which fail OPEN), it fails
 // CLOSED in prod, so a dropped/typo'd binding silently 503s every assistant request rather than merely
 // disabling a throttle (review #80, follow-up).
+// CONFLICTS_RATE_LIMITER fails CLOSED too: without it /conflicts* and /persons/* answer 503.
 const REQUIRED_RATE_LIMITERS = [
   'CSV_RATE_LIMITER',
   'AGG_RATE_LIMITER',
   'SEARCH_RATE_LIMITER',
+  'SUGGEST_RATE_LIMITER',
   'ASSISTANT_RATE_LIMITER',
+  'CONFLICTS_RATE_LIMITER',
 ];
+
+// A rate-limit namespace_id is account-wide, not scoped to the Worker, so two environments that bind the
+// same id count one client in one bucket: testing Stage would spend the tester's production budget.
+// Production keeps the committed ids; every other environment (SIGMA_SHIP_ENV) gets its own set and must
+// name every limiter the config binds.
+const RATE_LIMIT_NAMESPACE_IDS = {
+  staging: {
+    CSV_RATE_LIMITER: '2026102101',
+    AGG_RATE_LIMITER: '2026102102',
+    SEARCH_RATE_LIMITER: '2026102103',
+    ASSISTANT_RATE_LIMITER: '2026102105',
+    CONFLICTS_RATE_LIMITER: '2026102106',
+    SUGGEST_RATE_LIMITER: '2026102107',
+  },
+  dev: {
+    CSV_RATE_LIMITER: '2026102111',
+    AGG_RATE_LIMITER: '2026102112',
+    SEARCH_RATE_LIMITER: '2026102113',
+    ASSISTANT_RATE_LIMITER: '2026102115',
+    CONFLICTS_RATE_LIMITER: '2026102116',
+    SUGGEST_RATE_LIMITER: '2026102117',
+  },
+};
 
 const input = process.argv[2];
 if (!input) {
@@ -69,14 +95,10 @@ if (ext === '.json' || ext === '.jsonc') {
     csvCacheName: process.env.SIGMA_CSV_CACHE_NAME || '',
     reportsName: process.env.SIGMA_REPORTS_NAME || '',
     vectorizeName: process.env.SIGMA_VECTORIZE_NAME || '',
+    // Production is the committed config, so it renders exactly as before.
+    shipEnv: process.env.SIGMA_SHIP_ENV === 'production' ? '' : process.env.SIGMA_SHIP_ENV || '',
   };
-  if (
-    names.webName ||
-    names.d1Name ||
-    names.csvCacheName ||
-    names.reportsName ||
-    names.vectorizeName
-  ) {
+  if (Object.values(names).some(Boolean)) {
     out = renderJson(out, names);
   }
   // Most rate limiters fail OPEN at runtime (apps/web/workers/rate-limit.ts), so a missing binding or a
@@ -162,6 +184,19 @@ function renderJson(text, names) {
   if (names.vectorizeName && Array.isArray(obj.vectorize)) {
     for (const index of obj.vectorize) {
       if (index && typeof index === 'object') index.index_name = names.vectorizeName;
+    }
+  }
+  if (names.shipEnv) {
+    const ids = RATE_LIMIT_NAMESPACE_IDS[names.shipEnv];
+    if (!ids)
+      throw new Error(
+        `SIGMA_SHIP_ENV must be production, ${Object.keys(RATE_LIMIT_NAMESPACE_IDS).join(', ')}; got ${JSON.stringify(names.shipEnv)}`,
+      );
+    for (const binding of obj.unsafe?.bindings ?? []) {
+      if (binding?.type !== 'ratelimit') continue;
+      if (!ids[binding.name])
+        throw new Error(`no ${names.shipEnv} namespace_id for rate-limit binding ${binding.name}`);
+      binding.namespace_id = ids[binding.name];
     }
   }
   return `${JSON.stringify(obj, null, 2)}\n`;
