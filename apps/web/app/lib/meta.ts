@@ -7,6 +7,13 @@
 
 type MetaMatches = ReadonlyArray<{ id?: string; data?: unknown } | undefined> | undefined;
 
+declare const __SIGMA_VERSION__: string | undefined;
+
+/** The commit of the running build (vite.config.ts), or '' outside a deploy. */
+export function sigmaVersion(): string {
+  return typeof __SIGMA_VERSION__ === 'string' ? __SIGMA_VERSION__ : '';
+}
+
 export function getRootOrigin(matches: MetaMatches): string | undefined {
   const data = matches?.find((m) => m?.id === 'root')?.data as { origin?: string } | undefined;
   return data?.origin || undefined;
