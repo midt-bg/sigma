@@ -10,6 +10,21 @@
   /* faint edge fades hint that there is more to scroll */
   scrollbar-width: thin;
 }
+/* The tie graph's table twin: beside the graph it is for a screen reader only; on a phone, where the
+   graph is hidden, it is the visible list of the ties (the table reflows to cards). */
+@media (min-width: 601px) {
+  .tie-table {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
 .flow-svg {
   width: 100%;
   height: auto;
@@ -36,9 +51,13 @@
 }
 @media (max-width: 600px) {
   /* The Sankey is unusable at phone widths even with horizontal scroll — hide
-     it and lean on the top-flows table below, which already reflows to cards. */
+     it and lean on the top-flows table below, which already reflows to cards.
+     The legends and the copy that explain a diagram (.diagram-only) go with it. */
   .flow-scroll,
-  .flow-scroll-hint {
+  .flow-scroll-hint,
+  .diagram-only,
+  .tie-legend,
+  .net-legend {
     display: none;
   }
   /* Stack the filter controls into a clean vertical list on phones. The right edge stays clear of

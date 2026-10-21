@@ -180,7 +180,7 @@ function RegistryCompany({
             hint="Лицата, вписани в дружеството, и другите дружества, в които те имат роля по Търговския регистър."
           >
             <TieGraph layout={tieLayout} />
-            <div className="sr-only">
+            <div className="tie-table">
               <DataTable
                 columns={tieColumns}
                 rows={tieRows(ties)}
@@ -566,8 +566,8 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             <>
               <TieGraph layout={tieLayout} />
               {/* The graph's content as a table — the same links and the same sentences, for a screen
-                  reader and for anyone who wants to read rather than look. */}
-              <div className="sr-only">
+                  reader and, on a phone where the graph is hidden, for the eye. */}
+              <div className="tie-table">
                 <DataTable
                   columns={tieColumns}
                   rows={tieRows(ties)}
@@ -576,7 +576,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                 />
               </div>
               {ties.omitted > 0 && (
-                <p className="small muted mt-s3">
+                <p className="small muted mt-s3 diagram-only">
                   Показани са най-силните {count(ties.nodes.length - 1)}; още {count(ties.omitted)}{' '}
                   са извън схемата.
                 </p>

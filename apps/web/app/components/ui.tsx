@@ -279,15 +279,17 @@ export function Section({
   id,
   title,
   hint,
+  className,
   children,
 }: {
   id: string;
   title: ReactNode;
   hint?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="section" aria-labelledby={id}>
+    <section className={className ? `section ${className}` : 'section'} aria-labelledby={id}>
       <h2 id={id}>{title}</h2>
       {hint != null && <p className="section-hint">{hint}</p>}
       {children}
