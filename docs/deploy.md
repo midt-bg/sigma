@@ -15,9 +15,9 @@ Committ-натите `wrangler.*` файлове държат нулеви (zero
 
 | | Production | Staging | Dev2 (репетиция) | Production-v2 (бъдеще) |
 |---|---|---|---|---|
-| Web worker → URL | `sigma` → **sigma.midt.bg** (зад Access; workers.dev изключен) | `sigma-stage` → sigma-stage.cf-midt.workers.dev (зад Access) | `sigma-dev2` | ново име, 3-ти URL |
+| Web worker → URL | `sigma` → **sigma.midt.bg** (custom домейн, публичен); отговаря и на `sigma.cf-midt.workers.dev` | `sigma-stage` → sigma-stage.cf-midt.workers.dev (публичен, без Access) | `sigma-dev2` | ново име, 3-ти URL |
 | ETL worker | `sigma-etl` (cron) | `sigma-etl-stage` (cron) | `sigma-etl-dev2` | — |
-| Workflows (глобални за акаунта) | `sigma-refresh` · `sigma-registry` | `sigma-refresh-stage` · `sigma-registry-stage` | `sigma-*-dev2` | — |
+| Workflows (глобални за акаунта) | `sigma-refresh` · `sigma-registry` · `sigma-declarations` · `sigma-rebuild` | `sigma-refresh-stage` · `sigma-registry-stage` · `sigma-declarations-stage` · `sigma-rebuild-stage` | `sigma-*-dev2` | — |
 | D1 база | `sigma-green` · `sigma-blue` (слотове) | `sigma-stage-blue` · `sigma-stage-green` (**отделни** слотове) | `sigma-dev2-green` · `sigma-dev2-blue` | собствена база |
 | CF акаунт | obecto | obecto (засега споделен) | obecto | **отделен** акаунт |
 | GitHub Environment | `production` | `staging` | — (на ръка) | `production` (пренасочен) |
@@ -28,8 +28,9 @@ Dev2 съществува за репетицията на пускането: �
 
 Staging/dev разчитат на автоматичния `workers.dev` хост — наричането на worker-а `sigma-stage` е
 достатъчно, за да обслужва `sigma-stage.cf-midt.workers.dev` (без конфигуриране на routes).
-**Production** допълнително получава custom домейна `sigma.midt.bg` и Cloudflare Access gate преди
-пускане — виж *Заключване преди пускане* (§6) по-долу.
+**Production** получава и custom домейна `sigma.midt.bg`. Нито една среда не е зад Cloudflare Access, а
+web worker-ите не задават `workers_dev`, така че и production отговаря на своя `workers.dev` адрес —
+виж §6 (*Публичност, Access и `workers.dev`*).
 
 Всяка среда има **своя собствена D1 база** (*същият акаунт ≠ същата база*). В рамките на една среда
 web + etl споделят един D1, така че explorer-ът чете това, което ETL-ът записва; между средите никога
@@ -64,18 +65,28 @@ wrangler deploy --config build/server/wrangler.deploy.json      # изпраща
 | `SIGMA_REBUILD_WORKFLOW_NAME` | *(незададена → `sigma-rebuild`)* | `sigma-rebuild-stage` | render → rebuild `[[workflows]] name` |
 | `SIGMA_DECLARATIONS_BUCKET` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → `r2_buckets[].bucket_name` и `DECLARATIONS_BUCKET` на etl worker-а |
 | `SUPPRESSION_SALT` / `SUPPRESSION_KEY_VERSION` | prod salt / версия | staging salt / версия | секрети на etl worker-а за контейнера на декларациите |
-| `SIGMA_SHIP_ENV` | `production` (committ-натите `namespace_id`) | `staging` | render → `namespace_id` на rate-limit binding-ите на web worker-а (собствен набор за staging и dev, защото id-тата са общи за акаунта) и `SIGMA_SHIP_ENV` на etl worker-а |
+| `SIGMA_D1_NAME` | **задължителна:** живият слот `sigma-green` или `sigma-blue` | активният `sigma-stage-blue` или `sigma-stage-green` | render → `database_name` **+** provisioning/seed скриптовете |
+| `SIGMA_CSV_CACHE_NAME` | *(незададена → `sigma-csv-cache`)* | `sigma-csv-cache-stage` | render → `r2_buckets[].bucket_name` на web worker-а |
+| `SIGMA_REPORTS_NAME` | *(незададена → `sigma-reports`)* | собствено име на средата | render → R2 кофата на асистента (`REPORTS`) |
+| `SIGMA_VECTORIZE_NAME` | *(незададена → `sigma-assistant`)* | собствено име на средата | render → Vectorize индекса на асистента |
+| `SIGMA_SHIP_ENV` | `production` (committ-натите `namespace_id`) | `staging` | render → `namespace_id` на rate-limit binding-ите на web worker-а (собствен набор за staging и dev, защото id-тата са общи за акаунта) и `SIGMA_SHIP_ENV` на etl worker-а, по която контейнерът на декларациите проверява целевата база |
+| `SIGMA_SOURCE_COMMIT` | `github.sha` | `github.sha` | render → `[vars]` на etl worker-а; изграждането записва комита в `data_version` |
 
 > Секретите на etl worker-а се поставят в последната стъпка на деплоя, след самото качване. Между двете
 > има кратък прозорец, в който cron тик би заварил worker-а без токен. Ходът тогава не тръгва и в лога
 > стои `Missing declaration setting: …` — шумно и безвредно, нищо не се качва наполовина. Ако видите
 > това веднага след деплой, просто пуснете хода наново.
-| `SIGMA_D1_NAME` | *(незададена → `sigma`)* | активният `sigma-stage-blue` или `sigma-stage-green` | render → `database_name` **+** provisioning/seed скриптовете |
-| `SIGMA_CSV_CACHE_NAME` | *(незададена → `sigma-csv-cache`)* | `sigma-csv-cache-stage` | render → `r2_buckets[].bucket_name` на web worker-а |
+
+> **`SIGMA_D1_NAME` няма безопасна стойност по подразбиране за production.** Незададена, тя оставя
+> committ-натото `sigma` — име, което не е слот на production: проверката преди запис
+> (`scripts/deploy-preflight.mjs`) спира деплоя, а контейнерът на декларациите
+> (`assertD1TargetAuthorized` в `scripts/ship-related-persons.mjs`) отказва да пише в него. Задава се
+> винаги двойка със `SIGMA_D1_ID` на същия слот.
 
 Всяка променлива за име по подразбиране е своята committ-ната стойност, така че когато всички са
-незададени, рендерът е **байт-идентичен с днешния** (само `database_id` се подменя) — инвариантът за
-безопасност на production.
+незададени, рендерът е **байт-идентичен с committ-натия файл** (само `database_id` се подменя).
+Production задава само `SIGMA_D1_NAME` (слотът) и оставя имената на Worker-ите, потоците и кофите по
+подразбиране.
 
 > Имплементация на рендера: бърз път записва низа с подменен sentinel без промяна, когато никоя
 > променлива за име не е зададена (запазва байт-идентичността и `.jsonc` коментарите). Когато е
@@ -129,27 +140,42 @@ wrangler deploy --config build/server/wrangler.deploy.json      # изпраща
 
 ### Минимални scope-ове за API token
 
-Custom token-ът се нуждае само от тези **Account**-ниво права (не може да се ограничи до един Worker —
-виж *Бележки → Обхват на достъпа*): Workers Scripts **Edit**, D1 **Edit**, Workers R2 Storage **Edit**
-(explorer-ът свързва R2 bucket-а `sigma-csv-cache`) и Account Settings **Read**. Същите scope-ове
-покриват и provisioning, и деплой. (Workflows се изпращат като част от Worker-а `sigma-etl`, така че
-не е нужно отделно **Workflows** право — то се покрива от Workers Scripts: Edit; някои dashboard-и не
-изброяват самостоятелен Workflows scope.)
+Custom token-ът е **Account**-ниво (не може да се ограничи до един Worker — виж *Бележки → Обхват на
+достъпа*). Деплоят днес пипа следното, и token-ът трябва да го покрива:
+
+| право | защо (в кода) |
+|---|---|
+| Workers Scripts **Edit** | `wrangler deploy` на web и etl, `wrangler secret put` (`LOG_IP_KEY`, секретите на etl), `wrangler triggers deploy` при паркиране, четирите Workflow-а на etl (`[[workflows]]`) и Durable Object-а на контейнера |
+| Containers **Edit** | `[[containers]]` на etl (`DeclarationContainer`): деплоят строи образа от `containers/declarations/Dockerfile` и го качва в регистъра на акаунта |
+| D1 **Edit** | `scripts/deploy-preflight.mjs` (`wrangler d1 info`), `scripts/release-schema.mjs` (миграции и Time Travel bookmark), `scripts/d1-file.sh` |
+| Workers R2 Storage **Edit** | кофите `sigma-csv-cache`, `sigma-reports` (web) и `sigma-declarations` (etl); създаване на кофата и правилата за изтичане (`scripts/ensure-r2-lifecycle.sh`) |
+| Vectorize **Edit** | web свързва индекса `sigma-assistant`; деплоят пада, ако индексът липсва или не може да се прочете |
+| Account Settings **Read** | wrangler резолвва акаунта |
+
+Workers AI (`ai` binding на web) не иска ресурс; ако dashboard-ът изброява Workers AI или Workflows
+като отделни права, дайте им Read/Edit по същата логика. Същият token се поставя и като секрет на etl
+worker-а (контейнерът пише в D1 и R2 през wrangler), затова D1 и R2 правата са нужни и по време на
+работа, не само при деплой. Списъкът е изведен от командите в
+[deploy.yml](../.github/workflows/deploy.yml) и скриптовете му; при отказ от API-то сверете името на
+правото в dashboard-а — не разширявайте token-а „за всеки случай“.
 
 ## 1. Provisioning на D1 (за всяка среда, локално)
 
-Всяка среда получава **собствена** база. `SIGMA_D1_NAME` избира името (по подразбиране `sigma`):
+Всяка среда получава **собствени** бази — по два слота (виж таблицата „Среди“). `SIGMA_D1_NAME`
+избира името; незададена, `bootstrap.mjs` създава `sigma`, което **не е** слот на production и
+проверката преди запис го отказва. Затова името се задава винаги:
 
 ```bash
-# production (име по подразбиране)
-pnpm bootstrap:apply                                          # → wrangler d1 create sigma
+# production — двата слота
+SIGMA_D1_NAME=sigma-green node scripts/bootstrap.mjs --apply # → wrangler d1 create sigma-green
+SIGMA_D1_NAME=sigma-blue  node scripts/bootstrap.mjs --apply # → wrangler d1 create sigma-blue
 
 # staging
-SIGMA_D1_NAME=sigma-stage node scripts/bootstrap.mjs --apply # → wrangler d1 create sigma-stage
+SIGMA_D1_NAME=sigma-stage-blue node scripts/bootstrap.mjs --apply # → wrangler d1 create sigma-stage-blue
 ```
 
-Запишете отпечатания **D1 `database_id`** и го съхранете като секрет `SIGMA_D1_ID` на съответната
-среда — **не** в committ-натите `wrangler.*` файлове (които пазят zero-UUID dummy за локална
+Запишете отпечатания **D1 `database_id`** на слота, който ще обслужва, и го съхранете като секрет
+`SIGMA_D1_ID` на съответната среда (заедно с `SIGMA_D1_NAME` на същия слот) — **не** в committ-натите `wrangler.*` файлове (които пазят zero-UUID dummy за локална
 разработка).
 
 > `bootstrap.mjs` действа върху акаунта, към който `wrangler` е автентикиран в момента, и само
@@ -159,20 +185,24 @@ SIGMA_D1_NAME=sigma-stage node scripts/bootstrap.mjs --apply # → wrangler d1 c
 ## 2. Зареждане на данните (за всяка среда, локално)
 
 ```bash
-# production
-node scripts/import.mjs --remote
+# production — празният слот
+SIGMA_D1_NAME=sigma-blue node scripts/import.mjs --remote
 
 # staging
-SIGMA_D1_NAME=sigma-stage node scripts/import.mjs --remote
+SIGMA_D1_NAME=sigma-stage-blue node scripts/import.mjs --remote
 ```
+
+Пълното изграждане на слот за пускане е `RebuildWorkflow` (виж „Пълно изграждане…“ по-долу и
+[runbooks/production-cutover.md](runbooks/production-cutover.md)); `import.mjs` е ръчният път за
+първоначално зареждане.
 
 Това мигрира схемата, зарежда EOP staging данните (от отворената емисия `storage.eop.bg` — подменяема
 с `EOP_OPEN_DATA_BASE_URL`), извежда анексите, зарежда валутните курсове + NUTS, нормализира до
 domain таблиците и преизчислява rollup-ите + FTS.
 
-> **`SIGMA_D1_NAME` пази production от seed.** `import.mjs` и **всеки** `load-*.mjs` loader насочват
-> към базата по име чрез `SIGMA_D1_NAME`; без него те по подразбиране насочват към `sigma`. Винаги го
-> задавайте при зареждане на non-prod среда.
+> **`SIGMA_D1_NAME` избира базата.** `import.mjs` и **всеки** `load-*.mjs` loader насочват към базата
+> по име чрез `SIGMA_D1_NAME`; без него те насочват към `sigma` — име, което не е слот на никоя среда.
+> Винаги го задавайте.
 
 > **Уговорка за bulk-зареждане.** Всяка стъпка минава през `wrangler d1 execute --remote --file` —
 > единственият bulk път в wrangler 4.x (няма `wrangler d1 import`). Бавно, но осъществимо през API за
@@ -260,6 +290,32 @@ domain таблиците и преизчислява rollup-ите + FTS.
   правилата за изчисление на сумите, флаговете или собствеността не е стъпка върху обслужваната база, а
   пълно изграждане на празния слот и превключване (по-долу).
 
+### Известни остатъци в схемата
+
+Обекти, които базите носят извън веригата или различно от нея. Нито един не пречи на обслужването;
+планът ги показва, но не ги сравнява. Не се трият на ръка — чистенето е миграция.
+
+- **`idx_contracts_tender_id`** (Stage и production) дублира `idx_contracts_tender` от `0000_init.sql`
+  — същата колона `contracts(tender_id)`. Създава го `scripts/refresh-slice.sql` при всяко обновяване,
+  затова е и там, където веригата не го строи. Цена: двоен запис в индекса при всеки ред в `contracts`.
+  Чистене: `refresh-slice.sql` спира да го създава, а следваща миграция прави
+  `DROP INDEX IF EXISTS idx_contracts_tender_id` — едната от двете стъпки без другата не стига.
+- **`risk_scores` и `idx_risk_band`** (само Stage) са махнати от схемата, но остават в по-стария слот;
+  таблицата е празна и има външен ключ към `tenders`. Отпада с пълното изграждане на слота или с
+  миграция, която я трие.
+- **Журналът на Stage** имаше `0000`–`0021`, а обектите на `0022`–`0025` — от старите ръчни стъпки.
+  Деплоят през `release-schema.mjs` ги отбелязва (виж по-горе). Слот, по който още не е минал такъв
+  деплой, не приема обикновен `wrangler d1 migrations apply`; планът показва кое ще се отбележи.
+- **`0018_person_entities.sql`** е допълнен с индекса `idx_person_entities_indent` след като Stage го е
+  записал като приложен, затова слот, изграден преди това, няма индекса. Заключването
+  (`migrations.lock`) вече не допуска такава редакция; липсващият индекс идва с пълното изграждане на
+  слота или с нова миграция `CREATE INDEX IF NOT EXISTS`.
+- **`sigma_backfill_0002_current_value_currency`** е празна по замисъл: присъствието ѝ казва, че
+  еднократната корекция на валутите е минала върху базата. Остава.
+
+Проверка, само четене: `node scripts/release-schema.mjs plan <слот>` (редът „beside the schema (not
+compared)“ изброява допълнителните обекти) или
+`wrangler d1 execute <слот> --remote --command "SELECT type, name, tbl_name FROM sqlite_master WHERE name IN ('idx_contracts_tender_id','idx_contracts_tender','risk_scores','idx_risk_band','idx_person_entities_indent')"`.
 
 ## Проверка преди запис
 
@@ -330,21 +386,25 @@ domain таблиците и преизчислява rollup-ите + FTS.
   `SIGMA_WORKFLOW_NAME` = `sigma-refresh-stage`,
   `SIGMA_REGISTRY_WORKFLOW_NAME` = `sigma-registry-stage`, `SIGMA_D1_NAME` = името на активния слот
 
-> Средата `production` е **неблокираща** за създаване: дори с `environment: production` зададено на
-> job-а, GitHub все още излага repo-ниво секретите, така че production продължава да се деплойва с
-> днешните repo секрети, докато не решите да ги преместите в средата.
+> С `environment: production` на job-а GitHub излага и repo-ниво секретите, но настройките, които
+> проверката преди запис иска (`SIGMA_D1_NAME`, `SUPPRESSION_SALT`, `SUPPRESSION_KEY_VERSION`), са на
+> средата: без тях production деплоят спира, преди да е записал нещо.
 
-> Опционално подсилване: дайте на `production` **required reviewers**, за да изчака prod деплой ръчен
-> клик "Review deployments".
+> **Required reviewers на `production`.** Production деплоят тръгва от push на tag. Дайте на средата
+> `production` required reviewers, за да изчаква ръчен клик „Review deployments“ — така tag, пуснат по
+> грешка, не стига до production. Настройката е в repo Settings → Environments → `production`; дали е
+> включена, се вижда там.
 
 ## 4. Деплой
 
 Единственият workflow [.github/workflows/deploy.yml](../.github/workflows/deploy.yml) преобразува git
 събитие → среда и деплойва двата Worker-а:
 
-- **Production** — push на version tag (издаване на release):
+- **Production** — push на version tag (издаване на release; преди това виж
+  [runbooks/production-cutover.md](runbooks/production-cutover.md) и
+  [runbooks/release-rollback.md](runbooks/release-rollback.md)):
   ```bash
-  git tag v1.0.0 && git push origin v1.0.0          # → production
+  git tag vX.Y.Z && git push origin vX.Y.Z          # → production
   ```
 - **Staging** — ръчно стартиране:
   ```bash
@@ -361,77 +421,55 @@ Job-ът `deploy` задава `environment: <target>`, така че `${{ secre
 > машина — но CI е предвиденият път, за да остават credentials-ите извън лаптопите.
 
 Деплоят на `apps/web` презаписва каквото в момента обслужва това worker име с живия SSR explorer.
-ETL-ът по необходимост е отделен worker — той носи cron trigger-а и класовете `RefreshWorkflow` и
-`RegistryWorkflow`.
+ETL-ът по необходимост е отделен worker — той носи cron trigger-ите и класовете `RefreshWorkflow`,
+`RegistryWorkflow`, `DeclarationsWorkflow` и `RebuildWorkflow`, както и контейнера на декларациите.
 
 ## 5. Верификация
 
-- Отворете worker URL-а (напр. `https://sigma.cf-midt.workers.dev/` или
-  `https://sigma-stage.cf-midt.workers.dev/`) — реални суми (~190 хил. договора · ~50,8 млрд. €).
+- Отворете адреса на средата (`https://sigma.midt.bg/` или `https://sigma-stage.cf-midt.workers.dev/`)
+  — началната страница показва реални суми и дата на последния договор.
 - Dashboard → **Workflows** → refresh и registry Workflow-ите на средата са в списъка. Няма публичен
   HTTP trigger; ръчни/backfill стартирания минават през Dashboard или `wrangler workflows trigger
   <name>`. Cron-ът (`0 */6 * * *`) после стартира двата независимо.
 - Уверете се, че production е **недокоснат**, когато деплойвате staging (различен worker + D1 + lane).
 
-## 6. Заключване преди пускане — Cloudflare Access (Zero Trust)
+Когато нещо се обърка след деплоя — паднало обновяване, изостанал регистър, 503 от D1, смяна на
+секрет, връщане назад — процедурите са в [runbooks/README.md](runbooks/README.md).
 
-СИГМА е публичен портал за прозрачност; до пускането production (`sigma.midt.bg`) се пази **частен**
-зад **Cloudflare Access** и се отваря на go-live (без redeploy). Staging **не е** зад Access: той е
-публичен, а търсачките стоят настрана по кода — на всеки адрес освен `sigma.midt.bg` robots.txt е
-`Disallow: /` и всеки отговор носи `X-Robots-Tag: noindex` (`apps/web/app/lib/indexing.ts`).
+## 6. Публичност, Access и `workers.dev`
 
-> **Решение: Access, не in-worker парола.** По-ранен план заключваше *вътре* в worker-а (KV
-> `published` флаг + Basic Auth), защото Access не можеше да защити `workers.dev` URL, а v1 нямаше
-> custom домейн. И двете предпоставки се промениха — production вече използва custom домейна
-> `sigma.midt.bg`, а Cloudflare добави one-click Access и за `workers.dev`. Access е по-силният избор:
-> работи на ръба (преди worker-а *и* кеша), дава реална идентичност / SSO / audit и **покрива статични
-> assets** (без soft-vs-hard-gate компромис), без приложен код. In-worker gate-ът е изваден от
-> употреба.
+СИГМА е публичен портал за прозрачност. **Production (`sigma.midt.bg`) и staging са публични; нито една
+среда не е зад Cloudflare Access.** Търсачките индексират само `sigma.midt.bg`: на всеки друг адрес —
+staging, dev и `workers.dev` адресът на production — robots.txt е `Disallow: /` и всеки отговор носи
+`X-Robots-Tag: noindex` (`apps/web/app/lib/indexing.ts`).
 
-**Предпоставка.** `midt.bg` трябва да е Cloudflare **зона в същия акаунт** като worker-а `sigma` —
-Workers Custom Domains и self-hosted Access apps се закачат към зона, която контролирате. Ако DNS-ът ѝ
-още не е на Cloudflare, добавете домейна и сменете nameservers (или делегирайте `sigma.midt.bg`).
+**`workers.dev` на production.** `apps/web/wrangler.jsonc` не задава `workers_dev`, затова деплоят
+оставя автоматичния адрес `sigma.<sub>.workers.dev` включен (и preview адресите, ако са включени в
+акаунта) — вторият публичен адрес на същия Worker. Той не се индексира, но минава покрай всичко, което
+се настройва на ниво зона `midt.bg` (WAF и rate правила, purge на кеша, bot настройки). Текущото
+състояние: Workers & Pages → `sigma` → Settings → Domains & Routes. Ако бъде изключен, това е
+стойност само за production: `workers_dev: false` (и `preview_urls: false`) трябва да се рендерира
+само за production, както имената, иначе ще изключи и `workers.dev` адреса на staging, който няма друг.
+ETL worker-ите са без публична повърхност (`workers_dev = false` в `apps/etl/wrangler.toml`).
 
-**a. Поставете worker-а на хоста.** Workers & Pages → `sigma` → Settings → Domains & Routes →
-Add → **Custom Domain** → `sigma.midt.bg` (Cloudflare авто-създава DNS записа + TLS сертификата).
-Еквивалент в конфигурацията: `"routes": [{ "pattern": "sigma.midt.bg", "custom_domain": true }]` — но
-засега го закачете out-of-band, за да не се задейства и при `sigma-stage` деплоя (виж бележката за
-`workers_dev` по-долу).
+**Custom домейнът.** `midt.bg` е Cloudflare зона в същия акаунт; `sigma.midt.bg` е закачен към Worker-а
+`sigma` като **Custom Domain** (Workers & Pages → `sigma` → Settings → Domains & Routes), не чрез
+`routes` в конфигурацията — така staging деплоят не може да го докосне.
 
-**b. Защитете го с Access.** Zero Trust dashboard (`one.dash.cloudflare.com`, безплатно до 50
-потребители) → Access → Applications → **Add → Self-hosted**:
-- Application домейн: subdomain `sigma`, домейн `midt.bg` (празен path = целият сайт).
-- Policy → **Allow**, Include = вашите хора: списък *Emails*, *Emails ending in* `@obecto.com` или
-  група от identity provider.
-- Метод за вход: вграденият **One-time PIN** на Cloudflare (код по имейл) работи без IdP; добавете
-  Google / Microsoft Entra / GitHub под Settings → Authentication за SSO.
+**Ако някога трябва да се заключи** (Access е по-силният избор пред парола в Worker-а: работи на ръба,
+преди Worker-а и кеша, дава идентичност и audit и покрива статичните assets):
 
-**c. Затворете заобикалянето.** Изключете `workers.dev` за prod worker-а (**`workers_dev = false`**,
-или изключете route-а в dashboard-а) — иначе `sigma.<sub>.workers.dev` остава публичен backdoor около
-gate-а. Това е стъпката, която хората забравят.
+1. Zero Trust dashboard → Access → Applications → **Add → Self-hosted**: домейн `sigma.midt.bg` (или
+   адресът на staging), policy **Allow** за списък имейли или група от identity provider; вход с
+   One-time PIN или SSO.
+2. Затворете заобикалянето: изключете `workers.dev` за същия Worker (виж по-горе) — иначе
+   `workers.dev` адресът остава публичен.
+3. Тест: адресът пренасочва към Access вход; имейл извън списъка е отказан; `workers.dev` не отговаря.
+4. Отваряне без redeploy: изтрийте Access приложението или задайте policy **Bypass / Everyone**.
 
-**Тест.** `https://sigma.midt.bg` → пренасочване към Access вход → сайт; имейл извън списъка е
-отказан; `workers.dev` URL-ът вече не отговаря.
-
-**Публично на пускане (без redeploy).** Изтрийте Access приложението на `sigma.midt.bg` или задайте
-неговата policy на **Bypass / Everyone**; пре-заключете prod по всяко време чрез възстановяване на
-policy-то.
-
-**Staging gate (не се ползва).** Решено е staging да остане публичен, без Access — индексирането го
-спира кодът по-горе. Ако някога трябва да се заключи, идеята е същата — one-click *Enable Cloudflare Access* на
-`sigma-stage.<sub>.workers.dev` (Settings → Domains & Routes) или дайте на staging
-`staging.sigma.midt.bg` + собствено Access приложение.
-
-> **`workers_dev` е per-среда.** Prod иска `false` (заключен custom домейн); staging на workers.dev
-> иска `true`. Затова или дайте на staging собствен custom subdomain (и двете `false`, една
-> committ-ната стойност), или направете `workers_dev` env-задвижвана render стойност като имената —
-> **не** committ-вайте поголовно `workers_dev: false`, иначе ще изключите workers.dev URL-а на
-> staging.
-
-> **Bypass за автоматизация / IaC.** Ако нещо трябва да достигне заключен prod (uptime check и т.н.),
-> добавете **Service Token** policy или IP bypass. Access приложението + policy може да се управлява и
-> като код (Terraform `cloudflare_zero_trust_access_application` / `_policy`) вместо click-ops. ETL-ът
-> не се нуждае от нищо тук — `sigma-etl` е cron-only без публична повърхност.
+Ако нещо автоматизирано трябва да достига заключена среда (uptime проверка), добавете **Service Token**
+policy или IP bypass. Access приложението и policy-то могат да се управляват и като код (Terraform
+`cloudflare_zero_trust_access_application` / `_policy`).
 
 ## Гаранции за изолация — защо staging не може да докосне production
 
@@ -440,10 +478,10 @@ policy-то.
 1. **Различни worker имена.** Staging рендер произвежда `sigma-stage` / `sigma-etl-stage`;
    `wrangler deploy` презаписва само worker-а, именуван в неговата конфигурация — не може да пише в
    `sigma`.
-2. **Различен D1.** Staging свързва `sigma-stage` id-то; prod базата `sigma` никога не се именува в
-   staging рендер. Seed/provision скриптовете (`import.mjs` + всеки `load-*.mjs`) насочват към базата
-   по име чрез `SIGMA_D1_NAME` — без него по подразбиране е `sigma`, така че тази променлива е
-   guard-ът, който пази production от seed.
+2. **Различен D1.** Staging свързва id-то на своя слот (`sigma-stage-blue`/`sigma-stage-green`);
+   слотовете на production (`sigma-green`/`sigma-blue`) никога не се именуват в staging рендер, а
+   проверката преди запис отказва име, което не е слот на средата. Seed/provision скриптовете
+   (`import.mjs` + всеки `load-*.mjs`) насочват към базата по име чрез `SIGMA_D1_NAME`.
 3. **Различни credentials / lane.** Staging използва секретите на средата `staging` и concurrency
    групата `deploy-staging`. Когато production-v2 премине на собствен акаунт, акаунтската граница става
    четвърта стена: staging token няма достъп до prod акаунта изобщо.
@@ -582,9 +620,10 @@ worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); ко
   ([apps/web/app/lib/cache.ts](../apps/web/app/lib/cache.ts)) — без нужда от KV namespace. Worker-ът
   нормализира cache ключовете до query параметрите, които loader-ите консумират, така че непознати
   query параметри се сливат в същия кеширан запис, вместо да форсират свежа D1 агрегация. Cloudflare
-  ресурсите, които СИГМА provision-ва, са D1 **плюс R2 bucket-а `sigma-csv-cache`**, който explorer-ът
-  свързва (`CSV_CACHE`) за кеширане на CSV експорта — и двата са env-рендерирани (`SIGMA_D1_*` /
-  `SIGMA_CSV_CACHE_NAME`), така че staging и production никога не споделят storage. CSV експортите не
+  ресурсите на средата са D1 слотовете, R2 кофите `sigma-csv-cache` (`CSV_CACHE`, кеш на CSV
+  експорта), `sigma-reports` и `sigma-declarations`, Vectorize индексът `sigma-assistant` и
+  контейнерът на декларациите — всички с env-рендерирани имена (таблицата по-горе), така че staging и
+  production никога не споделят storage. CSV експортите не
   се кешират на ръба и са защитени от Workers Rate Limiting binding-а `CSV_RATE_LIMITER` (10/60s);
   cache miss-овете на началната страница, `/companies`, `/authorities`, `/contracts` (и всеки договор с
   неговия `.json`), `/flows`, `/network`, `/map`, `/trends`, `/analytics`, `/competition` и списъка
@@ -694,16 +733,15 @@ in-place отдалеченият път не е приложим за пъле�
    конкурентно bulk зареждане сринва `workerd` със SIGBUS). Верифицирайте броячите преди изпращане.
    (Изпращането *от* sqlite-а само го чете — explorer-ът е read-only — затова dev сървърът може да
    остане вдигнат по време на самото изпращане.)
-2. `wrangler`, автентикиран към целевия акаунт. Deploy/seed token-ът се нуждае от Workers Scripts + D1
-   + Workers R2 Storage + Account Settings (всички **Edit**, Account Read).
+2. `wrangler`, автентикиран към целевия акаунт, с правата от „Минимални scope-ове за API token“ (§0).
 3. Пътят на локално обслужвания D1 sqlite:
    `apps/web/.wrangler/state/v3/d1/miniflare-D1DatabaseObject/<най-голям>.sqlite`.
 
-> **Заданието за свързани лица още не следва тази процедура.** `related-persons-data.yml` изпраща към
-> `SIGMA_D1_ID`, тоест към **живия** слот, вместо към празния — затова презасяването му няма дълбочина
-> за връщане назад. Освен това гейтът за монотонност, подът `--min-links` и хидратацията на корпуса на
-> ЕОП черпят базата си за сравнение от целевата база, така че простото пренасочване към празния слот би
-> ги обезсилило тихо. Какво трябва да се промени и защо: [ADR-0038](adr/0038-reseed-writes-idle-slot-gates-read-live.md).
+> **Седмичният ход на декларациите пише в живия слот.** Контейнерът публикува таблиците на лицата в
+> слота, който средата обслужва (`SIGMA_D1_ID`), с размяна на поколения (`rp_next_*` → обслужвани →
+> `rp_prev_*`, виж [etl.md](etl.md), „Обработка на декларациите“): връщането е обратната размяна,
+> не превключване на слот. Пълното изграждане на празния слот (по-долу) строи и лицата. Защо
+> гейтовете четат живата база: [ADR-0038](adr/0038-reseed-writes-idle-slot-gates-read-live.md).
 
 ## Пълно изграждане на неактивния слот в контейнера
 
@@ -768,9 +806,8 @@ in-place отдалеченият път не е приложим за пъле�
    `sigma-registry-<env>`. Изискайте `Completed`, успешен integrity gate, нула pending windows и leases,
    `baseline_status='ready'` и празна registry queue.
 9. **Верифицирайте живото** (homepage, списъци, договор с лотове, компания, свързани лица, търсене и
-   методология). На
-   custom домейн **purge-нете edge кеша** след суапа (виж уговорката); на `*.workers.dev` той се
-   самолекува при TTL.
+   методология). Суапът минава през redeploy на web, който сменя ключовете на кеша на Worker-а (виж
+   уговорката) — страниците от предишния слот не се обслужват след него.
 10. **Rollback прозорец.** Предишният слот остава непокътнат като мигновен rollback — обърнете
    `SIGMA_D1_ID` обратно и redeploy. Той се **презаписва при следващия reseed**, така че rollback-ът е
    на дълбочина един reseed. Никога не изтривайте слот на горещия път.
@@ -799,8 +836,9 @@ DELETE FROM fx_rates; DELETE FROM nuts_regions;
 ## Резервен вариант: in-place reseed (само за запазване на едно фиксирано име, приема downtime)
 
 Използвайте това *само* когато умишлено искате едно постоянно име на еднократна среда (staging) и
-приемате цената — то **не** е по подразбиране. Има **~20-30 мин. влошен прозорец**, **непречистваем
-homepage-`0`-и кеш** до ~1ч на `*.workers.dev` и се нуждае от maintenance прозорец далеч от 6-часовите
+приемате цената — то **не** е по подразбиране. Има **~20-30 мин. влошен прозорец**; страница,
+кеширана по време на празния прозорец, остава до ~1ч, ако web не се деплойне наново (виж
+уговорката); и се нуждае от maintenance прозорец далеч от 6-часовите
 ETL тиктакания (00/06/12/18 UTC). Предпочитайте blue/green слотове. Стъпки (верифицирайте при всяка):
 
 1. **Backup:** `wrangler d1 export <env> --remote --output=/tmp/<env>-backup.sql`.

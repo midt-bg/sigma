@@ -53,16 +53,30 @@
 - Добавяйте адитивни, идемпотентни миграции (`IF NOT EXISTS`), които преживяват ship-а
   (`DELETE`+`INSERT`, не `DROP TABLE`).
 
-## AI асистент (`/assistant/chat`) — планиран
+## AI асистент (`/assistant/chat`) — в кода, не е осигурен
 
-> Този раздел е **изпреварващ стандарт** за планирания асистент (виж
-> [`spec/ai-assistant.md`](spec/ai-assistant.md)). Маршрутът `/assistant/chat`, `run_sql` и
-> `eop_fetch` **още не съществуват** в кода — правилата важат, когато слоят се появи.
+> Маршрутът `/assistant/chat` ([`assistant.chat.tsx`](../apps/web/app/routes/assistant.chat.tsx)) и
+> инструментите `run_sql` и `eop_fetch` ([`lib/assistant/`](../apps/web/app/lib/assistant/)) са в кода и
+> се деплойват. Асистентът остава изключен, като на средата не се задава `BGGPT_API_KEY`: без ключа
+> маршрутът връща 503 („Асистентът все още не е конфигуриран.“), преди да стигне до модела, D1 или
+> Vectorize. Дали ключът липсва, се проверява с `wrangler secret list --name <web worker>`.
+> Ключът е launch gate — не се задава в production, докато не са изпълнени условията в
+> [`lib/assistant/README.md`](../apps/web/app/lib/assistant/README.md) („Блокиращо преди прод ключ“):
+> `run_sql` срещу read-only D1 и глобален бюджет/circuit-breaker. Правилата по-долу важат още сега:
+> маршрутът е публичен адрес и всяка промяна в него се преглежда по тях.
 
-- Rate-limit **преди** embeddings/agent-loop, `failClosed: true` (503 при липсваща връзка).
-- CSRF guard: изисквай `POST` + `Content-Type: application/json` + `Sec-Fetch-Site: same-origin`.
+- Rate-limit **преди** embeddings/agent-loop (`apps/web/workers/assistant-rate-limit.ts`, per-IP),
+  `failClosed: true` (503 при липсваща връзка). Per-IP лимитът не е глобален бюджет.
+- CSRF guard ([`request-guard.ts`](../apps/web/app/lib/assistant/request-guard.ts)): само `POST`;
+  `Sec-Fetch-Site` се приема, когато е `same-origin`, `none` или липсва (клиент без браузър), а
+  `same-site`/`cross-site` се отхвърлят с 403; `Content-Type` трябва да съдържа `application/json`
+  (иначе 415).
+- Таван на тялото (256 KB по деклариран `Content-Length` и след прочитане), на броя съобщения и на
+  дължината на едно съобщение; клиентски `system`/`tool` съобщения и `tool-*` части отпадат, преди
+  историята да стигне до модела.
 - `run_sql` с позитивен allowlist на таблици (отхвърляй `sqlite_master`, `pragma_*` във
-  функционална форма, join с `on === null`).
+  функционална форма, join с `on === null`) и per-ход бюджет на прочетените редове
+  (`D1_ROWS_READ_BUDGET`).
 - `eop_fetch` прави `JSON.parse(slice)` след байтовия cap, не върху цялото тяло.
 
 ## Supply chain
