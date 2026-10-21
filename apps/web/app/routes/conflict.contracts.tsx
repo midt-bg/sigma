@@ -8,7 +8,7 @@ import { withDbRetry } from '../lib/retry';
 // window. Keyed on the URL-safe :scope/:slug/:eik and reconstructed into the link_key server-side, so the raw
 // '|'/':' key never hits the URL. :scope is a PATH segment (self | family), not a query param, so it is always
 // part of the cache key — a self-link and a family-link list for the same slug+eik can never collapse to one
-// entry. Lives under /conflicts/ so the CONFLICTS_RATE_LIMITER already throttles enumeration.
+// entry. One link's contracts is a small, edge-cached read, so it has no rate limit of its own.
 //
 // STATUS (niki #312 MEDIUM 6): since #287 the person/company pages load contracts EAGERLY (server-side, ЕИК-
 // deduped in `loadLinkContracts`), so this endpoint has no in-app consumer today. It is retained DELIBERATELY,

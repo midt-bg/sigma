@@ -569,8 +569,9 @@ worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); ко
   `SIGMA_CSV_CACHE_NAME`), така че staging и production никога не споделят storage. CSV експортите не
   се кешират на ръба и са защитени от Workers Rate Limiting binding-а `CSV_RATE_LIMITER` (10/60s);
   cache miss-овете на началната страница, `/companies`, `/authorities`, `/contracts` (и всеки договор с
-  неговия `.json`), `/flows`, `/network`, `/map`, `/trends`, `/analytics` и `/competition` са защитени от
-  `AGG_RATE_LIMITER` (30/60s).
+  неговия `.json`), `/flows`, `/network`, `/map`, `/trends`, `/analytics`, `/competition` и списъка
+  `/conflicts` са защитени от `AGG_RATE_LIMITER` (30/60s). Страниците на отделните лица (`/persons/*`) са
+  малки, кеширани четения и нямат лимит.
 - **Бележки по поправки в сигурността.** Route matching-ът на worker-а нормализира декодирани/малки
   пътища и маха завършващите наклонени черти, така че `/contracts.csv/` достига същия CSV limiter gate
   като `/contracts.csv`, а `/companies/` / `/authorities/` достигат същия агрегационен gate като
