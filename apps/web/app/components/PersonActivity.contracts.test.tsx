@@ -42,6 +42,7 @@ const activity = (over: Partial<Activity> = {}): Activity => ({
   yearOptions: [],
   filterCounts: { company: {}, authority: {}, year: {}, basis: {} },
   byAuthority: [],
+  byAuthorityTotal: 0,
   filters: { company: '', authority: '', year: '', basis: 'all' },
   ...over,
 });

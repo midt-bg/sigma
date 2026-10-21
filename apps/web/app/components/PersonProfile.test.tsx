@@ -50,6 +50,7 @@ const activity: PersonActivity = {
   yearOptions: [],
   filterCounts: { company: {}, authority: {}, year: {}, basis: {} },
   byAuthority: [],
+  byAuthorityTotal: 0,
   filters: { company: '', authority: '', year: '', basis: 'all' },
 };
 
