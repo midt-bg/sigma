@@ -790,8 +790,9 @@
   stroke-dasharray: 2 4;
   stroke-linecap: round;
 }
+/* Quieter than the other ties but still 3:1 on the paper (WCAG 1.4.11): the width carries the value. */
 .tie-svg .tie-money {
-  stroke: #d8d6cf;
+  stroke: color-mix(in oklch, var(--ink) 44%, var(--paper));
 }
 /* A role the Trade Register records: a person — or a company — holding it at the company it points to.
    Faded once every such role has ended, so the history stays in the picture without reading as standing. */
@@ -890,7 +891,7 @@
   border-top-color: var(--accent);
 }
 .tie-key.tie-money {
-  border-top-color: #d8d6cf;
+  border-top-color: color-mix(in oklch, var(--ink) 44%, var(--paper));
 }
 .tie-key.tie-role {
   border-top-width: 1.5px;

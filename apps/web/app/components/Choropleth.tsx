@@ -7,12 +7,13 @@ import { BG_MAP } from '../lib/bg-region-geometry';
 // in the ranked table beside it; the SVG is a visual summary (role="img" + aria-label) with a native
 // <title> per region for hover. Sequential monochrome ramp from --paper to --ink (palette tokens, no
 // off-palette blue or green), matching the site's ink-based viz language like Sankey and /trends.
+// Tiers 1–5 are all at least 3:1 against the paper (WCAG 1.4.11); tier 0 stays a faint wash.
 const TIER_FILL = [
   'color-mix(in oklch, var(--ink) 8%, var(--paper))', // 0 = no / negligible spend
-  'color-mix(in oklch, var(--ink) 26%, var(--paper))',
   'color-mix(in oklch, var(--ink) 44%, var(--paper))',
-  'color-mix(in oklch, var(--ink) 62%, var(--paper))',
-  'color-mix(in oklch, var(--ink) 80%, var(--paper))',
+  'color-mix(in oklch, var(--ink) 58%, var(--paper))',
+  'color-mix(in oklch, var(--ink) 72%, var(--paper))',
+  'color-mix(in oklch, var(--ink) 86%, var(--paper))',
   'var(--ink)', // 5 = highest
 ];
 
