@@ -13,6 +13,8 @@ const source = readFileSync(`${dir}accessibility.js`, 'utf8');
 const translations = JSON.parse(readFileSync(`${dir}translations.json`, 'utf8'));
 
 type Init = (opts: Record<string, unknown>) => Promise<void>;
+const OPTS = { parentSelector: 'body', navSelector: '.site-nav', mainSelector: 'main', lng: 'bg' };
+let init: Init;
 
 beforeEach(async () => {
   localStorage.clear();
@@ -27,8 +29,8 @@ beforeEach(async () => {
     vi.fn(async () => ({ json: async () => translations })),
   );
   Element.prototype.scrollIntoView = vi.fn();
-  const init = new Function(`${source}; return accessibility;`)() as Init;
-  await init({ parentSelector: 'body', navSelector: '.site-nav', mainSelector: 'main', lng: 'bg' });
+  init = new Function(`${source}; return accessibility;`)() as Init;
+  await init(OPTS);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -109,5 +111,28 @@ describe('vendored accessibility toolbar', () => {
     expect(document.activeElement).toBe(main);
     expect(main.getAttribute('tabindex')).toBe('-1');
     expect(main.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+  });
+
+  it('drops the stored theme on the original one and ignores an earlier stored "null"', async () => {
+    q<HTMLButtonElement>('.a11y__btn--yellow').click();
+    expect(localStorage.getItem('accesibility.theme')).toBe('yellow');
+    q<HTMLButtonElement>('.a11y__btn--clear').click();
+    expect(localStorage.getItem('accesibility.theme')).toBeNull();
+
+    localStorage.setItem('accesibility.theme', 'null');
+    document.documentElement.className = '';
+    await init(OPTS);
+    expect(document.documentElement.className).not.toContain('accessibility-null');
+  });
+
+  it('rebuilds the heading links for a page that arrived without a reload', () => {
+    const headingLinks = () =>
+      [...document.querySelectorAll<HTMLAnchorElement>('.ally-click a')].map((a) => a.textContent);
+    expect(headingLinks()).toEqual(['Заглавие']);
+    q('main').innerHTML = '<h1>Договори</h1>';
+    window.accessibilityRefreshHeadings!();
+    expect(headingLinks()).toEqual(['Договори']);
+    q<HTMLAnchorElement>('.ally-click a').click();
+    expect(document.activeElement).toBe(q('main h1'));
   });
 });
