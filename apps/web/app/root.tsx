@@ -200,6 +200,9 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
         )}
       </main>
       <SiteFooter />
+      {/* An error page is where a saved contrast theme or font size matters most; keep the widget. */}
+      <ScrollToTop />
+      <AccessibilityWidget />
     </>
   );
 }
