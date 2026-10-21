@@ -49,7 +49,7 @@ export default async function handleRequest(
     await body.allReady;
   }
 
-  responseHeaders.set('Content-Type', 'text/html');
+  responseHeaders.set('Content-Type', 'text/html; charset=utf-8');
   // CSP enforced in production only; dev relies on Vite's inline scripts / HMR.
   for (const [key, value] of securityHeaders(nonce, import.meta.env.PROD)) {
     responseHeaders.set(key, value);

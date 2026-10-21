@@ -49,9 +49,10 @@ import {
 export interface Env extends DeclarationEnv {
   DECLARATIONS?: DurableObjectNamespace<DeclarationContainer>;
   DECLARATIONS_ENABLED?: string;
-  /** How long the six-hourly writers stand aside for a live declarations run. Default 8 hours; raised
-   * for a first, cold run, which builds the corpus from an empty bucket. */
-  DECLARATIONS_STAND_ASIDE_HOURS?: string;
+  /** How long the six-hourly writers stand aside for a live declarations run: committed in wrangler.toml,
+   * 8 hours when absent or malformed; raised there for a cold run, which builds the corpus from an empty
+   * bucket. (The older DECLARATIONS_STAND_ASIDE_HOURS was a hand-set secret, and is no longer read.) */
+  DECLARATIONS_STAND_ASIDE_MAX_HOURS?: string;
   /** The operator's trigger for one declarations run; the weekly cron starts the same run. */
   DECLARATIONS_RUN?: Workflow;
   REBUILD_RUN?: Workflow;
@@ -764,7 +765,8 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
  * week to fix it, and the register is quiet at the weekend. Cloudflare numbers the weekdays from
  * 1 = Sunday to 7 = Saturday, not the usual 0 = Sunday: the `7` this used to carry started the run on
  * Saturdays (26.09.2026), and `0` the API refuses outright. `scheduled` compares this string to the one
- * the platform sends, so the number stays a number. */
+ * the platform sends, so the number stays a number — all but the minute, which a non-production render
+ * shifts (SIGMA_ETL_CRON_MINUTE) so that two environments do not hit the sources in the same minute. */
 export const DECLARATIONS_CRON = '0 3 * * 1';
 
 /** How long an operator-started run may be waited on before the workflow gives up with its OWN error.
@@ -872,7 +874,7 @@ export default {
   // No public route or HTTP trigger is configured.
   async scheduled(controller, env): Promise<void> {
     // The weekly cron owns the declarations; every other tick refreshes procurement and the register.
-    const weekly = controller?.cron === DECLARATIONS_CRON;
+    const weekly = controller?.cron?.replace(/^\S+/, '') === DECLARATIONS_CRON.replace(/^\S+/, '');
     const jobs: [string, () => Promise<unknown>][] = [];
     // A declarations run takes a fresh snapshot on every container attempt, and its resumed work is
     // only valid against the registry it started with. So the six-hourly writers stand aside while it
@@ -896,8 +898,9 @@ export default {
     }
     // The bound is on the run's AGE, not on its health: a wedged run must not freeze procurement for
     // good. A first, cold run builds the whole corpus from an empty bucket and takes far longer than a
-    // weekly one on a warm bucket, so the bound is a setting — raised for that run, and only for it.
-    const standAsideHours = Number(env.DECLARATIONS_STAND_ASIDE_HOURS ?? '8');
+    // weekly one on a warm bucket, so the bound is a setting in wrangler.toml — raised for that run, and
+    // only for it.
+    const standAsideHours = Number(env.DECLARATIONS_STAND_ASIDE_MAX_HOURS ?? '8');
     const declarationsRunning =
       live?.state === 'running' &&
       Date.now() - live.startedAt <

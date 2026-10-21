@@ -113,6 +113,7 @@ if (ext === '.json' || ext === '.jsonc') {
     shipEnv: process.env.SIGMA_SHIP_ENV || '',
     d1Name: process.env.SIGMA_D1_NAME || '',
     etlParked: etlSchedule(process.env.SIGMA_ETL_SCHEDULE) === 'off',
+    cronMinute: cronMinute(process.env.SIGMA_ETL_CRON_MINUTE),
     sourceCommit: process.env.SIGMA_SOURCE_COMMIT || '',
   };
   // Every name that renderToml can substitute has to open the gate. Listing only the older four made
@@ -249,6 +250,8 @@ function renderToml(text, names) {
       }
       if (section === '[triggers]' && names.etlParked)
         line = line.replace(/^(\s*crons\s*=\s*).*$/, '$1[]');
+      else if (section === '[triggers]' && names.cronMinute && /^\s*crons\s*=/.test(line))
+        line = line.replace(/"\d+ /g, `"${names.cronMinute} `);
       if (names.d1Name) line = replaceTomlStringValue(line, 'database_name', names.d1Name);
       return line;
     })
@@ -267,6 +270,18 @@ function etlSchedule(value) {
   if (schedule !== 'on' && schedule !== 'off')
     throw new Error(`SIGMA_ETL_SCHEDULE must be on or off, got ${JSON.stringify(value)}`);
   return schedule;
+}
+
+/**
+ * SIGMA_ETL_CRON_MINUTE: unset keeps the committed minute of every cron; a minute 0–59 replaces it. The
+ * deploy sets it for staging, so Stage and production do not hit the same sources in the same minute;
+ * `scheduled` tells the ticks apart without the minute. Anything else is refused.
+ */
+function cronMinute(value) {
+  if (!value) return '';
+  if (!/^\d{1,2}$/.test(value) || Number(value) > 59)
+    throw new Error(`SIGMA_ETL_CRON_MINUTE must be a minute 0–59, got ${JSON.stringify(value)}`);
+  return String(Number(value));
 }
 
 function replaceTomlStringValue(line, key, value) {

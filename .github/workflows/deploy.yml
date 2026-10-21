@@ -39,7 +39,7 @@ on:
         default: site
 
 # Least-privilege default token. The deploy job authenticates to Cloudflare with its own
-# scoped API token (see the job `env:` below), never GITHUB_TOKEN — read is all CI needs.
+# scoped API token (see the steps' `env:` below), never GITHUB_TOKEN — read is all CI needs.
 permissions:
   contents: read
 
@@ -80,12 +80,9 @@ jobs:
     concurrency:
       group: deploy-${{ needs.detect.outputs.env }}
       cancel-in-progress: false
+    # Only names live here. The secrets reach the steps that call Cloudflare and nothing else: `pnpm install`
+    # runs the build scripts of dependencies and Typecheck a whole toolchain, and neither needs a credential.
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      # Real D1 database_id substituted into wrangler.deploy.* by scripts/wrangler-render.mjs
-      # (committed wrangler.* hold a zero-UUID dummy). See docs/deploy.md.
-      SIGMA_D1_ID: ${{ secrets.SIGMA_D1_ID }}
       SIGMA_WEB_NAME: ${{ vars.SIGMA_WEB_NAME }}
       SIGMA_ETL_NAME: ${{ vars.SIGMA_ETL_NAME }}
       SIGMA_WORKFLOW_NAME: ${{ vars.SIGMA_WORKFLOW_NAME }}
@@ -95,8 +92,9 @@ jobs:
       SIGMA_DECLARATIONS_BUCKET: ${{ vars.SIGMA_DECLARATIONS_BUCKET }}
       # The environment the declarations container declares when it ships (assertD1TargetAuthorized).
       SIGMA_SHIP_ENV: ${{ needs.detect.outputs.env }}
-      # The container's takedown-list keying (ADR-0031), handed to the ETL Worker as secrets below.
-      SUPPRESSION_SALT: ${{ secrets.SUPPRESSION_SALT }}
+      # Stage's ETL runs half an hour after production's, so the two never hit the sources in the same minute.
+      SIGMA_ETL_CRON_MINUTE: ${{ needs.detect.outputs.env == 'staging' && '30' || '' }}
+      # The container's takedown-list keying (ADR-0031); the salt is a step secret (`&cloudflare_salt`).
       SUPPRESSION_KEY_VERSION: ${{ vars.SUPPRESSION_KEY_VERSION || '1' }}
       SIGMA_D1_NAME: ${{ vars.SIGMA_D1_NAME }}
       SIGMA_CSV_CACHE_NAME: ${{ vars.SIGMA_CSV_CACHE_NAME }}
@@ -116,8 +114,15 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      # The Cloudflare credentials, written once and named by every step that calls Cloudflare.
       - name: Guard — require deploy credentials
         id: guard
+        env: &cloudflare
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Real D1 database_id substituted into wrangler.deploy.* by scripts/wrangler-render.mjs
+          # (committed wrangler.* hold a zero-UUID dummy). See docs/deploy.md.
+          SIGMA_D1_ID: ${{ secrets.SIGMA_D1_ID }}
         run: |
           missing=()
           [ -z "${CLOUDFLARE_API_TOKEN}" ] && missing+=("CLOUDFLARE_API_TOKEN")
@@ -171,6 +176,12 @@ jobs:
       # in the idle slot and switched to, never released over in place. Read only.
       - name: Preflight — environment settings and target slot
         if: steps.guard.outputs.ok == 'true'
+        # The same credentials plus the takedown salt, for the steps that check or hand it on.
+        env: &cloudflare_salt
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SIGMA_D1_ID: ${{ secrets.SIGMA_D1_ID }}
+          SUPPRESSION_SALT: ${{ secrets.SUPPRESSION_SALT }}
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           node scripts/deploy-preflight.mjs "${{ needs.detect.outputs.env }}" --component "$SIGMA_COMPONENT"
@@ -185,6 +196,7 @@ jobs:
       # rules is a slot rebuild and a switch (docs/deploy.md), not a step on the served database.
       - name: Schema plan
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
+        env: *cloudflare
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           # prod leaves SIGMA_D1_NAME unset and uses the committed 'sigma' default (as wrangler-render does).
@@ -192,6 +204,7 @@ jobs:
 
       - name: Schema apply
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
+        env: *cloudflare
         run: node scripts/release-schema.mjs apply "${SIGMA_D1_NAME:-sigma}" --remote --yes
 
       # A one-time currency backfill that earlier staging deploys ran once mapped annex_total_suspect to the
@@ -202,6 +215,7 @@ jobs:
       # production never ran that backfill, and the integrity gate now asserts the rule everywhere.
       - name: Repair amounts of doubled annex totals (staging)
         if: steps.guard.outputs.ok == 'true' && needs.detect.outputs.env != 'production' && env.SIGMA_COMPONENT == 'site'
+        env: *cloudflare
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../scripts/repair-annex-total-suspect.sql
@@ -213,6 +227,7 @@ jobs:
       # it, and the next declarations run its day-job correction.
       - name: Sync the curated public-ownership list
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
+        env: *cloudflare
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           bash scripts/d1-file.sh "${SIGMA_D1_NAME:-sigma}" ../../scripts/seed-state-owned.sql
@@ -220,10 +235,12 @@ jobs:
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
+        env: *cloudflare
         run: pnpm --filter @sigma/web run deploy
 
       - name: Initialize LOG_IP_KEY secret if absent
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
+        env: *cloudflare
         run: |
           # LOG_IP_KEY is long-lived so IP HMAC tokens remain stable for same-client correlation.
           # SIGMA_WEB_NAME is unset in production (the committed default `sigma`); a bare "$SIGMA_WEB_NAME"
@@ -271,6 +288,7 @@ jobs:
 
       - name: Deploy refresh Workflow (sigma-etl)
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
+        env: *cloudflare
         run: pnpm --filter @sigma/etl run deploy
 
       # The declarations container ships to D1 with the same scoped token this job deploys with, and keys
@@ -278,6 +296,7 @@ jobs:
       # deploy. SIGMA_ETL_NAME is unset in production (the committed default).
       - name: ETL Worker secrets for the declarations container
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
+        env: *cloudflare_salt
         run: |
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SUPPRESSION_SALT SUPPRESSION_KEY_VERSION; do
             value="${!name}"
@@ -291,6 +310,7 @@ jobs:
       # exist yet in an environment whose ETL predates the declarations; it is created, never emptied.
       - name: Rebuild runner — declarations bucket
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'rebuild-runner'
+        env: *cloudflare
         run: |
           bucket="${SIGMA_DECLARATIONS_BUCKET:-sigma-declarations}"
           if pnpm --filter @sigma/etl exec wrangler r2 bucket info "$bucket" >/dev/null 2>&1; then
@@ -301,6 +321,7 @@ jobs:
 
       - name: Deploy the rebuild runner
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'rebuild-runner'
+        env: *cloudflare
         run: |
           SIGMA_ETL_NAME="${SIGMA_REBUILD_RUNNER_NAME:-sigma-rebuild-runner}" \
           SIGMA_REBUILD_WORKFLOW_NAME="${SIGMA_REBUILD_CUTOVER_WORKFLOW_NAME:-sigma-rebuild-cutover}" \
@@ -309,6 +330,7 @@ jobs:
 
       - name: Rebuild runner secrets
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'rebuild-runner'
+        env: *cloudflare_salt
         run: |
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SUPPRESSION_SALT SUPPRESSION_KEY_VERSION; do
             value="${!name}"
@@ -321,4 +343,5 @@ jobs:
       # expiry rules they stay for good, and the rules existed only where someone had set them by hand.
       - name: Expire the declarations run's leftovers in R2
         if: steps.guard.outputs.ok == 'true'
+        env: *cloudflare
         run: bash scripts/ensure-r2-lifecycle.sh "${SIGMA_DECLARATIONS_BUCKET:-sigma-declarations}"

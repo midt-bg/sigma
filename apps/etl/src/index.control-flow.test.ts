@@ -937,7 +937,7 @@ describe('scheduled handler', () => {
         DB: fakeD1([]).db,
         REFRESH: { create } as unknown as Workflow,
         DECLARATIONS: { getByName: () => ({ getRun: async () => run }) } as never,
-        ...(hours ? { DECLARATIONS_STAND_ASIDE_HOURS: hours } : {}),
+        ...(hours ? { DECLARATIONS_STAND_ASIDE_MAX_HOURS: hours } : {}),
       };
       await worker.scheduled?.({} as never, env);
       expect(create.mock.calls.length, String(hours)).toBe(started ? 1 : 0);
