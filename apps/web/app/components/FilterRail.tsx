@@ -72,7 +72,7 @@ export function FilterRail({
   const onCategoryChange = (e: ChangeEvent<HTMLInputElement>, groupKey: string) => {
     e.stopPropagation();
     const input = e.currentTarget;
-    const subgroup = input.closest('.filter-subgroup');
+    const subgroup = input.closest('.filter-subgroup-row');
 
     subgroup
       ?.querySelectorAll<HTMLInputElement>('input[type="checkbox"][name]')
@@ -139,47 +139,47 @@ export function FilterRail({
                       category.options.length > 0 && selectedCount === category.options.length;
                     const someSelected = selectedCount > 0;
 
+                    // The „all" box sits beside the <summary>, not in it: a summary is a button, so
+                    // a control inside it is lost to assistive technology. CSS lays it over the row.
                     return (
-                      <details className="filter-subgroup" key={category.key} open={someSelected}>
-                        <summary>
-                          <input
-                            type="checkbox"
-                            checked={allSelected}
-                            aria-checked={
-                              someSelected && !allSelected
-                                ? 'mixed'
-                                : allSelected
-                                  ? 'true'
-                                  : 'false'
-                            }
-                            aria-label={`Избери всички в ${category.label}`}
-                            ref={(element) => {
-                              if (element) element.indeterminate = someSelected && !allSelected;
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => onCategoryChange(e, g.key)}
-                          />
-                          <span className="filter-subgroup-label">{category.label}</span>
-                          {category.count != null && (
-                            <span className="muted small">{fmtCount(category.count)}</span>
-                          )}
-                        </summary>
-                        {category.options.map((o) => (
-                          <label className="check" key={o.value}>
-                            <input
-                              type={g.type}
-                              name={g.key}
-                              value={o.value}
-                              checked={g.selected.includes(o.value)}
-                              onChange={() => {}}
-                            />{' '}
-                            {o.label}
-                            {o.count != null && (
-                              <span className="muted small">{fmtCount(o.count)}</span>
+                      <div className="filter-subgroup-row" key={category.key}>
+                        <input
+                          type="checkbox"
+                          className="filter-subgroup-all"
+                          checked={allSelected}
+                          aria-checked={
+                            someSelected && !allSelected ? 'mixed' : allSelected ? 'true' : 'false'
+                          }
+                          aria-label={`Избери всички в ${category.label}`}
+                          ref={(element) => {
+                            if (element) element.indeterminate = someSelected && !allSelected;
+                          }}
+                          onChange={(e) => onCategoryChange(e, g.key)}
+                        />
+                        <details className="filter-subgroup" open={someSelected}>
+                          <summary>
+                            <span className="filter-subgroup-label">{category.label}</span>
+                            {category.count != null && (
+                              <span className="muted small">{fmtCount(category.count)}</span>
                             )}
-                          </label>
-                        ))}
-                      </details>
+                          </summary>
+                          {category.options.map((o) => (
+                            <label className="check" key={o.value}>
+                              <input
+                                type={g.type}
+                                name={g.key}
+                                value={o.value}
+                                checked={g.selected.includes(o.value)}
+                                onChange={() => {}}
+                              />{' '}
+                              {o.label}
+                              {o.count != null && (
+                                <span className="muted small">{fmtCount(o.count)}</span>
+                              )}
+                            </label>
+                          ))}
+                        </details>
+                      </div>
                     );
                   })
                 : (g.options ?? []).map((o) => (
