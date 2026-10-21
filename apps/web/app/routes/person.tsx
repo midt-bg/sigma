@@ -18,7 +18,7 @@ import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import { personName } from '../lib/person-name';
-import { date } from '@sigma/shared';
+import { count, date, plural } from '@sigma/shared';
 import { RegistrySource } from '../components/RegistryRoles';
 import { registryUrl, Section } from '../components/ui';
 
@@ -160,7 +160,8 @@ export default function Person({ loaderData }: Route.ComponentProps) {
                 {p.kind === 'person'
                   ? 'Обединен профил'
                   : 'Декларации с непотвърдена принадлежност'}{' '}
-                · {p.declaration_count} {p.declaration_count === 1 ? 'декларация' : 'декларации'}
+                · {count(p.declaration_count)}{' '}
+                {plural(p.declaration_count, 'декларация', 'декларации')}
               </p>
               {p.institutions && <p>{p.institutions}</p>}
             </li>

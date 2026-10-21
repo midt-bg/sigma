@@ -1,5 +1,5 @@
 import { Link, useSearchParams, data } from 'react-router';
-import { count, moneyBare } from '@sigma/shared';
+import { count, moneyBare, plural } from '@sigma/shared';
 import {
   authorityIdFromSlug,
   getAuthorityName,
@@ -486,7 +486,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     count={
                       <>
                         Показани са <strong>{count(pageRows.length)}</strong> от{' '}
-                        <strong>{count(total)}</strong> лица
+                        <strong>{count(total)}</strong> {plural(total, 'лице', 'лица')}
                       </>
                     }
                   />

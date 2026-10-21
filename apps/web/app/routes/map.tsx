@@ -1,6 +1,6 @@
 import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
-import { count, money, pct } from '@sigma/shared';
+import { count, money, pct, plural } from '@sigma/shared';
 import { getRegionalSpending, getDb } from '@sigma/db';
 import type { Route } from './+types/map';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -195,8 +195,9 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
           <p style={{ margin: 0 }}>
             Областта се извежда от адреса на институцията (NUTS) и е известна за{' '}
             {pct(data.coverage.pct)} от институциите. Останалите (
-            {money(data.unattributed.valueEur)} по {count(data.unattributed.contracts)} договора) са
-            с непосочена област и не са на картата. Виж методологията за подробности.
+            {money(data.unattributed.valueEur)} по {count(data.unattributed.contracts)}{' '}
+            {plural(data.unattributed.contracts, 'договор', 'договора')}) са с непосочена област и
+            не са на картата. Виж методологията за подробности.
           </p>
         </Callout>
       </main>

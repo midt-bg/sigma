@@ -121,10 +121,11 @@ describe('entityName', () => {
 });
 
 describe('plural', () => {
-  it('picks the Bulgarian count word (1, 21 → singular; 11, 2, 17 → plural)', () => {
+  it('uses singular only after the numeral 1', () => {
     expect(plural(1, 'договор', 'договора')).toBe('договор');
-    expect(plural(21, 'договор', 'договора')).toBe('договор');
-    expect(plural(11, 'договор', 'договора')).toBe('договора'); // 11 is the exception
+    expect(plural(21, 'договор', 'договора')).toBe('договора');
+    expect(plural(101, 'договор', 'договора')).toBe('договора');
+    expect(plural(11, 'договор', 'договора')).toBe('договора');
     expect(plural(2, 'съвпадение', 'съвпадения')).toBe('съвпадения');
     expect(plural(17, 'съвпадение', 'съвпадения')).toBe('съвпадения');
     expect(plural(0, 'съвпадение', 'съвпадения')).toBe('съвпадения');
