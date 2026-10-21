@@ -473,7 +473,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
             >
               <div className="split">
                 <FilterRail groups={groups} sort={filters.sort} clearHref={clearHref} />
-                <section>
+                <section id="results" tabIndex={-1}>
                   <ListControls
                     base={sp}
                     activeSort={filters.sort}

@@ -146,7 +146,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
         />
         <div className="split">
           <FilterRail groups={groups} sort={sort} clearHref="/authorities" csvHref={csvHref} />
-          <section>
+          <section id="results" tabIndex={-1}>
             <ListControls
               base={sp}
               activeSort={sort}
