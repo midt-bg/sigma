@@ -35,7 +35,7 @@ const loaderData = {
 function text(): string {
   const html = renderToStaticMarkup(
     <MemoryRouter>
-      <Methodology {...({ loaderData } as never)} />
+      <Methodology {...({ loaderData } as unknown as Parameters<typeof Methodology>[0])} />
     </MemoryRouter>,
   );
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
