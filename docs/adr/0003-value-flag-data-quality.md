@@ -13,9 +13,10 @@
 
 ## Решение
 
-Всеки договор носи `value_flag` (`ok` | `review` | `value_low` | `value_suspect` | `annex_suspect`)
-и `date_flag` (`ok` | `signed_after_publication`). Каноничната сумирана колона е **`amount_eur`** —
-попълнена за **всичките пет** флага (`value_suspect` се repair-ва до процедурната оценка,
+Всеки договор носи `value_flag` (`ok` | `review` | `value_low` | `value_suspect` | `annex_suspect`
+| `annex_total_suspect`, последният добавен по-късно с #305) и `date_flag` (`ok` |
+`signed_after_publication`). Каноничната сумирана колона е **`amount_eur`** — попълнена за
+**всички** флагове (`value_suspect` се repair-ва до процедурната оценка,
 `annex_suspect` пада към `signing`/`current`). Оттук — едно правило за всички суми:
 
 > Сумирай само `amount_eur` с предиката `amount_eur IS NOT NULL` — единната стойностна база за
