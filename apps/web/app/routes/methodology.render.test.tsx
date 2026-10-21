@@ -52,6 +52,7 @@ describe('/methodology', () => {
       'Агенцията за публичните предприятия и контрол',
       'Европейската централна банка',
       'EuroGeographics',
+      'Шрифтът ADYS',
     ])
       expect(t).toContain(source);
   });
