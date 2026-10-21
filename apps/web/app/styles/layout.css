@@ -120,6 +120,9 @@
   margin-left: auto;
   padding-left: var(--s-2);
 }
+.split aside .filter-subgroup-row {
+  position: relative;
+}
 .split aside .filter-subgroup {
   margin: 0;
   padding: 1px 0;
@@ -128,7 +131,9 @@
   display: flex;
   align-items: flex-start;
   gap: var(--s-2);
-  padding: 4px 0;
+  /* Room for the „all" box, laid over the start of the row (it is a sibling, not a child). */
+  min-block-size: 32px;
+  padding: 4px 0 4px calc(24px + var(--s-2));
   list-style: none;
   color: var(--ink);
   font-size: 13.5px;
@@ -149,7 +154,10 @@
 .split aside .filter-subgroup[open] > summary::after {
   content: '\2013';
 }
-.split aside .filter-subgroup > summary input {
+.split aside .filter-subgroup-all {
+  position: absolute;
+  inset-block-start: 5px;
+  inset-inline-start: 0;
   accent-color: var(--accent);
   flex-shrink: 0;
   inline-size: 24px;

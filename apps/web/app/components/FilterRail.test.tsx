@@ -204,7 +204,7 @@ describe('FilterRail', () => {
         checked: input.checked,
         aria: input.getAttribute('aria-checked'),
         indeterminate: input.indeterminate,
-        open: (input.closest('details') as HTMLDetailsElement).open,
+        open: input.parentElement!.querySelector('details')!.open,
       };
     };
     const construction = 'Строителство и инфраструктура';
@@ -227,8 +227,10 @@ describe('FilterRail', () => {
     const count = (el: Element) => el.querySelector(':scope > .muted')?.textContent ?? null;
     const summaries = [...container.querySelectorAll('.filter-subgroup > summary')];
     expect(summaries.map(count)).toEqual(['10', null, '2']);
+    // A summary is a button: the „all" box sits beside it, never inside it.
+    expect(summaries.map((s) => s.querySelector('input, a, button'))).toEqual([null, null, null]);
     expect(
-      [...category(health).closest('details')!.querySelectorAll('label')].map((l) => count(l)),
+      [...category(health).parentElement!.querySelectorAll('details label')].map((l) => count(l)),
     ).toEqual(['3', null]);
 
     const entries: string[] = [];
