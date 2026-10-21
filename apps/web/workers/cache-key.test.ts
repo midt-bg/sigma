@@ -142,6 +142,14 @@ describe('cacheKey', () => {
     expect(encoded.pathname).toBe('/contracts/e:UNP-1:CONTRACT-1');
   });
 
+  it('lowercases the static first segment only, keeping the case of identifiers', () => {
+    expect(cacheUrl('http://local/NETWORK').toString()).toBe(
+      cacheUrl('http://local/network').toString(),
+    );
+    expect(cacheUrl('http://local/Competition.data').pathname).toBe('/competition.data');
+    expect(cacheUrl('http://local/CONTRACTS/e:UNP-1:Ab').pathname).toBe('/contracts/e:UNP-1:Ab');
+  });
+
   it('keeps genuinely distinct paths distinct', () => {
     const first = cacheUrl('http://local/contracts/e:UNP-1:CONTRACT-1');
     const second = cacheUrl('http://local/contracts/e:UNP-1:CONTRACT-2');

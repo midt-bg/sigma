@@ -114,7 +114,15 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+// A HEAD is answered as the GET it describes, headers only: from the GET's cache entry when there is one,
+// and otherwise by rendering (and caching) that GET — never a separate, uncached run of the loaders.
 async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (request.method !== 'HEAD') return respond(request, env, ctx);
+  const response = await respond(new Request(request, { method: 'GET' }), env, ctx);
+  return new Response(null, response);
+}
+
+async function respond(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const httpsRedirect = redirectCleartextHttp(request, import.meta.env.PROD);
   if (httpsRedirect) return httpsRedirect;
 
