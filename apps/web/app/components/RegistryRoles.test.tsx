@@ -79,6 +79,17 @@ describe('CompanyRolesTables', () => {
     expect(cells(standing!, 'Вписване №')).toEqual(['20190312101010']);
   });
 
+  // aria-label on a role-less <span> is not read, so the „no share" dash says it in hidden text.
+  it('says in words that a share is unknown, behind a hidden dash', () => {
+    const c = render(<CompanyRolesTables roles={[role()]} />);
+    const cell = [...c.querySelectorAll('tbody td')].find(
+      (td) => td.getAttribute('data-label') === 'Дял',
+    )!;
+    expect(cell.querySelector('[aria-label]')).toBeNull();
+    expect(cell.querySelector('[aria-hidden="true"]')!.textContent).toBe('—');
+    expect(cell.querySelector('.sr-only')!.textContent).toBe('Няма данни за дял');
+  });
+
   it('marks a holder who filed declarations here as an official', () => {
     const c = render(
       <CompanyRolesTables
@@ -121,7 +132,7 @@ describe('CompanyRolesTables', () => {
     );
     const names = cells(c.querySelector('table')!, 'Лице');
     expect(names).toEqual(['ЧУЖДА ФИРМА ГМБХ · ГЕРМАНИЯ', 'ХОЛДИНГ АД · ЕИК 444444444']);
-    expect(cells(c.querySelector('table')!, 'Дял')).toEqual(['25%', '—']);
+    expect(cells(c.querySelector('table')!, 'Дял')).toEqual(['25%', '—Няма данни за дял']);
   });
 
   it('says so when no role is standing', () => {

@@ -38,9 +38,13 @@ const share: Column<{ sharePct: number | null }> = {
   secondary: true,
   cell: (r) =>
     r.sharePct == null ? (
-      <span className="muted" aria-label="Няма данни за дял">
-        —
-      </span>
+      // A name on a role-less <span> is not read; the dash is hidden and the words are said instead.
+      <>
+        <span className="muted" aria-hidden="true">
+          —
+        </span>
+        <span className="sr-only">Няма данни за дял</span>
+      </>
     ) : (
       pct(r.sharePct)
     ),
