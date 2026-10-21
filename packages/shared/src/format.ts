@@ -150,7 +150,7 @@ export function longDate(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return iso;
-  return `${Number(m[3])} ${MONTHS_BG[Number(m[2]) - 1] ?? m[2]} ${m[1]} г.`;
+  return `${Number(m[3])} ${MONTHS_BG[Number(m[2]) - 1] ?? m[2]} ${m[1]}${NBSP}г.`;
 }
 
 /** A period like `юли 2020 — май 2026` from first/last ISO dates. */

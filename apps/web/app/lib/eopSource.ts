@@ -59,6 +59,7 @@ export function eopSourceFiles(publishedAt: string | null | undefined): EopSourc
       label: 'Обявления (OCDS)',
       url: fileUrl(
         day,
+        // copy-typography: ignore — the exact file name in the source, spaces included.
         `Автоматично генерирани данни за обявления, публикувани в ЦАИС ЕОП на ${bg} г., съгласно стандарт OCDS.json`,
       ),
     });

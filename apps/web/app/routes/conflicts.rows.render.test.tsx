@@ -159,7 +159,7 @@ describe('/conflicts — the registry group', () => {
     ]);
     const [gap, named] = bodyRows().map((tr) => cell(tr, 'Дружества').textContent);
     expect(gap).toContain('дял по Търговския регистър');
-    expect(gap).toContain('СИГМА не го откри в годишната декларация за 2019, 2020 г.');
+    expect(gap).toContain('СИГМА не го откри в годишната декларация за 2019, 2020\u00a0г.');
     expect(gap).not.toContain('не е посочено');
     expect(named).not.toContain('не го откри');
     const [gapSignals, namedSignals] = bodyRows().map((tr) => cell(tr, 'Признаци').textContent);

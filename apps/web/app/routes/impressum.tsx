@@ -37,7 +37,7 @@ export default function Impressum() {
             </div>
             <div className="row">
               <dt>Адрес</dt>
-              <dd>ул. „Княз Александър I&quot; № 12, София 1000</dd>
+              <dd>ул. „Княз Александър I“ № 12, София 1000</dd>
             </div>
             <div className="row">
               <dt>Електронна поща</dt>
