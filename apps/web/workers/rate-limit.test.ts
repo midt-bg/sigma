@@ -143,4 +143,12 @@ describe('rateLimitKey', () => {
     expect(rateLimitKey(req('198.51.100.9'))).toBe('198.51.100.9');
     expect(rateLimitKey(new Request('http://local/x'))).toBe('unknown-client');
   });
+
+  it('keys IPv6 on its /64, however the address is written', () => {
+    expect(rateLimitKey(req('2001:db8:1234:5678::1'))).toBe('2001:db8:1234:5678::/64');
+    expect(rateLimitKey(req('2001:0DB8:1234:5678:ffff:0:0:2'))).toBe('2001:db8:1234:5678::/64');
+    expect(rateLimitKey(req('2001:db8::1'))).toBe('2001:db8:0:0::/64');
+    expect(rateLimitKey(req('2001:db8:1234:5679::1'))).toBe('2001:db8:1234:5679::/64');
+    expect(rateLimitKey(req('fe80::1:2:3:4'))).toBe('fe80:0:0:0::/64');
+  });
 });
