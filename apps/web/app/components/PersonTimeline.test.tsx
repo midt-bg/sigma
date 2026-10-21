@@ -609,7 +609,8 @@ it('renders nothing when there are no dated facts or companies', () => {
   }
 });
 
-it('detects overflow, scrolls the timeline and explains incomplete registry periods', () => {
+// A one-company profile whose timeline is wider than its box (see the scroll spies below).
+function overflowFixture() {
   const p = {
     person: null,
     name: 'Иван Петров Тестов',
@@ -672,6 +673,11 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
       },
     ],
   } as TimelineCompany;
+  return { p, company };
+}
+
+it('detects overflow, scrolls the timeline and explains incomplete registry periods', () => {
+  const { p, company } = overflowFixture();
 
   let scrollWidth = 500;
   const scrollWidthSpy = vi
@@ -696,6 +702,8 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     disconnect = disconnect;
   }
   vi.stubGlobal('ResizeObserver', TestResizeObserver);
+  const originalMatchMedia = window.matchMedia;
+  window.matchMedia = ((query: string) => ({ matches: true, media: query })) as never;
 
   const el = document.createElement('div');
   document.body.appendChild(el);
@@ -758,6 +766,7 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     expect(disconnect).toHaveBeenCalledOnce();
     el.remove();
     vi.unstubAllGlobals();
+    window.matchMedia = originalMatchMedia;
     scrollWidthSpy.mockRestore();
     clientWidthSpy.mockRestore();
     if (originalScrollBy) {
@@ -768,6 +777,40 @@ it('detects overflow, scrolls the timeline and explains incomplete registry peri
     } else {
       delete (HTMLElement.prototype as Partial<HTMLElement>).scrollBy;
     }
+  }
+});
+
+// On a phone the row labels scroll with the strips, so opening at the latest years would show marks
+// with no word of whose they are: the timeline opens at its start there.
+it('opens at the labels on a phone and at the latest years on a wider screen', () => {
+  const { p, company } = overflowFixture();
+  const scrollWidthSpy = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(500);
+  const clientWidthSpy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(200);
+  const originalMatchMedia = window.matchMedia;
+  const opened = (wide: boolean) => {
+    window.matchMedia = ((query: string) => ({
+      matches: wide && query === '(min-width: 601px)',
+      media: query,
+    })) as never;
+    const el = document.createElement('div');
+    document.body.appendChild(el);
+    const root = createRoot(el);
+    const Stub = createRoutesStub([
+      { path: '/', Component: () => <PersonTimeline profile={p} companies={[company]} /> },
+    ]);
+    act(() => root.render(<Stub />));
+    const left = el.querySelector<HTMLElement>('#person-time-canvas')!.scrollLeft;
+    act(() => root.unmount());
+    el.remove();
+    return left;
+  };
+  try {
+    expect(opened(false)).toBe(0);
+    expect(opened(true)).toBe(500);
+  } finally {
+    window.matchMedia = originalMatchMedia;
+    scrollWidthSpy.mockRestore();
+    clientWidthSpy.mockRestore();
   }
 });
 
