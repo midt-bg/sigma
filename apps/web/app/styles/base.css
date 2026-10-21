@@ -133,7 +133,14 @@ code,
 /* Keyboard focus indicator for native controls that otherwise fall back to the faint UA
    default ring on the warm paper background (WCAG 2.4.7). Low-specificity :where() so the
    component-specific focus styles above still win. */
-:where(button, select, summary, [type='checkbox'], [type='radio']):focus-visible {
+:where(
+  button,
+  select,
+  summary,
+  [type='checkbox'],
+  [type='radio'],
+  [role='region'][tabindex='0']
+):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
