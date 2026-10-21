@@ -57,17 +57,45 @@ describe('rateLimitAggregationRoute', () => {
     }
   });
 
-  it('does not limit unrelated paths', async () => {
-    const { limiter, limit } = rateLimiter(false);
-
-    await expect(
-      rateLimitAggregationRoute(
-        new Request('http://local/contracts'),
+  it('limits the other expensive pages, their .data twins and a contract with its .json', async () => {
+    for (const path of [
+      '/',
+      '/_root.data',
+      '/contracts',
+      '/contracts.data',
+      '/contracts/2024-000123',
+      '/contracts/2024-000123.json',
+      '/contracts/2024-000123.data',
+      '/flows',
+      '/network.data',
+      '/map',
+      '/trends?x=1',
+      '/analytics',
+      '/competition',
+    ]) {
+      const { limiter } = rateLimiter(false);
+      const response = await rateLimitAggregationRoute(
+        new Request(`http://local${path}`, { headers: { 'CF-Connecting-IP': '203.0.113.33' } }),
         { AGG_RATE_LIMITER: limiter },
         false,
-      ),
-    ).resolves.toBeNull();
-    expect(limit).not.toHaveBeenCalled();
+      );
+      expect(response?.status, path).toBe(429);
+    }
+  });
+
+  it('does not limit unrelated paths', async () => {
+    for (const path of ['/impressum', '/methodology', '/contracts.csv', '/companies/111']) {
+      const { limiter, limit } = rateLimiter(false);
+      await expect(
+        rateLimitAggregationRoute(
+          new Request(`http://local${path}`),
+          { AGG_RATE_LIMITER: limiter },
+          false,
+        ),
+        path,
+      ).resolves.toBeNull();
+      expect(limit).not.toHaveBeenCalled();
+    }
   });
 
   it('fails open when the binding is missing or throws', async () => {
