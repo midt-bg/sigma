@@ -120,3 +120,43 @@ test('identity publication can replace source projections and FTS within the sam
   assert.equal(db.prepare('SELECT id FROM persons').get().id, 'new');
   db.close();
 });
+
+test('a publish keeps the publishing gate on the served tables, and a target that lost it gets it back', () => {
+  const db = database();
+  // Renaming a table carries its triggers along: without the swap recreating them, the gate of 0010
+  // ends up on rp_prev_ and is dropped with the next retirement.
+  const gate = () =>
+    db
+      .prepare(
+        "SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'trg_interest_links%' OR name LIKE 'trg_ile%') ORDER BY name",
+      )
+      .all()
+      .map((r) => `${r.name}@${r.tbl_name}`);
+  const served = gate();
+  assert.equal(served.length, 4);
+  assert.ok(served.every((t) => /@interest_link(s|_evidence)$/.test(t)));
+  const opts = {
+    tables: TABLES,
+    maxStatements: 25,
+    paceMs: 0,
+    sleep: () => {},
+    readTable(table) {
+      const cols = db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((c) => c.name);
+      return { rowCount: 0, statements: insertStatements(table, cols, []) };
+    },
+    readSchema: schemaOf(db),
+    apply: (_name, sql) => db.exec(sql),
+    readCounts: countsOf(db),
+  };
+  runShip(opts);
+  assert.deepEqual(gate(), served);
+  runShip(opts); // the second publish retires the first generation
+  assert.deepEqual(gate(), served);
+  // A target where an earlier publish already moved the gate away and a retirement dropped it.
+  for (const t of served) db.exec(`DROP TRIGGER ${t.split('@')[0]}`);
+  runShip(opts);
+  assert.deepEqual(gate(), served);
+});
