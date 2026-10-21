@@ -17,7 +17,7 @@ import { progress } from './cacbg/progress.mjs';
 import { sendWithReceipt } from './d1-retry.mjs';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -148,6 +148,7 @@ export function runShip({
   yielding = () => false,
   runId = null,
   published = null,
+  readTriggers = chainTriggers,
 }) {
   // A published receipt for this very run means the swap already ran: the generation was verified by
   // rp_staging_guard before it moved, so there is nothing left to do and nothing to re-check.
@@ -197,7 +198,7 @@ export function runShip({
   assertShippedCounts(stagedCounts, readCounts(stagedCounts));
   // The generation before is no longer served; retiring it on its own keeps the swap batch small.
   send('retire_previous', retireSql(reads, wipeTables));
-  send('publish', swapSql(schema, reads, wipeTables, runId));
+  send('publish', swapSql(schema, reads, wipeTables, runId, readTriggers(tables)));
   assertShippedCounts(summary, readCounts(summary));
   return summary;
 }
@@ -215,6 +216,33 @@ export function stagingDdl(sql, table, shipped) {
     .replace(/(REFERENCES\s+)("?)([A-Za-z_]\w*)\2(?=\s*\()/g, (m, head, _q, ref) =>
       staged.has(ref) ? `${head}${sqlIdent(`rp_next_${ref}`)}` : m,
     );
+}
+
+/**
+ * The triggers the migration chain defines on the given tables, as DDL. Renaming a table carries its
+ * triggers along, so the swap would leave them on the retired generation, and the next retirement drops
+ * them with it: the served tables lose their publishing gate (0010). The swap recreates them on the served
+ * names. The chain is the source, not the target, so a target that already lost them gets them back.
+ */
+export function chainTriggers(
+  tables,
+  dir = resolve(import.meta.dirname, '../packages/db/migrations'),
+) {
+  const want = new Set(tables);
+  const db = new DatabaseSync(':memory:');
+  try {
+    for (const file of readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort())
+      db.exec(readFileSync(join(dir, file), 'utf8'));
+    return db
+      .prepare("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
+      .all()
+      .filter((t) => want.has(t.tbl_name))
+      .map((t) => ({ name: t.name, sql: t.sql }));
+  } finally {
+    db.close();
+  }
 }
 
 const indexName = (sql) =>
@@ -244,7 +272,7 @@ export function retireSql(reads, wipeTables = WIPE_ORDER) {
   );
 }
 
-export function swapSql(schema, reads, wipeTables = WIPE_ORDER, runId = null) {
+export function swapSql(schema, reads, wipeTables = WIPE_ORDER, runId = null, triggers = []) {
   const shipped = new Set(reads.map((r) => r.table));
   const prev = (t) => sqlIdent(`rp_prev_${t}`);
   const next = (t) => sqlIdent(`rp_next_${t}`);
@@ -262,6 +290,11 @@ export function swapSql(schema, reads, wipeTables = WIPE_ORDER, runId = null) {
     ...indexes.map((sql) => `DROP INDEX IF EXISTS ${sqlIdent(indexName(sql))};`),
     ...reads.map(({ table }) => `ALTER TABLE ${next(table)} RENAME TO ${sqlIdent(table)};`),
     ...indexes.map((sql) => sql.replace(/;?\s*$/, ';')),
+    // Wherever the renames left a trigger, it goes, and the chain's DDL puts it on the served table.
+    ...triggers.flatMap(({ name, sql }) => [
+      `DROP TRIGGER IF EXISTS ${sqlIdent(name)};`,
+      sql.replace(/;?\s*$/, ';'),
+    ]),
     ...wipeTables
       .filter((t) => !shipped.has(t) && schema[t]?.sql)
       .map((t) => `DELETE FROM ${sqlIdent(t)};`),
