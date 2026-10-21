@@ -243,6 +243,20 @@ describe('contractSitemapPages', () => {
   });
 });
 
+// The edge cache stores only a response with s-maxage; without it every crawler fetch re-read the corpus.
+describe('cache headers', () => {
+  it('lets the edge keep every streamed sitemap', () => {
+    const db = fakeDb({ authorities: [], companies: [], contracts: [], asOf: null });
+    for (const res of [
+      streamAuthoritySitemap(db, 'https://x.test'),
+      streamCompanySitemap(db, 'https://x.test'),
+      streamContractSitemap(db, 'https://x.test', 1),
+    ]) {
+      expect(res.headers.get('Cache-Control')).toMatch(/s-maxage=21600/);
+    }
+  });
+});
+
 describe('empty-input terminals', () => {
   it('authority sitemap with no rows emits just head+tail', async () => {
     const xml = await streamAuthoritySitemap(
