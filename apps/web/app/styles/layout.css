@@ -18,6 +18,22 @@
 .section .section-hint a {
   color: var(--ink);
 }
+/* Running text keeps a readable measure (about 75 characters a line) however wide the column; a plain
+   list in it shows its bullets or numbers (Tailwind's preflight takes them off every list). */
+.section > p,
+.section > ul:not([class]),
+.section > ol:not([class]),
+.glossary dd > p,
+.callout,
+p.small.muted {
+  max-width: 75ch;
+}
+.section > ul:not([class]) {
+  list-style: disc;
+}
+.section > ol:not([class]) {
+  list-style: decimal;
+}
 
 /* Two-column section (filter rail + content)
    Editorial posture: quiet rail, collapsible groups, full-width table side. */
