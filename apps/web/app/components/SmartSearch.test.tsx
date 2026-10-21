@@ -249,6 +249,50 @@ it('closes on Escape and swallows it so a surrounding drawer stays open', async 
   expect(outer).not.toHaveBeenCalled();
 });
 
+// A highlight that outlived the list would make Enter on the reopened field open that row, not search.
+it('forgets the highlighted row when the list closes', async () => {
+  await mount();
+  await type('тест');
+  await press('ArrowDown');
+  await press('Escape');
+  await act(async () => {
+    input().blur();
+    input().focus();
+  });
+  expect(input().getAttribute('aria-expanded')).toBe('true');
+  expect(input().getAttribute('aria-activedescendant')).toBe(null);
+  await press('Enter');
+  expect(router.state.location.pathname).toBe('/');
+});
+
+// The list scrolls inside a capped box; the row the arrows reach must be brought into it, the row the
+// pointer is over must not be scrolled under it.
+it('scrolls the row the arrows move to into view, not the one under the pointer', async () => {
+  const scroll = vi.fn();
+  Element.prototype.scrollIntoView = scroll;
+  await mount();
+  await type('тест');
+  await press('End');
+  expect(scroll).toHaveBeenCalledTimes(1);
+  expect(scroll.mock.contexts[0]).toBe(options()[3]);
+  expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+  await act(async () => {
+    options()[1]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+  });
+  expect(options()[1]!.getAttribute('aria-selected')).toBe('true');
+  expect(scroll).toHaveBeenCalledTimes(1);
+});
+
+it('tells a screen reader how many suggestions there are, or that there are none', async () => {
+  await mount();
+  const status = () => container.querySelector('[role="status"]')!.textContent;
+  expect(status()).toBe('');
+  await type('тест');
+  expect(status()).toBe('3 предложения');
+  await press('Escape');
+  expect(status()).toBe('');
+});
+
 it('closes when the pointer goes somewhere else on the page', async () => {
   await mount();
   await type('тест');
@@ -264,6 +308,7 @@ it('says so when nothing matches, without offering a row to select', async () =>
   await type('няма такова');
   expect(options()).toHaveLength(0);
   expect(container.querySelector('.smart-search-empty')?.textContent).toContain('Няма съвпадения');
+  expect(container.querySelector('[role="status"]')!.textContent).toBe('Няма съвпадения');
   // With nothing to walk, the arrows must not invent an active descendant.
   await press('ArrowDown');
   expect(input().getAttribute('aria-activedescendant')).toBe(null);
@@ -283,6 +328,8 @@ it('shows no list, stale or empty, when the suggestions are refused', async () =
   expect(options()).toHaveLength(0);
   expect(input().getAttribute('aria-expanded')).toBe('false');
   expect(pop().hasAttribute('hidden')).toBe(true);
+  // Nor does the status line claim a count or „no matches" for a refused text.
+  expect(container.querySelector('[role="status"]')!.textContent).toBe('');
   expect(container.querySelector('form')!.getAttribute('action')).toBe('/search');
 });
 

@@ -124,6 +124,22 @@ describe('SiteHeader search drawer and layout', () => {
     expect(document.activeElement).toBe(searchToggle());
   });
 
+  // The search field closes its suggestions on the first Esc and marks the event handled; React
+  // listens on the document in the app, so stopPropagation() alone does not keep it from the drawer.
+  it('leaves the drawer open on an Esc the field already handled', () => {
+    openSearch();
+    const handled = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    handled.preventDefault();
+    act(() => {
+      document.activeElement!.dispatchEvent(handled);
+    });
+    expect(searchToggle().getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('closes the search drawer from its × and on a click outside it, not inside it', () => {
     openSearch();
     act(() => drawer().querySelector<HTMLInputElement>('input')!.click());
