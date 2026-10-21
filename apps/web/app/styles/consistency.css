@@ -16,7 +16,7 @@
   margin-top: var(--s-6);
 }
 .section .section > h2 {
-  font-size: clamp(24px, 2.5vw, 32px);
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
   padding-bottom: var(--s-3);
   margin-bottom: var(--s-4);
 }
@@ -79,7 +79,7 @@ td .chip {
 .page-search label {
   display: block;
   margin-bottom: var(--s-2);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .page-search > div {
   display: flex;
@@ -116,7 +116,7 @@ td .chip {
 .profile-filters label {
   display: grid;
   gap: 6px;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .profile-filters input,
 .profile-filters select {
@@ -166,7 +166,7 @@ td .chip {
     margin-bottom: 4px;
   }
   .tbl-cards td.cell-title {
-    font-size: 19px;
+    font-size: 1.1875rem;
     line-height: 1.35;
   }
   .tbl-cards td .small {
@@ -208,7 +208,7 @@ td .chip {
 }
 .person-institutions {
   margin-top: var(--s-2);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.45;
 }
 .person-institutions ul {
@@ -223,7 +223,7 @@ td .chip {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 22px;
-  font-size: 12px;
+  font-size: 0.75rem;
   margin: 20px 0;
 }
 .person-time-legend > span {
@@ -269,13 +269,13 @@ td .chip {
 }
 .person-time-label {
   padding: 7px 22px 7px 0;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 .person-time-label small {
   display: block;
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--muted);
   margin-top: 5px;
 }
@@ -294,7 +294,7 @@ td .chip {
   position: absolute;
   transform: translateX(-50%);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: 0.6875rem;
   top: 8px;
   color: var(--muted);
 }
@@ -306,13 +306,13 @@ td .chip {
   background: none;
 }
 .time-institution .person-time-label {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .time-institution {
   padding-block: 6px;
 }
 .person-time-section {
-  font-size: 12px;
+  font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   margin: 22px 0 4px;
@@ -326,7 +326,7 @@ td .chip {
 }
 .time-company-heading {
   max-width: min(85ch, 100cqw);
-  font-size: 14px;
+  font-size: 0.875rem;
   padding: 7px 0 12px;
   overflow-wrap: anywhere;
 }
@@ -404,7 +404,7 @@ td .chip {
   height: 24px;
   padding-inline: 3px;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-family: var(--font-mono, monospace);
   text-decoration: none;
 }
@@ -419,7 +419,7 @@ td .chip {
 }
 .person-time-notes {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 .person-time-notes p {
@@ -451,7 +451,7 @@ td .chip {
 /* The public stake of a company the person holds a seat in, under its name. */
 .time-public-stake {
   margin-top: 3px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-soft);
 }
 .person-time-controls {
@@ -460,11 +460,11 @@ td .chip {
   gap: 10px;
   align-items: center;
   margin: 12px 0;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .person-time-controls button {
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: 0.75rem;
   background: transparent;
   color: inherit;
   border: 1px solid #b8b3aa;
@@ -524,7 +524,7 @@ td .chip {
   border-radius: 50%;
   background: transparent;
   color: var(--muted);
-  font: 12px/1 sans-serif;
+  font: 0.75rem/1 sans-serif;
   cursor: pointer;
 }
 .help-trigger:hover,
@@ -545,7 +545,7 @@ td .chip {
   border: 1px solid #aaa59c;
   background: var(--paper, #faf8f2);
   color: var(--ink, #171511);
-  font: 14px/1.55 var(--font-sans, sans-serif);
+  font: 0.875rem/1.55 var(--font-sans, sans-serif);
   text-align: left;
   text-transform: none;
   letter-spacing: normal;
@@ -585,7 +585,7 @@ td .chip {
   background: var(--paper-warm);
 }
 .registry-ended h3 {
-  font-size: 18px;
+  font-size: 1.125rem;
   margin: 24px 0 16px;
 }
 .declarations tr[id],
@@ -689,7 +689,7 @@ td .chip {
 }
 .declarations .declaration-discrepancy {
   font-family: inherit;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.5;
   text-transform: none;
   letter-spacing: normal;
@@ -797,7 +797,7 @@ td .chip {
 .time-tip {
   width: 300px;
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.45;
   pointer-events: none;
 }
@@ -814,7 +814,7 @@ td .chip {
 }
 .time-tip-value {
   font-family: var(--font-mono, monospace);
-  font-size: 15px;
+  font-size: 0.9375rem;
   margin-bottom: 4px;
 }
 .time-tip-overlap {

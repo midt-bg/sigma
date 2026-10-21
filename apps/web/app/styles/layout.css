@@ -10,7 +10,7 @@
   margin-bottom: var(--s-5);
 }
 .section .section-hint {
-  font: 14px/1.55 var(--font-sans);
+  font: 0.875rem/1.55 var(--font-sans);
   color: var(--ink-mid);
   margin: calc(-1 * var(--s-3)) 0 var(--s-5);
   max-width: 60ch;
@@ -51,7 +51,7 @@
 .split aside .filter-group > h4,
 .split aside .filter-group > summary {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 0.6563rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-mid);
@@ -74,7 +74,7 @@
   content: '+';
   font-family: var(--font-mono);
   color: var(--ink-soft);
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1;
   transition: transform 0.18s ease;
 }
@@ -88,7 +88,7 @@
   list-style: none;
   padding: 0;
   margin: 0 0 var(--s-2) 0;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .split aside li {
   padding: 4px 0;
@@ -104,7 +104,7 @@
   gap: var(--s-2);
   min-block-size: 24px;
   padding: 2px 0;
-  font-size: 13.5px;
+  font-size: 0.8438rem;
   line-height: 1.35;
   color: var(--ink);
   cursor: pointer;
@@ -136,7 +136,7 @@
   padding: 4px 0 4px calc(24px + var(--s-2));
   list-style: none;
   color: var(--ink);
-  font-size: 13.5px;
+  font-size: 0.8438rem;
   line-height: 1.35;
   cursor: pointer;
 }
@@ -147,7 +147,7 @@
   content: '+';
   color: var(--ink-soft);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.35;
   margin-left: auto;
 }
@@ -214,7 +214,7 @@
     cursor: pointer;
     min-height: 44px;
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 0.6563rem;
     letter-spacing: 0.18em;
     text-transform: uppercase;
     color: var(--ink-mid);
@@ -222,7 +222,7 @@
   .filter-rail-summary::after {
     content: '+';
     color: var(--ink-soft);
-    font-size: 16px;
+    font-size: 1rem;
   }
   .filter-rail-toggle:checked ~ .filter-rail-summary {
     color: var(--ink);
@@ -281,6 +281,14 @@ html .a11y-tools__button {
   background-color: var(--accent);
   border-color: var(--accent);
 }
+/* The open panel grows upwards from a fixed bottom edge; with enlarged text it is taller than a
+   phone or a short laptop window and its top controls left the screen, where a fixed box cannot be
+   scrolled to. Cap it at the viewport and let it scroll inside. */
+html .a11y-tools__nav {
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+}
 @media (max-width: 760px) {
   .a11y-tools {
     right: 0 !important;
@@ -316,7 +324,7 @@ html .a11y-tools__button {
   display: flex;
   flex-wrap: wrap;
   gap: var(--s-4);
-  font: 11px/1.4 var(--font-mono);
+  font: 0.6875rem/1.4 var(--font-mono);
   letter-spacing: 0.04em;
   color: var(--ink-soft);
   text-transform: uppercase;
@@ -360,7 +368,7 @@ details.row > summary {
   details.row > summary > :nth-child(3),
   details.row > summary > :nth-child(4) {
     grid-area: meta;
-    font: 11px/1.4 var(--font-mono);
+    font: 0.6875rem/1.4 var(--font-mono);
     color: var(--ink-soft);
     letter-spacing: 0.04em;
   }
@@ -416,7 +424,7 @@ details.row .body .signal {
   gap: var(--s-4);
   padding: var(--s-2) 0;
   border-bottom: 1px dotted var(--rule);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 @media (max-width: 600px) {
   details.row .body .signal {
@@ -475,7 +483,7 @@ details.row .body .signal .why {
   border-right: 0;
 }
 .tile .kicker {
-  font: 500 10.5px/1 var(--font-mono);
+  font: 500 0.6563rem/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
@@ -487,7 +495,7 @@ details.row .body .signal .why {
 .tile h3 {
   margin-bottom: var(--s-2);
   line-height: 1.2;
-  font: 400 22px/1.2 var(--font-serif);
+  font: 400 1.375rem/1.2 var(--font-serif);
   letter-spacing: -0.01em;
 }
 .tile h3 a {
@@ -498,7 +506,7 @@ details.row .body .signal .why {
   color: var(--accent);
 }
 .tile .desc {
-  font: 14px/1.55 var(--font-sans);
+  font: 0.875rem/1.55 var(--font-sans);
   color: var(--ink-mid);
 }
 
@@ -525,7 +533,7 @@ details.row .body .signal .why {
 }
 .lens-preview-title {
   margin-bottom: var(--s-2);
-  font: 500 10.5px/1.35 var(--font-mono);
+  font: 500 0.6563rem/1.35 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -546,18 +554,18 @@ details.row .body .signal .why {
 }
 .lens-name {
   min-width: 0;
-  font: 14px/1.35 var(--font-sans);
+  font: 0.875rem/1.35 var(--font-sans);
   color: var(--ink);
 }
 .lens-value {
-  font: 12px/1.2 var(--font-mono);
+  font: 0.75rem/1.2 var(--font-mono);
   color: var(--ink-mid);
   white-space: nowrap;
 }
 .lens-meta,
 .lens-share {
   grid-column: 1 / -1;
-  font: 12px/1.35 var(--font-mono);
+  font: 0.75rem/1.35 var(--font-mono);
   color: var(--ink-soft);
 }
 .lens-share .share {
@@ -590,20 +598,20 @@ details.row .body .signal .why {
 }
 .lens-metrics dt {
   margin-bottom: 4px;
-  font: 500 10.5px/1.25 var(--font-mono);
+  font: 500 0.6563rem/1.25 var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-soft);
 }
 .lens-metrics dd {
   margin: 0;
-  font: 14px/1.35 var(--font-sans);
+  font: 0.875rem/1.35 var(--font-sans);
   color: var(--ink);
 }
 .lens-link {
   margin-top: auto;
   padding-top: var(--s-4);
-  font: 500 14px/1.3 var(--font-sans);
+  font: 500 0.875rem/1.3 var(--font-sans);
 }
 .lens-link a {
   color: var(--accent);
@@ -634,7 +642,7 @@ details.row .body .signal .why {
   background: var(--ink);
   color: var(--paper);
   padding: 8px var(--s-4);
-  font: 500 11px/1 var(--font-mono);
+  font: 500 0.6875rem/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   cursor: pointer;
@@ -645,7 +653,7 @@ details.row .body .signal .why {
   gap: var(--s-2);
   align-items: center;
   margin: 0 0 var(--s-4);
-  font: 12px/1.5 var(--font-mono);
+  font: 0.75rem/1.5 var(--font-mono);
   color: var(--ink-soft);
 }
 .filter-rail .small.muted > a {

@@ -20,19 +20,19 @@
   }
 }
 .facts dt {
-  font: 500 10.5px/1.3 var(--font-mono);
+  font: 500 0.6563rem/1.3 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
 }
 .facts dd {
   margin: 0;
-  font: 15px/1.4 var(--font-sans);
+  font: 0.9375rem/1.4 var(--font-sans);
   color: var(--ink);
 }
 .facts dd .sub {
   color: var(--ink-soft);
-  font: 12px/1.3 var(--font-mono);
+  font: 0.75rem/1.3 var(--font-mono);
   letter-spacing: 0.04em;
   display: block;
   margin-top: 2px;
@@ -66,7 +66,7 @@
 .totals .num {
   display: block;
   /* Scale down on narrower viewports so the widest value ("51,6 млрд.") never overruns its cell. */
-  font: 400 clamp(26px, 2.8vw, 36px) / 1 var(--font-serif);
+  font: 400 clamp(1.625rem, 2.8vw, 2.25rem) / 1 var(--font-serif);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
   white-space: nowrap;
@@ -75,7 +75,7 @@
 .totals .label {
   display: block;
   margin-top: var(--s-3);
-  font: 10px/1.2 var(--font-mono);
+  font: 0.625rem/1.2 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -101,7 +101,7 @@
 .flag {
   display: inline-block;
   padding: 2px 8px;
-  font: 500 10.5px/1.5 var(--font-mono);
+  font: 500 0.6563rem/1.5 var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   background: var(--accent-bg);
@@ -136,7 +136,7 @@ a.flag:hover {
 .chip {
   display: inline-block;
   padding: 1px 8px;
-  font: 500 10.5px/1.6 var(--font-mono);
+  font: 500 0.6563rem/1.6 var(--font-mono);
   letter-spacing: 0.1em;
   background: var(--paper-warm);
   color: var(--ink-mid);
@@ -156,12 +156,12 @@ a.flag:hover {
   border: 1px solid var(--accent);
   background: var(--accent-bg);
   color: var(--accent);
-  font-size: 14px;
+  font-size: 0.875rem;
   letter-spacing: 0.02em;
 }
 .score .of {
   font-weight: 400;
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--ink-soft);
 }
 
@@ -171,7 +171,7 @@ a.flag:hover {
   background: transparent;
   padding: var(--s-3) var(--s-5);
   margin: var(--s-6) 0;
-  font: 14.5px/1.6 var(--font-sans);
+  font: 0.9063rem/1.6 var(--font-sans);
   color: var(--ink-mid);
 }
 .callout.warning {
@@ -181,7 +181,7 @@ a.flag:hover {
 }
 .callout h2,
 .callout h3 {
-  font: 400 18px/1.25 var(--font-serif);
+  font: 400 1.125rem/1.25 var(--font-serif);
   letter-spacing: -0.01em;
   margin-bottom: 6px;
   color: var(--ink);
@@ -198,20 +198,20 @@ a.flag:hover {
   margin-top: var(--s-3);
 }
 .stat .num {
-  font: 400 40px/1 var(--font-serif);
+  font: 400 2.5rem/1 var(--font-serif);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.015em;
   color: var(--ink);
 }
 .stat .label {
-  font: 10.5px/1.3 var(--font-mono);
+  font: 0.6563rem/1.3 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
   margin-top: var(--s-2);
 }
 .stat .sub {
-  font: 12px/1.4 var(--font-mono);
+  font: 0.75rem/1.4 var(--font-mono);
   color: var(--ink-soft);
   margin-top: var(--s-1);
 }
@@ -221,7 +221,7 @@ a.flag:hover {
   color: var(--ink-mid);
 }
 .small {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .right {
   text-align: right;
@@ -230,7 +230,7 @@ a.flag:hover {
   white-space: nowrap;
 }
 .cap {
-  font: 500 10.5px/1.3 var(--font-mono);
+  font: 500 0.6563rem/1.3 var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.14em;
   color: var(--ink-soft);
@@ -238,7 +238,7 @@ a.flag:hover {
 
 /* Inline source citation */
 .source {
-  font: 11px/1.4 var(--font-mono);
+  font: 0.6875rem/1.4 var(--font-mono);
   letter-spacing: 0.04em;
   color: var(--ink-soft);
   margin-top: var(--s-3);
@@ -257,14 +257,14 @@ a.flag:hover {
   flex-wrap: wrap;
   gap: var(--s-3);
   margin-top: var(--s-4);
-  font: 11px/1.4 var(--font-mono);
+  font: 0.6875rem/1.4 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
 }
 @media (max-width: 600px) {
   .paging {
-    font-size: 10px;
+    font-size: 0.625rem;
   }
   .paging .ctrl a,
   .paging .ctrl span {
@@ -346,7 +346,7 @@ a.flag:hover {
   /* body is 15px (base.css); iOS Safari auto-zooms on focus below 16px. .smart-search-input
      already forces 16px on mobile for the same reason — match it here. */
   .table-search input[type='search'] {
-    font-size: 16px;
+    font-size: 1rem;
   }
 }
 .paging .ctrl a {
@@ -358,7 +358,7 @@ a.flag:hover {
   text-decoration: none;
   margin-left: 4px;
   color: var(--ink-mid);
-  font: 500 10.5px/1.2 var(--font-mono);
+  font: 500 0.6563rem/1.2 var(--font-mono);
   letter-spacing: 0.14em;
 }
 .paging .ctrl span {
@@ -367,7 +367,7 @@ a.flag:hover {
   border: 1px solid var(--rule);
   margin-left: 4px;
   color: var(--ink-mid);
-  font: 500 10.5px/1.2 var(--font-mono);
+  font: 500 0.6563rem/1.2 var(--font-mono);
   letter-spacing: 0.14em;
 }
 .paging .ctrl a:hover {
@@ -381,7 +381,7 @@ a.flag:hover {
 
 /* Mini header for sub-sections — match list-eyebrow */
 .subhead {
-  font: 500 11px/1 var(--font-mono);
+  font: 500 0.6875rem/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
@@ -397,7 +397,7 @@ a.flag:hover {
 .linklist li {
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--rule-soft);
-  font: 14px/1.4 var(--font-sans);
+  font: 0.875rem/1.4 var(--font-sans);
 }
 .linklist li:last-child {
   border-bottom: 0;
@@ -415,7 +415,7 @@ a.flag:hover {
 .linklist li .sub {
   display: block;
   color: var(--ink-soft);
-  font: 11px/1.4 var(--font-mono);
+  font: 0.6875rem/1.4 var(--font-mono);
   letter-spacing: 0.04em;
   margin-top: 2px;
   text-transform: uppercase;
@@ -463,10 +463,10 @@ tbody td,
     padding-left: 0;
   }
   .totals .num {
-    font-size: 28px;
+    font-size: 1.75rem;
   }
   .stat .num {
-    font-size: 32px;
+    font-size: 2rem;
   }
 
   /* Section rhythm: trim the big top margins so content starts sooner */
@@ -482,8 +482,10 @@ tbody td,
   .totals {
     grid-template-columns: 1fr 1fr;
   }
+  /* The figure does not wrap, so on the narrowest phones it stops growing with enlarged text
+     instead of pushing the page sideways. */
   .totals .num {
-    font-size: 24px;
+    font-size: min(1.5rem, 7.5vw);
   }
 }
 
@@ -584,7 +586,7 @@ tbody td,
   margin: 0;
 }
 .ebs-pct {
-  font: 600 28px/1 var(--font-serif);
+  font: 600 1.75rem/1 var(--font-serif);
   letter-spacing: -0.01em;
   color: var(--accent);
   margin-right: 4px;
@@ -635,7 +637,7 @@ tbody td,
   left: 50%;
   transform: translateX(-50%);
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
   line-height: 1;
   color: var(--ink-mid);
