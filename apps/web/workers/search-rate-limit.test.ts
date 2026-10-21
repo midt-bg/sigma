@@ -35,24 +35,25 @@ describe('rateLimitSearchRoute', () => {
     expect(response?.status).toBe(429);
   });
 
-  it('limits search sub-paths such as /search/suggest', async () => {
-    const { limiter } = rateLimiter(false);
-
-    const response = await rateLimitSearchRoute(
-      new Request('http://local/search/suggest?q=стр', {
-        headers: { 'CF-Connecting-IP': '203.0.113.42' },
-      }),
-      { SEARCH_RATE_LIMITER: limiter },
-      false,
-    );
-
-    expect(response?.status).toBe(429);
+  it('limits /search/suggest and its .data twin on their own budget, not the page’s', async () => {
+    for (const path of ['/search/suggest?q=стр', '/search/suggest.data?q=стр']) {
+      const search = rateLimiter(true);
+      const suggest = rateLimiter(false);
+      const response = await rateLimitSearchRoute(
+        new Request(`http://local${path}`, { headers: { 'CF-Connecting-IP': '203.0.113.42' } }),
+        { SEARCH_RATE_LIMITER: search.limiter, SUGGEST_RATE_LIMITER: suggest.limiter },
+        false,
+      );
+      expect(response?.status, path).toBe(429);
+      expect(suggest.limit).toHaveBeenCalledWith({ key: '203.0.113.42' });
+      expect(search.limit).not.toHaveBeenCalled();
+    }
   });
 
   it('limits the single-fetch /search.data twin the same as /search (#184)', async () => {
     const { limiter } = rateLimiter(false);
 
-    for (const path of ['/search.data?q=a', '/search/suggest.data?q=a']) {
+    for (const path of ['/search.data?q=a', '/search/other.data?q=a']) {
       const response = await rateLimitSearchRoute(
         new Request(`http://local${path}`, { headers: { 'CF-Connecting-IP': '203.0.113.43' } }),
         { SEARCH_RATE_LIMITER: limiter },

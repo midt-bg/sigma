@@ -72,6 +72,15 @@
         "simple": { "limit": 20, "period": 60 },
       },
       {
+        // The search box's suggestions (/search/suggest): one request per settled pause while typing, so a
+        // roomier budget of its own — people behind one office or mobile NAT share it. Edge-cache hits
+        // never reach it. namespace_id 1007.
+        "name": "SUGGEST_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1007",
+        "simple": { "limit": 60, "period": 60 },
+      },
+      {
         // Per-IP throttle for POST /assistant/chat — each call runs embeddings + the BgGPT agent loop
         // (review #80). Tight, since it is far costlier than a page view. A global (account-wide) budget
         // / circuit-breaker is a launch-gate TODO: BGGPT_RATE_LIMIT_RPM (below) is declared for it but
