@@ -45,7 +45,7 @@ const base: TrendData = {
   ],
   sectors: [{ code: '45', label: 'Строителство', short: 'Строителство' }],
   totalValueEur: 2900,
-  coverage: { dated: 6, total: 7, pct: 0.857 },
+  coverage: { dated: 6, total: 7, pct: 0.857, omitted: 1, omittedEur: 100 },
   scope: { sector: null, funding: 'all', granularity: 'year' },
 };
 
