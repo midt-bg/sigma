@@ -195,25 +195,60 @@ describe('search', () => {
   it('flags company search exceptions without exposing consortium member piles as titles', async () => {
     const results = await search(searchDb(), 'а1');
     const hits = results.groups.find((g) => g.kind === 'company')?.hits ?? [];
+    const byTitle = (t: string) => hits.find((h) => h.title === t);
 
-    expect(hits[0]).toMatchObject({
-      title: 'А1 ПРИМЕР ЕАД и др.',
+    expect(byTitle('А1 ПРИМЕР ЕАД и др.')).toMatchObject({
       ident: null,
       isConsortium: true,
       hasEik: false,
       memberCount: 2,
     });
-    expect(hits[1]).toMatchObject({
-      title: 'No EIK Company',
+    expect(byTitle('No EIK Company')).toMatchObject({
       ident: null,
       isConsortium: false,
       hasEik: false,
       memberCount: null,
     });
-    expect(hits[2]).toMatchObject({
-      title: 'Company 0',
-      ownershipKind: 'state',
+    expect(byTitle('Company 0')).toMatchObject({ ownershipKind: 'state' });
+  });
+
+  it('puts the company named exactly as the query first, then rows with a valid ЕИК', async () => {
+    const row = (ref: string, title: string, eik_valid: number, rank: number) => ({
+      ref,
+      title,
+      ident: eik_valid ? ref.slice(4) : '',
+      subtitle: null,
+      amount: 1,
+      entity_kind: title.includes(';') ? 'consortium' : 'company',
+      ownership_kind: null,
+      eik_valid,
+      has_conflict: 0,
+      rank,
     });
+    // bm25 order: consortium strings and a name-keyed fragment ahead of the canonical company.
+    const rows = [
+      row('name:ТЕСТ ГРУП ЕООД; АЛФА ООД', 'ТЕСТ ГРУП ЕООД; АЛФА ООД', 0, -9),
+      row('name:ТЕСТ ГРУП', 'ТЕСТ ГРУП', 0, -8.9),
+      row('eik:111111118', 'ТЕСТ ГРУП ИНВЕСТ АД', 1, -8.8),
+      ...Array.from({ length: 5 }, (_, i) =>
+        row(`name:ТЕСТ ГРУП ${i}; БЕТА`, `ТЕСТ ГРУП ${i}; БЕТА`, 0, -8.7 + i * 0.01),
+      ),
+      row('eik:111111119', '"ТЕСТ ГРУП" ЕООД', 1, -8),
+    ];
+    const db = fakeD1([
+      { when: 'sqlite_master', first: { n: 2 } },
+      { when: ['FROM search_index', 'GROUP BY kind'], all: [{ kind: 'company', n: rows.length }] },
+      { when: 'FROM search_index', all: rows },
+    ]).db;
+    const company = (await search(db, 'тест груп')).groups.find((g) => g.kind === 'company')!;
+    expect(company.hits.map((h) => h.title)).toEqual([
+      '"ТЕСТ ГРУП" ЕООД', // exact name with a valid ЕИК, despite the weakest bm25
+      'ТЕСТ ГРУП', // exact name, no ЕИК
+      'ТЕСТ ГРУП ИНВЕСТ АД', // valid ЕИК
+      'ТЕСТ ГРУП ЕООД и др.', // then bm25 order
+      'ТЕСТ ГРУП 0 и др.',
+      'ТЕСТ ГРУП 1 и др.',
+    ]);
   });
 
   it('surfaces свързани лица as officials that link to the conflict profile', async () => {
