@@ -124,7 +124,7 @@
 .flow-controls select {
   padding: 4px var(--s-2);
   font: 0.75rem var(--font-mono);
-  border: 1px solid var(--rule);
+  border: 1px solid var(--ink-soft); /* a control boundary needs 3:1 (WCAG 1.4.11) */
   background: var(--paper);
   color: var(--ink);
   letter-spacing: 0.04em;

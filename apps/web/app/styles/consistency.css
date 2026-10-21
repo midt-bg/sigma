@@ -747,7 +747,7 @@ td .chip {
   top: 6px;
   height: 2px;
   min-width: 1px;
-  background: #9a948b;
+  background: #8a847b;
 }
 .time-procurement::after {
   content: '';
@@ -757,7 +757,7 @@ td .chip {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  border: 1px solid #9a948b;
+  border: 1px solid #8a847b;
   background: var(--paper, #faf8f2);
 }
 .time-procurement.tied {
@@ -787,7 +787,7 @@ td .chip {
 .time-symbol.procurement {
   width: 24px;
   height: 2px;
-  background: #9a948b;
+  background: #8a847b;
 }
 .time-symbol.announced {
   width: 24px;
@@ -840,7 +840,7 @@ td .chip {
   right: 7px;
   top: 0;
   bottom: 0;
-  background: #9a948b;
+  background: #8a847b;
 }
 .time-procurement.own.tied::before {
   background: #b71916;
