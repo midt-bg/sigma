@@ -50,9 +50,22 @@ afterEach(() => {
 
 async function render(results: SearchResults) {
   const Stub = createRoutesStub([
-    { path: '/search', Component: Search, loader: () => ({ results }) },
+    { path: '/search', Component: Search, loader: () => ({ results, typed: results.query }) },
   ]);
   await act(async () => root.render(<Stub initialEntries={['/search']} />));
+  return el;
+}
+
+// Through the real loader: what the visitor typed, and what was searched.
+async function renderUrl(url: string) {
+  const Stub = createRoutesStub([
+    {
+      path: '/search',
+      Component: Search,
+      loader: (args) => loader({ ...args, context: { cloudflare: { env: {} } } } as never),
+    },
+  ]);
+  await act(async () => root.render(<Stub initialEntries={[url]} />));
   return el;
 }
 
@@ -70,7 +83,7 @@ describe('/search', () => {
   it('titles the page after the query, and plainly without one', () => {
     const title = (q?: string) =>
       (
-        meta({ data: q == null ? undefined : { results: { query: q } } } as Parameters<
+        meta({ data: q == null ? undefined : { results: { query: q }, typed: q } } as Parameters<
           typeof meta
         >[0])[0] as { title: string }
       ).title;
@@ -146,5 +159,44 @@ describe('/search', () => {
     expect(cards[5]!.querySelector('.amt')).toBeNull();
     // An empty group is not shown at all.
     expect(c.querySelectorAll('.results-group')).toHaveLength(3);
+  });
+
+  describe('typed vs searched query', () => {
+    beforeEach(() => {
+      search.mockImplementation(async (_db: unknown, query: string): Promise<SearchResults> => ({
+        query,
+        groups: [],
+        empty: true,
+      }));
+    });
+    const input = () => el.querySelector<HTMLInputElement>('#page-query')!;
+
+    it('keeps the typed text and states the normalised terms', async () => {
+      await renderUrl(`/search?q=${encodeURIComponent('Ремонт, на ПЪТ 5 А')}`);
+      expect(search).toHaveBeenCalledWith(expect.anything(), 'ремонт на път');
+      expect(input().value).toBe('Ремонт, на ПЪТ 5 А');
+      expect(el.querySelector('h1')!.textContent).toBe('Ремонт, на ПЪТ 5 А');
+      expect(el.textContent).toContain('Търсено по думите: „ремонт на път"');
+    });
+
+    it('adds no note when only letter case differs', async () => {
+      await renderUrl('/search?q=%D0%9C%D0%BE%D1%81%D1%82');
+      expect(input().value).toBe('Мост');
+      expect(el.textContent).not.toContain('Търсено по думите');
+    });
+
+    it('asks for two characters when nothing searchable remains', async () => {
+      await renderUrl('/search?q=a');
+      expect(input().value).toBe('a');
+      expect(el.querySelector('h1')!.textContent).toBe('Търсене');
+      expect(el.textContent).toContain('Въведи поне две букви или цифри.');
+    });
+
+    it('titles the page by the typed query', () => {
+      const title = meta({
+        data: { typed: 'Мост', results: { query: 'мост', groups: [], empty: true } },
+      } as never)[0] as { title: string };
+      expect(title.title).toBe('Търсене: „Мост" — СИГМА');
+    });
   });
 });
