@@ -690,10 +690,6 @@
   stroke: var(--ink);
   stroke-width: 1.5;
 }
-.trend-svg .label {
-  font: 11px var(--font-mono, monospace);
-  fill: var(--ink-soft, #555);
-}
 .trend-svg .line-partial {
   fill: none;
   stroke: var(--ink);
@@ -705,9 +701,40 @@
   stroke: var(--ink);
   stroke-width: 1.5;
 }
-.trend-svg .label-partial {
-  font: 10px var(--font-mono, monospace);
-  fill: var(--ink-soft, #555);
+/* The words of the chart are HTML over the picture (TrendChart.tsx), sized in rem like the rest of
+   the page; their positions are percent of the drawing's box. */
+.trend-chart {
+  margin: 0;
+}
+.trend-plot {
+  position: relative;
+}
+.trend-peak {
+  margin-bottom: var(--s-2);
+  font: 0.75rem/1.4 var(--font-mono);
+  color: var(--ink-mid);
+}
+.trend-chart .label,
+.trend-chart .label-partial {
+  position: absolute;
+  font: 0.75rem/1.2 var(--font-mono);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.trend-chart .label-partial {
+  transform: translate(0, calc(-100% - 6px));
+}
+.trend-chart .label-partial.is-end {
+  transform: translate(-100%, calc(-100% - 6px));
+}
+.trend-axis {
+  position: relative;
+  height: 1.5em;
+  font: 0.75rem/1.2 var(--font-mono);
+}
+.trend-axis .label {
+  top: 0.25em;
+  transform: translateX(-50%);
 }
 
 /* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
