@@ -621,6 +621,8 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
+  /* A pasted id or URL is one unbroken word; without this it widens the page on a phone. */
+  overflow-wrap: anywhere;
 }
 .crumbs a {
   display: inline-flex;
