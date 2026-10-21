@@ -35,7 +35,7 @@ export async function rateLimitConflictsRoute(
     request,
     env.CONFLICTS_RATE_LIMITER,
     isProd,
-    'Too many requests',
+    'Твърде много отворени страници за кратко време. Опитай пак след минута.',
     'CONFLICTS_RATE_LIMITER',
     { failClosed: true },
   );

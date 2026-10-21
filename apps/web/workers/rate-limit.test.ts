@@ -99,17 +99,46 @@ describe('normalizedPathname', () => {
 // Cover both the GET/POST body path AND the HEAD no-body path so the method branch is exercised.
 describe('rateLimitExceededResponse', () => {
   it('returns a 429 with the body and hardened headers for a non-HEAD request', async () => {
-    const res = rateLimitExceededResponse(req(), true, 'Too many requests');
+    const res = rateLimitExceededResponse(req(), true, 'Опитай пак след минута.');
     expect(res.status).toBe(429);
     expect(res.headers.get('Retry-After')).toBe('60');
     expect(res.headers.get('Content-Type')).toContain('text/plain');
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
-    expect(await res.text()).toBe('Too many requests');
+    expect(await res.text()).toBe('Опитай пак след минута.');
+  });
+
+  it('answers a page request with a Bulgarian HTML page', async () => {
+    const pageHeaders: Record<string, string>[] = [
+      { Accept: 'text/html,application/xhtml+xml' },
+      { 'Sec-Fetch-Dest': 'document' },
+    ];
+    for (const headers of pageHeaders) {
+      const res = rateLimitExceededResponse(
+        new Request('http://local/contracts', { headers }),
+        true,
+        'Опитай пак след минута.',
+      );
+      expect(res.headers.get('Content-Type')).toContain('text/html');
+      expect(res.headers.get('Retry-After')).toBe('60');
+      const html = await res.text();
+      expect(html).toContain('<html lang="bg">');
+      expect(html).toContain('<h1>Твърде много заявки</h1>');
+      expect(html).toContain('Опитай пак след минута.');
+    }
+  });
+
+  it('keeps plain text for a data request even when it accepts HTML', async () => {
+    const res = rateLimitExceededResponse(
+      new Request('http://local/contracts.data', { headers: { Accept: 'text/html' } }),
+      true,
+      'Опитай пак след минута.',
+    );
+    expect(res.headers.get('Content-Type')).toContain('text/plain');
   });
 
   it('omits the body and Content-Type for a HEAD request but keeps status + headers', async () => {
     const head = new Request('http://local/x', { method: 'HEAD' });
-    const res = rateLimitExceededResponse(head, true, 'Too many requests');
+    const res = rateLimitExceededResponse(head, true, 'Опитай пак след минута.');
     expect(res.status).toBe(429);
     expect(res.headers.get('Retry-After')).toBe('60');
     expect(res.headers.get('Content-Type')).toBeNull();
@@ -125,7 +154,7 @@ describe('rateLimitUnavailableResponse', () => {
     expect(res.headers.get('Retry-After')).toBe('60');
     expect(res.headers.get('Content-Type')).toContain('text/plain');
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
-    expect(await res.text()).toBe('Rate limiting unavailable');
+    expect(await res.text()).toBe('Сайтът е зает в момента. Опитай пак след минута.');
   });
 
   it('omits the body and Content-Type for a HEAD request but keeps status + headers', async () => {

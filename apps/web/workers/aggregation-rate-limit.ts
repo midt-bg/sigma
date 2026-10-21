@@ -17,7 +17,7 @@ export async function rateLimitAggregationRoute(
     request,
     env.AGG_RATE_LIMITER,
     isProd,
-    'Too many aggregation requests',
+    'Твърде много отворени страници за кратко време. Опитай пак след минута.',
     'AGG_RATE_LIMITER',
   );
 }
