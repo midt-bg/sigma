@@ -318,7 +318,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           {tieLayout ? (
             <>
               <TieGraph layout={tieLayout} />
-              <div className="sr-only">
+              <div className="tie-table">
                 <DataTable
                   columns={tieColumns}
                   rows={tieRows(ties)}

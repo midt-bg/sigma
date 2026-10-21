@@ -112,7 +112,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
                 hint="Вписани роли по Търговския регистър в частни дружества. Мястото в орган на публично предприятие е заемана длъжност и стои при длъжностите."
               >
                 <TieGraph layout={p.tieLayout} />
-                <div className="sr-only">
+                <div className="tie-table">
                   <DataTable
                     columns={tieColumns}
                     rows={tieRows(p.person.network)}
@@ -121,7 +121,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
                   />
                 </div>
                 {p.person.network.omitted > 0 && (
-                  <p className="small muted">
+                  <p className="small muted diagram-only">
                     Още {count(p.person.network.omitted)} дружества са извън схемата; ролите и
                     договорите включват целия наличен набор.
                   </p>
