@@ -339,6 +339,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
         >
           <div className="table-wrap tbl-cards">
             <table>
+              <caption className="sr-only">Топ изпълнители</caption>
               <thead>
                 <tr>
                   <th scope="col">#</th>
