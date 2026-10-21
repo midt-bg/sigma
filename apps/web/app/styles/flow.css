@@ -41,11 +41,14 @@
   .flow-scroll-hint {
     display: none;
   }
-  /* Stack the filter controls into a clean vertical list on phones */
+  /* Stack the filter controls into a clean vertical list on phones. The right edge stays clear of
+     the two floating buttons (accessibility, back to top), which otherwise sit on the selects at
+     first paint on 320–360 px screens. */
   .flow-controls {
     flex-direction: column;
     align-items: stretch;
     gap: var(--s-3);
+    padding-right: 60px;
   }
   .flow-controls label {
     justify-content: space-between;

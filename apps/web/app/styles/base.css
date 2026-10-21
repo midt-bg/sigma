@@ -8,6 +8,16 @@ body {
   margin: 0;
   padding: 0;
 }
+/* Keep a focused or linked-to element clear of the floating buttons in the bottom corners
+   (accessibility, back to top: 112 px high together on phones, 72 px on wider screens). */
+html {
+  scroll-padding-bottom: 80px;
+}
+@media (max-width: 760px) {
+  html {
+    scroll-padding-bottom: 120px;
+  }
+}
 
 body {
   background: var(--paper);
