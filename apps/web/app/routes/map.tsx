@@ -1,27 +1,28 @@
-import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
+import { useNavigation, useSearchParams } from 'react-router';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
 import { count, money, pct, plural } from '@sigma/shared';
 import { getRegionalSpending, getDb } from '@sigma/db';
 import type { Route } from './+types/map';
 import { Breadcrumbs } from '../components/Breadcrumbs';
+import { FilterForm, FundingSelect } from '../components/FilterForm';
 import { PageHeader } from '../components/PageHeader';
 import { DataTable, type Column } from '../components/DataTable';
 import { TotalsStrip, type Total } from '../components/TotalsStrip';
 import { Choropleth } from '../components/Choropleth';
 import { Callout, Section, ShareBar } from '../components/ui';
 import { cached } from '../lib/cache';
+import { seoMeta } from '../lib/meta';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 import { singleSelectFilters } from '../lib/filters';
 
-export function meta(_: Route.MetaArgs) {
-  return [
-    { title: 'Карта на разходите — СИГМА' },
-    {
-      name: 'description',
-      content:
-        'Разходите за обществени поръчки по области на България. Къде по картата отиват парите, с класация по области и райони. Областта е известна за част от институциите.',
-    },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return seoMeta({
+    matches,
+    path: '/map',
+    title: 'Карта на разходите — СИГМА',
+    description:
+      'Разходите за обществени поръчки по области на България. Къде по картата отиват парите, с класация по области и райони. Областта е известна за част от институциите.',
+  });
 }
 
 export const headers = cached(1800);
@@ -42,7 +43,6 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
   const { data, coverage, years, unknownSector, unknownYear } = loaderData;
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
-  const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
   const sel = (k: string) => sp.get(k) ?? '';
   const total = data.totalValueEur;
@@ -107,11 +107,13 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
           lede="Къде по картата отиват парите за обществени поръчки. Областта се определя по адреса на институцията, така че е известна за част от тях. Институциите без посочена област се показват отделно и не влизат в картата."
         />
 
-        <Form
-          method="get"
-          className="flow-controls"
-          aria-label="Филтри на картата"
-          onChange={(e) => submit(e.currentTarget)}
+        <FilterForm
+          label="Филтри на картата"
+          values={{
+            sector: unknownSector ? '' : sel('sector'),
+            year: unknownYear ? '' : sel('year'),
+            funding: sel('funding'),
+          }}
         >
           <label>
             Сектор:
@@ -135,18 +137,8 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
               ))}
             </select>
           </label>
-          <label>
-            Финансиране:
-            <select name="funding" defaultValue={sel('funding')}>
-              <option value="">Всякакво</option>
-              <option value="eu">Само с финансиране от ЕС</option>
-              <option value="national">Само без финансиране от ЕС</option>
-            </select>
-          </label>
-          <noscript>
-            <button type="submit">Покажи</button>
-          </noscript>
-        </Form>
+          <FundingSelect value={sel('funding')} />
+        </FilterForm>
 
         <p className="sr-only" role="status">
           {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
