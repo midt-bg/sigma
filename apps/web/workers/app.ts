@@ -3,7 +3,6 @@ import { isIndexedHost } from '../app/lib/indexing';
 import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/security';
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { rateLimitAssistantRoute } from './assistant-rate-limit';
-import { rateLimitConflictsRoute } from './conflicts-rate-limit';
 import { normalizedPathname } from './rate-limit';
 import { cacheKey, canonicalRequest } from './cache-key';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
@@ -185,15 +184,6 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
     import.meta.env.PROD,
   );
   if (assistantRateLimitResponse) return assistantRateLimitResponse;
-
-  // /conflicts* names public officials and its .data twin serves each loader — throttle the subtree so it
-  // can't be bulk-scraped into a names export. After the cache check, so cached leaderboard hits are free.
-  const conflictsRateLimitResponse = await rateLimitConflictsRoute(
-    request,
-    env,
-    import.meta.env.PROD,
-  );
-  if (conflictsRateLimitResponse) return conflictsRateLimitResponse;
 
   // The same miss is already rendering in this isolate: take its entry instead of a second D1 read. The
   // check and the claim below run with no await between them, so of identical misses exactly one renders.

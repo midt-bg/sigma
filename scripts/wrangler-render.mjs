@@ -27,14 +27,12 @@ const SENTINELS = {
 // ASSISTANT_RATE_LIMITER is the most important to assert: unlike the others (which fail OPEN), it fails
 // CLOSED in prod, so a dropped/typo'd binding silently 503s every assistant request rather than merely
 // disabling a throttle (review #80, follow-up).
-// CONFLICTS_RATE_LIMITER fails CLOSED too: without it /conflicts* and /persons/* answer 503.
 const REQUIRED_RATE_LIMITERS = [
   'CSV_RATE_LIMITER',
   'AGG_RATE_LIMITER',
   'SEARCH_RATE_LIMITER',
   'SUGGEST_RATE_LIMITER',
   'ASSISTANT_RATE_LIMITER',
-  'CONFLICTS_RATE_LIMITER',
 ];
 
 // A rate-limit namespace_id is account-wide, not scoped to the Worker, so two environments that bind the
@@ -47,7 +45,6 @@ const RATE_LIMIT_NAMESPACE_IDS = {
     AGG_RATE_LIMITER: '2026102102',
     SEARCH_RATE_LIMITER: '2026102103',
     ASSISTANT_RATE_LIMITER: '2026102105',
-    CONFLICTS_RATE_LIMITER: '2026102106',
     SUGGEST_RATE_LIMITER: '2026102107',
   },
   dev: {
@@ -55,7 +52,6 @@ const RATE_LIMIT_NAMESPACE_IDS = {
     AGG_RATE_LIMITER: '2026102112',
     SEARCH_RATE_LIMITER: '2026102113',
     ASSISTANT_RATE_LIMITER: '2026102115',
-    CONFLICTS_RATE_LIMITER: '2026102116',
     SUGGEST_RATE_LIMITER: '2026102117',
   },
 };

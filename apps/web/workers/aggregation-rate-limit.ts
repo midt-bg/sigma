@@ -19,6 +19,8 @@ const AGGREGATION_PATHS = new Set([
   '/trends',
   '/analytics',
   '/competition',
+  // The related-persons list reads every published link and filters them in the Worker.
+  '/conflicts',
 ]);
 
 export async function rateLimitAggregationRoute(

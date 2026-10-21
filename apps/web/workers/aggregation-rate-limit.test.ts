@@ -72,6 +72,8 @@ describe('rateLimitAggregationRoute', () => {
       '/trends?x=1',
       '/analytics',
       '/competition',
+      '/conflicts?q=x',
+      '/conflicts.data',
     ]) {
       const { limiter } = rateLimiter(false);
       const response = await rateLimitAggregationRoute(
@@ -84,7 +86,17 @@ describe('rateLimitAggregationRoute', () => {
   });
 
   it('does not limit unrelated paths', async () => {
-    for (const path of ['/impressum', '/methodology', '/contracts.csv', '/companies/111']) {
+    for (const path of [
+      '/impressum',
+      '/methodology',
+      '/contracts.csv',
+      '/companies/111',
+      // Person pages and a link's contracts are small, edge-cached reads: no limit.
+      '/persons/p1',
+      '/persons/p1.data',
+      '/conflicts/methodology',
+      '/conflicts/link/self/p1/111/contracts',
+    ]) {
       const { limiter, limit } = rateLimiter(false);
       await expect(
         rateLimitAggregationRoute(

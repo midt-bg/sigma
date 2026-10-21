@@ -290,12 +290,12 @@ test('refuses an unknown environment and a limiter without an id for it', () => 
   assert.match(extra.run.stderr, /no staging namespace_id for rate-limit binding NEW_RATE_LIMITER/);
 });
 
-test('refuses a web config without the fail-closed conflicts limiter', () => {
+test('refuses a web config without the fail-closed assistant limiter', () => {
   const config = readFileSync('apps/web/wrangler.jsonc', 'utf8').replace(
-    '"name": "CONFLICTS_RATE_LIMITER"',
+    '"name": "ASSISTANT_RATE_LIMITER"',
     '"name": "OTHER_RATE_LIMITER"',
   );
   const rendered = renderWeb({}, config);
   assert.equal(rendered.run.status, 1);
-  assert.match(rendered.run.stderr, /missing rate-limit binding CONFLICTS_RATE_LIMITER/);
+  assert.match(rendered.run.stderr, /missing rate-limit binding ASSISTANT_RATE_LIMITER/);
 });

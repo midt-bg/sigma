@@ -105,7 +105,7 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
 // The worker is the single source of the noindex signal for /conflicts (a personal-names surface). It must
 // stamp X-Robots-Tag on BOTH the HTML and the single-fetch `.data` twin — the twin is JSON with no <head> to
 // carry a route <meta robots>, and a resource route's loader `data(..., {headers})` doesn't propagate to it.
-// The env omits CONFLICTS_RATE_LIMITER, so the fail-open limiter lets each request reach the (mocked) loader.
+// The env binds no limiter, so the fail-open limiters let each request reach the (mocked) loader.
 describe('handleRequest — /conflicts responses are noindex (HTML + .data twin)', () => {
   const noindexed = [
     'http://local/conflicts',
