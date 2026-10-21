@@ -459,26 +459,6 @@ details.row .body .signal .why {
   gap: 0;
   border-top: 1px solid var(--ink);
 }
-@media (max-width: 1024px) {
-  .tiles {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .tile:nth-child(2n + 1) {
-    padding-left: 0;
-  }
-  .tile:nth-child(2n) {
-    border-right: 0;
-  }
-}
-@media (max-width: 560px) {
-  .tiles {
-    grid-template-columns: 1fr;
-  }
-  .tile {
-    padding-left: 0;
-    border-right: 0;
-  }
-}
 .tile {
   border-bottom: 1px solid var(--rule);
   border-right: 1px solid var(--rule);
@@ -491,6 +471,28 @@ details.row .body .signal .why {
 }
 .tile:nth-child(4n) {
   border-right: 0;
+}
+@media (max-width: 1024px) {
+  .tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .tile:nth-child(2n + 1) {
+    padding-left: 0;
+  }
+  .tile:nth-child(2n) {
+    border-right: 0;
+  }
+}
+/* One column: every tile flush left, no divider. After the rules above and as specific as the
+   :nth-child ones, so that it wins over both. */
+@media (max-width: 560px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+  .tiles > .tile {
+    padding-left: 0;
+    border-right: 0;
+  }
 }
 .tile .kicker {
   font: 500 0.75rem/1 var(--font-mono);
