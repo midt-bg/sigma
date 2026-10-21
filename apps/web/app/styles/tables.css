@@ -425,6 +425,19 @@ td.rank {
   }
 }
 
+/* A ranking with a share bar (/competition) keeps every column on a tablet: the bar narrows and its
+   percentage drops under it, so the row fits the box and the value column stays in view. */
+@media (min-width: 601px) and (max-width: 960px) {
+  .tbl-cards .share {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 4px;
+  }
+  .tbl-cards .share-bar {
+    width: 48px;
+  }
+}
+
 /* Phones: tables that DON'T reflow into cards (e.g. the home top-10) keep
    their native columns and scroll sideways. Add a right-edge fade + a thin
    visible scrollbar so the off-screen right-hand columns are discoverable.
