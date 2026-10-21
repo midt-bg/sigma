@@ -22,11 +22,14 @@ const MONTHS_BG = [
   'декември',
 ];
 
-/** Format a number to `dp` decimals with a comma decimal sep; optionally drop a trailing „,0". */
+/** Format a number to `dp` decimals with a comma decimal sep and NBSP-grouped thousands; optionally
+ *  drop a trailing „,0". */
 function dec(n: number, dp: number, stripZeros: boolean): string {
   let s = n.toFixed(dp);
   if (stripZeros && s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
-  return s.replace('.', ',');
+  const [int, frac] = s.split('.');
+  const grouped = int!.replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
+  return frac == null ? grouped : `${grouped},${frac}`;
 }
 
 function rounded(n: number, dp: number): number {
