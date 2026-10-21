@@ -151,7 +151,7 @@ describe('app.ts edge cache middleware', () => {
 
   it('answers HEAD from the GET entry, headers only, without running the loaders', async () => {
     expect((await get('https://x/network')).edge).toBe('MISS');
-    const head = await get('https://x/NETWORK', 'HEAD'); // route matching ignores case, so does the key
+    const head = await get('https://x/network', 'HEAD'); // an upper-case path is redirected first (below)
     expect(head.edge).toBe('HIT');
     expect(head.body).toBe('');
     expect(rendered).toHaveLength(1);
@@ -230,6 +230,20 @@ describe('app.ts edge cache middleware', () => {
     const again = await get('https://x/contracts.data?_routes=root');
     expect(again.edge).toBe('BYPASS');
     expect(again.body).toContain('PARTIAL: root only');
+  });
+
+  it('redirects an upper-case path even when its lower-case page is cached', async () => {
+    expect((await get('https://x/contracts')).edge).toBe('MISS');
+    const res = await worker.fetch(
+      new Request('https://x/Contracts?bids=1'),
+      {},
+      {
+        waitUntil: () => {},
+        passThroughOnException: () => {},
+      },
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get('Location')).toBe('/contracts?bids=1');
   });
 
   it('never caches a non-ok (404) response — the invariant cache-key.ts relies on (#221/#213)', async () => {
