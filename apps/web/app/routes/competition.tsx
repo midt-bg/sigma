@@ -93,11 +93,13 @@ const concentrationColumns: Column<CompetitionConcentration>[] = [
   },
   {
     key: 'hhi',
-    header: 'Концентрация (HHI)',
+    // The two long one-word headers carry a soft hyphen: on a tablet they break at it instead of setting
+    // the column wider than the table's box, as the other rankings' several-word headers do on their own.
+    header: 'Концен\u00adтрация (HHI)',
     align: 'num',
     cell: (r) => <ShareBar ratio={r.hhi} warn={r.hhi >= 0.25} index />,
   },
-  { key: 'suppliers', header: 'Доставчици', align: 'num', cell: (r) => count(r.suppliers) },
+  { key: 'suppliers', header: 'Достав\u00adчици', align: 'num', cell: (r) => count(r.suppliers) },
   {
     key: 'contracts',
     header: 'Договори',
