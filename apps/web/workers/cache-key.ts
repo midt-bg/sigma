@@ -33,6 +33,10 @@ export function cacheKey(request: Request, deployTag: string): Request {
   } catch {
     // Malformed percent-encoding should not break cache lookup; keep the raw path as the fallback.
   }
+  // Route matching ignores case and every first path segment is a static one: `/NETWORK` is `/network`.
+  // ponytail: deeper static segments (`/conflicts/METHODOLOGY`) keep their case; lowercase those per
+  // route if their variants ever matter.
+  url.pathname = url.pathname.replace(/^\/[^/]*/, (segment) => segment.toLowerCase());
 
   params.set('_dt', deployTag);
   url.search = params.toString();

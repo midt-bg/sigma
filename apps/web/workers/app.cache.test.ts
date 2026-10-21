@@ -101,13 +101,13 @@ beforeEach(() => {
   vi.stubEnv('DEV', false);
 });
 
-async function get(url: string) {
+async function get(url: string, method = 'GET') {
   const waits: Promise<unknown>[] = [];
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void waits.push(p),
     passThroughOnException: () => {},
   };
-  const res = await worker.fetch(new Request(url), {}, ctx);
+  const res = await worker.fetch(new Request(url, { method }), {}, ctx);
   const body = await res.clone().text();
   await Promise.all(waits); // let edgeCache.put (ctx.waitUntil) settle before the next request
   return { edge: res.headers.get('X-Edge-Cache'), body };
@@ -141,6 +141,24 @@ describe('app.ts edge cache middleware', () => {
     expect(junk.body).toBe('PAGE: /competition?sector=45');
     expect(new URL(rendered[0]!.url).search).toBe('?sector=45');
     expect((await get('https://x/competition?sector=45')).edge).toBe('HIT');
+    expect(rendered).toHaveLength(1);
+  });
+
+  it('answers HEAD from the GET entry, headers only, without running the loaders', async () => {
+    expect((await get('https://x/network')).edge).toBe('MISS');
+    const head = await get('https://x/NETWORK', 'HEAD'); // route matching ignores case, so does the key
+    expect(head.edge).toBe('HIT');
+    expect(head.body).toBe('');
+    expect(rendered).toHaveLength(1);
+  });
+
+  it('fills the GET entry on a cold HEAD, so the next HEAD or GET is a HIT', async () => {
+    const cold = await get('https://x/contracts', 'HEAD');
+    expect(cold.edge).toBe('MISS');
+    expect(cold.body).toBe('');
+    expect(rendered[0]!.method).toBe('GET');
+    expect((await get('https://x/contracts', 'HEAD')).edge).toBe('HIT');
+    expect((await get('https://x/contracts')).body).toContain('all contracts');
     expect(rendered).toHaveLength(1);
   });
 
