@@ -9,6 +9,7 @@ import {
 } from '@sigma/db';
 import { data, Link, redirect } from 'react-router';
 import { PageHeader } from '../components/PageHeader';
+import { Breadcrumbs } from '../components/Breadcrumbs';
 import { DataTable } from '../components/DataTable';
 import type { Route } from './+types/person';
 import { PersonProfile } from '../components/PersonProfile';
@@ -80,89 +81,116 @@ export async function loader({ params, context, request }: Route.LoaderArgs) {
 export default function Person({ loaderData }: Route.ComponentProps) {
   if ('sources' in loaderData)
     return (
-      <main id="main">
-        <PageHeader
-          kicker="Търговски регистър"
-          title="Източникови записи"
-          lede="Наличните сведения не са достатъчни за обединяване в общ профил. Ролите са достъпни при съответното дружество."
-        />
-        <DataTable
-          rows={loaderData.sources}
-          getKey={(r) => `${r.eik}:${r.name}`}
-          variant="prose"
-          columns={[
-            {
-              key: 'name',
-              header: 'Име в регистъра',
-              isTitle: true,
-              cell: (r) => personName(r.name),
-            },
-            {
-              key: 'company',
-              header: 'Дружество',
-              cell: (r) => (r.href ? <Link to={r.href}>{r.company}</Link> : r.company),
-            },
-            {
-              key: 'eik',
-              header: 'Партида',
-              cell: (r) => <NewTabLink href={registryUrl(r.eik)}>ЕИК {r.eik}</NewTabLink>,
-            },
-            { key: 'fetchedAt', header: 'Извлечено на', cell: (r) => date(r.fetchedAt) },
+      <>
+        <Breadcrumbs
+          items={[
+            { label: 'Начало', to: '/' },
+            { label: 'Свързани лица', to: '/conflicts' },
+            { label: 'Източникови записи' },
           ]}
         />
-        <RegistrySource />
-      </main>
+        <main id="main">
+          <PageHeader
+            kicker="Търговски регистър"
+            title="Източникови записи"
+            lede="Наличните сведения не са достатъчни за обединяване в общ профил. Ролите са достъпни при съответното дружество."
+          />
+          <DataTable
+            rows={loaderData.sources}
+            getKey={(r) => `${r.eik}:${r.name}`}
+            variant="prose"
+            columns={[
+              {
+                key: 'name',
+                header: 'Име в регистъра',
+                isTitle: true,
+                cell: (r) => personName(r.name),
+              },
+              {
+                key: 'company',
+                header: 'Дружество',
+                cell: (r) => (r.href ? <Link to={r.href}>{r.company}</Link> : r.company),
+              },
+              {
+                key: 'eik',
+                header: 'Партида',
+                cell: (r) => <NewTabLink href={registryUrl(r.eik)}>ЕИК {r.eik}</NewTabLink>,
+              },
+              { key: 'fetchedAt', header: 'Извлечено на', cell: (r) => date(r.fetchedAt) },
+            ]}
+          />
+          <RegistrySource />
+        </main>
+      </>
     );
   if ('source' in loaderData)
     return (
-      <main id="main">
-        <PageHeader
-          kicker="Декларации от източника"
-          title={personName(loaderData.source.name)}
-          lede="Тези документи се водят като отделен запис. Няма доказана връзка с дружество, затова страницата няма раздели за свързани дружества, роли по Търговския регистър и договори — показани са само самите декларации."
-        >
-          {/* The register can issue one person more than one declarant identifier, and then the filings
+      <>
+        <Breadcrumbs
+          items={[
+            { label: 'Начало', to: '/' },
+            { label: 'Свързани лица', to: '/conflicts' },
+            { label: personName(loaderData.source.name) },
+          ]}
+        />
+        <main id="main">
+          <PageHeader
+            kicker="Декларации от източника"
+            title={personName(loaderData.source.name)}
+            lede="Тези документи се водят като отделен запис. Няма доказана връзка с дружество, затова страницата няма раздели за свързани дружества, роли по Търговския регистър и договори — показани са само самите декларации."
+          >
+            {/* The register can issue one person more than one declarant identifier, and then the filings
               stay in separate records: identity is established by evidence, never by the name (ADR-0033),
               because a namesake merged in error is the harm this rail exists to prevent. Saying so — and
               pointing at every record under the name — is the honest answer to „why are these apart?". */}
-          <p className="small muted">
-            Документи под същото име може да се водят в отделен запис — едно и също име не доказва
-            едно и също лице.{' '}
-            <Link to={`/search?q=${encodeURIComponent(loaderData.source.name)}`}>
-              Виж всички записи под това име
-            </Link>
-            .
-          </p>
-        </PageHeader>
-        <Section id="declarations" title="Всички декларации">
-          <Declarations declarations={loaderData.source.declarations} />
-        </Section>
-      </main>
+            <p className="small muted">
+              Документи под същото име може да се водят в отделен запис — едно и също име не доказва
+              едно и също лице.{' '}
+              <Link to={`/search?q=${encodeURIComponent(loaderData.source.name)}`}>
+                Виж всички записи под това име
+              </Link>
+              .
+            </p>
+          </PageHeader>
+          <Section id="declarations" title="Всички декларации">
+            <Declarations declarations={loaderData.source.declarations} />
+          </Section>
+        </main>
+      </>
     );
   if ('destinations' in loaderData)
     return (
-      <main id="main">
-        <PageHeader
-          kicker="Длъжностни лица"
-          title="Профили и декларации"
-          lede="Под това име и институция има документи, които доказателствата разделят на отделни записи. Всеки води към своя профил. Отделните групи не означават непременно различни хора — означават само, че нищо не доказва, че са едно и също."
+      <>
+        <Breadcrumbs
+          items={[
+            { label: 'Начало', to: '/' },
+            { label: 'Свързани лица', to: '/conflicts' },
+            { label: 'Профили и декларации' },
+          ]}
         />
-        <ul>
-          {loaderData.destinations.map((p) => (
-            <li key={p.id}>
-              <Link to={`/persons/${personSlug(p.id)}?view=profile`}>{personName(p.name)}</Link>
-              <p>
-                {p.kind === 'person'
-                  ? 'Обединен профил'
-                  : 'Декларации с непотвърдена принадлежност'}{' '}
-                · {count(p.declaration_count)}{' '}
-                {plural(p.declaration_count, 'декларация', 'декларации')}
-              </p>
-              {p.institutions && <p>{p.institutions}</p>}
-            </li>
-          ))}
-        </ul>
-      </main>
+        <main id="main">
+          <PageHeader
+            kicker="Длъжностни лица"
+            title="Профили и декларации"
+            lede="Под това име и институция има документи, които доказателствата разделят на отделни записи. Всеки води към своя профил. Отделните групи не означават непременно различни хора — означават само, че нищо не доказва, че са едно и също."
+          />
+          <ul>
+            {loaderData.destinations.map((p) => (
+              <li key={p.id}>
+                <Link to={`/persons/${personSlug(p.id)}?view=profile`}>{personName(p.name)}</Link>
+                <p>
+                  {p.kind === 'person'
+                    ? 'Обединен профил'
+                    : 'Декларации с непотвърдена принадлежност'}{' '}
+                  · {count(p.declaration_count)}{' '}
+                  {plural(p.declaration_count, 'декларация', 'декларации')}
+                </p>
+                {p.institutions && <p>{p.institutions}</p>}
+              </li>
+            ))}
+          </ul>
+        </main>
+      </>
     );
   return <PersonProfile profile={loaderData} />;
 }
