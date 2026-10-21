@@ -5,7 +5,7 @@ import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { rateLimitAssistantRoute } from './assistant-rate-limit';
 import { rateLimitConflictsRoute } from './conflicts-rate-limit';
 import { normalizedPathname } from './rate-limit';
-import { cacheKey } from './cache-key';
+import { cacheKey, canonicalRequest } from './cache-key';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
@@ -119,6 +119,10 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (httpsRedirect) return httpsRedirect;
 
   if (request.method === 'OPTIONS') return optionsResponse(import.meta.env.PROD);
+
+  // The loader sees only the query its route reads (app/lib/query-params.ts), the same query the cache
+  // key carries, so a junk or unknown value neither mints a new key nor renders into a shared one.
+  if (request.method === 'GET') request = canonicalRequest(request);
 
   const csvRateLimitResponse = await rateLimitCsvExport(request, env, import.meta.env.PROD);
   if (csvRateLimitResponse) return csvRateLimitResponse;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cacheKey } from './cache-key';
-import { CANONICAL_QUERY_PARAMS } from '../app/lib/query-params';
+import { CANONICAL_QUERY_PARAMS, routeQueryParams } from '../app/lib/query-params';
 
 function cacheUrl(input: string): URL {
   return new URL(cacheKey(new Request(input), 'deploy-test').url);
@@ -33,7 +33,7 @@ const APP_SOURCES: Record<string, string> = import.meta.glob(
 //     wrongly force log-/rate-limit-only reads into the key. If a worker ever reads a param to shape
 //     a cached response, key it explicitly here (better: move that read into a loader under app/).
 //   - A new URLSearchParams binding name (other than sp/searchParams/base) needs a pattern added here.
-function consumedQueryParams(): Set<string> {
+function consumedQueryParams(sources: Record<string, string> = APP_SOURCES): Set<string> {
   const patterns = [
     /(?:\bsp|\bsearch|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
     /\bgetMulti\(\s*\w+\s*,\s*['"]([A-Za-z_]\w*)['"]/g,
@@ -42,7 +42,7 @@ function consumedQueryParams(): Set<string> {
   ];
 
   const found = new Set<string>();
-  for (const [path, src] of Object.entries(APP_SOURCES)) {
+  for (const [path, src] of Object.entries(sources)) {
     if (path.includes('.test.')) continue;
     for (const re of patterns) {
       re.lastIndex = 0;
@@ -70,6 +70,48 @@ describe('cacheKey', () => {
       ['year', '2024'],
       ['_dt', 'deploy-test'],
     ]);
+  });
+
+  it('keeps only the params the matched route reads', () => {
+    // The home page and /analytics read none: a unique value must not mint a key (and a D1 read).
+    expect(cacheUrl('http://local/?q=probe-1&p=99').search).toBe('?_dt=deploy-test');
+    expect(cacheUrl('http://local/_root.data?q=probe-1').search).toBe('?_dt=deploy-test');
+    expect(cacheUrl('http://local/analytics?p=99&q=probe').search).toBe('?_dt=deploy-test');
+    expect(cacheUrl('http://local/competition.data?p=99&sector=45').search).toBe(
+      '?sector=45&_dt=deploy-test',
+    );
+    // /contracts reads `bidder`, /companies does not.
+    expect(cacheUrl('http://local/contracts?bidder=111').search).toBe(
+      '?bidder=111&_dt=deploy-test',
+    );
+    expect(cacheUrl('http://local/companies?bidder=111').search).toBe('?_dt=deploy-test');
+    // A person profile and its old /conflicts/official address read the activity filters.
+    expect(cacheUrl('http://local/persons/p-1?view=profile&q=x').search).toBe(
+      '?view=profile&_dt=deploy-test',
+    );
+    expect(cacheUrl('http://local/conflicts/official/p-1?year=2024').search).toBe(
+      '?year=2024&_dt=deploy-test',
+    );
+  });
+
+  it('folds junk explorer values into the key of what the page renders for them', () => {
+    const base = cacheUrl('http://local/competition').toString();
+    // Values that mean „no filter" — including the empty selects the filter form submits — are dropped.
+    expect(
+      cacheUrl('http://local/competition?funding=all&top=20&g=x&sector=&year=').toString(),
+    ).toBe(base);
+    // Every unknown sector or year is one placeholder (the page still says it is unknown) …
+    expect(cacheUrl('http://local/competition?sector=zz1&year=twenty').search).toBe(
+      cacheUrl('http://local/competition?sector=zz2&year=1066').search,
+    );
+    // … and only the first value counts, as for the page's own `sp.get`.
+    expect(cacheUrl('http://local/competition?sector=45&sector=72&sector=09').search).toBe(
+      '?sector=45&_dt=deploy-test',
+    );
+    expect(cacheUrl('http://local/competition?funding=eu&top=50&year=2024').search).toBe(
+      '?funding=eu&top=50&year=2024&_dt=deploy-test',
+    );
+    expect(cacheUrl('http://local/trends?g=year').search).toBe('?g=year&_dt=deploy-test');
   });
 
   it('preserves multi-values for allowed params', () => {
@@ -134,6 +176,27 @@ describe('CANONICAL_QUERY_PARAMS drift guard', () => {
 
     const undeclared = [...consumed].filter((p) => !CANONICAL_QUERY_PARAMS.has(p)).sort();
     expect(undeclared).toEqual([]);
+  });
+
+  it('places every param on the routes that read it', () => {
+    // Each route module's own reads must be on its route's list: a missing one would be stripped from the
+    // request before the loader runs. Reads through shared helpers are covered by the route tests.
+    const routesTs = APP_SOURCES['../app/routes.ts']!;
+    const routes = [...routesTs.matchAll(/route\(\s*'([^']+)',\s*'(routes\/[^']+)'/g)];
+    expect(routes.length).toBeGreaterThan(20);
+    const missing: string[] = [];
+    for (const [, path, file] of routes) {
+      const pathname = `/${path!.replace(/:[^/]+/g, 'x')}`;
+      const reads = consumedQueryParams({ [file!]: APP_SOURCES[`../app/${file}`] ?? '' });
+      for (const p of reads)
+        if (!routeQueryParams(pathname).includes(p)) missing.push(`${path} ${p}`);
+    }
+    expect(missing).toEqual([]);
+
+    const routed = new Set(
+      [...routes].flatMap(([, path]) => routeQueryParams(`/${path!.replace(/:[^/]+/g, 'x')}`)),
+    );
+    expect([...CANONICAL_QUERY_PARAMS].filter((p) => !routed.has(p)).sort()).toEqual([]);
   });
 
   it('does not retain allow-list entries that nothing reads', () => {

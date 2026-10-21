@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useSearchParams } from 'react-router';
 import { SmartSearch } from './SmartSearch';
 import { ANALYTICS_NAV_PATHS } from '../lib/analytics-lenses';
+import { routeQueryParams } from '../lib/query-params';
 
 type NavItem = {
   to: string;
@@ -31,8 +32,11 @@ function pathMatches(pathname: string, base: string): boolean {
 export function SiteHeader() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  // Prefill from the active query so reopening search on a results page shows it.
-  const activeQuery = searchParams.get('q') ?? '';
+  // Prefill from the active query so reopening search on a results page shows it. Only where the route
+  // reads `q`: elsewhere the edge cache and the server render ignore it, so `/?q=…` stays the home page.
+  const activeQuery = routeQueryParams(location.pathname).includes('q')
+    ? (searchParams.get('q') ?? '')
+    : '';
   const [searchOpen, setSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const drawerId = useId();

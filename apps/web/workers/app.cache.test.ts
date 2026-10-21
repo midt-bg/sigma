@@ -1,5 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Every request the stubbed React Router handler (the loaders) receives.
+const rendered = vi.hoisted(() => [] as Request[]);
+
 // Exercises the REAL edge-cache middleware in app.ts (handleRequest -> cacheKey -> edgeCache
 // match/put) without the SSR build or D1, to gate that app.ts actually keys the cache by cacheKey.
 // The pure cacheKey test proves keys differ; this proves the middleware USES that key, so a
@@ -9,6 +12,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // must be in the cache key. The import thunk is never invoked, so no real build is loaded.
 vi.mock('react-router', () => ({
   createRequestHandler: () => async (request: Request) => {
+    rendered.push(request);
     const url = new URL(request.url);
     // A designated path returns 404, to exercise the response.ok cache-put gate (see the „non-ok" test).
     if (url.pathname === '/contracts/missing') {
@@ -23,9 +27,11 @@ vi.mock('react-router', () => ({
     const bids = url.searchParams.get('bids');
     const body = url.searchParams.has('_routes')
       ? `PARTIAL: ${url.searchParams.get('_routes')} only`
-      : bids === '1'
-        ? 'ROWS: single-bid only (2)'
-        : 'ROWS: all contracts (5)';
+      : url.pathname === '/' || url.pathname === '/competition'
+        ? `PAGE: ${url.pathname}${url.search}`
+        : bids === '1'
+          ? 'ROWS: single-bid only (2)'
+          : 'ROWS: all contracts (5)';
     return new Response(body, {
       status: 200,
       headers: {
@@ -91,6 +97,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   fakeCache.store.clear();
+  rendered.length = 0;
   vi.stubEnv('DEV', false);
 });
 
@@ -116,6 +123,25 @@ describe('app.ts edge cache middleware', () => {
   it('caches per response — a repeated GET HITs', async () => {
     expect((await get('https://x/contracts')).edge).toBe('MISS');
     expect((await get('https://x/contracts')).edge).toBe('HIT');
+  });
+
+  it('a param the route does not read neither misses the cache nor reaches the loader', async () => {
+    expect((await get('https://x/')).edge).toBe('MISS');
+    const probe = await get('https://x/?q=unique-probe-1');
+    expect(probe.edge).toBe('HIT');
+    expect(probe.body).toBe('PAGE: /');
+    expect(rendered).toHaveLength(1);
+  });
+
+  it('renders the page from the same canonical query the key carries', async () => {
+    // The junk value is dropped before the loader, so the stored body is the one the key describes —
+    // and the next plain visitor gets it from the cache.
+    const junk = await get('https://x/competition?funding=bogus&sector=45&x=1');
+    expect(junk.edge).toBe('MISS');
+    expect(junk.body).toBe('PAGE: /competition?sector=45');
+    expect(new URL(rendered[0]!.url).search).toBe('?sector=45');
+    expect((await get('https://x/competition?sector=45')).edge).toBe('HIT');
+    expect(rendered).toHaveLength(1);
   });
 
   it('never serves the ?bids=1 body for /contracts (CWE-349, #56)', async () => {
