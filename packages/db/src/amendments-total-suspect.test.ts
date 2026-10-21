@@ -98,6 +98,7 @@ interface AmendmentStep {
   before: number | null;
   after: number;
   publishedAt: string;
+  currency?: string;
 }
 
 interface Case {
@@ -137,7 +138,7 @@ function seedAmendments(dbPath: string, cases: Case[]): void {
     .flatMap((c) =>
       c.steps.map(
         (s, i) =>
-          `('eop:annexes:${c.unp}', '2026-06-01T00:00:00Z', 'A-${c.unp}-${i + 1}', '${c.unp}', 'C-${c.unp}', '${s.publishedAt}', ${s.before ?? 'NULL'}, ${s.after}, 'BGN')`,
+          `('eop:annexes:${c.unp}', '2026-06-01T00:00:00Z', 'A-${c.unp}-${i + 1}', '${c.unp}', 'C-${c.unp}', '${s.publishedAt}', ${s.before ?? 'NULL'}, ${s.after}, '${s.currency ?? 'BGN'}')`,
       ),
     )
     .join(',\n');
@@ -661,6 +662,58 @@ describe('#305 84818-class orphan exact-double', () => {
         const small = rows.get('UNP-ORPHAN-SMALL');
         expect(small?.value_flag, 'non-exact orphan jump stays ok').toBe('ok');
         expect(small?.current_value_eur).toBe(Math.round(135_000 / 1.95583));
+      });
+    });
+  }
+});
+
+// A lev contract amended in euro after the changeover: the annex's figures are compared with the signing value
+// and with the earlier lev annexes at the fixed peg, so a doubled euro annex is caught like a doubled lev one.
+describe('annex_total_suspect across lev and euro', () => {
+  for (const [label, scriptPaths] of etlRuns) {
+    it(`${label}: flags a doubled euro annex on a lev contract, leaves a modest one ok`, () => {
+      withEtlDb(label, (dbPath) => {
+        const cases: Case[] = [
+          // 195 583 BGN = 100 000 EUR at signing; the euro annex goes 100 000 → 220 000 EUR.
+          {
+            unp: 'UNP-EUR-DOUBLE',
+            signing: SIGNING_BGN,
+            steps: [
+              { before: 100_000, after: 220_000, publishedAt: '2026-06-10', currency: 'EUR' },
+            ],
+          },
+          // A lev annex grows it 30 %, then a euro annex doubles that lev total (130 000 EUR at the peg).
+          {
+            unp: 'UNP-EUR-CHAIN',
+            signing: SIGNING_BGN,
+            steps: [
+              { before: SIGNING_BGN, after: 254_258, publishedAt: '2026-06-10' },
+              { before: 130_000, after: 286_000, publishedAt: '2026-06-20', currency: 'EUR' },
+            ],
+          },
+          // Control: the same euro annex at +30 % is a legal amendment and keeps its current value.
+          {
+            unp: 'UNP-EUR-SMALL',
+            signing: SIGNING_BGN,
+            steps: [
+              { before: 100_000, after: 130_000, publishedAt: '2026-06-10', currency: 'EUR' },
+            ],
+          },
+        ];
+        seedContracts(dbPath, cases);
+        seedAmendments(dbPath, cases);
+        for (const p of scriptPaths) readScript(dbPath, p);
+
+        const rows = rowsByUnp(dbPath);
+        for (const unp of ['UNP-EUR-DOUBLE', 'UNP-EUR-CHAIN']) {
+          expect(rows.get(unp)?.value_flag, unp).toBe('annex_total_suspect');
+          expect(rows.get(unp)?.amount_eur, unp).toBe(100_000);
+          expect(rows.get(unp)?.current_value_eur, unp).toBeNull();
+        }
+        expect(rows.get('UNP-EUR-SMALL')?.value_flag).toBe('ok');
+        expect(rows.get('UNP-EUR-SMALL')?.amount_eur).toBe(130_000);
+        // The served euro annex is marked untrusted too.
+        expect(servedByUnp(dbPath).get('UNP-EUR-DOUBLE')?.value_suspect).toBe(1);
       });
     });
   }

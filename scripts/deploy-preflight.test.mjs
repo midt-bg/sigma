@@ -102,7 +102,7 @@ test('an unknown environment is refused before anything is read', () => {
 });
 
 test('the code’s data version is the one in packages/db/data-version.json', () => {
-  assert.equal(codeDataVersion(), 2);
+  assert.equal(codeDataVersion(), 3);
 });
 
 test('the deploy checks the environment before the schema and names the web Worker even unset', async () => {
