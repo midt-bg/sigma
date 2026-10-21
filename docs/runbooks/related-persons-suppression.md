@@ -112,10 +112,12 @@ If a ship fails on any of these, fix the cause; do **not** empty the list or dro
 A rotated salt invalidates every existing fingerprint, so it is a coordinated change guarded by
 `key_version`: re-derive `fp` for each entry from its original `link_key` under the new salt (you need the
 plaintext keys, kept out-of-band, e.g. in the incident tickets), **bump every entry's `key_version`** to the
-new value, replace the file in one commit, and update **both** CI settings — but note they are different
-kinds: `SUPPRESSION_SALT` is a repository **secret**, while `SUPPRESSION_KEY_VERSION` is a repository
-**variable** (`${{ vars.SUPPRESSION_KEY_VERSION || '1' }}` in `related-persons-data.yml`). The version is
-not sensitive — it is a counter — and looking for it under Secrets is a dead end during an incident.
+new value, replace the file in one commit, and update **both** settings of the GitHub Environment — but
+note they are different kinds: `SUPPRESSION_SALT` is an Environment **secret**, while
+`SUPPRESSION_KEY_VERSION` is an Environment **variable** (`${{ vars.SUPPRESSION_KEY_VERSION || '1' }}` in
+`deploy.yml`). The version is not sensitive — it is a counter — and looking for it under Secrets is a
+dead end during an incident. Both reach the declarations container as etl Worker secrets on the next
+deploy of that environment, so the rotation takes effect only after that deploy.
 Because the loader refuses any entry on a non-current `key_version`, a half-finished rotation fails the
 build loudly instead of silently un-suppressing.
 
