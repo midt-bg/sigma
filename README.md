@@ -39,7 +39,7 @@
 | Търсене       | `/search`                                                             | По имена, предмет и идентификатори                                    |
 | Методология   | `/methodology`, `/conflicts/methodology`                              | Откъде са данните, как се сглобяват и как се оспорва връзка           |
 
-Списъците имат CSV експорт (`/contracts.csv`, `/companies.csv`, `/authorities.csv`), всеки договор — JSON изглед (`/contracts/[id].json`). Има и страници за достъпност, поверителност и impressum, плюс `robots.txt` и sitemap файлове. Маршрутът `/assistant/chat` (AI асистентът) е в кода, но не е пуснат: без ключ за модела отговаря с 503.
+Списъците имат CSV експорт (`/contracts.csv`, `/companies.csv`, `/authorities.csv`), всеки договор — JSON изглед (`/contracts/[id].json`). Има и страници за достъпност, поверителност и impressum, плюс `robots.txt`, `/.well-known/security.txt` и sitemap файлове. Маршрутът `/assistant/chat` (AI асистентът) е в кода, но не е пуснат: без ключ за модела отговаря с 503.
 
 ## Накъде върви
 
