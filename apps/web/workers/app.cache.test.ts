@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_RENDERING } from './render-gate';
+import { FLIGHT_MS, MAX_RENDERING } from './render-gate';
 
 // Every request the stubbed React Router handler (the loaders) receives; while `held.gate` is set, every
 // render waits on it, as for a slow D1.
@@ -179,6 +179,27 @@ describe('app.ts edge cache middleware', () => {
     expect(rendered).toHaveLength(1);
     expect(responses.map((r) => r.edge).sort()).toEqual(['HIT', 'HIT', 'HIT', 'HIT', 'MISS']);
     expect(new Set(responses.map((r) => r.body))).toEqual(new Set(['PAGE: /competition']));
+  });
+
+  it('stops waiting for a first render whose cache entry never settles', async () => {
+    // The first visitor left mid-put: its entry is never stored and the put never settles.
+    const put = vi.spyOn(fakeCache, 'put').mockImplementationOnce(() => new Promise(() => {}));
+    const ctx = { waitUntil: () => {}, passThroughOnException: () => {} };
+    const first = await worker.fetch(new Request('https://x/competition'), {}, ctx);
+    expect(first.headers.get('X-Edge-Cache')).toBe('MISS');
+
+    vi.useFakeTimers();
+    try {
+      const next = get('https://x/competition');
+      await vi.advanceTimersByTimeAsync(FLIGHT_MS);
+      expect((await next).edge).toBe('MISS');
+      expect(rendered).toHaveLength(2);
+      // The page is in the cache again for everyone after it.
+      expect((await get('https://x/competition')).edge).toBe('HIT');
+    } finally {
+      vi.useRealTimers();
+      put.mockRestore();
+    }
   });
 
   it('sheds a render past the in-flight cap with a 503 the client is told to retry', async () => {
