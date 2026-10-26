@@ -13,13 +13,13 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.129",
+    "@ai-sdk/openai": "^3.0.131",
     "@dagrejs/dagre": "1.1.8",
     "@sigma/api-contract": "workspace:*",
     "@sigma/config": "workspace:*",
     "@sigma/db": "workspace:*",
     "@sigma/shared": "workspace:*",
-    "ai": "^6.0.308",
+    "ai": "^6.0.314",
     "isbot": "^5.2.2",
     "node-sql-parser": "^5.4.0",
     "react": "^19.3.1",
@@ -37,7 +37,7 @@
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "catalog:",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "wrangler": "catalog:"
   }
 }
