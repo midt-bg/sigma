@@ -24,7 +24,8 @@
     "node-sql-parser": "^5.4.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-router": "7.18.4"
+    "react-router": "7.18.4",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.64.0",
