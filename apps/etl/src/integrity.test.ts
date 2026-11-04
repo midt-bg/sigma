@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fakeD1 } from '@sigma/test-support';
+import { fakeD1, throwingD1 } from '@sigma/test-support';
 import { runServedIntegrityGate, type GateLog } from './integrity';
 
 interface Captured {
@@ -148,13 +148,7 @@ describe('runServedIntegrityGate', () => {
 
   it('lets a failed query through: that is not a verdict, and the step retries it', async () => {
     const log = fakeLog();
-    const overloaded = {
-      prepare: () => ({
-        all: async () => {
-          throw new Error('D1 DB is overloaded');
-        },
-      }),
-    } as unknown as D1Database;
+    const overloaded = throwingD1(new Error('D1 DB is overloaded'));
     await expect(runServedIntegrityGate(overloaded, log)).rejects.toThrow('overloaded');
     expect(log.events.some((e) => e.event.event === 'etl_integrity_violation')).toBe(false);
   });
