@@ -84,18 +84,15 @@ function servedD1(seed: Seed = {}): D1Database {
 describe('runServedIntegrityGate', () => {
   it('passes (logs ok, does not throw) on a clean served D1', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1(), log)).resolves.toBeUndefined();
+    await expect(runServedIntegrityGate(servedD1(), log)).resolves.toBe(true);
     const ok = log.events.find((e) => e.event.event === 'etl_integrity_ok');
     expect(ok?.level).toBe('info');
     expect(log.events.some((e) => e.level === 'error')).toBe(false);
   });
 
-  it('throws and logs a violation when a check fails over the live D1 (empty corpus)', async () => {
+  it('returns false and logs a violation when a check fails over the live D1 (empty corpus)', async () => {
     const log = fakeLog();
-    // The step error itself must say WHICH check broke — the Workflow UI shows only this string.
-    await expect(runServedIntegrityGate(servedD1({ contracts: 0 }), log)).rejects.toThrow(
-      /^integrity gate failed: 1 of \d+ checks broke \(cron refresh\): non-empty-corpus — EMPTY corpus/,
-    );
+    await expect(runServedIntegrityGate(servedD1({ contracts: 0 }), log)).resolves.toBe(false);
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.level).toBe('error');
     expect(violation?.event.checks).toEqual([
@@ -103,17 +100,15 @@ describe('runServedIntegrityGate', () => {
     ]);
   });
 
-  it('throws on a hard data-integrity violation (negative ok amount_eur)', async () => {
+  it('returns false on a hard data-integrity violation (negative ok amount_eur)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1({ negOk: 3 }), log)).rejects.toThrow(
-      /integrity gate failed/,
-    );
+    await expect(runServedIntegrityGate(servedD1({ negOk: 3 }), log)).resolves.toBe(false);
     expect(log.events.some((e) => e.event.event === 'etl_integrity_violation')).toBe(true);
   });
 
   it('alerts but does NOT throw on a warn-only condition (out-of-range dates)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1({ badDates: 2 }), log)).resolves.toBeUndefined();
+    await expect(runServedIntegrityGate(servedD1({ badDates: 2 }), log)).resolves.toBe(true);
     expect(log.events.some((e) => e.event.event === 'etl_integrity_warn')).toBe(true);
     expect(log.events.some((e) => e.level === 'error')).toBe(false);
   });
@@ -130,26 +125,37 @@ describe('runServedIntegrityGate', () => {
     expect(await skippedFor({ rollups: true })).toBe((await skippedFor({})) - 2);
   });
 
-  it('throws when a doubled annex total is summed (annex-total-suspect-basis)', async () => {
+  it('names the doubled annex total in the violation (annex-total-suspect-basis)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1({ annexWrong: 2 }), log)).rejects.toThrow(
-      /annex-total-suspect-basis — 2 of 4 annex_total_suspect contract\(s\) carry an amount_eur other than their signing value \(Σ excess 2000\.00 €\)/,
-    );
+    await expect(runServedIntegrityGate(servedD1({ annexWrong: 2 }), log)).resolves.toBe(false);
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.event.checks).toEqual([
       expect.objectContaining({ name: 'annex-total-suspect-basis' }),
     ]);
   });
 
-  it('throws when a rollup no longer reconciles with SUM(amount_eur) over the live D1', async () => {
+  it('returns false when a rollup no longer reconciles with SUM(amount_eur) over the live D1', async () => {
     const log = fakeLog();
     await expect(
       runServedIntegrityGate(servedD1({ rollups: true, homeDrift: 5_000 }), log),
-    ).rejects.toThrow(/integrity gate failed/);
+    ).resolves.toBe(false);
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.level).toBe('error');
     expect(violation?.event.checks).toEqual([
       expect.objectContaining({ name: 'rollup-reconciliation' }),
     ]);
+  });
+
+  it('lets a failed query through: that is not a verdict, and the step retries it', async () => {
+    const log = fakeLog();
+    const overloaded = {
+      prepare: () => ({
+        all: async () => {
+          throw new Error('D1 DB is overloaded');
+        },
+      }),
+    } as unknown as D1Database;
+    await expect(runServedIntegrityGate(overloaded, log)).rejects.toThrow('overloaded');
+    expect(log.events.some((e) => e.event.event === 'etl_integrity_violation')).toBe(false);
   });
 });

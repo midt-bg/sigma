@@ -58,7 +58,7 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
     ingestBucketWindow: vi.fn(),
   },
   integrity: {
-    runServedIntegrityGate: vi.fn(async (_db: unknown, _log: GateLog) => {}),
+    runServedIntegrityGate: vi.fn(async (_db: unknown, _log: GateLog) => true as boolean),
   },
 }));
 vi.mock('@sigma/ingest', () => ingest);
@@ -176,6 +176,7 @@ describe('RefreshWorkflow.run — control flow', () => {
       log.info({ event: 'gate_info' });
       log.warn({ event: 'gate_warn' });
       log.error({ event: 'gate_error' });
+      return true;
     });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -269,33 +270,46 @@ describe('RefreshWorkflow.run — control flow', () => {
     expect(names.indexOf('pending-touched')).toBeLessThan(names.indexOf('load-fx'));
   });
 
-  it('fails the run non-retryably when the served integrity gate throws, still dropping staging', async () => {
+  it('finishes the run on a violation: the numbers are served already, the alarm is the log', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
-    integrity.runServedIntegrityGate.mockRejectedValueOnce(new Error('reconciliation drift'));
+    integrity.runServedIntegrityGate.mockResolvedValueOnce(false);
     const wf = makeWorkflow();
     const names: string[] = [];
 
-    await expect(wf.run({ payload: {} } as never, fakeStep(names) as never)).rejects.toThrow(
-      'reconciliation drift',
-    );
-    expect(names).toContain('integrity-gate');
-    expect(names).toContain('drop-transient-staging'); // finally runs on the gate-failure path
+    const result = await wf.run({ payload: {} } as never, fakeStep(names) as never);
+
+    expect(result).toMatchObject({ integrity: 'violation' });
+    expect(names).toContain('drop-transient-staging');
     expect(ingest.dropTransientStaging).toHaveBeenCalled();
+    expect(ingest.settlePendingWindows).not.toHaveBeenCalled(); // the next run replays the window
   });
 
-  it('stringifies a non-Error gate rejection into the NonRetryableError message', async () => {
-    // The gate catch wraps `err instanceof Error ? err.message : String(err)`; a thrown non-Error
-    // exercises the String(err) side that an Error rejection cannot.
+  it('finishes the run when an overloaded D1 outlasts the retries of the check', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
+    integrity.runServedIntegrityGate.mockRejectedValueOnce(new Error('D1 DB is overloaded'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    const result = await wf.run({ payload: {} } as never, fakeStep([]) as never);
+
+    expect(result).toMatchObject({ integrity: 'unverified' });
+    const logged = error.mock.calls.map((c) => String(c[0]));
+    expect(logged.some((l) => l.includes('etl_integrity_unverified'))).toBe(true);
+    expect(ingest.settlePendingWindows).not.toHaveBeenCalled();
+  });
+
+  it('records a non-Error failure of the check as text', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
     integrity.runServedIntegrityGate.mockRejectedValueOnce('raw string fault');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const wf = makeWorkflow();
 
-    await expect(wf.run({ payload: {} } as never, fakeStep([]) as never)).rejects.toThrow(
-      'raw string fault',
-    );
-    expect(ingest.dropTransientStaging).toHaveBeenCalled(); // finally still drops
+    await wf.run({ payload: {} } as never, fakeStep([]) as never);
+
+    expect(error.mock.calls.some((c) => String(c[0]).includes('raw string fault'))).toBe(true);
   });
 
   it('drops staging even when ingestion throws', async () => {
@@ -462,14 +476,10 @@ describe('RefreshWorkflow.run — lease fence', () => {
 });
 
 describe('RefreshWorkflow.run — failures inside finally', () => {
-  it('reports the gate failure, not the staging-drop hiccup that followed it', async () => {
+  it('reports the derive failure, not the staging-drop hiccup that followed it', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
-    integrity.runServedIntegrityGate.mockRejectedValueOnce(
-      new Error(
-        'integrity gate failed: 1 of 8 checks broke (cron refresh): rollup-reconciliation — x.',
-      ),
-    );
+    ingest.refreshDerivedContractCount.mockRejectedValueOnce(new Error('derive failed: the count'));
     ingest.dropTransientStaging
       .mockResolvedValueOnce(undefined) // drop-stale at the start
       .mockRejectedValueOnce(new Error('D1 hiccup on drop')); // the finally's drop
@@ -479,7 +489,7 @@ describe('RefreshWorkflow.run — failures inside finally', () => {
 
     await expect(
       wf.run({ payload: {}, instanceId: 'wf-60' } as never, fakeStep(names) as never),
-    ).rejects.toThrow(/integrity gate failed: 1 of 8 checks broke/);
+    ).rejects.toThrow(/derive failed: the count/);
 
     const logged = error.mock.calls.map((c) => String(c[0]));
     expect(logged.some((l) => l.includes('etl_refresh_staging_drop_failed'))).toBe(true);
@@ -564,16 +574,16 @@ describe('RefreshWorkflow.run — window replay', () => {
     });
   });
 
-  it('leaves the window recorded when the gate fails, so the next run replays it', async () => {
+  it('leaves the window recorded when the run fails, so the next run replays it', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
-    integrity.runServedIntegrityGate.mockRejectedValueOnce(new Error('integrity gate failed: x'));
+    ingest.refreshDerivedContractCount.mockRejectedValueOnce(new Error('derive failed: x'));
     const wf = makeWorkflow();
     const names: string[] = [];
 
     await expect(
       wf.run({ payload: {}, instanceId: 'wf-72' } as never, fakeStep(names) as never),
-    ).rejects.toThrow(/integrity gate failed/);
+    ).rejects.toThrow(/derive failed/);
 
     expect(ingest.recordPendingWindow).toHaveBeenCalledTimes(1);
     expect(ingest.settlePendingWindows).not.toHaveBeenCalled();
@@ -747,11 +757,11 @@ describe('RefreshWorkflow.run — inherited promises need evidence the source an
 });
 
 describe('RefreshWorkflow.run — release failures never mask the run', () => {
-  it('reports the gate failure when both the drop and the release fail after it', async () => {
+  it('reports the derive failure when both the drop and the release fail after it', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
-    integrity.runServedIntegrityGate.mockRejectedValueOnce(
-      new Error('integrity gate failed: the real one'),
+    ingest.refreshDerivedContractCount.mockRejectedValueOnce(
+      new Error('derive failed: the real one'),
     );
     ingest.dropTransientStaging
       .mockResolvedValueOnce(undefined)
@@ -763,7 +773,7 @@ describe('RefreshWorkflow.run — release failures never mask the run', () => {
 
     await expect(
       wf.run({ payload: {}, instanceId: 'wf-80' } as never, fakeStep(names) as never),
-    ).rejects.toThrow(/integrity gate failed: the real one/);
+    ).rejects.toThrow(/derive failed: the real one/);
 
     const logged = error.mock.calls.map((c) => String(c[0]));
     expect(logged.some((l) => l.includes('etl_refresh_staging_drop_failed'))).toBe(true);
