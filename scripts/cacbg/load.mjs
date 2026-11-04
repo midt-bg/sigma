@@ -74,7 +74,7 @@ const MIGRATION_REDIRECTS = path.join(ROOT, 'packages/db/migrations/0012_person_
 const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
-// separately — §8's monotonicity gate keys on that one, not on this.
+// separately — the audit's list of removed links keys on that one, not on this.
 const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-3';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
@@ -106,11 +106,10 @@ const readJsonl = (f) =>
         .map((l) => JSON.parse(l))
     : [];
 
-// Bootstrap mode works on a THROWAWAY COPY, and that is not a convenience — it is the correctness of the
-// monotonicity gate. Reaching the candidate list means rebuilding the corpus tables, which drops
-// interest_links; the pass itself never publishes, so it would leave the table EMPTY. The next real run
-// would then read that empty table as its prior-published set, write an empty snapshot, and the gate —
-// whose only job is to notice a published claim disappearing — would pass unconditionally, for ever.
+// Bootstrap mode works on a THROWAWAY COPY, and that is not a convenience. Reaching the candidate list
+// means rebuilding the corpus tables, which drops interest_links; the pass itself never publishes, so it
+// would leave the table EMPTY. The next real run would then read that empty table as its prior-published
+// set, and the carried person ids and the audit's list of removed links would both be lost.
 // Copying here rather than asking the caller to do it keeps the flag safe wherever it is invoked from.
 const WORK_DB = EMIT_CANDIDATES_ONLY ? `${DB}.bootstrap` : DB;
 // Check compatibility before opening or rebuilding the database.
@@ -231,31 +230,10 @@ const CORRECTIONS_LIST =
 const correctedFp = new Set(
   loadCorrections(CORRECTIONS_LIST, SUPP_SALT, SUPPRESSION_KEY_VERSION).map((e) => e.fp),
 );
-const usedCorrections = new Set();
 const snapshot = priorPublished.map((p) => {
   if (correctedFp.size === 0) return p;
-  const fp = fingerprint(p.link_key, SUPP_SALT);
-  if (!correctedFp.has(fp)) return p;
-  usedCorrections.add(fp);
-  return { ...p, corrected: true };
+  return correctedFp.has(fingerprint(p.link_key, SUPP_SALT)) ? { ...p, corrected: true } : p;
 });
-// The B3 rail, mirrored — and it matters MORE here. A stale suppression silently un-suppresses; a
-// stale acknowledgement silently pre-clears a FUTURE disappearance of that same link, which is exactly
-// the regression the gate exists to catch, with nobody having decided it. An acknowledgement is
-// one-shot by construction: once the corrected link stops being published it also stops appearing in
-// the prior set, so the entry must be deleted from the list in the same change that lands the fix.
-if (!EMIT_CANDIDATES_ONLY) {
-  const unusedCorr = [...correctedFp].filter((fp) => !usedCorrections.has(fp));
-  if (unusedCorr.length > 0) {
-    db.close();
-    throw new Error(
-      `${unusedCorr.length} correction(s) matched NO previously published link — a stale acknowledgement ` +
-        `would clear a future disappearance of that link, which is the regression this gate exists to ` +
-        `catch. Delete the entry once its fix has shipped (an acknowledgement is one-shot). ` +
-        `Unmatched fingerprints: ${unusedCorr.map((f) => f.slice(0, 12) + '…').join(', ')}`,
-    );
-  }
-}
 // Not written by the bootstrap pass, which works on a throwaway copy and has no business restating what
 // the real run is about to record.
 //
@@ -300,7 +278,15 @@ db.exec(
 );
 // A link is suppressed when its fingerprint is in the list. Only compute the HMAC when the list is
 // non-empty (size>0 ⇒ salt present, else the loader above threw), so the empty common path skips crypto.
+// The audit's withheld list (scripts/related-persons-job.mjs): a link that failed the audit stays out of
+// the surface for this build, exactly like a takedown, and the rest of the update goes on.
+const withheldByAudit = new Set(
+  process.env.CACBG_WITHHOLD_LIST
+    ? JSON.parse(fs.readFileSync(process.env.CACBG_WITHHOLD_LIST, 'utf8')).links
+    : [],
+);
 const isSuppressed = (linkKey) => {
+  if (withheldByAudit.has(linkKey)) return true;
   if (suppressedFp.size === 0) return false;
   const fp = fingerprint(linkKey, SUPP_SALT);
   if (!suppressedFp.has(fp)) return false;

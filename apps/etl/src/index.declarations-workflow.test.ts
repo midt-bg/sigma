@@ -2,12 +2,17 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it, vi } from 'vitest';
-import worker, { DeclarationsWorkflow, DECLARATIONS_CRON, RebuildWorkflow } from './index';
+import worker, {
+  declarationsDue,
+  DeclarationsWorkflow,
+  DECLARATIONS_CRON,
+  RebuildWorkflow,
+} from './index';
 import type { Env } from './index';
 
 // `scheduled` tells the weekly tick from the six-hourly one by comparing the platform's cron string to
-// DECLARATIONS_CRON, so the deployed schedule and the constant must be the same string — and Sunday must
-// be spelled `1`: Cloudflare counts 1 = Sunday … 7 = Saturday, rejects `0`, and `7` ran on Saturdays.
+// DECLARATIONS_CRON, so the deployed schedule and the constant must be the same string. The tick is daily:
+// which day starts a run is decided in code (declarationsDue), not by Cloudflare's weekday numbering.
 it('deploys the very cron the weekly branch compares against', () => {
   const toml = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), '../wrangler.toml'),
@@ -16,7 +21,7 @@ it('deploys the very cron the weekly branch compares against', () => {
   const crons = /^crons = \[(.*)\]$/m.exec(toml)?.[1];
   expect(crons, 'no crons in wrangler.toml').toBeDefined();
   expect(crons).toContain(`"${DECLARATIONS_CRON}"`);
-  expect(DECLARATIONS_CRON.split(' ').at(-1), 'Sunday is 1 for the Cloudflare API').toBe('1');
+  expect(DECLARATIONS_CRON.split(' ').at(-1), 'the tick is daily').toBe('*');
 });
 
 // dev and the deployed Workers must run the same compatibility date: the declarations container reaches
@@ -85,11 +90,24 @@ it('the weekly cron starts only the declarations; every other tick refreshes pro
   );
   expect(startRun).toHaveBeenCalledOnce();
   // Stage runs the same schedule half an hour later: the minute does not decide which tick it is.
-  await worker.scheduled({ cron: '30 3 * * 1' } as never, env);
+  await worker.scheduled({ cron: '30 3 * * *' } as never, env);
   expect(startRun).toHaveBeenCalledTimes(2);
   await worker.scheduled({ cron: '30 */6 * * *' } as never, env);
   expect(create).toHaveBeenCalledTimes(4);
   log.mockRestore();
+});
+
+it('a failed run is retried the next day; a finished one waits for Sunday', () => {
+  const monday = new Date('2026-11-02T03:00:00Z');
+  const sunday = new Date('2026-11-01T03:00:00Z');
+  const finished = { state: 'complete', startedAt: sunday.getTime() };
+  expect(declarationsDue({ state: 'failed', startedAt: sunday.getTime() }, monday)).toBe(true);
+  expect(declarationsDue(finished, monday)).toBe(false);
+  expect(declarationsDue(finished, sunday)).toBe(true);
+  expect(declarationsDue(undefined, monday)).toBe(true);
+  // A run the Sunday tick missed is made up for rather than waiting another week.
+  const old = { state: 'complete', startedAt: new Date('2026-10-20T03:00:00Z').getTime() };
+  expect(declarationsDue(old, monday)).toBe(true);
 });
 
 it('passes the operator resume flag to the rebuild', async () => {

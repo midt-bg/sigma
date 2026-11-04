@@ -68,24 +68,28 @@ const doing = (name) => {
   const at = ORDER.indexOf(name);
   return at >= first && at <= last;
 };
+const execScript = (script, args = []) =>
+  execFileSync(process.execPath, ['--import', './scripts/cacbg/register-ts.mjs', script, ...args], {
+    env,
+    stdio: 'inherit',
+  });
+const stopOn = (script, error) => {
+  console.log(
+    JSON.stringify({
+      event: 'declarations_error',
+      stage,
+      script,
+      exitCode: error.status ?? null,
+      signal: error.signal ?? null,
+    }),
+  );
+  process.exit(error.status === 75 ? 75 : 1);
+};
 const run = (script, args = []) => {
   try {
-    return execFileSync(
-      process.execPath,
-      ['--import', './scripts/cacbg/register-ts.mjs', script, ...args],
-      { env, stdio: 'inherit' },
-    );
+    return execScript(script, args);
   } catch (error) {
-    console.log(
-      JSON.stringify({
-        event: 'declarations_error',
-        stage,
-        script,
-        exitCode: error.status ?? null,
-        signal: error.signal ?? null,
-      }),
-    );
-    process.exit(error.status === 75 ? 75 : 1);
+    stopOn(script, error);
   }
 };
 const wrangler = (args, output = false) =>
@@ -314,7 +318,26 @@ if (doing('load')) {
 }
 if (doing('audit')) {
   setStage('audit');
-  run('scripts/cacbg/audit.mjs');
+  // A link the audit will not vouch for stays off the surface; the update itself goes on. The build is
+  // loaded once more without it, because the loader derives more than the link's own row from it, and
+  // what comes out is audited again before anything ships. Only a defect that names no link stops the
+  // run, and the next day's run tries again.
+  try {
+    execScript('scripts/cacbg/audit.mjs');
+  } catch (error) {
+    const list = join(staging, 'audit-withheld.json');
+    const verdict = existsSync(list) ? JSON.parse(readFileSync(list, 'utf8')) : null;
+    if (error.signal || !verdict?.links?.length || verdict.structural)
+      stopOn('scripts/cacbg/audit.mjs', error);
+    console.log(
+      JSON.stringify({ event: 'declarations_links_withheld', links: verdict.links.length }),
+    );
+    const kept = join(work, 'audit-withheld.json');
+    copyFileSync(list, kept);
+    env.CACBG_WITHHOLD_LIST = kept;
+    run('scripts/cacbg/load.mjs');
+    run('scripts/cacbg/audit.mjs');
+  }
 }
 if (doing('publish') && remote) {
   setStage('publish');

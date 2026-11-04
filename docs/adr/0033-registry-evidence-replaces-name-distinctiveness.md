@@ -246,6 +246,11 @@ not office holders.
 
 ### 6. Monotonicity is a gate, not a store — and #279 §8 is corrected
 
+> **Amended (2026-11).** The comparison no longer stops a run. Losing a link costs that link until the
+> source brings it back; stopping costs every other update of the week. What left the surface is printed
+> and logged (`declarations_links_removed`), and a link with an audit finding is withheld individually
+> while the run continues. The reasoning below records the original decision.
+
 #279 §8 requires the evidence seal to be kept „forever" and recomputation to be strictly additive. As
 written that is false, and the implementation must not pretend otherwise:
 

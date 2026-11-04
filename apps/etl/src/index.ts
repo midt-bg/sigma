@@ -767,7 +767,17 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
  * Saturdays (26.09.2026), and `0` the API refuses outright. `scheduled` compares this string to the one
  * the platform sends, so the number stays a number — all but the minute, which a non-production render
  * shifts (SIGMA_ETL_CRON_MINUTE) so that two environments do not hit the sources in the same minute. */
-export const DECLARATIONS_CRON = '0 3 * * 1';
+export const DECLARATIONS_CRON = '0 3 * * *';
+/** The declarations run on Sundays. On any other day the same tick starts one only to make up for a run
+ *  that failed or never finished: a problem costs a day, not the week until the next Sunday. */
+const DECLARATIONS_MAX_AGE_MS = 7 * 24 * 3_600_000;
+export function declarationsDue(
+  last: { state: string; startedAt: number; finishedAt?: string } | undefined,
+  now: Date,
+): boolean {
+  if (now.getUTCDay() === 0 || !last) return true;
+  return last.state === 'failed' || now.getTime() - last.startedAt > DECLARATIONS_MAX_AGE_MS;
+}
 
 /** How long an operator-started run may be waited on before the workflow gives up with its OWN error.
  * A Workflow instance is capped at 1,024 steps on the free plan, and each poll costs two (a sleep and a
@@ -873,8 +883,8 @@ export default {
   // Cron entrypoint: kick one durable refresh run, and the register layer beside it where it is configured.
   // No public route or HTTP trigger is configured.
   async scheduled(controller, env): Promise<void> {
-    // The weekly cron owns the declarations; every other tick refreshes procurement and the register.
-    const weekly = controller?.cron?.replace(/^\S+/, '') === DECLARATIONS_CRON.replace(/^\S+/, '');
+    // The daily 03:00 tick owns the declarations; every other tick refreshes procurement and the register.
+    const daily = controller?.cron?.replace(/^\S+/, '') === DECLARATIONS_CRON.replace(/^\S+/, '');
     const jobs: [string, () => Promise<unknown>][] = [];
     // A declarations run takes a fresh snapshot on every container attempt, and its resumed work is
     // only valid against the registry it started with. So the six-hourly writers stand aside while it
@@ -905,15 +915,19 @@ export default {
       live?.state === 'running' &&
       Date.now() - live.startedAt <
         (Number.isFinite(standAsideHours) ? standAsideHours : 8) * 3_600_000;
-    if (!weekly && declarationsRunning) {
+    if (!daily && declarationsRunning) {
       console.log(
         JSON.stringify({ event: 'etl_scheduled', skipped: 'declarations_running', job: 'refresh' }),
       );
-    } else if (!weekly) {
+    } else if (!daily) {
       jobs.push(['refresh', () => env.REFRESH.create()]);
       if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
         jobs.push(['registry', () => env.REGISTRY!.create()]);
-    } else if (env.DECLARATIONS_ENABLED === 'true' && env.DECLARATIONS)
+    } else if (
+      env.DECLARATIONS_ENABLED === 'true' &&
+      env.DECLARATIONS &&
+      declarationsDue(live, new Date(controller?.scheduledTime ?? Date.now()))
+    )
       jobs.push(['declarations', () => env.DECLARATIONS!.getByName('declarations').startRun()]);
     const results = await Promise.allSettled(
       jobs.map(async ([job, start]) => {

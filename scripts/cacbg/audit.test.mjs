@@ -95,7 +95,9 @@ function buildAndAudit({
     threw = true; // execFileSync throws on non-zero exit (a hard finding fired)
     out = `${e.stdout ?? ''}${e.stderr ?? ''}`;
   }
-  return { threw, out };
+  const withheldFile = path.join(staging, 'audit-withheld.json');
+  const withheld = fs.existsSync(withheldFile) ? JSON.parse(fs.readFileSync(withheldFile)) : null;
+  return { threw, out, withheld };
 }
 
 after(() => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
@@ -313,14 +315,9 @@ test('a well-formed seal passes every C axis (positive control)', () => {
 
 // ── D. Monotonicity (ADR-0033 decision 6) ────────────────────────────────────────────────────────
 // #279 §8 asked for a seal kept „forever" and strictly-additive recomputation. ADR-0033 showed that is
-// false (labels flip, the cache expires, a court can annul an entry) and replaced the STORE with a
-// GATE: seals are re-derived every run, and the audit compares the current published set against the
-// pre-wipe export. A link that vanishes under an UNCHANGED rules_version is a hard finding — nothing
-// about the rules changed, so its disappearance is a regression, not a decision.
-//
-// Why this needs its own gate and ship's count floor cannot serve: assertShipFloor checks a COUNT.
-// A one-for-one swap — one link lost, one gained — leaves the count identical and the floor silent
-// while a true published link is dropped. Only a per-key comparison sees it.
+// false (labels flip, the cache expires, a court can annul an entry): seals are re-derived every run.
+// The audit compares the current published set against the pre-wipe export and REPORTS what left. It
+// never stops the update over it: a lost link costs that link, a stopped run costs the whole week.
 const SEALED = [
   `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-05','${RULES_VERSION}','live'`,
 ];
@@ -332,7 +329,7 @@ const ONE_LINK = {
   seals: SEALED,
 };
 
-test('D — a previously published link that vanished under an UNCHANGED rules_version is a hard finding', () => {
+test('D — a previously published link that vanished under an UNCHANGED rules_version is reported, not a stop', () => {
   const { threw, out } = buildAndAudit({
     ...ONE_LINK,
     snapshot: [
@@ -340,9 +337,10 @@ test('D — a previously published link that vanished under an UNCHANGED rules_v
       { link_key: 'p9|200000002', rules_version: RULES_VERSION }, // published last run, gone now
     ],
   });
-  assert.equal(threw, true, 'a silent recall regression must fail the build');
-  assert.match(out, /D_monotonicity/);
-  assert.match(out, /p9\|200000002/);
+  assert.equal(threw, false, 'losing a link must not stop the update');
+  assert.doesNotMatch(out, /D_monotonicity/);
+  assert.match(out, /p9\|200000002 removed/);
+  assert.match(out, /"event":"declarations_links_removed"/);
 });
 
 test('D — a pre-evidence-regime link (null rules_version) that vanished is a declared removal, not a finding', () => {
@@ -415,25 +413,15 @@ test('D — a snapshot entry acknowledged as a corrected input is a declared rem
   assert.match(out, /p9\|200000002/);
 });
 
-test('D — neither escape hatch fires on its own: an unacknowledged, unsuppressed drop still hard-fails', () => {
-  // The mutation control for the two tests above. A gate that accepted every disappearance would pass
-  // both of them, and this is the assertion that says it did not.
-  const { threw } = buildAndAudit({
-    ...ONE_LINK,
-    links: [
-      ...ONE_LINK.links,
-      `'il2','p9|200000002','p9','200000002','${K('ВТОРА ФИРМА ЕООД')}','exact_name_key','document','b2','owns',0,1000,'held'`,
-    ],
-    snapshot: [
-      { link_key: 'p1|100000001', rules_version: RULES_VERSION },
-      { link_key: 'p9|200000002', rules_version: RULES_VERSION },
-    ],
-  });
-  assert.equal(
-    threw,
-    true,
-    'held is not a sanctioned removal — the evidence simply stopped licensing it',
-  );
+test('a finding on a link lists that link for withholding; the job reloads without it', () => {
+  const { threw, out, withheld } = buildAndAudit({ ...ONE_LINK, seals: [] });
+  assert.equal(threw, true);
+  assert.match(out, /C_no_evidence/);
+  assert.deepEqual(withheld, { links: ['p1|100000001'], structural: 0 });
+});
+
+test('a clean audit leaves no withheld list', () => {
+  assert.equal(buildAndAudit(ONE_LINK).withheld, null);
 });
 
 test('D positive control — an unchanged published set produces no monotonicity finding', () => {

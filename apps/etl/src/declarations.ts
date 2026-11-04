@@ -435,7 +435,8 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       if (status.state === 'yielded' || status.state === 'failed') {
         const reason = status.reason || `${status.stage} ${status.state}`;
         // A yield is our own code stopping on purpose, with its work accepted — retry it wherever it
-        // happens. Network stages are retried too; a data or audit refusal is final.
+        // happens. Network stages are retried too; a data refusal ends this run, and the next day's cron
+        // starts a new one (index.ts).
         //
         // `reindex` belongs with them and was missing: it is a run of `wrangler d1 execute` per chunk of
         // twenty-five people, so a transient D1 error is the ordinary weather there — and it sits AFTER
@@ -446,13 +447,18 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         //
         // `snapshot` is the same weather: schema files every run re-applies and a read-only export.
         // wrangler's import-status race ended the weekly run of 26.09.2026 there, in its third minute.
+        //
+        // `publish` too: the attempt starts over from a fresh snapshot, so a failure after the swap landed
+        // only rebuilds what is already served, and hours of finished work are not thrown away.
         if (
           status.state === 'yielded' ||
-          ['fetch', 'import', 'snapshot', 'registry', 'reindex'].includes(status.stage) ||
+          ['fetch', 'import', 'snapshot', 'registry', 'publish', 'reindex'].includes(
+            status.stage,
+          ) ||
           status.signal
         )
           await this.retry(run, reason, status.state === 'yielded');
-        else await this.finish(run, 'failed', reason); // A data/audit refusal is not a transient failure.
+        else await this.finish(run, 'failed', reason); // Repeating it now would refuse again.
         return;
       }
     }

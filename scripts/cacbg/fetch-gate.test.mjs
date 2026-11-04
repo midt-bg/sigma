@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { run } from './fetch.mjs';
+import { run, toleratedShortfall } from './fetch.mjs';
 
 const BASE = 'https://register.cacbg.bg';
 const FOLDER = '2099t'; // passes safeFolder (starts with 20YY); not a real register set
@@ -69,6 +69,28 @@ test('a non-404 miss (500 after retries) is a real shortfall → exit 1', async 
     [`${BASE}/${FOLDER}/a2.xml`]: { status: 500, body: '' },
   };
   assert.equal(await runGate(routes), 1);
+});
+
+test('a few documents the register keeps refusing do not hold back the rest → exit 0', async () => {
+  const files = Array.from({ length: 1000 }, (_, i) => `a${i}.xml`);
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(files) },
+    ...Object.assign({}, ...files.slice(1).map(ok)),
+    [`${BASE}/${FOLDER}/a0.xml`]: { status: 500, body: '' },
+  };
+  assert.equal(await runGate(routes, ['--concurrency', '8']), 0);
+  const index = JSON.parse(fs.readFileSync(path.join(dir, FOLDER, '.index.json'), 'utf8'));
+  assert.deepEqual(index.missing, ['a0.xml']);
+  assert.equal(index.files.length, 999);
+});
+
+test('the tolerated shortfall is a few documents, never a skipped set or a crawl cut short', () => {
+  const base = { unfetched: 5, notAttempted: 0, skippedSets: 0, announcedDeclarations: 287000 };
+  assert.equal(toleratedShortfall(base), true);
+  assert.equal(toleratedShortfall({ ...base, unfetched: 0 }), false);
+  assert.equal(toleratedShortfall({ ...base, unfetched: 288 }), false);
+  assert.equal(toleratedShortfall({ ...base, skippedSets: 1 }), false);
+  assert.equal(toleratedShortfall({ ...base, notAttempted: 1 }), false);
 });
 
 test('404 and 403 history survives failed crawls without certifying missing data', async () => {

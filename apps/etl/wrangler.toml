@@ -89,10 +89,10 @@ new_sqlite_classes = ["DeclarationContainer"]
 binding = "DECLARATIONS_CORPUS"
 bucket_name = "sigma-declarations"
 
-# Six-hourly: procurement and the register. Sundays 03:00 UTC: the declarations (DECLARATIONS_CRON).
-# Cloudflare counts the weekdays 1 = Sunday … 7 = Saturday — `7` started the run on Saturdays.
+# Six-hourly: procurement and the register. Daily 03:00 UTC: the declarations (DECLARATIONS_CRON), which
+# start on Sundays, and on any other day only to make up for a run that failed (declarationsDue).
 [triggers]
-crons = ["0 */6 * * *", "0 3 * * 1"]
+crons = ["0 */6 * * *", "0 3 * * *"]
 
 [observability]
 enabled = true
