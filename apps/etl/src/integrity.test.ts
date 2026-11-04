@@ -148,7 +148,7 @@ describe('runServedIntegrityGate', () => {
 
   it('lets a failed query through: that is not a verdict, and the step retries it', async () => {
     const log = fakeLog();
-    const overloaded = throwingD1(new Error('D1 DB is overloaded'));
+    const overloaded = throwingD1(new Error('D1 DB is overloaded')).db;
     await expect(runServedIntegrityGate(overloaded, log)).rejects.toThrow('overloaded');
     expect(log.events.some((e) => e.event.event === 'etl_integrity_violation')).toBe(false);
   });
