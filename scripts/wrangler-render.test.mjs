@@ -176,7 +176,10 @@ test('the ETL keeps its crons unless parked', async () => {
 });
 
 test('a cron minute shifts every cron and nothing else; parking still wins', async () => {
-  assert.match(await renderEtl(undefined, '30'), /crons = \["30 \*\/6 \* \* \*", "30 3 \* \* \*"\]/);
+  assert.match(
+    await renderEtl(undefined, '30'),
+    /crons = \["30 \*\/6 \* \* \*", "30 3 \* \* \*"\]/,
+  );
   assert.match(await renderEtl(undefined, ''), /crons = \["0 \*\/6 \* \* \*", "0 3 \* \* \*"\]/);
   assert.match(await renderEtl('off', '30'), /\[triggers\]\ncrons = \[\]/);
   for (const bad of ['60', '-1', '3O', '*/5'])
