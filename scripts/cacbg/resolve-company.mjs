@@ -29,6 +29,10 @@ export function namesCompany(entity, method, names) {
     return named.some((c) => names.some((n) => eikCompanyNameKey(c) === eikCompanyNameKey(n)));
   if (method === 'extracted_name')
     return named.some((c) => names.some((n) => companyNameKey(c) === companyNameKey(n)));
+  if (method === 'registry_namesake')
+    return [entity, ...named].some((c) =>
+      names.some((n) => companyNameKey(c) === companyNameKey(n)),
+    );
   if (method === 'name_stem') {
     const stem = companyNameStem(named.length ? named[0] : entity);
     return stem.length >= 4 && names.some((n) => companyNameStem(n) === stem);
@@ -36,13 +40,22 @@ export function namesCompany(entity, method, names) {
   return false;
 }
 
+/** Two companies registered under one name before 2008, in different court districts, can both still
+ * exist. The name cannot tell them apart; `namesake` can, when the register shows the declarant in
+ * exactly one of them. Without it, or without such an answer, the name stays ambiguous. `eiks` names
+ * every candidate, so each partida can be asked for. */
+const namesakeOf = (eiks, namesake) => {
+  const eik = namesake?.([...eiks]) ?? null;
+  return eik ? { eik, method: 'registry_namesake' } : { ambiguous: true, eiks: [...eiks] };
+};
+
 /** Resolve one company-bearing field without choosing between contradictory identities.
  * `byStem` adds a last, weaker step (`name_stem`): the фирма without its legal form and punctuation. A
  * stem match names a company only; the register has to show the declarant in it before anything is
  * published. */
 export function resolveDeclaredCompany(
   entity,
-  { byKey, bidderByEik, nameKey = companyNameKey, byStem },
+  { byKey, bidderByEik, nameKey = companyNameKey, byStem, namesake },
 ) {
   const validEiks = (key) =>
     new Set(
@@ -52,7 +65,7 @@ export function resolveDeclaredCompany(
   if (!isMatchableKey(key)) return null;
   const exact = validEiks(key);
   if (exact.size === 1) return { eik: [...exact][0], method: 'exact_name_key' };
-  if (exact.size > 1) return { ambiguous: true };
+  if (exact.size > 1) return namesakeOf(exact, namesake);
 
   const candidates = [...new Set(companyCandidates(entity).map(nameKey))];
   const stated = declaredEiks(entity);
@@ -74,7 +87,7 @@ export function resolveDeclaredCompany(
   // Even an unmatched second company is a second possible subject of this field.
   if (candidates.length > 1) return { ambiguous: true };
   const matches = validEiks(candidates[0]);
-  if (matches.size > 1) return { ambiguous: true };
+  if (matches.size > 1) return namesakeOf(matches, namesake);
   if (matches.size === 1) return { eik: [...matches][0], method: 'extracted_name' };
   if (!byStem) return null;
   const named = companyCandidates(entity);

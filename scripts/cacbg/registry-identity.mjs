@@ -104,6 +104,18 @@ function subjectsNamed(company, person) {
   );
 }
 
+/** Of several companies under one name, the only one whose partida registers the declarant under this
+ * exact full name — else null. A variant spelling, enough to follow one person, is not enough to choose
+ * between two companies. */
+export function namesakeResolver(registry, people = peopleByCompany(registry)) {
+  return (eiks, declarant) => {
+    const name = declarantNameKey(declarant ?? '');
+    if (name.split(' ').length < 3) return null;
+    const named = eiks.filter((eik) => people.get(eik)?.get(name)?.size);
+    return named.length === 1 ? named[0] : null;
+  };
+}
+
 /** Resolve declared companies against registry data, including declarations of related-person stakes.
  * The company is its ЕИК: the declared one, or the one the declared name leads to. */
 export function registryCompanyResolver(registry, people = peopleByCompany(registry)) {

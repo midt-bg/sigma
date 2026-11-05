@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import {
+  namesakeResolver,
   registryIdentityResolver,
   mixedScriptCompanyKey,
   identityInputsDigest,
@@ -276,4 +277,20 @@ test('the identity input digest follows the facts, not the physical row order', 
   assert.notEqual(before, identityInputsDigest(b));
   a.close();
   b.close();
+});
+
+test('a namesake is settled only by the one partida that names the declarant in full', () => {
+  const { db, add, name } = fixture();
+  try {
+    const eiks = ['123456789', '987654321'];
+    assert.equal(namesakeResolver(db)(eiks, name), null);
+    add('987654321', 'a'.repeat(64), name);
+    assert.equal(namesakeResolver(db)(eiks, name), '987654321');
+    assert.equal(namesakeResolver(db)(eiks, 'Ивана Тестова'), null, 'two names are not enough');
+    assert.equal(namesakeResolver(db)(eiks, undefined), null);
+    add('123456789', 'c'.repeat(64), name);
+    assert.equal(namesakeResolver(db)(eiks, name), null, 'named in both partidas');
+  } finally {
+    db.close();
+  }
 });

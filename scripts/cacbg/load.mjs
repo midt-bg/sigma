@@ -4,7 +4,7 @@ import { rebuildPersonEntities, declarationSourceId } from './person-entities.mj
 import { declarantGuid } from './declarant-guid.mjs';
 import { resolveOffices } from './declaration-office.mjs';
 import { buildPersonRegistryLinks } from './person-registry-links.mjs';
-import { IDENTITY_RULES_VERSION } from './registry-identity.mjs';
+import { IDENTITY_RULES_VERSION, namesakeResolver } from './registry-identity.mjs';
 import { recordBuild } from './build-proof.mjs';
 // Phase 1 — productionized loader/resolver. Reads the extracted staging (holdings.jsonl / related.jsonl),
 // resolves each declared interest to a winning bidder's ЕИК via the ONE production normalizer, and
@@ -360,8 +360,18 @@ for (const b of bidders) {
 // Returns {eik, method} | {ambiguous:true} | null. Never guesses across >1 ЕИК.
 //   name_stem       — the фирма without legal form and punctuation names exactly one winner; publishes only
 //                     where the register shows the declarant in that company (evidence.mjs rung 2).
+//   registry_namesake — the name leads to several winners, and the register shows the declarant in
+//                     exactly one of them. It is asked with the declarant's name, so it serves only the
+//                     companies a declaration names.
 const byStem = stemIndex([...bidderByEik.values()]);
-const resolveEntity = (entity) => resolveDeclaredCompany(entity, { byKey, bidderByEik, byStem });
+const namesake = namesakeResolver(db);
+const resolveEntity = (entity, declarant) =>
+  resolveDeclaredCompany(entity, {
+    byKey,
+    bidderByEik,
+    byStem,
+    ...(declarant ? { namesake: (eiks) => namesake(eiks, declarant) } : {}),
+  });
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_companies'").get()) {
   db.exec('DELETE FROM registry_requested_companies');
   const putRequest = db.prepare('INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)');
@@ -369,7 +379,13 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_compa
     putRequest.run(r.eik, r.declarationId, r.declaredName);
 }
 // An explicit, name-checked EIK remains stronger when another declaration supplies only a name.
-const METHOD_RANK = { declared_eik: 3, exact_name_key: 2, extracted_name: 1, name_stem: 0 };
+const METHOD_RANK = {
+  declared_eik: 3,
+  exact_name_key: 2,
+  registry_namesake: 2,
+  extracted_name: 1,
+  name_stem: 0,
+};
 // Ambiguous name keys — TELEMETRY, not a gate (ADR-0027). A companyNameKey that maps to >1 distinct
 // valid winner ЕИК. The resolver already QUARANTINES these (resolveEntity → {ambiguous:true}); they
 // never publish, so they carry no libel exposure — this only sizes the ambiguous tail for Phase 0. On the
@@ -700,7 +716,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     h.timing ?? 'annual',
     h.seat ?? '',
   );
-  const res = resolveEntity(h.entity);
+  const res = resolveEntity(h.entity, h.person);
   if (res && !res.ambiguous) insDeclarationCompany.run(did, res.eik, res.method);
   // Preserve historical/disposal rows as source facts, but never let them establish
   // a positive holding during the filing year. "Prior" is appointment-relative,

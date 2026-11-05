@@ -14,7 +14,7 @@ import {
   CONTINUITY_RULE,
   COMPANY_AUTHOR_BASIS,
 } from './declaration-continuity.mjs';
-import { registryCompanyResolver } from './registry-identity.mjs';
+import { namesakeResolver, registryCompanyResolver } from './registry-identity.mjs';
 import { declarantGuidEvidence, DECLARANT_GUID_RULE } from './declarant-guid.mjs';
 import { documentFingerprint } from './source-identity.mjs';
 import { declaredEiks } from './extract-companies.mjs';
@@ -265,6 +265,11 @@ if (fs.existsSync(conflictsFile)) {
   }
 }
 
+const namesakeOf = namesakeResolver(db);
+// Prepared on the first namesake link only: older inputs have no persons.name to read.
+let personNameStmt;
+const personName = (id) =>
+  (personNameStmt ??= db.prepare('SELECT name FROM persons WHERE id = ?')).get(id)?.name;
 for (const l of published) {
   const rec = byKey.get(l.entity_key);
 
@@ -284,6 +289,15 @@ for (const l of published) {
         l,
         'A_eik_not_winner',
         `declared_eik published ${l.eik}, not among key ${l.entity_key}'s valid winners {${[...rec.valid].join(',')}}`,
+      );
+  } else if (l.match_method === 'registry_namesake') {
+    // Several winners share the name; the register picks the one whose partida names the declarant.
+    // Re-ask it from this database, so a link the register no longer supports cannot stay published.
+    if (namesakeOf([...rec.valid], personName(l.person_id)) !== l.eik)
+      flag(
+        l,
+        'A_namesake_unproven',
+        `key ${l.entity_key} → {${[...rec.valid].join(',')}}; the register does not name the declarant in ${l.eik} alone`,
       );
   } else if (rec.valid.size !== 1)
     flag(

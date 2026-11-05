@@ -65,10 +65,13 @@ for (const h of read('holdings.jsonl')) {
   const pid = `person:${companyNameKey(h.person)}|${companyNameKey(identityInstitution(declarationInstitution(h)))}`;
   const resolved = resolveDeclaredCompany(h.entity, { byKey, bidderByEik });
   // Explicit EIK requests are also allowed when the catalog predates a registration; the response is checked later.
+  // Namesakes are all asked for: the register is what tells them apart.
   const eiks =
     resolved && !resolved.ambiguous
       ? [resolved.eik]
-      : declaredEiks(h.entity).filter((e) => /^\d{9}$/.test(e));
+      : resolved?.eiks?.length
+        ? resolved.eiks
+        : declaredEiks(h.entity).filter((e) => /^\d{9}$/.test(e));
   if (!eiks.length) unresolved++;
   for (const eik of eiks) {
     const declarationId = `decl:${h.folder}:${h.xmlFile}`;

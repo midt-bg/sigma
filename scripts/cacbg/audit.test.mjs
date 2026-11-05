@@ -607,3 +607,33 @@ test('identity evidence must be automatic and match active source versions', () 
       );
   }
 });
+
+test('a registry_namesake link holds only on the one partida that names the declarant', () => {
+  const observations = fs.readFileSync(
+    path.join(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql'),
+    'utf8',
+  );
+  for (const [eik, bidder, axis] of [
+    ['200000002', 'b2', null],
+    ['100000001', 'b1', 'A_namesake_unproven'],
+  ]) {
+    const { threw, out } = buildAndAudit({
+      bidders: COLLIDING_BIDDERS,
+      links: [
+        `'il1','p1|${eik}','p1','${eik}','${KEY}','registry_namesake','document','${bidder}','owns',0,1000,'published'`,
+      ],
+      seals: [
+        `'p1|${eik}','document','owner','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live'`,
+      ],
+      extraSql: `CREATE TABLE registry_roles(eik,subject_id,subject_name,entry_number,subject_kind,role);
+        ${observations}
+        CREATE TABLE persons(id TEXT PRIMARY KEY, name TEXT);
+        INSERT INTO persons VALUES('p1','Иван Петров Тестов');
+        INSERT INTO registry_identity_observations VALUES('200000002','1','00190','1','2019-01-01',0,
+          '${'a'.repeat(64)}','EGN','Иван Петров Тестов','Иван Петров Тестов','person','${'f'.repeat(64)}','2026-01-01');`,
+    });
+    assert.equal(/A_multi_eik/.test(out), false, out);
+    assert.equal(/A_namesake_unproven/.test(out), Boolean(axis), out);
+    assert.equal(threw, Boolean(axis), out);
+  }
+});

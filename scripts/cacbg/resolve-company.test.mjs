@@ -43,7 +43,7 @@ test('multiple company candidates cannot select the first, even if only one is a
     assert.deepEqual(resolve(text), { ambiguous: true }, text);
 });
 test('a name collision needs a single stated EIK with the same full name', () => {
-  assert.deepEqual(resolve('Генерик ООД'), { ambiguous: true });
+  assert.deepEqual(resolve('Генерик ООД'), { ambiguous: true, eiks: ['333333338', '444444447'] });
   assert.deepEqual(resolve('Генерик ООД, ЕИК 333333338'), {
     eik: '333333338',
     method: 'declared_eik',
@@ -105,4 +105,29 @@ test('namesCompany re-proves a link by the method that made it', () => {
   assert.ok(!namesCompany('„Бета“ ООД', 'name_stem', names));
   assert.ok(!namesCompany('Ива ЕТ', 'name_stem', ['ИВА ООД']));
   assert.ok(!namesCompany('Тестилон ЕООД', 'exact_name_key', names));
+});
+
+test('namesake companies resolve to the one partida that names the declarant', () => {
+  const asked = [];
+  const namesake = (eiks) => {
+    asked.push(eiks);
+    return eiks.includes('444444447') ? '444444447' : null;
+  };
+  const viaRegister = (text) => resolveDeclaredCompany(text, { byKey, bidderByEik, namesake });
+  assert.deepEqual(viaRegister('„Генерик“ ООД'), { eik: '444444447', method: 'registry_namesake' });
+  assert.deepEqual(asked, [['333333338', '444444447']]);
+  // A stated ЕИК still decides before the register is asked.
+  assert.deepEqual(viaRegister('Генерик ООД, ЕИК 333333338'), {
+    eik: '333333338',
+    method: 'declared_eik',
+  });
+  // A register that names the declarant in neither (or both) partidas leaves the name ambiguous.
+  const silent = resolveDeclaredCompany('Генерик ООД', {
+    byKey,
+    bidderByEik,
+    namesake: () => null,
+  });
+  assert.deepEqual(silent, { ambiguous: true, eiks: ['333333338', '444444447'] });
+  assert.ok(namesCompany('„Генерик“ ООД', 'registry_namesake', ['ГЕНЕРИК ООД']));
+  assert.ok(!namesCompany('„Генерик“ ООД', 'registry_namesake', ['АЛФА ЕООД']));
 });
