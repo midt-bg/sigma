@@ -76,7 +76,7 @@ const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — the audit's list of removed links keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-4';
+const MATCHER_VERSION = 'cnk-1+classify-3+tr-1+resolve-4';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very
@@ -633,7 +633,43 @@ const annualInventoryDocuments = new Map();
 const annualDocumentKeys = new Map();
 const unresolvedInventoryDocuments = new Set();
 const sourceDocumentId = (r) => `decl:${r.folder}:${r.xmlFile}`;
+// A holder cell that is only the declarant's first name (ADR-0051). On its own it stays unknown: a son or a
+// father often bears the same first name. It is the declarant's own stake where ANOTHER of the person's filings
+// names the declarant in full as the holder of the same company — and the filing itself names no other holder
+// of that company, which would leave two people the name could be.
+const companyTies = (h) => {
+  const ties = [`key:${companyNameKey(h.entity)}`];
+  const res = resolveEntity(h.entity);
+  if (res?.eik && !res.ambiguous) ties.push(`eik:${res.eik}`);
+  return ties;
+};
+const ownedInFull = new Map(); // person|company → the filings naming the person in full as its holder
+const namedHolders = new Set(); // filing|company where a holder is named, the declarant or another
 for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
+  if (h.holderRelation !== 'self' && h.holderRelation !== 'related') continue;
+  if (!isMatchableKey(companyNameKey(h.person))) continue;
+  for (const tie of companyTies(h)) {
+    namedHolders.add(`${sourceDocumentId(h)}|${tie}`);
+    if (h.holderRelation !== 'self') continue;
+    const key = `${personOf(h)}|${tie}`;
+    ownedInFull.set(key, (ownedInFull.get(key) ?? new Set()).add(sourceDocumentId(h)));
+  }
+}
+let firstNameHolder = 0;
+const confirmHolder = (h) => {
+  if (h.holderRelation !== 'unknown' || !h.holderFirstName) return h;
+  if (!isMatchableKey(companyNameKey(h.person))) return h;
+  const doc = sourceDocumentId(h);
+  const ties = companyTies(h);
+  if (ties.some((tie) => namedHolders.has(`${doc}|${tie}`))) return h;
+  const pid = personOf(h);
+  const confirmed = ties.some((tie) =>
+    [...(ownedInFull.get(`${pid}|${tie}`) ?? [])].some((other) => other !== doc),
+  );
+  return confirmed ? { ...h, holderRelation: 'self', holderConfirmed: true } : h;
+};
+const holdingRows = readJsonl(path.join(STAGING, 'holdings.jsonl')).map(confirmHolder);
+for (const h of holdingRows) {
   if (h.kind === 'shares' && h.timing === 'annual' && h.holderRelation === 'unknown')
     unresolvedInventoryDocuments.add(sourceDocumentId(h));
 }
@@ -682,7 +718,6 @@ if (filingFolderDated > 0 || filingUndatable > 0) {
 }
 
 db.exec('BEGIN');
-const holdingRows = readJsonl(path.join(STAGING, 'holdings.jsonl'));
 const postKey = (h) =>
   `${h.folder}|${h.xmlFile}|${companyNameKey(h.entity)}|${h.timing ?? 'annual'}`;
 const declaredPosts = new Set(holdingRows.filter((h) => h.kind === 'management').map(postKey));
@@ -702,6 +737,7 @@ const publicEnterprise = (row, res) => {
 const namesakePicks = [];
 const statedEiks = new Map();
 for (const row of holdingRows) {
+  if (row.holderConfirmed) firstNameHolder++;
   // A participation line in a PUBLIC enterprise whose amount is a post („управител“) declares the office,
   // not a stake: its manager cannot be its private owner. It is recorded and judged as management. In a
   // private company the same word stays a stake — its sole owner is very often its manager too. When the
@@ -1606,6 +1642,7 @@ const S = {
   quarantined,
   immaterialFamilySkipped: immaterialFamily,
   unknownHolderSkipped: unknownHolder,
+  firstNameHolderConfirmed: firstNameHolder,
   namelessInstitutionSkipped: namelessInstitution,
   namelessPersonSkipped: namelessPerson,
   postAlreadyDeclaredSkipped: postDuplicate,

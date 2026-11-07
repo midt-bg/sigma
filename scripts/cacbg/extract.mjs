@@ -178,7 +178,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
   const fingerprint = checkpointFingerprint([
     digest(Buffer.from(JSON.stringify(stamp?.inventory ?? []))),
     identityRules ?? 'no-identity',
-    'schema-8',
+    'schema-9',
     registryDigest,
   ]);
   let head = { fingerprint, folders: [] };
@@ -372,6 +372,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
               timing: it.timing,
               seat: it.seat ?? '',
               holderRelation: it.holderRelation ?? 'self',
+              ...(it.holderFirstName ? { holderFirstName: true } : {}),
               controlHash: d.controlHash,
             }) + '\n',
           );
