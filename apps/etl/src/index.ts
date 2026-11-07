@@ -87,8 +87,13 @@ interface RefreshResult {
   pendingTouched: number;
   /** The oldest unsettled promise this run tried to replay (folded into `from`), or null. */
   replayFrom: string | null;
-  /** Promises still outstanding after this run — what the cap kept out of reach (0 when none). */
-  uncoveredWindows: number;
+  /**
+   * Promises still outstanding after this run — what the cap kept out of reach (0 when none). Null
+   * when the check after the write did not pass: nothing was settled, so every promise is still owed.
+   */
+  uncoveredWindows: number | null;
+  /** The check after the write: `ok` settles the window, anything else leaves it for the next run. */
+  integrity?: 'ok' | 'violation' | 'unverified';
   /** Set when the run did nothing because another live instance holds the refresh lease. */
   skipped?: 'lease-held';
   /** The instance that held the lease when this run stepped aside. */
@@ -187,8 +192,8 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
     // so it only ever claims success for a run that survived its own cleanup.
     let outcome: RefreshResult | null = null;
     // The run's own failure, kept so a failure inside `finally` cannot mask it: JavaScript lets a
-    // throwing finally REPLACE the original error, and the gate's verdict must never be hidden
-    // behind a staging-drop hiccup.
+    // throwing finally REPLACE the original error, and the run's error (a lost lease, a failed write)
+    // must never be hidden behind a staging-drop hiccup. The gate's verdict is logged before that.
     let failed = false;
     // The FIRST failure inside finally, boxed rather than a null sentinel: a thrown `null` or
     // `undefined` is still a failure. Later cleanup failures are logged, never allowed to REPLACE
@@ -360,23 +365,31 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
 
       // Reconciliation gate (#97) on the served D1 the refresh just wrote — the CLI paths gate every
       // derive, but this steady-state path did not. POST-COMMIT alarm: the slice is already applied
-      // and served, so a violation fails the step + surfaces in observability, it does not un-serve
-      // the drift (ship-and-alert; see issue #154 and docs/integrity-gate.md).
-      await fenced('integrity-gate', async () => {
-        try {
-          await runServedIntegrityGate(this.env.DB, {
+      // and served, so nothing here can un-serve it and the run goes on either way. A violation is
+      // logged at error level; a D1 that stays overloaded through the step's retries leaves the
+      // numbers unverified. Either way the window stays recorded, so the next run replays it and
+      // checks again. A lost lease is not a D1 hiccup: it ends the run as at every other step.
+      let integrity: RefreshResult['integrity'] = 'unverified';
+      try {
+        const reconciled = await fenced('integrity-gate', () =>
+          runServedIntegrityGate(this.env.DB, {
             info: (e) => console.log(JSON.stringify({ level: 'info', ...e })),
             warn: (e) => console.warn(JSON.stringify({ level: 'warn', ...e })),
             error: (e) => console.error(JSON.stringify({ level: 'error', ...e })),
-          });
-        } catch (err) {
-          // The verdict is deterministic over the just-written rows — fail the step immediately
-          // rather than burning the default (~3) retries re-checking the same committed data. A
-          // transient infra error lands here too; for a verification gate, "couldn't verify → fail
-          // closed" is the safe default.
-          throw new NonRetryableError(err instanceof Error ? err.message : String(err));
-        }
-      });
+          }),
+        );
+        integrity = reconciled ? 'ok' : 'violation';
+      } catch (err) {
+        if (String(err instanceof Error ? err.message : err).includes('lease lost before'))
+          throw err;
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            event: 'etl_integrity_unverified',
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
 
       // The verified coverage is subtracted from every promise: fulfilled ones go, straddling ones
       // shrink to what is still outstanding, out-of-reach ones stay — and are named, run after run,
@@ -400,14 +413,17 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
           }),
         );
       }
-      const windows = await fenced('settle-windows', async () =>
-        settlePendingWindows(
-          this.env.DB,
-          { from: plan.from, to: plan.to },
-          new Date(),
-          sawData ? () => true : (w) => w.holder === leaseHolder,
-        ),
-      );
+      const windows =
+        integrity === 'ok'
+          ? await fenced('settle-windows', async () =>
+              settlePendingWindows(
+                this.env.DB,
+                { from: plan.from, to: plan.to },
+                new Date(),
+                sawData ? () => true : (w) => w.holder === leaseHolder,
+              ),
+            )
+          : { remaining: [] };
       if (windows.remaining.length > 0) {
         console.warn(
           JSON.stringify({
@@ -424,7 +440,8 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         staged,
         derived,
         pendingTouched: pending.total,
-        uncoveredWindows: windows.remaining.length,
+        uncoveredWindows: integrity === 'ok' ? windows.remaining.length : null,
+        integrity,
       };
       return outcome;
     } catch (err) {
@@ -474,7 +491,12 @@ interface RegistryParams {
   portalPaceMs?: number;
   /** Pause between two reads, under the API's per-client limit; 0 in tests. */
   paceMs?: number;
+  /** Wait before starting. The cron sets it, so the register does not write during the refresh. */
+  startDelayMs?: number;
 }
+
+// A refresh takes 1–3 minutes on the same tick. Both writing at once is what overloads D1 (7429).
+export const REGISTRY_START_DELAY_MS = 5 * 60_000;
 
 interface RegistryResult {
   skipped?: 'not-configured' | 'lease-held';
@@ -539,6 +561,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
     }
     const params = event.payload ?? {};
     const holder = event.instanceId;
+    if (params.startDelayMs) await step.sleep('start-delay', params.startDelayMs);
     const startedAt = new Date().toISOString();
     const acquired = await step.do('acquire-registry-lease', async () =>
       acquireRegistryLease(this.env.DB, holder, new Date(startedAt)),
@@ -925,7 +948,10 @@ export default {
     } else if (!daily) {
       jobs.push(['refresh', () => env.REFRESH.create()]);
       if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
-        jobs.push(['registry', () => env.REGISTRY!.create()]);
+        jobs.push([
+          'registry',
+          () => env.REGISTRY!.create({ params: { startDelayMs: REGISTRY_START_DELAY_MS } }),
+        ]);
     } else if (
       env.DECLARATIONS_ENABLED === 'true' &&
       env.DECLARATIONS &&

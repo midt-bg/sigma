@@ -31,7 +31,7 @@ vi.mock('@sigma/ingest', async (importOriginal) => ({
 vi.mock('./registry', () => reg);
 import { RegistryError } from '@sigma/ingest';
 import { NonRetryableError } from 'cloudflare:workflows';
-import worker, { RegistryWorkflow, type Env } from './index';
+import worker, { REGISTRY_START_DELAY_MS, RegistryWorkflow, type Env } from './index';
 function run() {
   const wf = new RegistryWorkflow(
     {} as ExecutionContext,
@@ -113,6 +113,18 @@ describe('published registry Workflow', () => {
     expect(reg.deferXml).toHaveBeenCalled();
     expect(reg.storeDeed).not.toHaveBeenCalled();
   });
+  it('starts the register after the refresh, so the two do not write at once', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 'registry' });
+    await worker.scheduled(
+      { cron: '0 */6 * * *' } as never,
+      {
+        REFRESH: { create: async () => ({ id: 'refresh' }) },
+        REGISTRY: { create },
+        REGISTRY_API_BASE_URL: 'https://published.test',
+      } as unknown as Env,
+    );
+    expect(create).toHaveBeenCalledWith({ params: { startDelayMs: REGISTRY_START_DELAY_MS } });
+  });
   it('starts the register even when the procurement start fails', async () => {
     const create = vi.fn().mockResolvedValue({ id: 'registry' });
     await expect(
@@ -177,6 +189,17 @@ describe('published registry Workflow — configuration, pacing and failure path
     await expect(run).rejects.toBeInstanceOf(NonRetryableError);
     expect(reg.prepareEntryBaseline).not.toHaveBeenCalled();
     expect(reg.releaseRegistryLease).toHaveBeenCalledWith({}, 'run');
+  });
+
+  it('waits the requested delay before it takes the lease', async () => {
+    reg.acquireRegistryLease.mockResolvedValueOnce(false);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result, sleep } = start({ ...PAYLOAD, startDelayMs: 300_000 });
+    await result;
+    expect(sleep).toHaveBeenCalledWith('start-delay', 300_000);
+    expect(sleep.mock.invocationCallOrder[0]).toBeLessThan(
+      reg.acquireRegistryLease.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('runs a cron start without a payload on the Sofia day, pacing portal pages and bounding deeds by default', async () => {
