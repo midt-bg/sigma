@@ -194,3 +194,40 @@ test('interestClassOf: running a company with any public stake is a held positio
     assert.equal(interestClassOf(link({ relation, publicStake: true })), 'private_ownership');
   assert.equal(interestClassOf(link({ scope: 'family', publicStake: true })), 'family_ownership');
 });
+
+test('a participation detail that names a post, and no quantity or owner, declares the post', async () => {
+  const { declaresPostNotStake } = await import('./classify.mjs');
+  for (const d of [
+    'управител',
+    'Управител',
+    'Член на УС',
+    'Председател на СД',
+    'изпълнителен директор',
+    'Член на КС',
+    'Зам. председател на СД',
+    'Изпълнителен директор и член на СД',
+    'управителка',
+    'член на управителен съвет',
+    'Член на Надзорния съвет',
+    'член на контролният съвет',
+    'изп. директор',
+  ])
+    assert.equal(declaresPostNotStake(d), true, d);
+  for (const d of [
+    '100%',
+    '50 дяла',
+    'едноличен собственик на капитала',
+    '50% от капитала, управител',
+    'съдружник и управител',
+    'член',
+    // Any word form of a stake or an owner keeps the line a stake.
+    'дялове',
+    'акционер',
+    'управител и едноличен собственик',
+    'управител, съдружничка',
+    'управител – притежава половината',
+    '',
+    undefined,
+  ])
+    assert.equal(declaresPostNotStake(d), false, String(d));
+});

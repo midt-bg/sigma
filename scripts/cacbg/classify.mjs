@@ -215,3 +215,51 @@ export function interestClassOf({ scope, relation, ownershipKind, publicStake })
   if (relation === 'manages' && (ownershipKind || publicStake)) return 'ex_officio_board';
   return 'private_ownership';
 }
+
+// A post, not a quantity: the words a declarant writes into a stake's amount field when the line records the
+// office held in the company. The test is strict — every word must belong to a post — so a figure, an owner or
+// any word form of a stake („дялове“, „акционер“, „едноличен“) keeps the line a stake.
+const POST_HEADS = new Set([
+  'управител',
+  'управителка',
+  'директор',
+  'директорка',
+  'председател',
+  'председателка',
+  'прокурист',
+  'прокуристка',
+  'ликвидатор',
+  'ликвидаторка',
+]);
+const BOARDS = new Set([
+  'ус',
+  'сд',
+  'нс',
+  'кс',
+  'съвет',
+  'съвета',
+  'управителния',
+  'управителният',
+  'управителен',
+  'надзорния',
+  'надзорният',
+  'надзорен',
+  'контролния',
+  'контролният',
+  'контролен',
+  'директорите',
+]);
+const POST_FILLERS = new Set(['член', 'изпълнителен', 'изп', 'заместник', 'зам', 'на', 'и']);
+/** True when a participation row's detail names a post held in the company and nothing else. */
+export function declaresPostNotStake(detail) {
+  const words = String(detail ?? '')
+    .toLocaleLowerCase('bg')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  if (!words.every((w) => POST_HEADS.has(w) || BOARDS.has(w) || POST_FILLERS.has(w))) return false;
+  // „член“ alone names no post; it needs the body it sits on.
+  return (
+    words.some((w) => POST_HEADS.has(w)) ||
+    (words.includes('член') && words.some((w) => BOARDS.has(w)))
+  );
+}

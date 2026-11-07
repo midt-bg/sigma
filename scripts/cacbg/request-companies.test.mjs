@@ -64,3 +64,53 @@ test('company requests use the full official name independently of winners and r
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('namesake companies are all requested so the register can tell them apart', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-request-'));
+  try {
+    const catalog = join(dir, 'catalog.sqlite'),
+      dbFile = join(dir, 'work.sqlite');
+    const cat = new DatabaseSync(catalog);
+    cat.exec(
+      `CREATE TABLE companies(eik,name,legal_form); INSERT INTO companies VALUES('123456789','ТЕСТ ДВА','OOD'),('987654321','ТЕСТ ДВА','OOD');`,
+    );
+    cat.close();
+    const db = new DatabaseSync(dbFile);
+    db.exec(
+      `CREATE TABLE interest_links(person_id,status);CREATE TABLE declarations(person_id,folder_year,xml_file);`,
+    );
+    db.close();
+    writeFileSync(
+      join(dir, 'holdings.jsonl'),
+      JSON.stringify({
+        folder: '2025',
+        xmlFile: 'a.xml',
+        person: 'Иван Петров Тестов',
+        institution: 'Община Тест',
+        entity: '„Тест Два“ ООД',
+      }) + '\n',
+    );
+    execFileSync(
+      process.execPath,
+      [
+        '--import',
+        './scripts/cacbg/register-ts.mjs',
+        'scripts/cacbg/request-companies.mjs',
+        '--catalog',
+        catalog,
+        '--db',
+        dbFile,
+        '--staging',
+        dir,
+      ],
+      { stdio: 'pipe' },
+    );
+    const requests = readFileSync(join(dir, 'registry-requests.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map(JSON.parse);
+    assert.deepEqual(requests.map((r) => r.eik).sort(), ['123456789', '987654321']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
