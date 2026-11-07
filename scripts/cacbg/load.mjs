@@ -634,37 +634,44 @@ const annualDocumentKeys = new Map();
 const unresolvedInventoryDocuments = new Set();
 const sourceDocumentId = (r) => `decl:${r.folder}:${r.xmlFile}`;
 // A holder cell that is only the declarant's first name (ADR-0051). On its own it stays unknown: a son or a
-// father often bears the same first name. It is the declarant's own stake where ANOTHER of the person's filings
-// names the declarant in full as the holder of the same company — and the filing itself names no other holder
-// of that company, which would leave two people the name could be.
+// father often bears the same first name. It is the declarant's own stake where a filing of the SAME year or
+// LATER names the declarant in full in the holder cell of the same company, and the filing itself lists no
+// other line for that company, whoever its holder. Only the asset tables have a holder cell: an interests
+// line (a stake or a post) says nothing about who holds the shares.
 const companyTies = (h) => {
-  const ties = [`key:${companyNameKey(h.entity)}`];
+  const key = companyNameKey(h.entity);
+  const ties = isMatchableKey(key) ? [`key:${key}`] : [];
   const res = resolveEntity(h.entity);
   if (res?.eik && !res.ambiguous) ties.push(`eik:${res.eik}`);
   return ties;
 };
-const ownedInFull = new Map(); // person|company → the filings naming the person in full as its holder
-const namedHolders = new Set(); // filing|company where a holder is named, the declarant or another
+const rowYear = (h) => (Number.isFinite(yr(h.year)) ? yr(h.year) : yr(h.folder));
+const ownedInFull = new Map(); // person|company → [filing, year] of each holder cell naming the person in full
+const companyLines = new Map(); // filing|company → asset lines for it
 for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
-  if (h.holderRelation !== 'self' && h.holderRelation !== 'related') continue;
-  if (!isMatchableKey(companyNameKey(h.person))) continue;
+  if (h.template !== 'assets' || !isMatchableKey(companyNameKey(h.person))) continue;
   for (const tie of companyTies(h)) {
-    namedHolders.add(`${sourceDocumentId(h)}|${tie}`);
+    const line = `${sourceDocumentId(h)}|${tie}`;
+    companyLines.set(line, (companyLines.get(line) ?? 0) + 1);
     if (h.holderRelation !== 'self') continue;
     const key = `${personOf(h)}|${tie}`;
-    ownedInFull.set(key, (ownedInFull.get(key) ?? new Set()).add(sourceDocumentId(h)));
+    ownedInFull.set(key, [...(ownedInFull.get(key) ?? []), [sourceDocumentId(h), rowYear(h)]]);
   }
 }
 let firstNameHolder = 0;
 const confirmHolder = (h) => {
-  if (h.holderRelation !== 'unknown' || !h.holderFirstName) return h;
+  if (h.template !== 'assets' || h.holderRelation !== 'unknown' || !h.holderFirstName) return h;
   if (!isMatchableKey(companyNameKey(h.person))) return h;
   const doc = sourceDocumentId(h);
+  const year = rowYear(h);
   const ties = companyTies(h);
-  if (ties.some((tie) => namedHolders.has(`${doc}|${tie}`))) return h;
+  if (!Number.isFinite(year) || !ties.length) return h;
+  if (ties.some((tie) => (companyLines.get(`${doc}|${tie}`) ?? 0) > 1)) return h;
   const pid = personOf(h);
   const confirmed = ties.some((tie) =>
-    [...(ownedInFull.get(`${pid}|${tie}`) ?? [])].some((other) => other !== doc),
+    (ownedInFull.get(`${pid}|${tie}`) ?? []).some(
+      ([other, y]) => other !== doc && Number.isFinite(y) && y >= year,
+    ),
   );
   return confirmed ? { ...h, holderRelation: 'self', holderConfirmed: true } : h;
 };

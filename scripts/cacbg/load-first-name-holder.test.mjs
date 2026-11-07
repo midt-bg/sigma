@@ -19,6 +19,9 @@ let dir, DB, STAGING, TR_DB, TR_RAW, report;
 const PETKO = 'Петко Иванов Пробов';
 const STOYAN = 'Стоян Илиев Опитов';
 const KALIN = 'Калин Петров Мострев';
+const OGNYAN = 'Огнян Петров Пробнев';
+const RADKO = 'Радко Иванов Тестиев';
+const TRAYAN = 'Траян Илиев Сондов';
 
 const row = (over) => ({
   template: 'assets',
@@ -54,6 +57,12 @@ before(() => {
     INSERT INTO contracts VALUES ('c1','t1','eik:300000101','2025-05-01',50000);
     INSERT INTO contracts VALUES ('c2','t1','eik:300000102','2025-05-01',50000);
     INSERT INTO contracts VALUES ('c3','t1','eik:300000103','2025-05-01',50000);
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000104','ИНТЕР ТЕХ 10 ООД','300000104',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000105','РАДКО ТЕХ 11 ООД','300000105',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000106','СОНДА ТЕХ 12 ООД','300000106',1,'София');
+    INSERT INTO contracts VALUES ('c4','t1','eik:300000104','2025-05-01',50000);
+    INSERT INTO contracts VALUES ('c5','t1','eik:300000105','2025-05-01',50000);
+    INSERT INTO contracts VALUES ('c6','t1','eik:300000106','2025-05-01',50000);
   `);
   db.close();
 
@@ -121,6 +130,93 @@ before(() => {
       holderRelation: 'self',
       controlHash: 'K21',
     }),
+    // Огнян writes „ОГНЯН" in 2020; his full name appears only on an interests line — he manages the
+    // company. An interests line has no holder cell: it does not say who holds the shares.
+    row({
+      folder: '2021',
+      xmlFile: 'O20.xml',
+      year: '2020',
+      person: OGNYAN,
+      entity: 'ИНТЕР ТЕХ 10 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'O20',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'O21.xml',
+      year: '2021',
+      template: 'interests',
+      kind: 'management',
+      detail: 'управител',
+      timing: 'current',
+      person: OGNYAN,
+      entity: 'ИНТЕР ТЕХ 10 ООД',
+      holderRelation: 'self',
+      controlHash: 'O21',
+    }),
+    // Радко's 2020 filing lists „РАДКО" and a second holder line for the company whose name the classifier
+    // cannot settle (a son named after him, in full): two people the first name could be.
+    row({
+      folder: '2021',
+      xmlFile: 'R20.xml',
+      year: '2020',
+      person: RADKO,
+      entity: 'РАДКО ТЕХ 11 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'R20',
+    }),
+    row({
+      folder: '2021',
+      xmlFile: 'R20.xml',
+      year: '2020',
+      person: RADKO,
+      entity: 'РАДКО ТЕХ 11 ООД',
+      holderRelation: 'unknown',
+      controlHash: 'R20',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'R21.xml',
+      year: '2021',
+      person: RADKO,
+      entity: 'РАДКО ТЕХ 11 ООД',
+      timing: 'disposed',
+      holderRelation: 'self',
+      controlHash: 'R21',
+    }),
+    // Траян holds the company in 2019 and transfers it in 2020, both in full; „ТРАЯН" in 2021 comes after
+    // the transfer — most likely whoever received it — and is not his.
+    row({
+      folder: '2020',
+      xmlFile: 'T19.xml',
+      year: '2019',
+      person: TRAYAN,
+      entity: 'СОНДА ТЕХ 12 ООД',
+      holderRelation: 'self',
+      controlHash: 'T19',
+    }),
+    row({
+      folder: '2021',
+      xmlFile: 'T20.xml',
+      year: '2020',
+      person: TRAYAN,
+      entity: 'СОНДА ТЕХ 12 ООД',
+      timing: 'disposed',
+      holderRelation: 'self',
+      controlHash: 'T20',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'T21.xml',
+      year: '2021',
+      person: TRAYAN,
+      entity: 'СОНДА ТЕХ 12 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'T21',
+    }),
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -146,6 +242,9 @@ before(() => {
     300000101: PETKO,
     300000102: STOYAN,
     300000103: KALIN,
+    300000104: OGNYAN,
+    300000105: RADKO,
+    300000106: TRAYAN,
   };
   seedVerdicts({
     workDb: DB,
@@ -219,4 +318,21 @@ test('a first name beside another named holder of the company stays unknown', ()
   // Only the 2021 disposal is his own; the 2020 holding is not dated as his.
   assert.ok(link, 'the disposal still forms the own link');
   assert.equal(link.first_declared_year, null);
+});
+
+test('an interests line naming the declarant is not a holder cell', () => {
+  const link = ownLink('300000104', OGNYAN);
+  assert.ok(!link || !String(link.relation).includes('owns'), 'no own stake from the first name');
+});
+
+test('a first name beside another holder line the classifier cannot settle stays unknown', () => {
+  const link = ownLink('300000105', RADKO);
+  assert.ok(link, 'the disposal still forms the own link');
+  assert.equal(link.first_declared_year, null);
+});
+
+test('a first name after the declarant transferred the company is not his', () => {
+  const link = ownLink('300000106', TRAYAN);
+  assert.ok(link, 'the 2019 holding forms the own link');
+  assert.equal(link.last_declared_year, '2019');
 });

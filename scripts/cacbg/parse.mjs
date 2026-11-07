@@ -91,8 +91,8 @@ export function classifyHolder(holder, declarant) {
 }
 // A holder cell that is the declarant's first name and nothing else („ИВАН" for „Иван Петров Тестов"). On
 // its own it stays unknown — a son or a father often bears the same name. The loader accepts it as the
-// declarant's own stake only where another of the declarant's filings names the declarant in full as the holder
-// of the same company (ADR-0051). Only the fact is kept, never the cell.
+// declarant's own stake only where a filing of the same year or later names the declarant in full as the holder
+// of the same company, under the rules of ADR-0051. Only the fact is kept, never the cell.
 export function holderIsFirstName(holder, declarant) {
   const D = holderTokens(declarant);
   const H = holderTokens(holder);
