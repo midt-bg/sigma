@@ -177,11 +177,13 @@ export const LINK_SELECT = `SELECT
     -- the relevant moment, or as transferred. The years of those filings, so the surface names the stake
     -- for what it is („предходно участие“, „прехвърлен дял“) instead of as a stake the person holds. A
     -- transfer is named beside the declared years too, so a stake held and then sold reads as both.
+    -- The unary plus keeps SQLite off the (timing, reported_year) index: without ANALYZE it would scan
+    -- every transfer in the corpus for each link instead of seeking the link's own rows.
     CASE WHEN il.first_declared_year IS NULL THEN (SELECT json_group_array(DISTINCT h.reported_year)
-      FROM interest_link_observations h WHERE h.link_key=il.link_key AND h.timing='prior'
+      FROM interest_link_observations h WHERE h.link_key=il.link_key AND +h.timing='prior'
         AND h.kind<>'management' AND h.reported_year IS NOT NULL) END AS prior_years,
     (SELECT json_group_array(DISTINCT h.reported_year)
-      FROM interest_link_observations h WHERE h.link_key=il.link_key AND h.timing='disposed'
+      FROM interest_link_observations h WHERE h.link_key=il.link_key AND +h.timing='disposed'
         AND h.reported_year IS NOT NULL) AS disposed_years,
     il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
     il.relation, il.contemporaneous, il.own_institution,

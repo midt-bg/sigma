@@ -205,6 +205,16 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
+  it("seeks a link's own earlier and transferred filings, not every one in the corpus", () => {
+    withDb((dbPath) => {
+      // The served schema has this index (0023); with no ANALYZE, SQLite would take it over the link key.
+      readScript(dbPath, resolve(root, 'packages/db/migrations/0023_read_path_indexes.sql'));
+      const plan = sqlite(dbPath, `EXPLAIN QUERY PLAN ${lit(OFFICIAL_SQL, 'person:ivan')};`);
+      expect(plan).not.toMatch(/SEARCH h USING INDEX idx_interest_observations_timing/);
+      expect(plan.match(/SEARCH h USING INDEX \S+ \(link_key=\?\)/g)).toHaveLength(2);
+    });
+  });
+
   it('proven historical links surface with their sources and unchanged contract window', () => {
     withDb((dbPath) => {
       const before = rows(dbPath, lit(LEADERBOARD_SQL, 100))[0]!;

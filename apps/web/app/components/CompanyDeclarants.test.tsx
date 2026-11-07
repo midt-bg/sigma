@@ -173,6 +173,12 @@ it('names a declared own stake with its declared years, and a transfer beside th
   expect(
     basis([own({ firstDeclaredYear: '2020', lastDeclaredYear: '2020', disposedYears: ['2021'] })]),
   ).toEqual(['деклариран собствен дял (2020)', 'деклариран прехвърлен дял (2021)']);
+  // Beside a held stake, the transfer's explanation does not say that no filing lists it as held.
+  const page = render([
+    own({ firstDeclaredYear: '2018', lastDeclaredYear: '2022', disposedYears: ['2020'] }),
+  ]);
+  expect(page.textContent).toContain('е прехвърлило дела си');
+  expect(page.textContent).not.toContain('Нито една декларация не посочва дела');
   // A stake with a declared year of its own is held in that year: the earlier filings do not relabel it.
   expect(
     basis([own({}), own({ linkKey: 'x', firstDeclaredYear: null, priorYears: ['2018'] })]),
