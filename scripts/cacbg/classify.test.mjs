@@ -207,6 +207,10 @@ test('a participation detail that names a post, and no quantity or owner, declar
     'Зам. председател на СД',
     'Изпълнителен директор и член на СД',
     'управителка',
+    'член на управителен съвет',
+    'Член на Надзорния съвет',
+    'член на контролният съвет',
+    'изп. директор',
   ])
     assert.equal(declaresPostNotStake(d), true, d);
   for (const d of [

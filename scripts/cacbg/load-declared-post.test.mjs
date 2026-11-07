@@ -85,7 +85,8 @@ before(() => {
       detail: 'Управител',
       timing: 'prior',
     }),
-    // A post on the participation line of a private company: management, not ownership.
+    // A post on the participation line of a PRIVATE company stays what it was declared as: its sole owner is
+    // very often its manager too, so the word does not tell the two apart.
     row({
       xmlFile: 'B.xml',
       controlHash: 'B1',
@@ -106,16 +107,16 @@ before(() => {
       xmlFile: 'D.xml',
       controlHash: 'D1',
       person: 'Деян Тестов Примеров',
-      entity: 'ЧАСТНО ТЕСТ ЕООД',
+      entity: 'ДЪРЖАВНО ТЕСТ ЕООД',
       kind: 'management',
-      detail: 'управител',
+      detail: 'член на съвета на директорите',
     }),
     row({
       xmlFile: 'D.xml',
       controlHash: 'D1',
       person: 'Деян Тестов Примеров',
-      entity: 'ЧАСТНО ТЕСТ ЕООД',
-      detail: 'управител',
+      entity: 'ДЪРЖАВНО ТЕСТ ЕООД',
+      detail: 'член на СД',
     }),
     // Only the participation line is read this way: a declared block of shares stays shares.
     row({
@@ -139,9 +140,9 @@ before(() => {
       .join('\n') + '\n',
   );
   const registry = {
-    300000004: { managers: ['АННА ТЕСТОВА ПРИМЕРОВА'] },
+    300000004: { managers: ['АННА ТЕСТОВА ПРИМЕРОВА', 'ДЕЯН ТЕСТОВ ПРИМЕРОВ'] },
     300000006: {
-      managers: ['БОРИС ТЕСТОВ ПРИМЕРОВ', 'ДЕЯН ТЕСТОВ ПРИМЕРОВ'],
+      managers: ['БОРИС ТЕСТОВ ПРИМЕРОВ'],
       owners: ['ЦВЕТАНА ТЕСТОВА ПРИМЕРОВА', 'ЕЛИЦА ТЕСТОВА ПРИМЕРОВА'],
     },
   };
@@ -198,7 +199,7 @@ test('the manager of a state company who repeats the post on the participation l
   // The source line is kept, recorded as the management it declares.
   assert.deepEqual(
     query(
-      "SELECT kind, detail, timing FROM declared_interests WHERE entity_raw='ДЪРЖАВНО ТЕСТ ЕООД' ORDER BY timing",
+      "SELECT di.kind, di.detail, di.timing FROM declared_interests di JOIN declarations d ON d.id=di.declaration_id WHERE d.xml_file='A.xml' ORDER BY di.timing",
     ).map((r) => ({ ...r })),
     [
       { kind: 'management', detail: 'управител', timing: 'current' },
@@ -207,8 +208,14 @@ test('the manager of a state company who repeats the post on the participation l
   );
 });
 
-test('a post on the participation line of a private company is management, not ownership', () => {
-  assert.equal(link('300000006', 'Борис Тестов Примеров').relation, 'manages');
+test('a post on the participation line of a private company stays as declared', () => {
+  assert.equal(link('300000006', 'Борис Тестов Примеров').relation, 'owns');
+  assert.deepEqual(
+    query(
+      "SELECT di.kind FROM declared_interests di JOIN declarations d ON d.id=di.declaration_id WHERE d.xml_file='B.xml'",
+    ).map((r) => ({ ...r })),
+    [{ kind: 'participation' }],
+  );
 });
 
 test('a share that also names a post stays a share', () => {
@@ -216,12 +223,12 @@ test('a share that also names a post stays a share', () => {
 });
 
 test('the same post on both lines of one declaration is recorded once', () => {
-  assert.equal(link('300000006', 'Деян Тестов Примеров').relation, 'manages');
+  assert.equal(link('300000004', 'Деян Тестов Примеров').relation, 'manages');
   assert.deepEqual(
     query(
       "SELECT di.kind, di.detail FROM declared_interests di JOIN declarations d ON d.id=di.declaration_id WHERE d.xml_file='D.xml'",
     ).map((r) => ({ ...r })),
-    [{ kind: 'management', detail: 'управител' }],
+    [{ kind: 'management', detail: 'член на съвета на директорите' }],
   );
 });
 

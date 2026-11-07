@@ -239,11 +239,17 @@ const BOARDS = new Set([
   'съвет',
   'съвета',
   'управителния',
+  'управителният',
+  'управителен',
   'надзорния',
+  'надзорният',
+  'надзорен',
   'контролния',
+  'контролният',
+  'контролен',
   'директорите',
 ]);
-const POST_FILLERS = new Set(['член', 'изпълнителен', 'заместник', 'зам', 'на', 'и']);
+const POST_FILLERS = new Set(['член', 'изпълнителен', 'изп', 'заместник', 'зам', 'на', 'и']);
 /** True when a participation row's detail names a post held in the company and nothing else. */
 export function declaresPostNotStake(detail) {
   const words = String(detail ?? '')

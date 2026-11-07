@@ -665,11 +665,19 @@ const holdingRows = readJsonl(path.join(STAGING, 'holdings.jsonl'));
 const postKey = (h) =>
   `${h.folder}|${h.xmlFile}|${companyNameKey(h.entity)}|${h.timing ?? 'annual'}`;
 const declaredPosts = new Set(holdingRows.filter((h) => h.kind === 'management').map(postKey));
+// A company the state or a municipality controls, or holds a public stake in.
+const publicEnterprise = (res) =>
+  Boolean(res && !res.ambiguous) &&
+  Boolean(bidderByEik.get(res.eik)?.ownership_kind || publicStakeEik.has(String(res.eik)));
 for (const row of holdingRows) {
-  // A participation line whose amount is a post („управител“) declares the office, not a stake. It is
-  // recorded and judged as management, so it cannot make the declarant an owner. When the same declaration
-  // already lists that post for the company, the line adds nothing and is not recorded twice.
-  const post = row.kind === 'participation' && declaresPostNotStake(row.detail);
+  // A participation line in a PUBLIC enterprise whose amount is a post („управител“) declares the office,
+  // not a stake: its manager cannot be its private owner. It is recorded and judged as management. In a
+  // private company the same word stays a stake — its sole owner is very often its manager too. When the
+  // same declaration already lists a post in that company for the period, the line is not recorded twice.
+  const post =
+    row.kind === 'participation' &&
+    declaresPostNotStake(row.detail) &&
+    publicEnterprise(resolveEntity(row.entity));
   if (post && declaredPosts.has(postKey(row))) {
     postDuplicate++;
     continue;
