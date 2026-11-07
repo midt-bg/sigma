@@ -196,6 +196,20 @@ test('asset decl: a self stake whose holder repeats the OWN name with case/spaci
   assert.equal(d.familyHoldingCount, 0, 'no fabricated family holding');
 });
 
+test('asset decl: a holder cell with only the first name stays unknown and carries the mark, not the cell', () => {
+  const firstNameRow = `<Row>
+    <Cell Num="1" Description="Ном. по ред">1</Cell>
+    <Cell Num="4" Description="Наименование на дружеството">"ТЕСТ АГРО" ЕООД</Cell>
+    <Cell Num="7" Description="Име: собствено, бащино, фамилно">ИВАН</Cell></Row>`;
+  const d = parseDeclaration(assetDecl({ name: 'Иван Петров Тестов', rows: firstNameRow }));
+  assert.equal(d.interests.length, 1);
+  assert.equal(d.interests[0].holderRelation, 'unknown');
+  assert.equal(d.interests[0].holderFirstName, true);
+  assert.equal(d.interests[0].holder, undefined);
+  const plain = parseDeclaration(assetDecl({ name: 'Иван Петров Тестов', rows: selfRow }));
+  assert.equal(plain.interests[0].holderFirstName, undefined);
+});
+
 // АД securities table: issuer is in the „Емитент" column (≈col 6), NOT the ООД company column — a
 // declarant's blue-chip share holding must not be mis-read as closely-held ownership.
 const secDecl = `<?xml version="1.0"?>

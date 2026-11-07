@@ -76,7 +76,7 @@ const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — the audit's list of removed links keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-4';
+const MATCHER_VERSION = 'cnk-1+classify-3+tr-1+resolve-4';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very
@@ -633,7 +633,65 @@ const annualInventoryDocuments = new Map();
 const annualDocumentKeys = new Map();
 const unresolvedInventoryDocuments = new Set();
 const sourceDocumentId = (r) => `decl:${r.folder}:${r.xmlFile}`;
+// A holder cell that is only the declarant's first name (ADR-0051). On its own it stays unknown: a son or a
+// father often bears the same first name. It is the declarant's own stake where a filing of the SAME year or
+// LATER names the declarant in full in the holder cell of the same company and no other holder of it, and
+// the filing itself lists no other line for that company, whoever its holder. Only the asset tables have a
+// holder cell: an interests line (a stake or a post) says nothing about who holds the shares.
+// The company is the same by its name key or by an ЕИК the name states or names exactly — a name-stem
+// guess drops the legal form and names a company only, not this one.
+const companyTies = (h) => {
+  const key = companyNameKey(h.entity);
+  const ties = isMatchableKey(key) ? [`key:${key}`] : [];
+  const res = resolveEntity(h.entity);
+  if (res?.eik && !res.ambiguous && res.method !== 'name_stem') ties.push(`eik:${res.eik}`);
+  return ties;
+};
+const rowYear = (h) => (Number.isFinite(yr(h.year)) ? yr(h.year) : yr(h.folder));
+const ownedInFull = new Map(); // person|company → [filing, year] of each holder cell naming the person in full
+const companyLines = new Map(); // filing|company → asset lines for it
+const otherHolderLines = new Map(); // filing|company → asset lines for it not held by the declarant in full
 for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
+  if (h.template !== 'assets' || !isMatchableKey(companyNameKey(h.person))) continue;
+  for (const tie of companyTies(h)) {
+    const line = `${sourceDocumentId(h)}|${tie}`;
+    companyLines.set(line, (companyLines.get(line) ?? 0) + 1);
+    if (h.holderRelation !== 'self') {
+      otherHolderLines.set(line, (otherHolderLines.get(line) ?? 0) + 1);
+      continue;
+    }
+    const key = `${personOf(h)}|${tie}`;
+    // The confirming year is the declared one: the folder year runs ahead of it and would make an earlier
+    // transfer look like the same year. A transfer in year N happened before that year's 31 December
+    // snapshot, so it confirms only an earlier year.
+    const y = yr(h.year);
+    const until = h.timing === 'disposed' ? y - 1 : y;
+    ownedInFull.set(key, [...(ownedInFull.get(key) ?? []), [sourceDocumentId(h), until]]);
+  }
+}
+let firstNameHolder = 0;
+const confirmHolder = (h) => {
+  if (h.template !== 'assets' || h.holderRelation !== 'unknown' || !h.holderFirstName) return h;
+  if (!isMatchableKey(companyNameKey(h.person))) return h;
+  const doc = sourceDocumentId(h);
+  const year = rowYear(h);
+  const ties = companyTies(h);
+  if (!Number.isFinite(year) || !ties.length) return h;
+  if (ties.some((tie) => (companyLines.get(`${doc}|${tie}`) ?? 0) > 1)) return h;
+  const pid = personOf(h);
+  const confirmed = ties.some((tie) =>
+    (ownedInFull.get(`${pid}|${tie}`) ?? []).some(
+      ([other, until]) =>
+        other !== doc &&
+        Number.isFinite(until) &&
+        until >= year &&
+        !ties.some((t) => otherHolderLines.get(`${other}|${t}`)),
+    ),
+  );
+  return confirmed ? { ...h, holderRelation: 'self', holderConfirmed: true } : h;
+};
+const holdingRows = readJsonl(path.join(STAGING, 'holdings.jsonl')).map(confirmHolder);
+for (const h of holdingRows) {
   if (h.kind === 'shares' && h.timing === 'annual' && h.holderRelation === 'unknown')
     unresolvedInventoryDocuments.add(sourceDocumentId(h));
 }
@@ -682,7 +740,6 @@ if (filingFolderDated > 0 || filingUndatable > 0) {
 }
 
 db.exec('BEGIN');
-const holdingRows = readJsonl(path.join(STAGING, 'holdings.jsonl'));
 const postKey = (h) =>
   `${h.folder}|${h.xmlFile}|${companyNameKey(h.entity)}|${h.timing ?? 'annual'}`;
 const declaredPosts = new Set(holdingRows.filter((h) => h.kind === 'management').map(postKey));
@@ -702,6 +759,7 @@ const publicEnterprise = (row, res) => {
 const namesakePicks = [];
 const statedEiks = new Map();
 for (const row of holdingRows) {
+  if (row.holderConfirmed) firstNameHolder++;
   // A participation line in a PUBLIC enterprise whose amount is a post („управител“) declares the office,
   // not a stake: its manager cannot be its private owner. It is recorded and judged as management. In a
   // private company the same word stays a stake — its sole owner is very often its manager too. When the
@@ -1606,6 +1664,7 @@ const S = {
   quarantined,
   immaterialFamilySkipped: immaterialFamily,
   unknownHolderSkipped: unknownHolder,
+  firstNameHolderConfirmed: firstNameHolder,
   namelessInstitutionSkipped: namelessInstitution,
   namelessPersonSkipped: namelessPerson,
   postAlreadyDeclaredSkipped: postDuplicate,

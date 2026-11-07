@@ -8,7 +8,7 @@
 // „свързано лице" card (a libel risk), so the three-state classifier is the guard.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyHolder } from './parse.mjs';
+import { classifyHolder, holderIsFirstName } from './parse.mjs';
 
 const DECLARANT = 'Иван Петров Георгиев';
 
@@ -58,4 +58,21 @@ test('classifyHolder — an initial never double-consumes one declarant token', 
 test('classifyHolder — a missing declarant is unknown, never self/related', () => {
   assert.equal(classifyHolder('Иван Петров Георгиев', ''), 'unknown');
   assert.equal(classifyHolder('Иван Петров Георгиев', '   '), 'unknown');
+});
+
+test("holderIsFirstName — only the declarant's own first name, alone, is marked (ADR-0051)", () => {
+  assert.equal(holderIsFirstName('ИВАН', DECLARANT), true);
+  assert.equal(holderIsFirstName('  иван ', DECLARANT), true);
+  // The family name or the patronymic alone is not the first name.
+  assert.equal(holderIsFirstName('Георгиев', DECLARANT), false);
+  assert.equal(holderIsFirstName('Петров', DECLARANT), false);
+  // An initial, another first name, two names or an empty cell are not marked.
+  assert.equal(holderIsFirstName('И.', DECLARANT), false);
+  assert.equal(holderIsFirstName('Мария', DECLARANT), false);
+  assert.equal(holderIsFirstName('Иван Георгиев', DECLARANT), false);
+  assert.equal(holderIsFirstName('', DECLARANT), false);
+  // A one-word declarant gives nothing to tell a first name from the whole name.
+  assert.equal(holderIsFirstName('Иван', 'Иван'), false);
+  // The mark never overrides the classifier: the cell itself stays unknown.
+  assert.equal(classifyHolder('ИВАН', DECLARANT), 'unknown');
 });
