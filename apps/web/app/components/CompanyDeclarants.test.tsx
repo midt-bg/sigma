@@ -132,3 +132,44 @@ it('labels each office-holder by whose stake they declared', () => {
     '/persons/both': 'собствен и свързан дял',
   });
 });
+
+const own = (over: Partial<ConflictLink>): ConflictLink => ({
+  ...link('source-own', 'Община Тест', '2023'),
+  linkKey: 'source-own|123456789|self',
+  relation: 'owns',
+  ...over,
+});
+const basis = (links: ConflictLink[]) =>
+  [...render(links).querySelectorAll('[data-label="Декларирано участие"] .chip')].map(
+    (c) => c.textContent,
+  );
+
+it('names an own stake every declaration reports as earlier or transferred for what it is, with its years', () => {
+  const historical = { firstDeclaredYear: null, lastDeclaredYear: null };
+  expect(basis([own({ ...historical, priorYears: ['2018'] })])).toEqual([
+    'декларирано предходно участие (2018)',
+  ]);
+  expect(basis([own({ ...historical, disposedYears: ['2021', '2020'] })])).toEqual([
+    'деклариран прехвърлен дял (2020, 2021)',
+  ]);
+  expect(basis([own({ ...historical, priorYears: ['2018'], disposedYears: ['2020'] })])).toEqual([
+    'декларирано предходно участие (2018)',
+    'деклариран прехвърлен дял (2020)',
+  ]);
+  // The explanation is the label's: the years do not hide it.
+  expect(
+    render([own({ ...historical, priorYears: ['2018'] })]).querySelector('.chip-trigger'),
+  ).not.toBeNull();
+});
+
+it('keeps a declared own stake as one, whatever earlier filings said', () => {
+  expect(basis([own({ priorYears: [], disposedYears: [] })])).toEqual(['деклариран собствен дял']);
+  // A stake with a declared year of its own is held in that year: the earlier filings do not relabel it.
+  expect(
+    basis([own({}), own({ linkKey: 'x', firstDeclaredYear: null, priorYears: ['2018'] })]),
+  ).toEqual(['деклариран собствен дял']);
+  // A link with no year and no earlier or transferred filing says nothing new — the old label stays.
+  expect(basis([own({ firstDeclaredYear: null, lastDeclaredYear: null })])).toEqual([
+    'деклариран собствен дял',
+  ]);
+});

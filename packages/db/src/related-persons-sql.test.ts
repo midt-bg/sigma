@@ -174,6 +174,25 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
+  it('a link with no declared year carries the years of its earlier and transferred filings', () => {
+    withDb((dbPath) => {
+      const dated = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
+      expect(dated.prior_years).toBeNull();
+      expect(dated.disposed_years).toBeNull();
+      sqlite(
+        dbPath,
+        `UPDATE interest_links SET first_declared_year=NULL, last_declared_year=NULL WHERE link_key='person:ivan|111';
+        INSERT INTO interest_link_observations VALUES
+          ('person:ivan|111','decl:i','participation','prior','2018'),
+          ('person:ivan|111','decl:i','shares','disposed','2020'),
+          ('person:ivan|111','decl:i','management','prior','2017');`,
+      );
+      const historical = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
+      expect(JSON.parse(String(historical.prior_years))).toEqual(['2018']);
+      expect(JSON.parse(String(historical.disposed_years))).toEqual(['2020']);
+    });
+  });
+
   it('proven historical links surface with their sources and unchanged contract window', () => {
     withDb((dbPath) => {
       const before = rows(dbPath, lit(LEADERBOARD_SQL, 100))[0]!;

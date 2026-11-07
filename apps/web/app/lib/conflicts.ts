@@ -34,6 +34,32 @@ export function declaredStakeNoun(links: { relation: string }[]): string {
     : 'собствен дял';
 }
 
+/** The years of an own stake that no declaration reports as held — only filings that report it as held
+ *  before the relevant moment, or as transferred. Nothing when any of the links has a declared year. */
+function historicalStake(
+  own: Pick<ConflictLink, 'firstDeclaredYear' | 'priorYears' | 'disposedYears'>[],
+): { prior?: string[]; disposed?: string[] } {
+  if (!own.length || own.some((l) => l.firstDeclaredYear != null)) return {};
+  const prior = [...new Set(own.flatMap((l) => l.priorYears ?? []))].sort();
+  const disposed = [...new Set(own.flatMap((l) => l.disposedYears ?? []))].sort();
+  if (!prior.length && !disposed.length) return {};
+  return { ...(prior.length ? { prior } : {}), ...(disposed.length ? { disposed } : {}) };
+}
+
+/** What a person declared about their OWN stake in the companies of a row. A stake every declaration
+ *  reports as held before the relevant moment, or as transferred, is named so, with the years of those
+ *  filings — the same words the person's page uses — and never as a stake the person holds. */
+export function ownStakeLabels(companies: ConflictPersonRow['companies']): string[] {
+  const own = (companies ?? []).filter((c) => c.self);
+  if (!own.length || own.some((c) => !c.prior && !c.disposed)) return ['деклариран собствен дял'];
+  const prior = [...new Set(own.flatMap((c) => c.prior ?? []))].sort();
+  const disposed = [...new Set(own.flatMap((c) => c.disposed ?? []))].sort();
+  return [
+    ...(prior.length ? [`декларирано предходно участие (${prior.join(', ')})`] : []),
+    ...(disposed.length ? [`деклариран прехвърлен дял (${disposed.join(', ')})`] : []),
+  ];
+}
+
 /** The chip in a company's header: what the officials declared about it, never more than every link says.
  *  Management is not a stake, so a company whose officials declared only that they manage it says so. */
 export function declarantsChip(relations: readonly string[]): string {
@@ -133,6 +159,10 @@ export interface ConflictPersonRow {
     declared?: 'stake' | 'manages' | 'family' | 'named' | null;
     /** Registry group: the years whose annual declaration does not name the registered company. */
     missingYears?: string[];
+    /** An own stake no declaration reports as held: the years of the filings that report it as held before
+     *  the relevant moment, or as transferred. Absent when any own stake in the company has a declared year. */
+    prior?: string[];
+    disposed?: string[];
   }[];
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
@@ -289,6 +319,11 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
           ),
           family: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'related')),
           manages: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'manages')),
+          ...historicalStake(
+            groupLinks.filter(
+              (l) => l.eik === eik && (l.relation === 'owns' || l.relation === 'owns+manages'),
+            ),
+          ),
         })),
         contractCount,
         contractValueEur,

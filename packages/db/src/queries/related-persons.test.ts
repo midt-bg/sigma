@@ -425,3 +425,20 @@ describe('the official’s role and the filing on a link', () => {
     expect([b!.position, b!.sourceYear]).toEqual([null, null]);
   });
 });
+
+describe('the years of a link that rests on earlier or transferred filings', () => {
+  it('reads them sorted, and an absent list as none', async () => {
+    const { db } = fakeD1([
+      {
+        when: 'FROM interest_links il',
+        all: [
+          row({ link_key: 'a|1', prior_years: '["2019","2018"]', disposed_years: '[]' }),
+          row({ link_key: 'b|2', prior_years: null, disposed_years: null }),
+        ],
+      },
+    ]);
+    const [a, b] = await getConflictLeaderboard(db, 10);
+    expect([a!.priorYears, a!.disposedYears]).toEqual([['2018', '2019'], []]);
+    expect([b!.priorYears, b!.disposedYears]).toEqual([[], []]);
+  });
+});

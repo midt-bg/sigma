@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import type { ConflictLink } from '@sigma/api-contract';
-import { groupByPerson, officialHref } from '../lib/conflicts';
+import { groupByPerson, officialHref, ownStakeLabels } from '../lib/conflicts';
 import { personName } from '../lib/person-name';
 import { DataTable } from './DataTable';
 import { Chip, Section } from './ui';
@@ -42,17 +42,16 @@ export function CompanyDeclarants({ links }: { links: ConflictLink[] }) {
           {
             key: 'basis',
             header: 'Декларирано участие',
-            cell: (person) => (
-              <Chip>
-                {person.stakeKind === 'mixed'
-                  ? 'собствен и свързан дял'
-                  : person.stakeKind === 'family'
-                    ? 'дял на свързано лице'
-                    : person.companies?.every((c) => c.manages && !c.self)
-                      ? 'декларирано управление'
-                      : 'деклариран собствен дял'}
-              </Chip>
-            ),
+            cell: (person) =>
+              person.stakeKind === 'mixed' ? (
+                <Chip>собствен и свързан дял</Chip>
+              ) : person.stakeKind === 'family' ? (
+                <Chip>дял на свързано лице</Chip>
+              ) : person.companies?.every((c) => c.manages && !c.self) ? (
+                <Chip>декларирано управление</Chip>
+              ) : (
+                ownStakeLabels(person.companies).map((label) => <Chip key={label}>{label}</Chip>)
+              ),
           },
         ]}
         rows={groups}
