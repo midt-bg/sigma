@@ -442,13 +442,17 @@ export async function run({
           return null; // a torn or legacy receipt is simply not a receipt; the full crawl rewrites it
         }
       })();
-      const covered = (index?.files?.length ?? 0) + (index?.missing?.length ?? 0);
+      const covered =
+        (index?.files?.length ?? 0) + (index?.missing?.length ?? 0) + (index?.failed?.length ?? 0);
       // Measured against the DISTINCT files, exactly as the receipt was sealed: the register lists one
       // document under every person and post it belongs to, so a set announces 7 114 rows for 6 043
       // files. The stats, on the other hand, are per ROW, because that is how the walk below counts them
       // and how the completeness gate reconciles announced against obtained — a duplicate row is a row.
+      // A receipt sealed over tolerated failures is not trusted: the documents that failed are asked for
+      // again on every run until they arrive (the obtained ones are read from the cache, not refetched).
       if (
         index?.listHash === digest(listRes.body) &&
+        !index.failed?.length &&
         covered === new Set(rows.map((r) => r.xmlFile)).size
       ) {
         const gaps = new Set(index.missing);
@@ -596,7 +600,8 @@ export async function run({
         JSON.stringify({
           listHash: digest(listRes.body),
           files: [...obtainedFiles].sort().map(([file, entry]) => ({ file, ...entry })),
-          missing: [...sourceGaps, ...failedFiles].sort(),
+          missing: [...sourceGaps].sort(),
+          failed: [...failedFiles].sort(),
         }),
       );
       await store.put(`${folder}/.index.json`, index);

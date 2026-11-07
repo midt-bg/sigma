@@ -247,7 +247,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
         ? index.files
         : [...(await store.files(folder)).keys()].sort().map((file) => ({ file }));
       if (index) {
-        const covered = [...files.map((f) => f.file), ...index.missing];
+        const covered = [...files.map((f) => f.file), ...index.missing, ...(index.failed ?? [])];
         if (
           new Set(covered).size !== covered.length ||
           covered.length !== ctx.size ||

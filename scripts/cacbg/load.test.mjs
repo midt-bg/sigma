@@ -1596,6 +1596,22 @@ test('a link on the audit withheld list stays off the surface and the rest of th
   assert.deepEqual(after, before.slice(1));
 });
 
+test('a reload without withheld links keeps comparing against the last published generation', () => {
+  runLoad();
+  // The run's first load wrote out what the site served before it. The reload rebuilds over that load,
+  // so the DB now holds this run's build — the snapshot it compares against must stay the served one.
+  const SNAP = path.join(STAGING, 'published-snapshot.json');
+  const served = [{ link_key: 'person:served|300000000|self', rules_version: 'r-served' }];
+  fs.writeFileSync(SNAP, JSON.stringify(served));
+  const list = path.join(dir, 'withheld-none.json');
+  fs.writeFileSync(list, JSON.stringify({ links: [] }));
+  runLoad({ CACBG_WITHHOLD_LIST: list });
+  assert.deepEqual(JSON.parse(fs.readFileSync(SNAP, 'utf8')), served);
+  // An ordinary load writes it out afresh.
+  runLoad();
+  assert.notDeepEqual(JSON.parse(fs.readFileSync(SNAP, 'utf8')), served);
+});
+
 test('corrections are fail-closed on a missing salt, exactly like suppressions', () => {
   const corrFile = path.join(dir, 'corr-nosalt.jsonl');
   fs.writeFileSync(

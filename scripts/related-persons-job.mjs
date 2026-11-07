@@ -1,6 +1,7 @@
 // Shared Node pipeline for the Container and the existing Actions job. Local mode never calls Wrangler.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { auditUntilClean } from './cacbg/audit-passes.mjs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './cacbg/corpus.mjs';
@@ -318,25 +319,22 @@ if (doing('load')) {
 }
 if (doing('audit')) {
   setStage('audit');
-  // A link the audit will not vouch for stays off the surface; the update itself goes on. The build is
-  // loaded once more without it, because the loader derives more than the link's own row from it, and
-  // what comes out is audited again before anything ships. Only a defect that names no link stops the
-  // run, and the next day's run tries again.
+  // A link the audit will not vouch for stays off the surface and the update goes on (audit-passes.mjs).
+  const kept = join(work, 'audit-withheld.json');
+  const list = join(staging, 'audit-withheld.json');
   try {
-    execScript('scripts/cacbg/audit.mjs');
+    auditUntilClean({
+      audit: () => execScript('scripts/cacbg/audit.mjs'),
+      verdict: () => (existsSync(list) ? JSON.parse(readFileSync(list, 'utf8')) : null),
+      reload: (links, pass) => {
+        console.log(JSON.stringify({ event: 'declarations_links_withheld', pass, links }));
+        writeFileSync(kept, JSON.stringify({ links }));
+        env.CACBG_WITHHOLD_LIST = kept;
+        run('scripts/cacbg/load.mjs');
+      },
+    });
   } catch (error) {
-    const list = join(staging, 'audit-withheld.json');
-    const verdict = existsSync(list) ? JSON.parse(readFileSync(list, 'utf8')) : null;
-    if (error.signal || !verdict?.links?.length || verdict.structural)
-      stopOn('scripts/cacbg/audit.mjs', error);
-    console.log(
-      JSON.stringify({ event: 'declarations_links_withheld', links: verdict.links.length }),
-    );
-    const kept = join(work, 'audit-withheld.json');
-    copyFileSync(list, kept);
-    env.CACBG_WITHHOLD_LIST = kept;
-    run('scripts/cacbg/load.mjs');
-    run('scripts/cacbg/audit.mjs');
+    stopOn('scripts/cacbg/audit.mjs', error);
   }
 }
 if (doing('publish') && remote) {

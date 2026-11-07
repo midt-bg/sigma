@@ -79,9 +79,17 @@ test('a few documents the register keeps refusing do not hold back the rest → 
     [`${BASE}/${FOLDER}/a0.xml`]: { status: 500, body: '' },
   };
   assert.equal(await runGate(routes, ['--concurrency', '8']), 0);
-  const index = JSON.parse(fs.readFileSync(path.join(dir, FOLDER, '.index.json'), 'utf8'));
-  assert.deepEqual(index.missing, ['a0.xml']);
-  assert.equal(index.files.length, 999);
+  const readIndex = () =>
+    JSON.parse(fs.readFileSync(path.join(dir, FOLDER, '.index.json'), 'utf8'));
+  // The refused document is a failure, not a gap the register left: the receipt keeps them apart.
+  assert.deepEqual(readIndex().missing, []);
+  assert.deepEqual(readIndex().failed, ['a0.xml']);
+  assert.equal(readIndex().files.length, 999);
+  // The next run does not trust that receipt: it asks for the failed document again and gets it.
+  routes[`${BASE}/${FOLDER}/a0.xml`] = { status: 200, body: '<x/>' };
+  assert.equal(await runGate(routes, ['--concurrency', '8']), 0);
+  assert.deepEqual(readIndex().failed, []);
+  assert.equal(readIndex().files.length, 1000);
 });
 
 test('the tolerated shortfall is a few documents, never a skipped set or a crawl cut short', () => {

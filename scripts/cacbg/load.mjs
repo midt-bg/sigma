@@ -1348,7 +1348,11 @@ const carryKey = (key) => {
     .filter((k) => builtKeys.has(k));
   return now.length === 1 ? now[0] : key;
 };
-{
+// A reload without the links the audit withheld (scripts/related-persons-job.mjs) rebuilds over the first
+// load of this same run, so the work DB no longer holds the last published generation. That load already
+// wrote it out, and the audit must keep comparing against it.
+const reload = Boolean(process.env.CACBG_WITHHOLD_LIST);
+if (!reload || !fs.existsSync(path.join(STAGING, 'published-snapshot.json'))) {
   const snapPath = path.join(STAGING, 'published-snapshot.json');
   const snapTmp = `${snapPath}.tmp`;
   const carried = snapshot.map((p) => ({ ...p, link_key: carryKey(p.link_key) }));

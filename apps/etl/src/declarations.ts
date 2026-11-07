@@ -56,6 +56,8 @@ interface DeclarationRun {
   attemptAlive?: true;
   attemptStage?: string;
   attemptCompleted?: number;
+  /** Refusals per stage since the run last moved past its durable mark; replay does not clear them. */
+  stageFailures?: Record<string, number>;
   lastProgressAt: number;
 }
 interface ContainerStatus {
@@ -408,6 +410,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       if (next > previous || (next === previous && status.completed > run.completed)) {
         run.stage = status.stage;
         run.completed = status.completed;
+        delete run.stageFailures;
         if (Number.isSafeInteger(status.total) && status.total! >= status.completed)
           run.total = status.total;
         else delete run.total;
@@ -450,14 +453,29 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         //
         // `publish` too: the attempt starts over from a fresh snapshot, so a failure after the swap landed
         // only rebuilds what is already served, and hours of finished work are not thrown away.
-        if (
+        //
+        // A replayed attempt counts as moving, so the failure budget alone would retry a stage that
+        // refuses every time — publish, say — for ever. The same refusal at the same stage, three times
+        // without the run getting past its mark, ends the run; tomorrow's cron starts a new one.
+        const retryable =
           status.state === 'yielded' ||
           ['fetch', 'import', 'snapshot', 'registry', 'publish', 'reindex'].includes(
             status.stage,
           ) ||
-          status.signal
-        )
-          await this.retry(run, reason, status.state === 'yielded');
+          status.signal;
+        if (retryable && status.state === 'failed' && !status.signal) {
+          const repeats = (run.stageFailures?.[status.stage] ?? 0) + 1;
+          run.stageFailures = { ...run.stageFailures, [status.stage]: repeats };
+          if (repeats >= MAX_FAILURES) {
+            await this.finish(
+              run,
+              'failed',
+              `${reason}; ${status.stage} failed ${repeats} times without getting further`,
+            );
+            return;
+          }
+        }
+        if (retryable) await this.retry(run, reason, status.state === 'yielded');
         else await this.finish(run, 'failed', reason); // Repeating it now would refuse again.
         return;
       }
