@@ -305,8 +305,26 @@ test('a namesake is settled only by the one partida that names the holder in ful
       assert.equal(namesakeResolver(db)(eiks, name), null, why);
       db.prepare('DELETE FROM registry_identity_observations WHERE eik=?').run('123456789');
     }
-    add('123456789', '1990-01-01', name, 'BirthDate');
-    assert.equal(namesakeResolver(db)(eiks, name), null, 'a birth date for an identifier');
+    // As the register's writer stores them: a birth date or no identifier is `other` with no indent, two
+    // holders under one identifier are `collective`.
+    const observe = (kind, indent, type, holder) =>
+      db
+        .prepare(
+          "INSERT INTO registry_identity_observations VALUES(?,'1','00190',?,'2019-01-01',0,?,?,?,?,?,?,'2026-01-01')",
+        )
+        .run('123456789', String(++entry), indent, type, holder, holder, kind, 'f'.repeat(64));
+    let entry = 1000;
+    for (const [kind, indent, type, why] of [
+      ['other', null, 'BirthDate', 'a birth date for an identifier'],
+      ['other', null, 'UNDEFINED', 'no identifier'],
+      ['collective', 'd'.repeat(64), 'EGN', 'a collective row'],
+    ]) {
+      observe(kind, indent, type, name);
+      assert.equal(namesakeResolver(db)(eiks, name), null, why);
+      db.prepare('DELETE FROM registry_identity_observations WHERE eik=?').run('123456789');
+    }
+    observe('other', '123456789', 'UIC', name);
+    assert.equal(namesakeResolver(db)(eiks, name), '987654321', 'a company is not a person');
     db.prepare('DELETE FROM registry_identity_observations WHERE eik=?').run('123456789');
     add('123456789', 'b'.repeat(64), 'Иван Петров Тестов');
     assert.equal(namesakeResolver(db)(eiks, name), '987654321', 'a different person');

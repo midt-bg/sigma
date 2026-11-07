@@ -694,6 +694,11 @@ if (filingFolderDated > 0 || filingUndatable > 0) {
 }
 
 db.exec('BEGIN');
+// Every company a declaration names by the register's pick, and every ЕИК a person states, by claim
+// (person, whose stake, company name) — gathered before any holding is filtered out of link formation, so
+// a stated ЕИК outranks the pick wherever it was made (see „a person who states the ЕИК" below).
+const namesakePicks = [];
+const statedEiks = new Map();
 for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   // A degenerate official name folds to the empty person key (`person:`), which would MERGE every such
   // official into one identity and mis-attribute their links. Can't attribute a stake to a nameless person
@@ -736,7 +741,13 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     h.seat ?? '',
   );
   const res = resolveEntity(h.entity, holdersOf(h, did));
-  if (res && !res.ambiguous) insDeclarationCompany.run(did, res.eik, res.method);
+  if (res && !res.ambiguous) {
+    insDeclarationCompany.run(did, res.eik, res.method);
+    const claim = `${pid}|${h.holderRelation === 'related' ? 'family' : 'self'}|${companyNameKey(bidderByEik.get(res.eik)?.name ?? '')}`;
+    if (res.method === 'registry_namesake') namesakePicks.push({ did, claim, eik: res.eik });
+    if (res.method === 'declared_eik')
+      statedEiks.set(claim, (statedEiks.get(claim) ?? new Set()).add(res.eik));
+  }
   // Preserve historical/disposal rows as source facts, but never let them establish
   // a positive holding during the filing year. "Prior" is appointment-relative,
   // and a disposal alone proves neither the retained balance nor a full exit date.
@@ -1122,21 +1133,15 @@ function interestClass(rec, relation) {
 const dropNamesakePick = db.prepare(
   "DELETE FROM declaration_companies WHERE declaration_id=? AND eik=? AND match_method='registry_namesake'",
 );
+const statedElsewhere = (claim, eik) => [...(statedEiks.get(claim) ?? [])].some((e) => e !== eik);
+for (const pick of namesakePicks)
+  if (statedElsewhere(pick.claim, pick.eik)) dropNamesakePick.run(pick.did, pick.eik);
 for (const [gid, rec] of agg)
   if (
     rec.method === 'registry_namesake' &&
-    [...agg.values()].some(
-      (o) =>
-        o.pid === rec.pid &&
-        o.scope === rec.scope &&
-        o.key === rec.key &&
-        o.eik !== rec.eik &&
-        o.method === 'declared_eik',
-    )
-  ) {
-    for (const o of rec.observations.values()) dropNamesakePick.run(o.declarationId, rec.eik);
+    statedElsewhere(`${rec.pid}|${rec.scope}|${rec.key}`, rec.eik)
+  )
     agg.delete(gid);
-  }
 const heldOwnershipOpen = new Set(); // ЕИК whose management link the open ownership holds back
 db.exec('BEGIN');
 for (const rec of agg.values()) {

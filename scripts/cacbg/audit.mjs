@@ -271,9 +271,12 @@ const namesakeOf = namesakeResolver(db);
 // only, so older inputs without these tables still audit.
 const hasTable = (name) => db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(name);
 let holderStmts;
-// The loader asks the register about the holder the declaration names for THIS stake: for a family stake,
-// the relatives listed against this company, not every relative the person has declared.
-const holderNames = (l, companyNames) => {
+// The loader asks the register about the holder each declaration names for THIS stake, one declaration at
+// a time: for a family stake, the relatives that declaration lists against this company. The audit asks the
+// same question per declaration (the link's own, where the observations table records them) and accepts the
+// link when one of them settles on its ЕИК — pooling every declaration's relatives would see two holders in
+// two partidas where the loader saw one in each.
+const holderNameSets = (l, companyNames) => {
   holderStmts ??= {
     person: db.prepare('SELECT name FROM persons WHERE id = ?'),
     sources: hasTable('person_sources')
@@ -282,21 +285,32 @@ const holderNames = (l, companyNames) => {
         )
       : null,
     relatives: hasTable('related_persons_internal')
-      ? db.prepare(`SELECT rp.related_name name, rp.info FROM related_persons_internal rp
+      ? db.prepare(`SELECT rp.declaration_id, rp.related_name name, rp.info FROM related_persons_internal rp
           JOIN declarations d ON d.id = rp.declaration_id
           WHERE d.person_id = ? AND rp.related_kind = 'stake_holder'`)
       : null,
-  };
-  const rows =
-    l.relation === 'related'
-      ? (holderStmts.relatives?.all(l.person_id) ?? []).filter((r) =>
-          namesCompany(r.info ?? '', 'registry_namesake', companyNames),
+    observed: hasTable('interest_link_observations')
+      ? db.prepare(
+          'SELECT DISTINCT declaration_id FROM interest_link_observations WHERE link_key = ?',
         )
-      : [
-          holderStmts.person.get(l.person_id),
-          ...(holderStmts.sources?.all(l.person_id, l.person_id) ?? []),
-        ];
-  return [...new Set(rows.filter(Boolean).map((r) => r.name))];
+      : null,
+  };
+  const names = (rows) => [...new Set(rows.filter(Boolean).map((r) => r.name))];
+  if (l.relation !== 'related')
+    return [
+      names([
+        holderStmts.person.get(l.person_id),
+        ...(holderStmts.sources?.all(l.person_id, l.person_id) ?? []),
+      ]),
+    ];
+  const own = new Set((holderStmts.observed?.all(l.link_key) ?? []).map((r) => r.declaration_id));
+  const byDeclaration = new Map();
+  for (const r of holderStmts.relatives?.all(l.person_id) ?? []) {
+    if (own.size && !own.has(r.declaration_id)) continue;
+    if (!namesCompany(r.info ?? '', 'registry_namesake', companyNames)) continue;
+    byDeclaration.set(r.declaration_id, [...(byDeclaration.get(r.declaration_id) ?? []), r]);
+  }
+  return [...byDeclaration.values()].map(names);
 };
 for (const l of published) {
   const rec = byKey.get(l.entity_key);
@@ -321,7 +335,11 @@ for (const l of published) {
   } else if (l.match_method === 'registry_namesake') {
     // Several winners share the name; the register picks the one whose partida names the holder.
     // Re-ask it from this database, so a link the register no longer supports cannot stay published.
-    if (namesakeOf([...rec.valid], holderNames(l, [...rec.names])) !== l.eik)
+    if (
+      !holderNameSets(l, [...rec.names]).some(
+        (holders) => namesakeOf([...rec.valid], holders) === l.eik,
+      )
+    )
       flag(
         l,
         'A_namesake_unproven',

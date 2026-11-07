@@ -115,7 +115,10 @@ function anyoneByCompany(registry) {
     return anyone;
   for (const r of registry
     .prepare(
-      "SELECT eik, name FROM registry_identity_observations WHERE subject_kind='person' AND name IS NOT NULL",
+      // Not only the people the register identifies by ЕГН: a holder entered by birth date, with no
+      // identifier or in a collective row is just as possibly the declarant. Only companies are left out.
+      `SELECT eik, name FROM registry_identity_observations
+       WHERE name IS NOT NULL AND NOT (subject_kind='other' AND upper(coalesce(indent_type,''))='UIC')`,
     )
     .all())
     anyone.set(r.eik, (anyone.get(r.eik) ?? new Set()).add(declarantNameKey(r.name)));

@@ -141,6 +141,16 @@ before(() => {
       person: 'Елена Тестова Примерова',
       entity: 'ТЕСТ ДВА ООД',
     }),
+    // …and in a third, whose stake forms no link at all (its timing is unknown).
+    stake({
+      xmlFile: 'H.xml',
+      controlHash: 'H1',
+      folder: '2022',
+      year: '2022',
+      timing: 'unknown',
+      person: 'Елена Тестова Примерова',
+      entity: 'ТЕСТ ДВА ООД',
+    }),
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -257,4 +267,5 @@ test('a stated ЕИК of one namesake is not joined by the register’s pick of 
   );
   assert.deepEqual(companiesOf('E.xml'), [{ eik: '300000004', match_method: 'declared_eik' }]);
   assert.deepEqual(companiesOf('F.xml'), [], 'the bare name is not shown as the other company');
+  assert.deepEqual(companiesOf('H.xml'), [], 'not even where the stake forms no link');
 });

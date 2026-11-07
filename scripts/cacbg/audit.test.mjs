@@ -700,6 +700,39 @@ test('a family registry_namesake link is re-proven by the relative the declarati
   }
 });
 
+test('two declarations naming two relatives for one name are each settled on their own', () => {
+  const observations = fs.readFileSync(
+    path.join(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql'),
+    'utf8',
+  );
+  const observe = (eik, n, name) =>
+    `('${eik}','1','00190','${n}','2019-01-01',0,'${String(n).repeat(64)}','EGN','${name}','${name}','person','${'f'.repeat(64)}','2026-01-01')`;
+  const { threw, out } = buildAndAudit({
+    bidders: COLLIDING_BIDDERS,
+    decls: [`'d1','p1'`, `'d2','p1'`],
+    links: [
+      `'il1','p1|200000002|family','p1','200000002','${KEY}','registry_namesake','document','b2','related',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|200000002|family','document','owner','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live'`,
+    ],
+    extraSql: `CREATE TABLE registry_roles(eik,subject_id,subject_name,entry_number,subject_kind,role);
+      ${observations}
+      CREATE TABLE persons(id TEXT PRIMARY KEY, name TEXT);
+      CREATE TABLE related_persons_internal(id,declaration_id,related_name,related_kind,info,timing);
+      INSERT INTO persons VALUES('p1','Иван Петров Тестов');
+      INSERT INTO related_persons_internal VALUES
+        ('r1','d1','Мария Иванова Тестова','stake_holder','„ОБЩ“ ЕООД','annual'),
+        ('r2','d2','Петър Иванов Тестов','stake_holder','ОБЩ ЕООД','annual');
+      INSERT INTO registry_identity_snapshots VALUES('100000001','h','2026-01-01'),('200000002','h','2026-01-01');
+      INSERT INTO registry_identity_observations VALUES
+        ${observe('200000002', 1, 'Мария Иванова Тестова')},
+        ${observe('100000001', 2, 'Петър Иванов Тестов')};`,
+  });
+  assert.equal(/A_namesake_unproven/.test(out), false, out);
+  assert.equal(threw, false, out);
+});
+
 test('a relative declared against another company does not unsettle a family namesake link', () => {
   const observations = fs.readFileSync(
     path.join(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql'),
