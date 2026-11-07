@@ -50,11 +50,13 @@ before(() => {
     INSERT INTO bidders VALUES
       ('eik:300000004','ДЪРЖАВНО ТЕСТ ЕООД','300000004',1,'София','state'),
       ('eik:300000006','ЧАСТНО ТЕСТ ЕООД','300000006',1,'София',NULL),
-      ('eik:300000008','ОФИС ТЕСТ ЕООД','300000008',1,'София',NULL);
+      ('eik:300000008','ОФИС ТЕСТ ЕООД','300000008',1,'София',NULL),
+      ('eik:300000010','СМЕСЕНО ТЕСТ ЕООД','300000010',1,'София',NULL);
     INSERT INTO contracts VALUES
       ('c1','t1','eik:300000004','2024-05-01',50000),
       ('c2','t1','eik:300000006','2024-05-01',40000),
-      ('c3','t1','eik:300000008','2024-05-01',30000);
+      ('c3','t1','eik:300000008','2024-05-01',30000),
+      ('c4','t1','eik:300000010','2024-05-01',20000);
     CREATE TABLE registry_deeds(eik TEXT PRIMARY KEY, name TEXT, legal_form TEXT, outcome TEXT);
     CREATE TABLE registry_company_history(eik TEXT PRIMARY KEY, names_json TEXT, source_hash TEXT, fetched_at TEXT);
     CREATE TABLE registry_identity_snapshots(eik TEXT PRIMARY KEY, source_hash TEXT);
@@ -63,8 +65,14 @@ before(() => {
     INSERT INTO registry_deeds VALUES
       ('300000004','ДЪРЖАВНО ТЕСТ','EOOD','ok'),
       ('300000006','ЧАСТНО ТЕСТ','EOOD','ok'),
-      ('300000008','ОФИС ТЕСТ','EOOD','ok');
+      ('300000008','ОФИС ТЕСТ','EOOD','ok'),
+      ('300000010','СМЕСЕНО ТЕСТ','EOOD','ok');
   `);
+  // A municipality holds a minority share of СМЕСЕНО ТЕСТ: a public stake, not a public enterprise.
+  db.exec(fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0013_registry.sql'), 'utf8'));
+  db.exec(`ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT;
+    INSERT INTO registry_roles(eik,sub_uic,field_ident,role,subject_kind,subject_id,subject_name,share,entry_number,added_on)
+    VALUES ('300000010','300000010','00230','partner','entity','000000001','Община Тест','10%','20200101000000','2020-01-01');`);
   for (const m of ['0003_related_persons_foundation', '0009_interest_link_evidence'])
     db.exec(fs.readFileSync(path.join(ROOT, `packages/db/migrations/${m}.sql`), 'utf8'));
   db.close();
@@ -130,6 +138,15 @@ before(() => {
       kind: 'shares',
       detail: 'управител',
     }),
+    // A municipality's minority share does not make the company a public enterprise: its private partners
+    // own it and often run it, so the post on the participation line stays the declared stake.
+    row({
+      xmlFile: 'H.xml',
+      controlHash: 'H1',
+      person: 'Христина Тестова Примерова',
+      entity: 'СМЕСЕНО ТЕСТ ЕООД',
+      detail: 'управител',
+    }),
     // The company she files for as a public enterprise is her office, whatever its ownership columns say.
     row({
       xmlFile: 'G.xml',
@@ -161,6 +178,7 @@ before(() => {
     },
     300000006: { managers: ['БОРИС ТЕСТОВ ПРИМЕРОВ'] },
     300000008: { managers: ['ГАЛЯ ТЕСТОВА ПРИМЕРОВА'] },
+    300000010: { managers: ['ХРИСТИНА ТЕСТОВА ПРИМЕРОВА'], owners: ['ХРИСТИНА ТЕСТОВА ПРИМЕРОВА'] },
   };
   seedVerdicts({
     workDb: DB,
@@ -256,4 +274,14 @@ test('a post on the participation line of the company the declarant files for is
   const galya = link('300000008', 'Галя Тестова Примерова');
   assert.equal(galya.relation, 'manages');
   assert.equal(galya.interest_class, 'ex_officio_board');
+});
+
+test('a post on the participation line of a company with a minority public stake stays as declared', () => {
+  assert.equal(link('300000010', 'Христина Тестова Примерова').relation, 'owns');
+  assert.deepEqual(
+    query(
+      "SELECT di.kind FROM declared_interests di JOIN declarations d ON d.id=di.declaration_id WHERE d.xml_file='H.xml'",
+    ).map((r) => ({ ...r })),
+    [{ kind: 'participation' }],
+  );
 });
