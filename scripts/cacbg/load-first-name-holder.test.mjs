@@ -22,6 +22,10 @@ const KALIN = 'Калин Петров Мострев';
 const OGNYAN = 'Огнян Петров Пробнев';
 const RADKO = 'Радко Иванов Тестиев';
 const TRAYAN = 'Траян Илиев Сондов';
+const ZDRAVKO = 'Здравко Петров Опитин';
+const HRISTO = 'Христо Иванов Пробин';
+const BORISLAV = 'Борислав Илиев Мострин';
+const STANIMIR = 'Станимир Петров Сондин';
 
 const row = (over) => ({
   template: 'assets',
@@ -63,6 +67,14 @@ before(() => {
     INSERT INTO contracts VALUES ('c4','t1','eik:300000104','2025-05-01',50000);
     INSERT INTO contracts VALUES ('c5','t1','eik:300000105','2025-05-01',50000);
     INSERT INTO contracts VALUES ('c6','t1','eik:300000106','2025-05-01',50000);
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000107','ЗДРАВ ТЕХ 13 ООД','300000107',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000108','ХРИСТ ТЕХ 14 ООД','300000108',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000109','БОРИС ТЕХ 15 ООД','300000109',1,'София');
+    INSERT INTO contracts VALUES ('c7','t1','eik:300000107','2025-05-01',50000);
+    INSERT INTO contracts VALUES ('c8','t1','eik:300000108','2025-05-01',50000);
+    INSERT INTO contracts VALUES ('c9','t1','eik:300000109','2025-05-01',50000);
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000110','СТАН ТЕХ 16 ООД','300000110',1,'София');
+    INSERT INTO contracts VALUES ('c10','t1','eik:300000110','2025-05-01',50000);
   `);
   db.close();
 
@@ -217,6 +229,119 @@ before(() => {
       holderFirstName: true,
       controlHash: 'T21',
     }),
+    // Здравко holds the company in full in 2020 and transfers it during 2021, in a filing of that year;
+    // „ЗДРАВКО" on the 2021 annual comes after the transfer and is not his.
+    row({
+      folder: '2021',
+      xmlFile: 'Z20.xml',
+      year: '2020',
+      person: ZDRAVKO,
+      entity: 'ЗДРАВ ТЕХ 13 ООД',
+      holderRelation: 'self',
+      controlHash: 'Z20',
+    }),
+    row({
+      folder: '2021',
+      xmlFile: 'Z21V.xml',
+      year: '2021',
+      person: ZDRAVKO,
+      entity: 'ЗДРАВ ТЕХ 13 ООД',
+      timing: 'disposed',
+      holderRelation: 'self',
+      controlHash: 'Z21V',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'Z21.xml',
+      year: '2021',
+      person: ZDRAVKO,
+      entity: 'ЗДРАВ ТЕХ 13 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'Z21',
+    }),
+    // Христо writes „ХРИСТО" in one 2021 filing and his full name for the same holding in another of 2021.
+    row({
+      folder: '2022',
+      xmlFile: 'X21.xml',
+      year: '2021',
+      person: HRISTO,
+      entity: 'ХРИСТ ТЕХ 14 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'X21',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'X21E.xml',
+      year: '2021',
+      person: HRISTO,
+      entity: 'ХРИСТ ТЕХ 14 ООД',
+      holderRelation: 'self',
+      controlHash: 'X21E',
+    }),
+    // Борислав's 2020 filing lists the company twice, once by its ЕИК: a second line, whoever's.
+    row({
+      folder: '2021',
+      xmlFile: 'B20.xml',
+      year: '2020',
+      person: BORISLAV,
+      entity: 'БОРИС ТЕХ 15 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'B20',
+    }),
+    row({
+      folder: '2021',
+      xmlFile: 'B20.xml',
+      year: '2020',
+      person: BORISLAV,
+      entity: '"БОРИС ТЕХ 15" ООД, ЕИК 300000109',
+      holderRelation: 'unknown',
+      controlHash: 'B20',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'B21.xml',
+      year: '2021',
+      person: BORISLAV,
+      entity: 'БОРИС ТЕХ 15 ООД',
+      timing: 'disposed',
+      holderRelation: 'self',
+      controlHash: 'B21',
+    }),
+    // Станимир holds the company in full in 2019; his transfer has no readable year and sits in a later
+    // folder. The folder year runs ahead of the declared one, so it does not date the transfer late enough
+    // to confirm „СТАНИМИР" in 2021.
+    row({
+      folder: '2020',
+      xmlFile: 'N19.xml',
+      year: '2019',
+      person: STANIMIR,
+      entity: 'СТАН ТЕХ 16 ООД',
+      holderRelation: 'self',
+      controlHash: 'N19',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'N20.xml',
+      year: '',
+      person: STANIMIR,
+      entity: 'СТАН ТЕХ 16 ООД',
+      timing: 'disposed',
+      holderRelation: 'self',
+      controlHash: 'N20',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'N21.xml',
+      year: '2021',
+      person: STANIMIR,
+      entity: 'СТАН ТЕХ 16 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'N21',
+    }),
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -245,6 +370,10 @@ before(() => {
     300000104: OGNYAN,
     300000105: RADKO,
     300000106: TRAYAN,
+    300000107: ZDRAVKO,
+    300000108: HRISTO,
+    300000109: BORISLAV,
+    300000110: STANIMIR,
   };
   seedVerdicts({
     workDb: DB,
@@ -306,7 +435,8 @@ test('a first name the declarant writes in full elsewhere for the same company i
   const link = ownLink('300000101', PETKO);
   assert.ok(link, 'the own link forms');
   assert.equal(link.first_declared_year, '2020');
-  assert.equal(report.firstNameHolderConfirmed, 1);
+  // Петко and Христо.
+  assert.equal(report.firstNameHolderConfirmed, 2);
 });
 
 test('a first name no filing writes in full stays unknown and forms nothing', () => {
@@ -322,7 +452,7 @@ test('a first name beside another named holder of the company stays unknown', ()
 
 test('an interests line naming the declarant is not a holder cell', () => {
   const link = ownLink('300000104', OGNYAN);
-  assert.ok(!link || !String(link.relation).includes('owns'), 'no own stake from the first name');
+  assert.equal(link?.relation, 'manages', 'the post stays a post; the first name adds no stake');
 });
 
 test('a first name beside another holder line the classifier cannot settle stays unknown', () => {
@@ -333,6 +463,30 @@ test('a first name beside another holder line the classifier cannot settle stays
 
 test('a first name after the declarant transferred the company is not his', () => {
   const link = ownLink('300000106', TRAYAN);
+  assert.ok(link, 'the 2019 holding forms the own link');
+  assert.equal(link.last_declared_year, '2019');
+});
+
+test("a transfer confirms only an earlier year: the same year's first name is not his", () => {
+  const link = ownLink('300000107', ZDRAVKO);
+  assert.ok(link, 'the 2020 holding forms the own link');
+  assert.equal(link.last_declared_year, '2020');
+});
+
+test('a full name for the same holding in another filing of the same year confirms it', () => {
+  // Counted in the first test; here the link stays the one year both filings declare.
+  const link = ownLink('300000108', HRISTO);
+  assert.equal(link.first_declared_year, '2021');
+});
+
+test('the same company named a second time by its ЕИК is a second line', () => {
+  const link = ownLink('300000109', BORISLAV);
+  assert.ok(link, 'the disposal still forms the own link');
+  assert.equal(link.first_declared_year, null);
+});
+
+test('a filing year read from the folder confirms nothing', () => {
+  const link = ownLink('300000110', STANIMIR);
   assert.ok(link, 'the 2019 holding forms the own link');
   assert.equal(link.last_declared_year, '2019');
 });

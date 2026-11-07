@@ -655,7 +655,12 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     companyLines.set(line, (companyLines.get(line) ?? 0) + 1);
     if (h.holderRelation !== 'self') continue;
     const key = `${personOf(h)}|${tie}`;
-    ownedInFull.set(key, [...(ownedInFull.get(key) ?? []), [sourceDocumentId(h), rowYear(h)]]);
+    // The confirming year is the declared one: the folder year runs ahead of it and would make an earlier
+    // transfer look like the same year. A transfer in year N happened before that year's 31 December
+    // snapshot, so it confirms only an earlier year.
+    const y = yr(h.year);
+    const until = h.timing === 'disposed' ? y - 1 : y;
+    ownedInFull.set(key, [...(ownedInFull.get(key) ?? []), [sourceDocumentId(h), until]]);
   }
 }
 let firstNameHolder = 0;
@@ -670,7 +675,7 @@ const confirmHolder = (h) => {
   const pid = personOf(h);
   const confirmed = ties.some((tie) =>
     (ownedInFull.get(`${pid}|${tie}`) ?? []).some(
-      ([other, y]) => other !== doc && Number.isFinite(y) && y >= year,
+      ([other, until]) => other !== doc && Number.isFinite(until) && until >= year,
     ),
   );
   return confirmed ? { ...h, holderRelation: 'self', holderConfirmed: true } : h;
