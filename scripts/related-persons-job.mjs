@@ -1,12 +1,13 @@
 // Shared Node pipeline for the Container and the existing Actions job. Local mode never calls Wrangler.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { auditUntilClean } from './cacbg/audit-passes.mjs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './cacbg/corpus.mjs';
 import { retryD1 } from './d1-retry.mjs';
 import { importSql } from './cacbg/import-sql.mjs';
-import { progress } from './cacbg/progress.mjs';
+import { progress, stageExitCode, STOP_SIGNALS } from './cacbg/progress.mjs';
 import {
   assertD1TargetAuthorized,
   parseWranglerJson,
@@ -34,8 +35,9 @@ const env = {
 // The container is stopped with a signal to its whole process group. `execFileSync` blocks the event
 // loop, so without a handler Node's default disposition would kill this process before the stage that
 // is doing the work can accept what it has and exit 75. The handler is deliberately empty: the stage
-// below gets the same signal and its exit code carries the decision up.
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {});
+// below gets the same signal and its exit code carries the decision up; a stage that the signal kills
+// outright yields as well (`stageExitCode`).
+for (const signal of STOP_SIGNALS) process.on(signal, () => {});
 
 let stage = 'fetch';
 const setStage = (next) => {
@@ -68,24 +70,28 @@ const doing = (name) => {
   const at = ORDER.indexOf(name);
   return at >= first && at <= last;
 };
+const execScript = (script, args = []) =>
+  execFileSync(process.execPath, ['--import', './scripts/cacbg/register-ts.mjs', script, ...args], {
+    env,
+    stdio: 'inherit',
+  });
+const stopOn = (script, error) => {
+  console.log(
+    JSON.stringify({
+      event: 'declarations_error',
+      stage,
+      script,
+      exitCode: error.status ?? null,
+      signal: error.signal ?? null,
+    }),
+  );
+  process.exit(stageExitCode(error));
+};
 const run = (script, args = []) => {
   try {
-    return execFileSync(
-      process.execPath,
-      ['--import', './scripts/cacbg/register-ts.mjs', script, ...args],
-      { env, stdio: 'inherit' },
-    );
+    return execScript(script, args);
   } catch (error) {
-    console.log(
-      JSON.stringify({
-        event: 'declarations_error',
-        stage,
-        script,
-        exitCode: error.status ?? null,
-        signal: error.signal ?? null,
-      }),
-    );
-    process.exit(error.status === 75 ? 75 : 1);
+    stopOn(script, error);
   }
 };
 const wrangler = (args, output = false) =>
@@ -314,7 +320,27 @@ if (doing('load')) {
 }
 if (doing('audit')) {
   setStage('audit');
-  run('scripts/cacbg/audit.mjs');
+  // A link the audit will not vouch for stays off the surface and the update goes on (audit-passes.mjs).
+  const kept = join(work, 'audit-withheld.json');
+  const list = join(staging, 'audit-withheld.json');
+  try {
+    auditUntilClean({
+      audit: () => execScript('scripts/cacbg/audit.mjs'),
+      verdict: () => (existsSync(list) ? JSON.parse(readFileSync(list, 'utf8')) : null),
+      reload: (links, pass) => {
+        // Each pass is progress the coordinator can see: a reload and a second audit together can
+        // outlast its stall limit, and they are the run moving, not the run stuck.
+        progress('audit', 2 * pass - 1, undefined, true);
+        console.log(JSON.stringify({ event: 'declarations_links_withheld', pass, links }));
+        writeFileSync(kept, JSON.stringify({ links }));
+        env.CACBG_WITHHOLD_LIST = kept;
+        run('scripts/cacbg/load.mjs');
+        progress('audit', 2 * pass, undefined, true);
+      },
+    });
+  } catch (error) {
+    stopOn('scripts/cacbg/audit.mjs', error);
+  }
 }
 if (doing('publish') && remote) {
   setStage('publish');

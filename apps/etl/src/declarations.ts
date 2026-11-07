@@ -56,6 +56,8 @@ interface DeclarationRun {
   attemptAlive?: true;
   attemptStage?: string;
   attemptCompleted?: number;
+  /** Refusals per stage since the run last moved past its durable mark; replay does not clear them. */
+  stageFailures?: Record<string, number>;
   lastProgressAt: number;
 }
 interface ContainerStatus {
@@ -408,6 +410,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       if (next > previous || (next === previous && status.completed > run.completed)) {
         run.stage = status.stage;
         run.completed = status.completed;
+        delete run.stageFailures;
         if (Number.isSafeInteger(status.total) && status.total! >= status.completed)
           run.total = status.total;
         else delete run.total;
@@ -435,7 +438,8 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       if (status.state === 'yielded' || status.state === 'failed') {
         const reason = status.reason || `${status.stage} ${status.state}`;
         // A yield is our own code stopping on purpose, with its work accepted — retry it wherever it
-        // happens. Network stages are retried too; a data or audit refusal is final.
+        // happens. Network stages are retried too; a data refusal ends this run, and the next day's cron
+        // starts a new one (index.ts).
         //
         // `reindex` belongs with them and was missing: it is a run of `wrangler d1 execute` per chunk of
         // twenty-five people, so a transient D1 error is the ordinary weather there — and it sits AFTER
@@ -446,13 +450,35 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         //
         // `snapshot` is the same weather: schema files every run re-applies and a read-only export.
         // wrangler's import-status race ended the weekly run of 26.09.2026 there, in its third minute.
-        if (
+        //
+        // `publish` too: the attempt starts over from a fresh snapshot, so a failure after the swap landed
+        // only rebuilds what is already served, and hours of finished work are not thrown away.
+        //
+        // A replayed attempt counts as moving, so the failure budget alone would retry a stage that
+        // refuses every time — publish, say — for ever. The same refusal at the same stage, three times
+        // without the run getting past its mark, ends the run; tomorrow's cron starts a new one. A child
+        // killed by a signal at the same point (out of memory) counts too; the platform's own stop arrives
+        // as a yield and never does.
+        const retryable =
           status.state === 'yielded' ||
-          ['fetch', 'import', 'snapshot', 'registry', 'reindex'].includes(status.stage) ||
-          status.signal
-        )
-          await this.retry(run, reason, status.state === 'yielded');
-        else await this.finish(run, 'failed', reason); // A data/audit refusal is not a transient failure.
+          ['fetch', 'import', 'snapshot', 'registry', 'publish', 'reindex'].includes(
+            status.stage,
+          ) ||
+          status.signal;
+        if (retryable && status.state === 'failed') {
+          const repeats = (run.stageFailures?.[status.stage] ?? 0) + 1;
+          run.stageFailures = { ...run.stageFailures, [status.stage]: repeats };
+          if (repeats >= MAX_FAILURES) {
+            await this.finish(
+              run,
+              'failed',
+              `${reason}; ${status.stage} failed ${repeats} times without getting further`,
+            );
+            return;
+          }
+        }
+        if (retryable) await this.retry(run, reason, status.state === 'yielded');
+        else await this.finish(run, 'failed', reason); // Repeating it now would refuse again.
         return;
       }
     }

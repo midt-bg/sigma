@@ -67,11 +67,9 @@ Suppression keeps a *built* link out of the public surface. It is the wrong tool
 have been built at all — a misparsed declaration row, a stake attributed to the wrong filing, an entity
 that was never declared. There you fix the input, and the link stops existing.
 
-That removal still has to get past the monotonicity gate ([ADR-0033](../adr/0033-registry-evidence-replaces-name-distinctiveness.md)
-decision 6), which hard-fails on a link that was published last run and is not published now. And you
-cannot use a suppression to clear it: correcting the input unbuilds the link, so the fingerprint would
-match nothing and `load.mjs` fails on the unmatched-entry rail instead. The two removals fail in opposite
-directions, which is why there is a second list.
+That removal does not stop the run: the audit reports what left the surface and continues. The second
+list only records the ground of the removal in that report, so the link reads as a correction and not
+as something the source stopped supporting.
 
 1. Compute the fingerprint exactly as above (same salt, same function, same `key_version`).
 2. Append one line to `scripts/cacbg/link-corrections.jsonl`:
@@ -85,13 +83,7 @@ directions, which is why there is a second list.
    flattened into "removed".
 
 **An acknowledgement is one-shot. Delete the line in the next change.** Once the corrected link stops being
-published it also stops appearing in the prior set, so the entry matches nothing and the build fails on the
-same rail suppressions use. That is deliberate: a stale acknowledgement would sit in the list and silently
-pre-clear a *future* disappearance of that same link — the exact regression the gate exists to catch, with
-nobody having decided it.
-
-Do not use this list to clear a removal you do not understand. If a published link vanished and you cannot
-name why, that is the gate doing its job; find the cause.
+published it also stops appearing in the prior set, so the entry no longer does anything.
 
 ## Fail-closed behaviour
 

@@ -54,8 +54,6 @@ assertOverrideDirSafe(
  * That distinction had no reader. `restore-keys: cacbg-raw-` takes the most RECENT snapshot, not the most
  * complete, and the loop below walks readdirSync over whatever files exist without reconciling them
  * against list.xml — so a truncated corpus simply produces a smaller surface, with no error anywhere.
- * Neither downstream gate closes it: the monotonicity gate sees net growth whenever new links outnumber
- * lost ones, the --min-links floor only counts, and a first run in a fresh environment has no baseline.
  *
  * A partial corpus stays fully usable for RESUMING — the next crawl skips what is on disk. This gate is
  * only about PUBLISHING from one.
@@ -84,8 +82,7 @@ async function assertCorpusComplete(store) {
     `REFUSE TO EXTRACT: no completeness stamp at ${RAW}/${CORPUS_STAMP}. The raw corpus was never ` +
       `confirmed whole — it is a deadline stop, a crashed crawl, or a cache restored from one. Extracting ` +
       `now would publish a surface missing whatever the corpus is missing, and nothing downstream would ` +
-      `notice: the monotonicity gate sees net growth when new links offset lost ones, and the ship floor ` +
-      `only counts. Re-run the crawl to completion (it resumes — declarations on disk are skipped), or ` +
+      `notice. Re-run the crawl to completion (it resumes — declarations on disk are skipped), or ` +
       `pass --allow-partial-corpus to state that a smaller surface is intended.`,
   );
 }
@@ -250,7 +247,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
         ? index.files
         : [...(await store.files(folder)).keys()].sort().map((file) => ({ file }));
       if (index) {
-        const covered = [...files.map((f) => f.file), ...index.missing];
+        const covered = [...files.map((f) => f.file), ...index.missing, ...(index.failed ?? [])];
         if (
           new Set(covered).size !== covered.length ||
           covered.length !== ctx.size ||

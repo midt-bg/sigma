@@ -597,6 +597,54 @@ it('retries a failed snapshot instead of ending the weekly run', async () => {
   expect(f.run().retryAt).toBeGreaterThan(Date.now());
 });
 
+// A retried attempt replays its way back to the mark, and replay counts as moving — so a publish that
+// refuses every time would be retried for ever on the failure budget alone.
+it('ends a run whose publish refuses three times without getting further', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-publish');
+  await f.job().alarm();
+  f.answer({ stage: 'publish', completed: 1 });
+  vi.advanceTimersByTime(60_000);
+  await f.job().alarm(); // the durable mark reaches publish
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1) {
+      await f.resume();
+      f.answer({ stage: 'fetch', completed: 100 }); // replay below the mark: moving
+      vi.advanceTimersByTime(60_000);
+      await f.job().alarm();
+    }
+    f.answer({ state: 'failed', stage: 'publish', completed: 1, reason: 'publish refused' });
+    vi.advanceTimersByTime(60_000);
+    await f.job().alarm();
+    expect(f.run().state, `after refusal ${attempt}`).toBe(attempt < 3 ? 'running' : 'failed');
+  }
+  expect(f.run().reason).toMatch(/publish failed 3 times without getting further/);
+
+  // A child killed at the same point every time is the same loop.
+  const k = fixture();
+  await k.job().startRun('workflow-killed');
+  await k.job().alarm();
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1) await k.resume();
+    k.answer({ state: 'failed', stage: 'extract', completed: 0, signal: 'SIGKILL' });
+    vi.advanceTimersByTime(60_000);
+    await k.job().alarm();
+  }
+  expect(k.run().state).toBe('failed');
+
+  // Getting past the mark clears the count: a run that moves on is not held to its old refusals.
+  const g = fixture();
+  await g.job().startRun('workflow-publish-moves');
+  await g.job().alarm();
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    if (attempt > 1) await g.resume();
+    g.answer({ state: 'failed', stage: 'publish', completed: attempt, reason: 'publish refused' });
+    vi.advanceTimersByTime(60_000);
+    await g.job().alarm();
+  }
+  expect(g.run().state).toBe('running');
+});
+
 it('says at error level when a run fails, and stays quiet when it completes', async () => {
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {

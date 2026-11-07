@@ -120,6 +120,20 @@ export function assessCompleteness(perFolder, skippedFolders = []) {
 // like a network throw — else a sustained non-200 wall crawls on forever, hammering the register. A 404
 // is a source gap (listed-but-unpublished), not a failure, so it resets alongside a 200. Pure.
 export const BREAKER_TRIP = 25;
+// A handful of documents the register keeps refusing must not hold back the other two hundred thousand:
+// the run publishes without them and asks for them again next time. A shortfall above this share is the
+// source failing rather than a few bad files, and that run stops and the next day's run tries again.
+export const TOLERATED_UNFETCHED_SHARE = 0.001;
+export const toleratedShortfall = ({
+  unfetched,
+  notAttempted,
+  skippedSets,
+  announcedDeclarations,
+}) =>
+  unfetched > 0 &&
+  notAttempted === 0 &&
+  skippedSets === 0 &&
+  unfetched <= announcedDeclarations * TOLERATED_UNFETCHED_SHARE;
 export function nextBreaker(consecutive, outcome) {
   return outcome === 'ok' || outcome === 'missing' ? 0 : consecutive + 1;
 }
@@ -322,6 +336,10 @@ export async function run({
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
   const stats = { folders: {}, skippedFolders: [] };
   const inventory = [];
+  // Folders short of a few documents: their index is written only once the run knows the whole shortfall.
+  const shortfallIndexes = [];
+  // Sets that were reached but could not be sealed: a corpus without one of them is no corpus at all.
+  let unsealed = 0;
   const cachedFolders = new Map();
   const filesFor = (folder) => {
     if (!cachedFolders.has(folder)) cachedFolders.set(folder, store.files(folder));
@@ -426,13 +444,17 @@ export async function run({
           return null; // a torn or legacy receipt is simply not a receipt; the full crawl rewrites it
         }
       })();
-      const covered = (index?.files?.length ?? 0) + (index?.missing?.length ?? 0);
+      const covered =
+        (index?.files?.length ?? 0) + (index?.missing?.length ?? 0) + (index?.failed?.length ?? 0);
       // Measured against the DISTINCT files, exactly as the receipt was sealed: the register lists one
       // document under every person and post it belongs to, so a set announces 7 114 rows for 6 043
       // files. The stats, on the other hand, are per ROW, because that is how the walk below counts them
       // and how the completeness gate reconciles announced against obtained — a duplicate row is a row.
+      // A receipt sealed over tolerated failures is not trusted: the documents that failed are asked for
+      // again on every run until they arrive (the obtained ones are read from the cache, not refetched).
       if (
         index?.listHash === digest(listRes.body) &&
+        !index.failed?.length &&
         covered === new Set(rows.map((r) => r.xmlFile)).size
       ) {
         const gaps = new Set(index.missing);
@@ -454,6 +476,7 @@ export async function run({
     const cachedFiles = await filesFor(folder);
     const obtainedFiles = new Map();
     const sourceGaps = new Set();
+    const failedFiles = new Set();
     // `announced` is what the SET declares, so it is read BEFORE --limit truncates the work. Taking it
     // after the slice made a deliberately partial crawl report announced == obtained, i.e. the completeness
     // gate certified a corpus it had never attempted to fetch (ydimitrof #226).
@@ -513,6 +536,7 @@ export async function run({
           );
         } catch (error) {
           reportFailure(xmlFile, { error: error.message, code: error.code }, error.sourceFolder);
+          failedFiles.add(xmlFile);
           fstat.errors++;
           consecutive = nextBreaker(consecutive, 'fail');
           if (consecutive > BREAKER_TRIP)
@@ -541,6 +565,7 @@ export async function run({
             },
             res.sourceFolder,
           );
+          failedFiles.add(xmlFile);
           // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
           // just network throws — so the crawl stops instead of hammering the register indefinitely.
           fstat.errors++;
@@ -572,21 +597,32 @@ export async function run({
     // otherwise the run that finally completes the corpus is the one declared partial and refused. If the
     // clock is spent but this set finished, the next iteration's top-of-loop guard stops us; if this was
     // the LAST set, there is nothing left to withhold and the corpus is complete.
-    if (
-      !withheld &&
-      !fstat.errors &&
-      obtainedFiles.size + sourceGaps.size === new Set(rows.map((r) => r.xmlFile)).size
-    ) {
+    // The register lists one document under every post it belongs to, and each row is fetched on its own:
+    // a request that failed for one row may have succeeded (or met a 404) for another. The document is
+    // then obtained (or a gap), not a failure, and is counted once.
+    for (const file of obtainedFiles.keys()) {
+      failedFiles.delete(file);
+      sourceGaps.delete(file);
+    }
+    for (const file of sourceGaps) failedFiles.delete(file);
+    const writeIndex = async () => {
       const index = Buffer.from(
         JSON.stringify({
           listHash: digest(listRes.body),
           files: [...obtainedFiles].sort().map(([file, entry]) => ({ file, ...entry })),
           missing: [...sourceGaps].sort(),
+          failed: [...failedFiles].sort(),
         }),
       );
       await store.put(`${folder}/.index.json`, index);
       inventory.push({ folder, sha256: digest(index) });
-    }
+    };
+    const accounted =
+      obtainedFiles.size + sourceGaps.size + failedFiles.size ===
+      new Set(rows.map((r) => r.xmlFile)).size;
+    if (!withheld && !fstat.errors && accounted) await writeIndex();
+    else if (!withheld && accounted) shortfallIndexes.push(writeIndex);
+    else if (!withheld) unsealed++;
     if (withheld) {
       deadlineHit = true;
       console.log(`  deadline reached inside ${folder} — stopping`);
@@ -595,6 +631,17 @@ export async function run({
   }
 
   const completeness = assessCompleteness(stats.folders, stats.skippedFolders);
+  if (!deadlineHit && !unsealed && toleratedShortfall(completeness)) {
+    for (const writeIndex of shortfallIndexes) await writeIndex();
+    completeness.incomplete = false;
+    console.warn(
+      JSON.stringify({
+        event: 'declarations_source_shortfall',
+        unfetched: completeness.unfetched,
+        announced: completeness.announcedDeclarations,
+      }),
+    );
+  }
   progress('fetch', completed, undefined, true);
   console.log('\n=== crawl summary ===');
   console.log(JSON.stringify({ folders: stats.folders, ...completeness, deadlineHit }, null, 2));
@@ -643,9 +690,7 @@ export async function run({
   // on its deadline and saves what it has), and `restore-keys: cacbg-raw-` takes the most RECENT snapshot,
   // not the most complete. Nothing downstream could tell the two apart: extract.mjs walks readdirSync over
   // whatever files exist and never reconciles them against list.xml, so a truncated corpus re-publishes as
-  // a smaller surface with no error anywhere. The monotonicity gate sees net growth when new links offset
-  // lost ones, the --min-links floor only counts, and a first run in a fresh environment has no baseline
-  // at all.
+  // a smaller surface with no error anywhere.
   //
   // So: a partial cache stays perfectly good for RESUMING (the next crawl skips what is on disk) but is
   // marked unfit for PUBLISHING. --allow-incomplete does not write it either: that flag records that an

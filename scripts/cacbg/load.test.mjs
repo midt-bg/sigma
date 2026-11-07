@@ -1323,7 +1323,7 @@ test('a family stake publishes when the register shows the relative its declarat
   db.close();
 });
 
-test('the published surface is exported BEFORE the wipe, so the audit can gate monotonicity', () => {
+test('the published surface is exported BEFORE the wipe, so the audit can report what left', () => {
   // ADR-0033 decision 6. The loader rebuilds the CACBG tables from scratch every run, so the previous
   // published set exists only in the instant before the DROP. Without this export the audit has
   // nothing to compare against and the monotonicity gate can never fire — which is precisely the state
@@ -1497,7 +1497,7 @@ test('a published link with no evidence row (pre-#309 regime) carries null rules
   );
 });
 
-test('the monotonicity gate still sees a prior surface AFTER a bootstrap pass', () => {
+test('the audit still sees a prior surface AFTER a bootstrap pass', () => {
   // The end-to-end shape of the merged workflow: real run → bootstrap (to produce the crawl list) →
   // real run. If the bootstrap emptied interest_links, the second real run would export an EMPTY
   // prior-published set, and the gate — whose only job is to notice a published claim disappearing —
@@ -1509,7 +1509,7 @@ test('the monotonicity gate still sees a prior surface AFTER a bootstrap pass', 
   const prior = JSON.parse(fs.readFileSync(snapshot, 'utf8'));
   assert.ok(
     prior.length > 0,
-    'the snapshot went empty — the gate is now vacuous and would never fire again',
+    'the snapshot went empty — the carried ids and the list of removed links are lost',
   );
 });
 
@@ -1553,10 +1553,7 @@ test('a corrections entry marks its key in the snapshot, so the audit reads a de
   );
 });
 
-test('a corrections entry matching NO previously published link fails the build', () => {
-  // The B3 rail, mirrored. A stale acknowledgement is worse than a missing one: it sits in the list
-  // and would clear a FUTURE disappearance of the same link — the exact regression the gate exists to
-  // catch — with nobody having decided that.
+test('a corrections entry matching NO previously published link does not stop the build', () => {
   const corrFile = path.join(dir, 'corr-stale.jsonl');
   fs.writeFileSync(
     corrFile,
@@ -1568,12 +1565,51 @@ test('a corrections entry matching NO previously published link fails the build'
     }) + '\n',
   );
   runLoad();
-  assert.throws(
-    () => runLoad({ CACBG_CORRECTIONS_LIST: corrFile, SUPPRESSION_SALT: SUPP_SALT }),
-    (err) =>
-      /correction/i.test(String(err.stderr ?? '') + String(err.message ?? '')) &&
-      /matched NO/i.test(String(err.stderr ?? '') + String(err.message ?? '')),
+  assert.doesNotThrow(() =>
+    runLoad({ CACBG_CORRECTIONS_LIST: corrFile, SUPPRESSION_SALT: SUPP_SALT }),
   );
+});
+
+test('a link on the audit withheld list stays off the surface and the rest of the build is untouched', () => {
+  runLoad();
+  const open = () => new DatabaseSync(DB, { readOnly: true });
+  let db = open();
+  const before = db
+    .prepare("SELECT link_key FROM interest_links WHERE status='published' ORDER BY link_key")
+    .all()
+    .map((r) => r.link_key);
+  db.close();
+  assert.ok(before.length > 1, 'the fixture must publish more than the withheld link');
+  const list = path.join(dir, 'withheld.json');
+  fs.writeFileSync(list, JSON.stringify({ links: [before[0]], structural: 0 }));
+  runLoad({ CACBG_WITHHOLD_LIST: list });
+  db = open();
+  const after = db
+    .prepare("SELECT link_key FROM interest_links WHERE status='published' ORDER BY link_key")
+    .all()
+    .map((r) => r.link_key);
+  assert.equal(
+    db.prepare('SELECT status FROM interest_links WHERE link_key=?').get(before[0]).status,
+    'suppressed',
+  );
+  db.close();
+  assert.deepEqual(after, before.slice(1));
+});
+
+test('a reload without withheld links keeps comparing against the last published generation', () => {
+  runLoad();
+  // The run's first load wrote out what the site served before it. The reload rebuilds over that load,
+  // so the DB now holds this run's build — the snapshot it compares against must stay the served one.
+  const SNAP = path.join(STAGING, 'published-snapshot.json');
+  const served = [{ link_key: 'person:served|300000000|self', rules_version: 'r-served' }];
+  fs.writeFileSync(SNAP, JSON.stringify(served));
+  const list = path.join(dir, 'withheld-none.json');
+  fs.writeFileSync(list, JSON.stringify({ links: [] }));
+  runLoad({ CACBG_WITHHOLD_LIST: list });
+  assert.deepEqual(JSON.parse(fs.readFileSync(SNAP, 'utf8')), served);
+  // An ordinary load writes it out afresh.
+  runLoad();
+  assert.notDeepEqual(JSON.parse(fs.readFileSync(SNAP, 'utf8')), served);
 });
 
 test('corrections are fail-closed on a missing salt, exactly like suppressions', () => {

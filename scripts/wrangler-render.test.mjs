@@ -133,7 +133,7 @@ bucket_name = "sigma-reports"
 const ETL = `name = "sigma-etl"
 
 [triggers]
-crons = ["0 */6 * * *", "0 3 * * 1"]
+crons = ["0 */6 * * *", "0 3 * * *"]
 `;
 async function renderEtl(schedule, minute) {
   const dir = mkdtempSync(join(tmpdir(), 'sigma-wrangler-render-'));
@@ -172,12 +172,15 @@ test('a parked ETL deploys without Cron Triggers and keeps its name', async () =
 
 test('the ETL keeps its crons unless parked', async () => {
   for (const schedule of [undefined, '', 'on'])
-    assert.match(await renderEtl(schedule), /crons = \["0 \*\/6 \* \* \*", "0 3 \* \* 1"\]/);
+    assert.match(await renderEtl(schedule), /crons = \["0 \*\/6 \* \* \*", "0 3 \* \* \*"\]/);
 });
 
 test('a cron minute shifts every cron and nothing else; parking still wins', async () => {
-  assert.match(await renderEtl(undefined, '30'), /crons = \["30 \*\/6 \* \* \*", "30 3 \* \* 1"\]/);
-  assert.match(await renderEtl(undefined, ''), /crons = \["0 \*\/6 \* \* \*", "0 3 \* \* 1"\]/);
+  assert.match(
+    await renderEtl(undefined, '30'),
+    /crons = \["30 \*\/6 \* \* \*", "30 3 \* \* \*"\]/,
+  );
+  assert.match(await renderEtl(undefined, ''), /crons = \["0 \*\/6 \* \* \*", "0 3 \* \* \*"\]/);
   assert.match(await renderEtl('off', '30'), /\[triggers\]\ncrons = \[\]/);
   for (const bad of ['60', '-1', '3O', '*/5'])
     await assert.rejects(() => renderEtl(undefined, bad), /SIGMA_ETL_CRON_MINUTE must be a minute/);

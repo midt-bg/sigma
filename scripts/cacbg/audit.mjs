@@ -2,7 +2,9 @@ import { fileDigest } from './build-proof.mjs';
 // Adversarial accuracy audit of PUBLISHED interest_links. Independent of load.mjs: it rebuilds the
 // name-key → ЕИК map from scratch over the live bidders table and re-proves the libel-critical
 // invariant (one distinctive key → exactly one eik_valid ЕИК == the published one) for every
-// published link. Anything that fails is a hard finding, not a warning. Read-only.
+// published link. A finding on one link withholds THAT link (the job reloads without it and audits again);
+// it never stops the update. Only a defect that names no link stops the run, and the next day's run retries.
+// Read-only: the withheld list is a file beside the build.
 //
 // Run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/audit.mjs
 import { DatabaseSync } from 'node:sqlite';
@@ -25,9 +27,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
 const STAGING = process.env.CACBG_STAGING || path.join(ROOT, 'scratch/cacbg/staging');
 const SNAPSHOT = path.join(STAGING, 'published-snapshot.json');
+const WITHHELD = path.join(STAGING, 'audit-withheld.json');
 const { companyNameKey } = await import('../../packages/shared/src/company-name-key.ts');
 
 fs.rmSync(`${DB}.audited.json`, { force: true });
+fs.rmSync(WITHHELD, { force: true });
 const db = new DatabaseSync(DB, { readOnly: true });
 
 // 1. Rebuild key → {valid ЕИК set, sample names} from ALL bidders — the ground truth the guard rests on.
@@ -172,13 +176,14 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get())
       .all()
       .map((r) => r.id),
   );
-  for (const link of published)
-    if (invalid.has(link.person_id))
-      flag(
-        link,
-        'I_source_identity',
-        'Published profile disagrees with current identity evidence or source membership',
-      );
+  // A defect of the PERSON, not of one link: withholding the link would leave the person's page — its
+  // declarations and registry roles — published on the broken identity. It names no link, so it stops the run.
+  const broken = new Set(published.filter((l) => invalid.has(l.person_id)).map((l) => l.person_id));
+  for (const person of broken)
+    findings.push({
+      axis: 'I_source_identity',
+      detail: `${person}: published profile disagrees with current identity evidence or source membership`,
+    });
 }
 
 // History is provenance, never an escape from the publishing evidence gate.
@@ -435,66 +440,31 @@ for (const l of nonExact) {
 
 db.close();
 
-// D. Monotonicity — ADR-0033 decision 6, the correction of #279 §8.
+// D. What left the surface since the last run — reported, never a reason to stop.
 //
-// §8 asked for a seal kept „forever" and strictly-additive recomputation. That is unachievable: labels
-// flip, the deed cache expires, and a court can annul an entry (чл. 29 ЗТРРЮЛНЦ) with no rules change
-// at all. So the seal is NOT a store — it is re-derived every run — and monotonicity is enforced HERE,
-// as a gate, against the export load.mjs writes immediately before it drops the CACBG tables.
-//
-// The rule: a link that was published last run and is not published now is a REGRESSION unless the
-// rules themselves changed. Under an unchanged rules_version nothing licensed the removal, so it is a
-// hard finding. Under a changed one it is an intentional event and degrades to a printed diff.
-//
-// ship-related-persons.mjs's count floor cannot do this job: it compares a COUNT, so a one-for-one
-// swap — one true link silently dropped, one gained — leaves it perfectly quiet.
+// Seals are re-derived every run, and a link can leave for ordinary reasons: a label flips, a deed
+// changes, a declaration is taken down. Losing a link costs that one link until the source brings it
+// back; stopping the run over it costs every other update of the week. So the comparison stays as a
+// printed diff and an event, and nothing here can fail the build.
 const publishedNow = new Set(published.map((l) => l.link_key));
 let priorPublished = null;
 try {
   priorPublished = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'));
 } catch (e) {
-  // ENOENT is the legitimate first run — there is no prior surface to regress from. Anything else
-  // (unreadable, malformed) must not be swallowed into a silent pass of the gate.
-  if (e.code !== 'ENOENT') throw e;
+  // ENOENT is the legitimate first run. An unreadable snapshot only costs this report.
+  if (e.code !== 'ENOENT') console.warn(`! unreadable prior snapshot: ${e.message}`);
 }
 const vanished = (priorPublished ?? []).filter((p) => !publishedNow.has(p.link_key));
-
-// The three grounds decision 6 sanctions for a removal. Anything else that vanished is a regression.
-//
-// Getting this set right is what stops the gate from deadlocking the mechanisms it points at. The
-// rules bump is the obvious one. The other two are not optional extras — each is the ONLY expressible
-// form of a removal the ADR names in prose:
-//
-//   suppressed — the ADR-0031 takedown path, which decision 6 wires the court-annulled entry
-//     (чл. 29 ЗТРРЮЛНЦ) to by name. It flips status published → suppressed with rules_version
-//     untouched, so without this branch the one removal the ADR explicitly licenses hard-fails.
-//   corrected — "a correction of wrong input". Suppression cannot express it: correcting the input
-//     unbuilds the link, and load.mjs's B3 unused-suppression gate then fails the build for a
-//     fingerprint that matched nothing. So the two sanctioned removals would fail in OPPOSITE
-//     directions, leaving a real correction with no path at all. The flag is set by load.mjs from the
-//     version-controlled, fingerprinted corrections list — a human decision recorded in git, not a
-//     condition the audit can infer.
-//
-// Both are declared, both are reviewed, and both are still PRINTED below: a withdrawn public claim is
-// never silent, it just is not a build failure.
-const declaredRemoval = (p) =>
-  p.rules_version !== RULES_VERSION ||
-  p.corrected === true ||
-  statusNow.get(p.link_key) === 'suppressed';
-const regressions = vanished.filter((p) => !declaredRemoval(p));
-for (const p of regressions)
-  findings.push({
-    axis: 'D_monotonicity',
-    link_key: p.link_key,
-    eik:
-      p.link_key
-        .split('|')
-        .filter((part) => part !== 'family')
-        .at(-1) ?? '',
-    // The link_key is named explicitly: it is the only handle a human has to go and look at which
-    // claim disappeared, and the shared axis report prints the ЕИК alone.
-    detail: `${p.link_key} published last run under rules_version ${p.rules_version} (unchanged) and is not published now — nothing licensed this removal`,
-  });
+const removalGround = (p) =>
+  p.rules_version == null
+    ? `the pre-evidence regime — now under ${RULES_VERSION}`
+    : p.rules_version !== RULES_VERSION
+      ? `a rules change (${p.rules_version} → ${RULES_VERSION})`
+      : p.corrected === true
+        ? 'an acknowledged input correction'
+        : statusNow.get(p.link_key) === 'suppressed'
+          ? 'a suppression (an ADR-0031 takedown, or withheld by this run’s audit)'
+          : 'the source no longer supports it';
 
 // Report
 const byAxis = {};
@@ -504,32 +474,26 @@ console.log(`published links audited: ${published.length}`);
 console.log(`hard findings: ${findings.length}\n`);
 for (const [axis, fs] of Object.entries(byAxis)) {
   console.log(`## ${axis} — ${fs.length}`);
-  for (const f of fs.slice(0, 20)) console.log(`  - [${f.eik}] ${f.detail}`);
+  for (const f of fs.slice(0, 20)) console.log(`  - [${f.eik ?? '-'}] ${f.detail}`);
   console.log('');
 }
 if (priorPublished === null) {
-  console.log(`## monotonicity — no prior export at ${SNAPSHOT}; treating this as a first run\n`);
+  console.log(`## removed links — no prior export at ${SNAPSHOT}; treating this as a first run\n`);
 } else {
-  const declared = vanished.filter(declaredRemoval);
   console.log(
-    `## monotonicity — ${priorPublished.length} published last run, ${publishedNow.size} now; ` +
-      `${regressions.length} regression(s), ${declared.length} declared removal(s)\n`,
+    `## removed links — ${priorPublished.length} published last run, ${publishedNow.size} now; ` +
+      `${vanished.length} removed\n`,
   );
-  // Declared removals are not findings, but they are never silent: withdrawing a named public claim is
-  // exactly when a human should read WHICH claims went and on what ground. The ground is printed too —
-  // "removed" alone would flatten a court annulment, a corrected parse and a rules bump into one line.
-  for (const p of declared) {
-    const ground =
-      p.rules_version == null
-        ? `the pre-evidence regime — predates §8 and #309, now under ${RULES_VERSION}`
-        : p.rules_version !== RULES_VERSION
-          ? `a rules change (${p.rules_version} → ${RULES_VERSION})`
-          : statusNow.get(p.link_key) === 'suppressed'
-            ? 'a suppression (ADR-0031 takedown path)'
-            : 'an acknowledged input correction';
-    console.log(`  - ${p.link_key} removed under ${ground}`);
-  }
-  if (declared.length) console.log('');
+  for (const p of vanished) console.log(`  - ${p.link_key} removed: ${removalGround(p)}`);
+  if (vanished.length) console.log('');
+  console.log(
+    JSON.stringify({
+      event: 'declarations_links_removed',
+      before: priorPublished.length,
+      after: publishedNow.size,
+      removed: vanished.length,
+    }),
+  );
 }
 
 console.log(`## non-exact provenance (${provenance.length}) — verify each cross-check by eye`);
@@ -540,7 +504,16 @@ for (const p of provenance) {
   );
 }
 
-if (findings.length) process.exitCode = 1;
+if (findings.length) {
+  process.exitCode = 1;
+  // A finding that names a link costs that link. Anything else names no link to withhold, and it is the
+  // job that decides what to do with the list: this script only reports and writes nothing else.
+  const links = [...new Set(findings.flatMap((f) => (f.link_key ? [f.link_key] : [])))];
+  fs.writeFileSync(
+    WITHHELD,
+    JSON.stringify({ links, structural: findings.filter((f) => !f.link_key).length }),
+  );
+}
 
 // Bind successful verification to the exact closed file that ship will read.
 if (!findings.length && fs.existsSync(`${DB}.build.json`)) {
