@@ -42,6 +42,9 @@ const PARTIDAS = {
     'ГАЛИНА ТЕСТОВА ПРИМЕРОВА',
   ],
   300000010: ['БОРИС ТЕСТОВ ПРИМЕРОВ'],
+  // ТЕСТ ВОДА: a state company and its private namesake, both read.
+  300000014: ['ВАСИЛ ТЕСТОВ ПРИМЕРОВ'],
+  300000016: ['ДИМО ДРУГОВ ЧУЖДЕНЦОВ'],
 };
 
 before(() => {
@@ -64,12 +67,16 @@ before(() => {
       ('eik:300000004','ТЕСТ ДВА ООД','300000004',1,'София',NULL),
       ('eik:300000006','ТЕСТ ДВА ООД','300000006',1,'Варна',NULL),
       ('eik:300000010','ТЕСТ ТРИ ООД','300000010',1,'София',NULL),
-      ('eik:300000012','ТЕСТ ТРИ ООД','300000012',1,'Варна',NULL);
+      ('eik:300000012','ТЕСТ ТРИ ООД','300000012',1,'Варна',NULL),
+      ('eik:300000014','ТЕСТ ВОДА ООД','300000014',1,'София','state'),
+      ('eik:300000016','ТЕСТ ВОДА ООД','300000016',1,'Варна',NULL);
     INSERT INTO contracts VALUES
       ('c1','t1','eik:300000004','2024-05-01',50000),
       ('c2','t1','eik:300000006','2024-05-01',40000),
       ('c3','t1','eik:300000010','2024-05-01',30000),
-      ('c4','t1','eik:300000012','2024-05-01',20000);
+      ('c4','t1','eik:300000012','2024-05-01',20000),
+      ('c5','t1','eik:300000014','2024-05-01',20000),
+      ('c6','t1','eik:300000016','2024-05-01',20000);
     CREATE TABLE registry_deeds(eik TEXT PRIMARY KEY, name TEXT, legal_form TEXT, outcome TEXT);
     CREATE TABLE registry_company_history(eik TEXT PRIMARY KEY, names_json TEXT, source_hash TEXT, fetched_at TEXT);
     CREATE TABLE state_owned_eik(eik TEXT PRIMARY KEY, ownership_kind TEXT, canonical_name TEXT);
@@ -77,7 +84,9 @@ before(() => {
     INSERT INTO registry_deeds VALUES
       ('300000004','ТЕСТ ДВА','OOD','ok'),
       ('300000006','ТЕСТ ДВА','OOD','ok'),
-      ('300000010','ТЕСТ ТРИ','OOD','ok');
+      ('300000010','ТЕСТ ТРИ','OOD','ok'),
+      ('300000014','ТЕСТ ВОДА','OOD','ok'),
+      ('300000016','ТЕСТ ВОДА','OOD','ok');
   `);
   for (const m of [
     '0003_related_persons_foundation',
@@ -189,6 +198,18 @@ before(() => {
       timing: 'unknown',
       person: 'Елена Тестова Примерова',
       entity: 'ТЕСТ ДВА ООД',
+    }),
+    // The manager of a state company writes the post in the participation field. The name is shared with a
+    // private company; the partida that names him is the state one — the line is his office, not a stake.
+    stake({
+      xmlFile: 'V.xml',
+      controlHash: 'V1',
+      template: 'interests',
+      kind: 'participation',
+      detail: 'управител',
+      timing: 'current',
+      person: 'Васил Тестов Примеров',
+      entity: 'ТЕСТ ВОДА ООД',
     }),
   ];
   fs.writeFileSync(
@@ -320,4 +341,22 @@ test('a pick that agrees with a stated ЕИК stays the company its declaration 
   assert.deepEqual(companiesOf('G4.xml'), [
     { eik: '300000006', match_method: 'registry_namesake' },
   ]);
+});
+
+test('a post in the participation field of a state namesake is the office, not a stake', () => {
+  assert.deepEqual(
+    query(
+      `SELECT il.eik, il.relation, il.interest_class, il.status FROM interest_links il
+       JOIN persons p ON p.id=il.person_id WHERE p.name=?`,
+      'Васил Тестов Примеров',
+    ),
+    [
+      {
+        eik: '300000014',
+        relation: 'manages',
+        interest_class: 'ex_officio_board',
+        status: 'internal',
+      },
+    ],
+  );
 });

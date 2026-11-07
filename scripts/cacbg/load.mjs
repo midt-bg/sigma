@@ -720,10 +720,15 @@ for (const row of holdingRows) {
   // not a stake: its manager cannot be its private owner. It is recorded and judged as management. In a
   // private company the same word stays a stake — its sole owner is very often its manager too. When the
   // same declaration already lists a post in that company for the period, the line is not recorded twice.
+  // The company is asked for as the links ask for it: a name many companies share is the one whose partida
+  // names the holder (ADR-0050), and that one may well be a public enterprise.
   const post =
     row.kind === 'participation' &&
     declaresPostNotStake(row.detail) &&
-    publicEnterprise(row, resolveEntity(row.entity));
+    publicEnterprise(
+      row,
+      resolveEntity(row.entity, holdersOf(row, `decl:${row.folder}:${row.xmlFile}`)),
+    );
   if (post && declaredPosts.has(postKey(row))) {
     postDuplicate++;
     continue;
