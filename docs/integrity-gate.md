@@ -160,8 +160,11 @@ Two boundaries are deliberate, documented so the gate is not mistaken for more t
   The **work-backfill path gates before shipping**: `runWorkBackfill` asserts the sqlite work DB, and
   `ship-domain.mjs` refuses to ship a 0-row source, so the bulk-rebuild path is guarded pre-publish.
   The **`apps/etl` cron refresh inherits the same ship-and-alert shape**: it gates the served D1 after
-  the slice has already been written, throwing in the `integrity-gate` step (which fails the Workflow
-  step and surfaces in Cloudflare observability) rather than un-serving the slice.
+  the slice has already been written, so a violation cannot un-serve anything and does not fail the run.
+  It logs `etl_integrity_violation` at error level and the result carries `integrity: 'violation'`. A D1
+  error during the check is retried by the step; if the retries run out, the run logs
+  `etl_integrity_unverified` and carries `integrity: 'unverified'`. In both cases the window stays
+  recorded, so the next run replays it and checks again.
 
 ## Scope
 
