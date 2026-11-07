@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import {
+  namesakeResolver,
   registryIdentityResolver,
   mixedScriptCompanyKey,
   identityInputsDigest,
@@ -276,4 +277,60 @@ test('the identity input digest follows the facts, not the physical row order', 
   assert.notEqual(before, identityInputsDigest(b));
   a.close();
   b.close();
+});
+
+test('a namesake is settled only by the one partida that names the holder in full', () => {
+  const { db, add, name } = fixture();
+  const read = (eik) =>
+    db.prepare("INSERT INTO registry_identity_snapshots VALUES(?,'h','2026-01-01')").run(eik);
+  try {
+    const eiks = ['123456789', '987654321'];
+    add('987654321', 'a'.repeat(64), name);
+    read('987654321');
+    // The other partida is unread: it may hold the very person, so nothing is chosen yet.
+    assert.equal(namesakeResolver(db)(eiks, name), null, 'a namesake partida is unread');
+    read('123456789');
+    assert.equal(namesakeResolver(db)(eiks, name), '987654321');
+    assert.equal(namesakeResolver(db)(eiks, [name]), '987654321');
+    assert.equal(namesakeResolver(db)(eiks, ['Друго Лице Тестово', name]), '987654321');
+    assert.equal(namesakeResolver(db)(eiks, 'Ивана Тестова'), null, 'two names are not enough');
+    assert.equal(namesakeResolver(db)(eiks, undefined), null);
+    assert.equal(namesakeResolver(db)(eiks, []), null);
+    // Someone in the other partida who could be the holder is enough to refuse, though not to choose.
+    for (const [other, why] of [
+      ['Ивана Тестова', 'a shorter name'],
+      ['Ивана Петрова Тестова-Примерова', 'a variant spelling'],
+    ]) {
+      add('123456789', 'b'.repeat(64), other);
+      assert.equal(namesakeResolver(db)(eiks, name), null, why);
+      db.prepare('DELETE FROM registry_identity_observations WHERE eik=?').run('123456789');
+    }
+    // As the register's writer stores them: a birth date or no identifier is `other` with no indent, two
+    // holders under one identifier are `collective`.
+    const observe = (kind, indent, type, holder) =>
+      db
+        .prepare(
+          "INSERT INTO registry_identity_observations VALUES(?,'1','00190',?,'2019-01-01',0,?,?,?,?,?,?,'2026-01-01')",
+        )
+        .run('123456789', String(++entry), indent, type, holder, holder, kind, 'f'.repeat(64));
+    let entry = 1000;
+    for (const [kind, indent, type, why] of [
+      ['other', null, 'BirthDate', 'a birth date for an identifier'],
+      ['other', null, 'UNDEFINED', 'no identifier'],
+      ['collective', 'd'.repeat(64), 'EGN', 'a collective row'],
+    ]) {
+      observe(kind, indent, type, name);
+      assert.equal(namesakeResolver(db)(eiks, name), null, why);
+      db.prepare('DELETE FROM registry_identity_observations WHERE eik=?').run('123456789');
+    }
+    observe('other', '123456789', 'UIC', name);
+    assert.equal(namesakeResolver(db)(eiks, name), '987654321', 'a company is not a person');
+    db.prepare('DELETE FROM registry_identity_observations WHERE eik=?').run('123456789');
+    add('123456789', 'b'.repeat(64), 'Иван Петров Тестов');
+    assert.equal(namesakeResolver(db)(eiks, name), '987654321', 'a different person');
+    add('123456789', 'c'.repeat(64), name);
+    assert.equal(namesakeResolver(db)(eiks, name), null, 'named in both partidas');
+  } finally {
+    db.close();
+  }
 });

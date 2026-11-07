@@ -4,7 +4,7 @@ import { rebuildPersonEntities, declarationSourceId } from './person-entities.mj
 import { declarantGuid } from './declarant-guid.mjs';
 import { resolveOffices } from './declaration-office.mjs';
 import { buildPersonRegistryLinks } from './person-registry-links.mjs';
-import { IDENTITY_RULES_VERSION } from './registry-identity.mjs';
+import { IDENTITY_RULES_VERSION, namesakeResolver } from './registry-identity.mjs';
 import { recordBuild } from './build-proof.mjs';
 // Phase 1 — productionized loader/resolver. Reads the extracted staging (holdings.jsonl / related.jsonl),
 // resolves each declared interest to a winning bidder's ЕИК via the ONE production normalizer, and
@@ -76,7 +76,7 @@ const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — §8's monotonicity gate keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-3';
+const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-4';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very
@@ -361,8 +361,37 @@ for (const b of bidders) {
 // Returns {eik, method} | {ambiguous:true} | null. Never guesses across >1 ЕИК.
 //   name_stem       — the фирма without legal form and punctuation names exactly one winner; publishes only
 //                     where the register shows the declarant in that company (evidence.mjs rung 2).
+//   registry_namesake — the name leads to several winners, every one of their partidas is read, and the
+//                     register shows the holder in exactly one of them. It is asked with the holder's name —
+//                     the declarant's for their own stake, the relative's for a family stake — so it serves
+//                     only the companies a declaration names.
 const byStem = stemIndex([...bidderByEik.values()]);
-const resolveEntity = (entity) => resolveDeclaredCompany(entity, { byKey, bidderByEik, byStem });
+const namesake = namesakeResolver(db);
+const resolveEntity = (entity, holders = []) =>
+  resolveDeclaredCompany(entity, {
+    byKey,
+    bidderByEik,
+    byStem,
+    ...(holders.length ? { namesake: (eiks) => namesake(eiks, holders) } : {}),
+  });
+// The relatives a declaration names as holders of each family stake: declaration → company key → names.
+const stakeHolders = new Map();
+for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
+  if (r.related_kind !== 'stake_holder' || !r.related_name) continue;
+  const did = `decl:${r.folder}:${r.xmlFile}`;
+  const byCompany = stakeHolders.get(did) ?? new Map();
+  const key = companyNameKey(r.info ?? '');
+  byCompany.set(key, [...(byCompany.get(key) ?? []), r.related_name]);
+  stakeHolders.set(did, byCompany);
+}
+// Whose name the register must show for this holding: the declarant's own stake, a relative's stake, or —
+// for a holder the declaration does not settle — nobody's.
+const holdersOf = (h, did) =>
+  h.holderRelation === 'related'
+    ? (stakeHolders.get(did)?.get(companyNameKey(h.entity)) ?? [])
+    : h.holderRelation === 'unknown'
+      ? []
+      : [h.person];
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_companies'").get()) {
   db.exec('DELETE FROM registry_requested_companies');
   const putRequest = db.prepare('INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)');
@@ -370,7 +399,13 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_compa
     putRequest.run(r.eik, r.declarationId, r.declaredName);
 }
 // An explicit, name-checked EIK remains stronger when another declaration supplies only a name.
-const METHOD_RANK = { declared_eik: 3, exact_name_key: 2, extracted_name: 1, name_stem: 0 };
+const METHOD_RANK = {
+  declared_eik: 3,
+  exact_name_key: 2,
+  registry_namesake: 2,
+  extracted_name: 1,
+  name_stem: 0,
+};
 // Ambiguous name keys — TELEMETRY, not a gate (ADR-0027). A companyNameKey that maps to >1 distinct
 // valid winner ЕИК. The resolver already QUARANTINES these (resolveEntity → {ambiguous:true}); they
 // never publish, so they carry no libel exposure — this only sizes the ambiguous tail for Phase 0. On the
@@ -675,15 +710,25 @@ const publicEnterprise = (row, res) => {
     publicEnterpriseOffices.get(pid)?.has(res.eik) || organizationOffices.get(pid)?.has(res.eik),
   );
 };
+// Every company a declaration names by the register's pick, and every ЕИК a person states, by claim
+// (person, whose stake, company name) — gathered before any holding is filtered out of link formation, so
+// a stated ЕИК outranks the pick wherever it was made (see „a person who states the ЕИК" below).
+const namesakePicks = [];
+const statedEiks = new Map();
 for (const row of holdingRows) {
   // A participation line in a PUBLIC enterprise whose amount is a post („управител“) declares the office,
   // not a stake: its manager cannot be its private owner. It is recorded and judged as management. In a
   // private company the same word stays a stake — its sole owner is very often its manager too. When the
   // same declaration already lists a post in that company for the period, the line is not recorded twice.
+  // The company is asked for as the links ask for it: a name many companies share is the one whose partida
+  // names the holder (ADR-0050), and that one may well be a public enterprise.
   const post =
     row.kind === 'participation' &&
     declaresPostNotStake(row.detail) &&
-    publicEnterprise(row, resolveEntity(row.entity));
+    publicEnterprise(
+      row,
+      resolveEntity(row.entity, holdersOf(row, `decl:${row.folder}:${row.xmlFile}`)),
+    );
   if (post && declaredPosts.has(postKey(row))) {
     postDuplicate++;
     continue;
@@ -729,8 +774,14 @@ for (const row of holdingRows) {
     h.timing ?? 'annual',
     h.seat ?? '',
   );
-  const res = resolveEntity(h.entity);
-  if (res && !res.ambiguous) insDeclarationCompany.run(did, res.eik, res.method);
+  const res = resolveEntity(h.entity, holdersOf(h, did));
+  if (res && !res.ambiguous) {
+    insDeclarationCompany.run(did, res.eik, res.method);
+    const claim = `${pid}|${h.holderRelation === 'related' ? 'family' : 'self'}|${companyNameKey(bidderByEik.get(res.eik)?.name ?? '')}`;
+    if (res.method === 'registry_namesake') namesakePicks.push({ did, claim, eik: res.eik });
+    if (res.method === 'declared_eik')
+      statedEiks.set(claim, (statedEiks.get(claim) ?? new Set()).add(res.eik));
+  }
   // Preserve historical/disposal rows as source facts, but never let them establish
   // a positive holding during the filing year. "Prior" is appointment-relative,
   // and a disposal alone proves neither the retained balance nor a full exit date.
@@ -885,7 +936,7 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
     );
   }
   if (r.related_kind === 'stake_holder') {
-    const res = resolveEntity(r.info ?? '');
+    const res = resolveEntity(r.info ?? '', [r.related_name]);
     const rec = res?.eik ? agg.get(`${personOf(r)}|${res.eik}|family`) : null;
     if (rec) rec.relativeNames.add(r.related_name);
   }
@@ -1110,6 +1161,32 @@ function interestClass(rec, relation) {
     publicStake: publicStakeEik.has(String(rec.bidder.eik)),
   });
 }
+// A person who states the ЕИК of one namesake in another declaration has said which company the name means:
+// the register's pick for a mention without the ЕИК must not add a second company beside it — neither as a
+// link nor as the company those declarations are shown to name.
+const dropNamesakePick = db.prepare(
+  "DELETE FROM declaration_companies WHERE declaration_id=? AND eik=? AND match_method='registry_namesake'",
+);
+// Contradicted only when the person states other ЕИК and never this one: a pick that agrees with a stated ЕИК
+// is the company the person means.
+const statedElsewhere = (claim, eik) => {
+  const stated = statedEiks.get(claim);
+  return Boolean(stated?.size) && !stated.has(eik);
+};
+for (const [gid, rec] of agg)
+  if (
+    rec.method === 'registry_namesake' &&
+    statedElsewhere(`${rec.pid}|${rec.scope}|${rec.key}`, rec.eik)
+  )
+    agg.delete(gid);
+// One declaration names a company once (declaration_companies is keyed by declaration and ЕИК), whoever's stake
+// it is: a row another surviving stake still rests on stays.
+const stillNamed = new Set();
+for (const rec of agg.values())
+  for (const o of rec.observations.values()) stillNamed.add(`${o.declarationId}|${rec.eik}`);
+for (const pick of namesakePicks)
+  if (statedElsewhere(pick.claim, pick.eik) && !stillNamed.has(`${pick.did}|${pick.eik}`))
+    dropNamesakePick.run(pick.did, pick.eik);
 const heldOwnershipOpen = new Set(); // ЕИК whose management link the open ownership holds back
 db.exec('BEGIN');
 for (const rec of agg.values()) {
