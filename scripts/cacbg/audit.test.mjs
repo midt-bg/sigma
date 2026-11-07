@@ -608,14 +608,39 @@ test('identity evidence must be automatic and match active source versions', () 
   }
 });
 
-test('a registry_namesake link holds only on the one partida that names the declarant', () => {
+test('a registry_namesake link holds only on the one read partida that names the holder', () => {
+  const personEntities = fs.readFileSync(
+    path.join(ROOT, 'packages/db/migrations/0018_person_entities.sql'),
+    'utf8',
+  );
   const observations = fs.readFileSync(
     path.join(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql'),
     'utf8',
   );
-  for (const [eik, bidder, axis] of [
-    ['200000002', 'b2', null],
-    ['100000001', 'b1', 'A_namesake_unproven'],
+  const person = (eik, name) =>
+    `INSERT INTO registry_identity_observations VALUES('${eik}','1','00190','1','2019-01-01',0,
+      '${'a'.repeat(64)}','EGN','${name}','${name}','person','${'f'.repeat(64)}','2026-01-01');`;
+  for (const [label, eik, bidder, extra, axis] of [
+    ['named in its partida alone', '200000002', 'b2', '', null],
+    ['not named there', '100000001', 'b1', '', 'A_namesake_unproven'],
+    [
+      'the other partida is unread',
+      '200000002',
+      'b2',
+      "DELETE FROM registry_identity_snapshots WHERE eik='100000001';",
+      'A_namesake_unproven',
+    ],
+    // The declaration of this person carries another spelling; the register shows that one.
+    [
+      'named under another spelling of the same person',
+      '200000002',
+      'b2',
+      `UPDATE persons SET name='Иван Петров Тестов-Друг';
+       INSERT INTO person_entities VALUES('p1',NULL,'2026-01-01');
+       INSERT INTO person_sources(id,namespace,source_key,source_hash,name,entity_id,active)
+         VALUES('s1','cacbg','k1','h1','Иван Петров Тестов','p1',1);`,
+      null,
+    ],
   ]) {
     const { threw, out } = buildAndAudit({
       bidders: COLLIDING_BIDDERS,
@@ -628,12 +653,49 @@ test('a registry_namesake link holds only on the one partida that names the decl
       extraSql: `CREATE TABLE registry_roles(eik,subject_id,subject_name,entry_number,subject_kind,role);
         ${observations}
         CREATE TABLE persons(id TEXT PRIMARY KEY, name TEXT);
+        CREATE TABLE person_registry_links(person_id,registry_indent);
+        ALTER TABLE declarations ADD COLUMN folder_year; ALTER TABLE declarations ADD COLUMN xml_file;
+        ${personEntities}
         INSERT INTO persons VALUES('p1','Иван Петров Тестов');
-        INSERT INTO registry_identity_observations VALUES('200000002','1','00190','1','2019-01-01',0,
-          '${'a'.repeat(64)}','EGN','Иван Петров Тестов','Иван Петров Тестов','person','${'f'.repeat(64)}','2026-01-01');`,
+        INSERT INTO registry_identity_snapshots VALUES('100000001','h','2026-01-01'),('200000002','h','2026-01-01');
+        ${person('200000002', 'Иван Петров Тестов')}
+        ${extra}`,
     });
-    assert.equal(/A_multi_eik/.test(out), false, out);
-    assert.equal(/A_namesake_unproven/.test(out), Boolean(axis), out);
-    assert.equal(threw, Boolean(axis), out);
+    assert.equal(/A_multi_eik/.test(out), false, `${label}: ${out}`);
+    assert.equal(/A_namesake_unproven/.test(out), Boolean(axis), `${label}: ${out}`);
+    assert.equal(threw, Boolean(axis), `${label}: ${out}`);
+  }
+});
+
+test('a family registry_namesake link is re-proven by the relative the declaration names', () => {
+  const observations = fs.readFileSync(
+    path.join(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql'),
+    'utf8',
+  );
+  for (const [registered, axis] of [
+    ['Мария Иванова Тестова', null],
+    ['Иван Петров Тестов', 'A_namesake_unproven'],
+  ]) {
+    const { threw, out } = buildAndAudit({
+      bidders: COLLIDING_BIDDERS,
+      decls: [`'d1','p1'`],
+      links: [
+        `'il1','p1|200000002|family','p1','200000002','${KEY}','registry_namesake','document','b2','related',0,1000,'published'`,
+      ],
+      seals: [
+        `'p1|200000002|family','document','owner','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live'`,
+      ],
+      extraSql: `CREATE TABLE registry_roles(eik,subject_id,subject_name,entry_number,subject_kind,role);
+        ${observations}
+        CREATE TABLE persons(id TEXT PRIMARY KEY, name TEXT);
+        CREATE TABLE related_persons_internal(id,declaration_id,related_name,related_kind,info,timing);
+        INSERT INTO persons VALUES('p1','Иван Петров Тестов');
+        INSERT INTO related_persons_internal VALUES('r1','d1','Мария Иванова Тестова','stake_holder','„ОБЩ“ ЕООД','annual');
+        INSERT INTO registry_identity_snapshots VALUES('100000001','h','2026-01-01'),('200000002','h','2026-01-01');
+        INSERT INTO registry_identity_observations VALUES('200000002','1','00190','1','2019-01-01',0,
+          '${'b'.repeat(64)}','EGN','${registered}','${registered}','person','${'f'.repeat(64)}','2026-01-01');`,
+    });
+    assert.equal(/A_namesake_unproven/.test(out), Boolean(axis), `${registered}: ${out}`);
+    assert.equal(threw, Boolean(axis), `${registered}: ${out}`);
   }
 });

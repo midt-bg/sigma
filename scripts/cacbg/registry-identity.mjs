@@ -104,16 +104,37 @@ function subjectsNamed(company, person) {
   );
 }
 
-/** Of several companies under one name, the only one whose partida registers the declarant under this
- * exact full name — else null. A variant spelling, enough to follow one person, is not enough to choose
- * between two companies. */
-export function namesakeResolver(registry, people = peopleByCompany(registry)) {
-  return (eiks, declarant) => {
-    const name = declarantNameKey(declarant ?? '');
-    if (name.split(' ').length < 3) return null;
-    const named = eiks.filter((eik) => people.get(eik)?.get(name)?.size);
+/** Of several companies under one name, the only one whose partida registers the holder under one of these
+ * exact full names — else null. A variant spelling, enough to follow one person, is not enough to choose
+ * between two companies. Every partida must have been read: an unread one may hold the very person. */
+export function namesakeResolver(
+  registry,
+  people = peopleByCompany(registry),
+  read = readPartidas(registry),
+) {
+  return (eiks, holders) => {
+    const names = [holders ?? []]
+      .flat()
+      .map((n) => declarantNameKey(n ?? ''))
+      .filter((n) => n.split(' ').length >= 3);
+    if (!names.length || !eiks.every((eik) => read.has(eik))) return null;
+    const named = eiks.filter((eik) => names.some((n) => people.get(eik)?.get(n)?.size));
     return named.length === 1 ? named[0] : null;
   };
+}
+
+/** The companies whose partida was read for identity, with or without people in it. */
+function readPartidas(registry) {
+  if (
+    !registry.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_identity_snapshots'").get()
+  )
+    return new Set();
+  return new Set(
+    registry
+      .prepare('SELECT eik FROM registry_identity_snapshots')
+      .all()
+      .map((r) => r.eik),
+  );
 }
 
 /** Resolve declared companies against registry data, including declarations of related-person stakes.

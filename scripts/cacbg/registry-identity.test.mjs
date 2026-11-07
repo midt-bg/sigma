@@ -279,15 +279,23 @@ test('the identity input digest follows the facts, not the physical row order', 
   b.close();
 });
 
-test('a namesake is settled only by the one partida that names the declarant in full', () => {
+test('a namesake is settled only by the one partida that names the holder in full', () => {
   const { db, add, name } = fixture();
+  const read = (eik) =>
+    db.prepare("INSERT INTO registry_identity_snapshots VALUES(?,'h','2026-01-01')").run(eik);
   try {
     const eiks = ['123456789', '987654321'];
-    assert.equal(namesakeResolver(db)(eiks, name), null);
     add('987654321', 'a'.repeat(64), name);
+    read('987654321');
+    // The other partida is unread: it may hold the very person, so nothing is chosen yet.
+    assert.equal(namesakeResolver(db)(eiks, name), null, 'a namesake partida is unread');
+    read('123456789');
     assert.equal(namesakeResolver(db)(eiks, name), '987654321');
+    assert.equal(namesakeResolver(db)(eiks, [name]), '987654321');
+    assert.equal(namesakeResolver(db)(eiks, ['Друго Лице Тестово', name]), '987654321');
     assert.equal(namesakeResolver(db)(eiks, 'Ивана Тестова'), null, 'two names are not enough');
     assert.equal(namesakeResolver(db)(eiks, undefined), null);
+    assert.equal(namesakeResolver(db)(eiks, []), null);
     add('123456789', 'c'.repeat(64), name);
     assert.equal(namesakeResolver(db)(eiks, name), null, 'named in both partidas');
   } finally {

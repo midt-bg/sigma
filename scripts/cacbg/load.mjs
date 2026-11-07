@@ -360,18 +360,37 @@ for (const b of bidders) {
 // Returns {eik, method} | {ambiguous:true} | null. Never guesses across >1 ЕИК.
 //   name_stem       — the фирма without legal form and punctuation names exactly one winner; publishes only
 //                     where the register shows the declarant in that company (evidence.mjs rung 2).
-//   registry_namesake — the name leads to several winners, and the register shows the declarant in
-//                     exactly one of them. It is asked with the declarant's name, so it serves only the
-//                     companies a declaration names.
+//   registry_namesake — the name leads to several winners, every one of their partidas is read, and the
+//                     register shows the holder in exactly one of them. It is asked with the holder's name —
+//                     the declarant's for their own stake, the relative's for a family stake — so it serves
+//                     only the companies a declaration names.
 const byStem = stemIndex([...bidderByEik.values()]);
 const namesake = namesakeResolver(db);
-const resolveEntity = (entity, declarant) =>
+const resolveEntity = (entity, holders = []) =>
   resolveDeclaredCompany(entity, {
     byKey,
     bidderByEik,
     byStem,
-    ...(declarant ? { namesake: (eiks) => namesake(eiks, declarant) } : {}),
+    ...(holders.length ? { namesake: (eiks) => namesake(eiks, holders) } : {}),
   });
+// The relatives a declaration names as holders of each family stake: declaration → company key → names.
+const stakeHolders = new Map();
+for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
+  if (r.related_kind !== 'stake_holder' || !r.related_name) continue;
+  const did = `decl:${r.folder}:${r.xmlFile}`;
+  const byCompany = stakeHolders.get(did) ?? new Map();
+  const key = companyNameKey(r.info ?? '');
+  byCompany.set(key, [...(byCompany.get(key) ?? []), r.related_name]);
+  stakeHolders.set(did, byCompany);
+}
+// Whose name the register must show for this holding: the declarant's own stake, a relative's stake, or —
+// for a holder the declaration does not settle — nobody's.
+const holdersOf = (h, did) =>
+  h.holderRelation === 'related'
+    ? (stakeHolders.get(did)?.get(companyNameKey(h.entity)) ?? [])
+    : h.holderRelation === 'unknown'
+      ? []
+      : [h.person];
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_companies'").get()) {
   db.exec('DELETE FROM registry_requested_companies');
   const putRequest = db.prepare('INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)');
@@ -716,7 +735,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     h.timing ?? 'annual',
     h.seat ?? '',
   );
-  const res = resolveEntity(h.entity, h.person);
+  const res = resolveEntity(h.entity, holdersOf(h, did));
   if (res && !res.ambiguous) insDeclarationCompany.run(did, res.eik, res.method);
   // Preserve historical/disposal rows as source facts, but never let them establish
   // a positive holding during the filing year. "Prior" is appointment-relative,
@@ -872,7 +891,7 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
     );
   }
   if (r.related_kind === 'stake_holder') {
-    const res = resolveEntity(r.info ?? '');
+    const res = resolveEntity(r.info ?? '', [r.related_name]);
     const rec = res?.eik ? agg.get(`${personOf(r)}|${res.eik}|family`) : null;
     if (rec) rec.relativeNames.add(r.related_name);
   }
@@ -1097,6 +1116,21 @@ function interestClass(rec, relation) {
     publicStake: publicStakeEik.has(String(rec.bidder.eik)),
   });
 }
+// A person who states the ЕИК of one namesake in another declaration has said which company the name means:
+// the register's pick for a mention without the ЕИК must not add a second company beside it.
+for (const [gid, rec] of agg)
+  if (
+    rec.method === 'registry_namesake' &&
+    [...agg.values()].some(
+      (o) =>
+        o.pid === rec.pid &&
+        o.scope === rec.scope &&
+        o.key === rec.key &&
+        o.eik !== rec.eik &&
+        o.method === 'declared_eik',
+    )
+  )
+    agg.delete(gid);
 const heldOwnershipOpen = new Set(); // ЕИК whose management link the open ownership holds back
 db.exec('BEGIN');
 for (const rec of agg.values()) {

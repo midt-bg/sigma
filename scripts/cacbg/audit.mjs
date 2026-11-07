@@ -266,10 +266,34 @@ if (fs.existsSync(conflictsFile)) {
 }
 
 const namesakeOf = namesakeResolver(db);
-// Prepared on the first namesake link only: older inputs have no persons.name to read.
-let personNameStmt;
-const personName = (id) =>
-  (personNameStmt ??= db.prepare('SELECT name FROM persons WHERE id = ?')).get(id)?.name;
+// The names the register may show for a link's holder: every spelling of the declarant for their own stake,
+// the relatives their declarations name as stake holders for a family one. Read on the first namesake link
+// only, so older inputs without these tables still audit.
+const hasTable = (name) => db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(name);
+let holderStmts;
+const holderNames = (l) => {
+  holderStmts ??= {
+    person: db.prepare('SELECT name FROM persons WHERE id = ?'),
+    sources: hasTable('person_sources')
+      ? db.prepare(
+          'SELECT name FROM person_sources WHERE active=1 AND (entity_id = ? OR legacy_person_id = ?)',
+        )
+      : null,
+    relatives: hasTable('related_persons_internal')
+      ? db.prepare(`SELECT rp.related_name name FROM related_persons_internal rp
+          JOIN declarations d ON d.id = rp.declaration_id
+          WHERE d.person_id = ? AND rp.related_kind = 'stake_holder'`)
+      : null,
+  };
+  const rows =
+    l.relation === 'related'
+      ? (holderStmts.relatives?.all(l.person_id) ?? [])
+      : [
+          holderStmts.person.get(l.person_id),
+          ...(holderStmts.sources?.all(l.person_id, l.person_id) ?? []),
+        ];
+  return [...new Set(rows.filter(Boolean).map((r) => r.name))];
+};
 for (const l of published) {
   const rec = byKey.get(l.entity_key);
 
@@ -291,13 +315,13 @@ for (const l of published) {
         `declared_eik published ${l.eik}, not among key ${l.entity_key}'s valid winners {${[...rec.valid].join(',')}}`,
       );
   } else if (l.match_method === 'registry_namesake') {
-    // Several winners share the name; the register picks the one whose partida names the declarant.
+    // Several winners share the name; the register picks the one whose partida names the holder.
     // Re-ask it from this database, so a link the register no longer supports cannot stay published.
-    if (namesakeOf([...rec.valid], personName(l.person_id)) !== l.eik)
+    if (namesakeOf([...rec.valid], holderNames(l)) !== l.eik)
       flag(
         l,
         'A_namesake_unproven',
-        `key ${l.entity_key} → {${[...rec.valid].join(',')}}; the register does not name the declarant in ${l.eik} alone`,
+        `key ${l.entity_key} → {${[...rec.valid].join(',')}}; the register does not name the holder in ${l.eik} alone, or a namesake partida is unread`,
       );
   } else if (rec.valid.size !== 1)
     flag(
