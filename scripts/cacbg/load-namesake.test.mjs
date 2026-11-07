@@ -35,7 +35,12 @@ const stake = (over) => ({
 // ТЕСТ ДВА: both partidas read. ТЕСТ ТРИ: the second partida is not read yet.
 const PARTIDAS = {
   300000004: ['МАРИЯ ИВАНОВА ТЕСТОВА'],
-  300000006: ['АННА ТЕСТОВА ПРИМЕРОВА', 'ЦВЕТАН ТЕСТОВ ПРИМЕРОВ', 'ЕЛЕНА ТЕСТОВА ПРИМЕРОВА'],
+  300000006: [
+    'АННА ТЕСТОВА ПРИМЕРОВА',
+    'ЦВЕТАН ТЕСТОВ ПРИМЕРОВ',
+    'ЕЛЕНА ТЕСТОВА ПРИМЕРОВА',
+    'ГАЛИНА ТЕСТОВА ПРИМЕРОВА',
+  ],
   300000010: ['БОРИС ТЕСТОВ ПРИМЕРОВ'],
 };
 
@@ -139,6 +144,40 @@ before(() => {
       folder: '2023',
       year: '2023',
       person: 'Елена Тестова Примерова',
+      entity: 'ТЕСТ ДВА ООД',
+    }),
+    // She states the ЕИК of each namesake in one declaration and writes the bare name in a third; the
+    // register shows her in 300000006 — the pick agrees with a stated ЕИК, so that declaration names it.
+    stake({
+      xmlFile: 'G1.xml',
+      controlHash: 'G1',
+      person: 'Галина Тестова Примерова',
+      entity: 'ТЕСТ ДВА ООД, ЕИК 300000004',
+    }),
+    stake({
+      xmlFile: 'G2.xml',
+      controlHash: 'G2',
+      folder: '2023',
+      year: '2023',
+      person: 'Галина Тестова Примерова',
+      entity: 'ТЕСТ ДВА ООД, ЕИК 300000006',
+    }),
+    stake({
+      xmlFile: 'G3.xml',
+      controlHash: 'G3',
+      folder: '2022',
+      year: '2022',
+      person: 'Галина Тестова Примерова',
+      entity: 'ТЕСТ ДВА ООД',
+    }),
+    // …and in a fourth whose stake forms no link: no other stake holds that row, the agreement alone does.
+    stake({
+      xmlFile: 'G4.xml',
+      controlHash: 'G4',
+      folder: '2021',
+      year: '2021',
+      timing: 'unknown',
+      person: 'Галина Тестова Примерова',
       entity: 'ТЕСТ ДВА ООД',
     }),
     // …and in a third, whose stake forms no link at all (its timing is unknown).
@@ -268,4 +307,17 @@ test('a stated ЕИК of one namesake is not joined by the register’s pick of 
   assert.deepEqual(companiesOf('E.xml'), [{ eik: '300000004', match_method: 'declared_eik' }]);
   assert.deepEqual(companiesOf('F.xml'), [], 'the bare name is not shown as the other company');
   assert.deepEqual(companiesOf('H.xml'), [], 'not even where the stake forms no link');
+});
+
+test('a pick that agrees with a stated ЕИК stays the company its declaration names', () => {
+  assert.deepEqual(
+    links('Галина Тестова Примерова').map((l) => l.eik),
+    ['300000004', '300000006'],
+  );
+  assert.deepEqual(companiesOf('G3.xml'), [
+    { eik: '300000006', match_method: 'registry_namesake' },
+  ]);
+  assert.deepEqual(companiesOf('G4.xml'), [
+    { eik: '300000006', match_method: 'registry_namesake' },
+  ]);
 });

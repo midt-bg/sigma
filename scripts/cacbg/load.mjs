@@ -1133,15 +1133,26 @@ function interestClass(rec, relation) {
 const dropNamesakePick = db.prepare(
   "DELETE FROM declaration_companies WHERE declaration_id=? AND eik=? AND match_method='registry_namesake'",
 );
-const statedElsewhere = (claim, eik) => [...(statedEiks.get(claim) ?? [])].some((e) => e !== eik);
-for (const pick of namesakePicks)
-  if (statedElsewhere(pick.claim, pick.eik)) dropNamesakePick.run(pick.did, pick.eik);
+// Contradicted only when the person states other ЕИК and never this one: a pick that agrees with a stated ЕИК
+// is the company the person means.
+const statedElsewhere = (claim, eik) => {
+  const stated = statedEiks.get(claim);
+  return Boolean(stated?.size) && !stated.has(eik);
+};
 for (const [gid, rec] of agg)
   if (
     rec.method === 'registry_namesake' &&
     statedElsewhere(`${rec.pid}|${rec.scope}|${rec.key}`, rec.eik)
   )
     agg.delete(gid);
+// One declaration names a company once (declaration_companies is keyed by declaration and ЕИК), whoever's stake
+// it is: a row another surviving stake still rests on stays.
+const stillNamed = new Set();
+for (const rec of agg.values())
+  for (const o of rec.observations.values()) stillNamed.add(`${o.declarationId}|${rec.eik}`);
+for (const pick of namesakePicks)
+  if (statedElsewhere(pick.claim, pick.eik) && !stillNamed.has(`${pick.did}|${pick.eik}`))
+    dropNamesakePick.run(pick.did, pick.eik);
 const heldOwnershipOpen = new Set(); // ЕИК whose management link the open ownership holds back
 db.exec('BEGIN');
 for (const rec of agg.values()) {
