@@ -312,6 +312,69 @@ describe('RefreshWorkflow.run — control flow', () => {
     expect(error.mock.calls.some((c) => String(c[0]).includes('raw string fault'))).toBe(true);
   });
 
+  it('lets the step retry a D1 error in the check, and a passing retry settles the window', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
+    integrity.runServedIntegrityGate
+      .mockRejectedValueOnce(new Error('D1 DB is overloaded'))
+      .mockResolvedValueOnce(true);
+    const { NonRetryableError } = await import('cloudflare:workflows');
+    // Like the platform: a plain error is retried, a NonRetryableError is not.
+    const retrying = {
+      do: async <T>(_name: string, fn: () => Promise<T>): Promise<T> => {
+        for (let attempt = 1; ; attempt++) {
+          try {
+            return await fn();
+          } catch (err) {
+            if (err instanceof NonRetryableError || attempt === 3) throw err;
+          }
+        }
+      },
+    };
+    const wf = makeWorkflow();
+
+    const result = await wf.run({ payload: {} } as never, retrying as never);
+
+    expect(integrity.runServedIntegrityGate).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ integrity: 'ok' });
+    expect(ingest.settlePendingWindows).toHaveBeenCalled();
+  });
+
+  it('reports no settled count when the check did not pass', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
+    integrity.runServedIntegrityGate.mockResolvedValueOnce(false);
+    const wf = makeWorkflow();
+
+    const result = await wf.run({ payload: {} } as never, fakeStep([]) as never);
+
+    expect(result.uncoveredWindows).toBeNull();
+  });
+
+  it('ends the run on a lease lost before the check, instead of calling it unverified', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    // drop-stale, record-window, create, ingest, load-fx, derive g1, count renew fine; the gate's
+    // fence and the finally's check find the new holder.
+    const ours = { acquired: true, holder: 'wf-60', expiresAt: '2026-06-07T00:30:00.000Z' };
+    const theirs = { acquired: false, holder: 'wf-61', expiresAt: '2026-06-07T00:45:00.000Z' };
+    for (let i = 0; i < 7; i++) ingest.renewRefreshLease.mockResolvedValueOnce(ours);
+    ingest.renewRefreshLease.mockResolvedValueOnce(theirs).mockResolvedValueOnce(theirs);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-60' } as never, fakeStep([]) as never),
+    ).rejects.toThrow(/refresh lease lost before integrity-gate: now held by wf-61/);
+
+    expect(integrity.runServedIntegrityGate).not.toHaveBeenCalled();
+    expect(error.mock.calls.some((c) => String(c[0]).includes('etl_integrity_unverified'))).toBe(
+      false,
+    );
+    expect(ingest.settlePendingWindows).not.toHaveBeenCalled();
+  });
+
   it('drops staging even when ingestion throws', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockRejectedValue(new Error('bucket down'));

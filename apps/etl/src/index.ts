@@ -87,8 +87,11 @@ interface RefreshResult {
   pendingTouched: number;
   /** The oldest unsettled promise this run tried to replay (folded into `from`), or null. */
   replayFrom: string | null;
-  /** Promises still outstanding after this run — what the cap kept out of reach (0 when none). */
-  uncoveredWindows: number;
+  /**
+   * Promises still outstanding after this run — what the cap kept out of reach (0 when none). Null
+   * when the check after the write did not pass: nothing was settled, so every promise is still owed.
+   */
+  uncoveredWindows: number | null;
   /** The check after the write: `ok` settles the window, anything else leaves it for the next run. */
   integrity?: 'ok' | 'violation' | 'unverified';
   /** Set when the run did nothing because another live instance holds the refresh lease. */
@@ -189,8 +192,8 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
     // so it only ever claims success for a run that survived its own cleanup.
     let outcome: RefreshResult | null = null;
     // The run's own failure, kept so a failure inside `finally` cannot mask it: JavaScript lets a
-    // throwing finally REPLACE the original error, and the gate's verdict must never be hidden
-    // behind a staging-drop hiccup.
+    // throwing finally REPLACE the original error, and the run's error (a lost lease, a failed write)
+    // must never be hidden behind a staging-drop hiccup. The gate's verdict is logged before that.
     let failed = false;
     // The FIRST failure inside finally, boxed rather than a null sentinel: a thrown `null` or
     // `undefined` is still a failure. Later cleanup failures are logged, never allowed to REPLACE
@@ -365,7 +368,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       // and served, so nothing here can un-serve it and the run goes on either way. A violation is
       // logged at error level; a D1 that stays overloaded through the step's retries leaves the
       // numbers unverified. Either way the window stays recorded, so the next run replays it and
-      // checks again. A lost lease lands in this catch too, and nothing below writes without it.
+      // checks again. A lost lease is not a D1 hiccup: it ends the run as at every other step.
       let integrity: RefreshResult['integrity'] = 'unverified';
       try {
         const reconciled = await fenced('integrity-gate', () =>
@@ -377,6 +380,8 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         );
         integrity = reconciled ? 'ok' : 'violation';
       } catch (err) {
+        if (String(err instanceof Error ? err.message : err).includes('lease lost before'))
+          throw err;
         console.error(
           JSON.stringify({
             level: 'error',
@@ -435,7 +440,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         staged,
         derived,
         pendingTouched: pending.total,
-        uncoveredWindows: windows.remaining.length,
+        uncoveredWindows: integrity === 'ok' ? windows.remaining.length : null,
         integrity,
       };
       return outcome;
