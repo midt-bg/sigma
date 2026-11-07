@@ -89,6 +89,15 @@ export function classifyHolder(holder, declarant) {
   if (unmatched.filter((t) => !isInitial(t)).length >= 2) return 'related';
   return 'unknown';
 }
+// A holder cell that is the declarant's first name and nothing else („ИВАН" for „Иван Петров Тестов"). On
+// its own it stays unknown — a son or a father often bears the same name. The loader accepts it as the
+// declarant's own stake only where a filing of the same year or later names the declarant in full as the holder
+// of the same company, under the rules of ADR-0051. Only the fact is kept, never the cell.
+export function holderIsFirstName(holder, declarant) {
+  const D = holderTokens(declarant);
+  const H = holderTokens(holder);
+  return D.length >= 2 && H.length === 1 && !isInitial(H[0]) && H[0] === D[0];
+}
 function cellText(cell) {
   if (cell == null) return '';
   const t = typeof cell === 'object' ? cell['#text'] : cell;
@@ -228,6 +237,9 @@ function parseAssets(pp) {
         timing: disposition ? 'disposed' : 'annual',
         seat,
         holderRelation,
+        ...(holderRelation === 'unknown' && holderIsFirstName(by[cHolder] ?? '', declarant)
+          ? { holderFirstName: true }
+          : {}),
         // The relative's name stays on the family row for the internal related-persons table only; the
         // holdings export never carries it (ADR-0044).
         ...(holderRelation === 'related' ? { holder: by[cHolder] } : {}),
