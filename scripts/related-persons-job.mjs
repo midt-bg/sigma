@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './cacbg/corpus.mjs';
 import { retryD1 } from './d1-retry.mjs';
 import { importSql } from './cacbg/import-sql.mjs';
-import { progress } from './cacbg/progress.mjs';
+import { progress, stageExitCode, STOP_SIGNALS } from './cacbg/progress.mjs';
 import {
   assertD1TargetAuthorized,
   parseWranglerJson,
@@ -35,8 +35,9 @@ const env = {
 // The container is stopped with a signal to its whole process group. `execFileSync` blocks the event
 // loop, so without a handler Node's default disposition would kill this process before the stage that
 // is doing the work can accept what it has and exit 75. The handler is deliberately empty: the stage
-// below gets the same signal and its exit code carries the decision up.
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {});
+// below gets the same signal and its exit code carries the decision up; a stage that the signal kills
+// outright yields as well (`stageExitCode`).
+for (const signal of STOP_SIGNALS) process.on(signal, () => {});
 
 let stage = 'fetch';
 const setStage = (next) => {
@@ -84,7 +85,7 @@ const stopOn = (script, error) => {
       signal: error.signal ?? null,
     }),
   );
-  process.exit(error.status === 75 ? 75 : 1);
+  process.exit(stageExitCode(error));
 };
 const run = (script, args = []) => {
   try {

@@ -414,7 +414,7 @@ console.log(`published links audited: ${published.length}`);
 console.log(`hard findings: ${findings.length}\n`);
 for (const [axis, fs] of Object.entries(byAxis)) {
   console.log(`## ${axis} — ${fs.length}`);
-  for (const f of fs.slice(0, 20)) console.log(`  - [${f.eik}] ${f.detail}`);
+  for (const f of fs.slice(0, 20)) console.log(`  - [${f.eik ?? '-'}] ${f.detail}`);
   console.log('');
 }
 if (priorPublished === null) {
