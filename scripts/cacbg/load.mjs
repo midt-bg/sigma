@@ -30,6 +30,7 @@ import {
   authOwn,
   OWN_RANK,
   interestClassOf,
+  declaresPostNotStake,
 } from './classify.mjs';
 import {
   openCache,
@@ -616,7 +617,8 @@ let diN = 0,
   immaterialFamily = 0,
   unknownHolder = 0,
   namelessInstitution = 0,
-  namelessPerson = 0;
+  namelessPerson = 0,
+  postDuplicate = 0;
 // §2 ал.3 ПЗР canary (rail #3): every MATERIAL family holding must originate from a PUBLIC asset declaration.
 // parse.mjs builds family scope SOLELY from parseAssets/<PublicPerson> (templateType 'assets'), so this map —
 // material family holdings bucketed by their source declaration's template — must stay 100% 'assets'. Any other
@@ -694,12 +696,39 @@ if (filingFolderDated > 0 || filingUndatable > 0) {
 }
 
 db.exec('BEGIN');
+const holdingRows = readJsonl(path.join(STAGING, 'holdings.jsonl'));
+const postKey = (h) =>
+  `${h.folder}|${h.xmlFile}|${companyNameKey(h.entity)}|${h.timing ?? 'annual'}`;
+const declaredPosts = new Set(holdingRows.filter((h) => h.kind === 'management').map(postKey));
+// A company the state or a municipality controls, or the declarant's own office (ADR-0047 §2). A minority
+// public stake is not enough: the private partners of such a company own it and often run it too.
+const publicEnterprise = (row, res) => {
+  if (!res || res.ambiguous) return false;
+  if (bidderByEik.get(res.eik)?.ownership_kind) return true;
+  const pid = personOf(row);
+  return Boolean(
+    publicEnterpriseOffices.get(pid)?.has(res.eik) || organizationOffices.get(pid)?.has(res.eik),
+  );
+};
 // Every company a declaration names by the register's pick, and every ЕИК a person states, by claim
 // (person, whose stake, company name) — gathered before any holding is filtered out of link formation, so
 // a stated ЕИК outranks the pick wherever it was made (see „a person who states the ЕИК" below).
 const namesakePicks = [];
 const statedEiks = new Map();
-for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
+for (const row of holdingRows) {
+  // A participation line in a PUBLIC enterprise whose amount is a post („управител“) declares the office,
+  // not a stake: its manager cannot be its private owner. It is recorded and judged as management. In a
+  // private company the same word stays a stake — its sole owner is very often its manager too. When the
+  // same declaration already lists a post in that company for the period, the line is not recorded twice.
+  const post =
+    row.kind === 'participation' &&
+    declaresPostNotStake(row.detail) &&
+    publicEnterprise(row, resolveEntity(row.entity));
+  if (post && declaredPosts.has(postKey(row))) {
+    postDuplicate++;
+    continue;
+  }
+  const h = post ? { ...row, kind: 'management' } : row;
   // A degenerate official name folds to the empty person key (`person:`), which would MERGE every such
   // official into one identity and mis-attribute their links. Can't attribute a stake to a nameless person
   // — skip the row (bad-input, not a resolvable holding).
@@ -1584,6 +1613,7 @@ const S = {
   unknownHolderSkipped: unknownHolder,
   namelessInstitutionSkipped: namelessInstitution,
   namelessPersonSkipped: namelessPerson,
+  postAlreadyDeclaredSkipped: postDuplicate,
 };
 console.log(JSON.stringify(S, null, 2));
 
