@@ -175,13 +175,14 @@ export const LINK_SELECT = `SELECT
       WHERE years.timing='not_listed' AND years.reported_year IS NOT NULL AND ${declarationYearDisputed('il', 'years.reported_year')}) AS disputed_years,
     -- A link with no declared year of its own rests only on filings that report the stake as held BEFORE
     -- the relevant moment, or as transferred. The years of those filings, so the surface names the stake
-    -- for what it is („предходно участие“, „прехвърлен дял“) instead of as a stake the person holds.
+    -- for what it is („предходно участие“, „прехвърлен дял“) instead of as a stake the person holds. A
+    -- transfer is named beside the declared years too, so a stake held and then sold reads as both.
     CASE WHEN il.first_declared_year IS NULL THEN (SELECT json_group_array(DISTINCT h.reported_year)
       FROM interest_link_observations h WHERE h.link_key=il.link_key AND h.timing='prior'
         AND h.kind<>'management' AND h.reported_year IS NOT NULL) END AS prior_years,
-    CASE WHEN il.first_declared_year IS NULL THEN (SELECT json_group_array(DISTINCT h.reported_year)
+    (SELECT json_group_array(DISTINCT h.reported_year)
       FROM interest_link_observations h WHERE h.link_key=il.link_key AND h.timing='disposed'
-        AND h.reported_year IS NOT NULL) END AS disposed_years,
+        AND h.reported_year IS NOT NULL) AS disposed_years,
     il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
     il.relation, il.contemporaneous, il.own_institution,
     il.first_declared_year, il.last_declared_year, il.match_method,

@@ -117,7 +117,7 @@ export function Chip({
   // A label may name its years („… (2018, 2019)“); the explanation is the label's, not the years'.
   const help =
     typeof children === 'string'
-      ? CHIP_HELP[children.toLowerCase().replace(/ \([\d, ]+\)$/u, '')]
+      ? CHIP_HELP[children.toLowerCase().replace(/ \([\d, –]+\)$/u, '')]
       : undefined;
   const className = `chip${tone ? ` chip-${tone}` : ''}`;
   return help && explain ? (

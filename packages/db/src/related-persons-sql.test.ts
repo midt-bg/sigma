@@ -174,11 +174,23 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
-  it('a link with no declared year carries the years of its earlier and transferred filings', () => {
+  it('a link carries the years of its transferred filings, and with no declared year of its earlier ones', () => {
     withDb((dbPath) => {
       const dated = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
       expect(dated.prior_years).toBeNull();
-      expect(dated.disposed_years).toBeNull();
+      expect(JSON.parse(String(dated.disposed_years))).toEqual([]);
+      // A transfer is carried beside the declared years too.
+      sqlite(
+        dbPath,
+        `INSERT INTO interest_link_observations VALUES ('person:ivan|111','decl:i','shares','disposed','2021');`,
+      );
+      const sold = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
+      expect(sold.prior_years).toBeNull();
+      expect(JSON.parse(String(sold.disposed_years))).toEqual(['2021']);
+      sqlite(
+        dbPath,
+        `DELETE FROM interest_link_observations WHERE link_key='person:ivan|111' AND reported_year='2021';`,
+      );
       sqlite(
         dbPath,
         `UPDATE interest_links SET first_declared_year=NULL, last_declared_year=NULL WHERE link_key='person:ivan|111';
