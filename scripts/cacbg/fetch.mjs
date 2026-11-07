@@ -338,6 +338,8 @@ export async function run({
   const inventory = [];
   // Folders short of a few documents: their index is written only once the run knows the whole shortfall.
   const shortfallIndexes = [];
+  // Sets that were reached but could not be sealed: a corpus without one of them is no corpus at all.
+  let unsealed = 0;
   const cachedFolders = new Map();
   const filesFor = (folder) => {
     if (!cachedFolders.has(folder)) cachedFolders.set(folder, store.files(folder));
@@ -595,6 +597,14 @@ export async function run({
     // otherwise the run that finally completes the corpus is the one declared partial and refused. If the
     // clock is spent but this set finished, the next iteration's top-of-loop guard stops us; if this was
     // the LAST set, there is nothing left to withhold and the corpus is complete.
+    // The register lists one document under every post it belongs to, and each row is fetched on its own:
+    // a request that failed for one row may have succeeded (or met a 404) for another. The document is
+    // then obtained (or a gap), not a failure, and is counted once.
+    for (const file of obtainedFiles.keys()) {
+      failedFiles.delete(file);
+      sourceGaps.delete(file);
+    }
+    for (const file of sourceGaps) failedFiles.delete(file);
     const writeIndex = async () => {
       const index = Buffer.from(
         JSON.stringify({
@@ -612,6 +622,7 @@ export async function run({
       new Set(rows.map((r) => r.xmlFile)).size;
     if (!withheld && !fstat.errors && accounted) await writeIndex();
     else if (!withheld && accounted) shortfallIndexes.push(writeIndex);
+    else if (!withheld) unsealed++;
     if (withheld) {
       deadlineHit = true;
       console.log(`  deadline reached inside ${folder} — stopping`);
@@ -620,7 +631,7 @@ export async function run({
   }
 
   const completeness = assessCompleteness(stats.folders, stats.skippedFolders);
-  if (!deadlineHit && toleratedShortfall(completeness)) {
+  if (!deadlineHit && !unsealed && toleratedShortfall(completeness)) {
     for (const writeIndex of shortfallIndexes) await writeIndex();
     completeness.incomplete = false;
     console.warn(

@@ -176,13 +176,14 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get())
       .all()
       .map((r) => r.id),
   );
-  for (const link of published)
-    if (invalid.has(link.person_id))
-      flag(
-        link,
-        'I_source_identity',
-        'Published profile disagrees with current identity evidence or source membership',
-      );
+  // A defect of the PERSON, not of one link: withholding the link would leave the person's page — its
+  // declarations and registry roles — published on the broken identity. It names no link, so it stops the run.
+  const broken = new Set(published.filter((l) => invalid.has(l.person_id)).map((l) => l.person_id));
+  for (const person of broken)
+    findings.push({
+      axis: 'I_source_identity',
+      detail: `${person}: published profile disagrees with current identity evidence or source membership`,
+    });
 }
 
 // History is provenance, never an escape from the publishing evidence gate.
@@ -402,7 +403,7 @@ const removalGround = (p) =>
       : p.corrected === true
         ? 'an acknowledged input correction'
         : statusNow.get(p.link_key) === 'suppressed'
-          ? 'a suppression (ADR-0031 takedown path)'
+          ? 'a suppression (an ADR-0031 takedown, or withheld by this run’s audit)'
           : 'the source no longer supports it';
 
 // Report

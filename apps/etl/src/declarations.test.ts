@@ -620,6 +620,18 @@ it('ends a run whose publish refuses three times without getting further', async
   }
   expect(f.run().reason).toMatch(/publish failed 3 times without getting further/);
 
+  // A child killed at the same point every time is the same loop.
+  const k = fixture();
+  await k.job().startRun('workflow-killed');
+  await k.job().alarm();
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1) await k.resume();
+    k.answer({ state: 'failed', stage: 'extract', completed: 0, signal: 'SIGKILL' });
+    vi.advanceTimersByTime(60_000);
+    await k.job().alarm();
+  }
+  expect(k.run().state).toBe('failed');
+
   // Getting past the mark clears the count: a run that moves on is not held to its old refusals.
   const g = fixture();
   await g.job().startRun('workflow-publish-moves');

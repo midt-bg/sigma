@@ -327,10 +327,14 @@ if (doing('audit')) {
       audit: () => execScript('scripts/cacbg/audit.mjs'),
       verdict: () => (existsSync(list) ? JSON.parse(readFileSync(list, 'utf8')) : null),
       reload: (links, pass) => {
+        // Each pass is progress the coordinator can see: a reload and a second audit together can
+        // outlast its stall limit, and they are the run moving, not the run stuck.
+        progress('audit', 2 * pass - 1, undefined, true);
         console.log(JSON.stringify({ event: 'declarations_links_withheld', pass, links }));
         writeFileSync(kept, JSON.stringify({ links }));
         env.CACBG_WITHHOLD_LIST = kept;
         run('scripts/cacbg/load.mjs');
+        progress('audit', 2 * pass, undefined, true);
       },
     });
   } catch (error) {

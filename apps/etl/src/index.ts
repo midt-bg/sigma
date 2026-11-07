@@ -761,21 +761,22 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
   }
 }
 
-/** The cron that starts the declarations run: Sundays 03:00 UTC — a bad run then leaves the working
- * week to fix it, and the register is quiet at the weekend. Cloudflare numbers the weekdays from
- * 1 = Sunday to 7 = Saturday, not the usual 0 = Sunday: the `7` this used to carry started the run on
- * Saturdays (26.09.2026), and `0` the API refuses outright. `scheduled` compares this string to the one
- * the platform sends, so the number stays a number — all but the minute, which a non-production render
- * shifts (SIGMA_ETL_CRON_MINUTE) so that two environments do not hit the sources in the same minute. */
+/** The cron that may start the declarations run: every day at 03:00 UTC. `declarationsDue` decides —
+ * always on Sundays, on other days only to make up for a failed or stale run. `scheduled` compares this
+ * string to the one the platform sends — all but the minute, which a non-production render shifts
+ * (SIGMA_ETL_CRON_MINUTE) so that two environments do not hit the sources in the same minute. */
 export const DECLARATIONS_CRON = '0 3 * * *';
 /** The declarations run on Sundays. On any other day the same tick starts one only to make up for a run
  *  that failed or never finished: a problem costs a day, not the week until the next Sunday. */
 const DECLARATIONS_MAX_AGE_MS = 7 * 24 * 3_600_000;
 export function declarationsDue(
-  last: { state: string; startedAt: number; finishedAt?: string } | undefined,
+  last: { state: string; startedAt: number; finishedAt?: string } | undefined | 'unknown',
   now: Date,
 ): boolean {
-  if (now.getUTCDay() === 0 || !last) return true;
+  if (now.getUTCDay() === 0) return true;
+  // Without the last run's state only the weekly run starts: a make-up needs to know there is one to make up.
+  if (last === 'unknown') return false;
+  if (!last) return true;
   return last.state === 'failed' || now.getTime() - last.startedAt > DECLARATIONS_MAX_AGE_MS;
 }
 
@@ -894,11 +895,13 @@ export default {
     // has not landed) must not take procurement down with it. An unknown answer means „no run", which
     // is the same state this handler was in before the declarations existed.
     let live: Awaited<ReturnType<DeclarationContainer['getRun']>>;
+    let stateKnown = true;
     try {
       live = env.DECLARATIONS
         ? await env.DECLARATIONS.getByName('declarations').getRun()
         : undefined;
     } catch (error) {
+      stateKnown = false;
       console.log(
         JSON.stringify({
           event: 'etl_scheduled',
@@ -926,7 +929,10 @@ export default {
     } else if (
       env.DECLARATIONS_ENABLED === 'true' &&
       env.DECLARATIONS &&
-      declarationsDue(live, new Date(controller?.scheduledTime ?? Date.now()))
+      declarationsDue(
+        stateKnown ? live : 'unknown',
+        new Date(controller?.scheduledTime ?? Date.now()),
+      )
     )
       jobs.push(['declarations', () => env.DECLARATIONS!.getByName('declarations').startRun()]);
     const results = await Promise.allSettled(

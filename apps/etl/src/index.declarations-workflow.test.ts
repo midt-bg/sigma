@@ -105,6 +105,9 @@ it('a failed run is retried the next day; a finished one waits for Sunday', () =
   expect(declarationsDue(finished, monday)).toBe(false);
   expect(declarationsDue(finished, sunday)).toBe(true);
   expect(declarationsDue(undefined, monday)).toBe(true);
+  // A state that could not be read starts only the weekly run.
+  expect(declarationsDue('unknown', monday)).toBe(false);
+  expect(declarationsDue('unknown', sunday)).toBe(true);
   // A run the Sunday tick missed is made up for rather than waiting another week.
   const old = { state: 'complete', startedAt: new Date('2026-10-20T03:00:00Z').getTime() };
   expect(declarationsDue(old, monday)).toBe(true);

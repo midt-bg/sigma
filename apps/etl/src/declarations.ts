@@ -456,14 +456,16 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         //
         // A replayed attempt counts as moving, so the failure budget alone would retry a stage that
         // refuses every time — publish, say — for ever. The same refusal at the same stage, three times
-        // without the run getting past its mark, ends the run; tomorrow's cron starts a new one.
+        // without the run getting past its mark, ends the run; tomorrow's cron starts a new one. A child
+        // killed by a signal at the same point (out of memory) counts too; the platform's own stop arrives
+        // as a yield and never does.
         const retryable =
           status.state === 'yielded' ||
           ['fetch', 'import', 'snapshot', 'registry', 'publish', 'reindex'].includes(
             status.stage,
           ) ||
           status.signal;
-        if (retryable && status.state === 'failed' && !status.signal) {
+        if (retryable && status.state === 'failed') {
           const repeats = (run.stageFailures?.[status.stage] ?? 0) + 1;
           run.stageFailures = { ...run.stageFailures, [status.stage]: repeats };
           if (repeats >= MAX_FAILURES) {

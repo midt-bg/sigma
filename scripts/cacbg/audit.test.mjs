@@ -521,7 +521,7 @@ test('the four axes above are a BOUND: a clean, valid, sealed link passes them a
 });
 
 test('a public source profile cannot conceal competing registry identities behind a name key', () => {
-  const { threw, out } = buildAndAudit({
+  const { threw, out, withheld } = buildAndAudit({
     bidders: ["'b1','РЕАЛЕН ЕООД','100000001',1"],
     decls: ["'d1','p1'", "'d2','p1'"],
     links: [
@@ -539,6 +539,8 @@ test('a public source profile cannot conceal competing registry identities behin
   });
   assert.equal(threw, true);
   assert.match(out, /I_source_identity/);
+  // The defect is the person's: withholding the link would publish the page on the broken identity.
+  assert.deepEqual(withheld, { links: [], structural: 1 });
 });
 
 test('inventory differences retain proven links only with both dated comparison sources', () => {

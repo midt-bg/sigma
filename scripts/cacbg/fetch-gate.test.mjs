@@ -92,6 +92,31 @@ test('a few documents the register keeps refusing do not hold back the rest → 
   assert.equal(readIndex().files.length, 1000);
 });
 
+test('a document listed twice, refused once and obtained once, is obtained — the set is sealed', async () => {
+  const files = Array.from({ length: 1000 }, (_, i) => `a${i}.xml`);
+  let asked = 0;
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml([...files, 'a0.xml']) },
+    ...Object.assign({}, ...files.slice(1).map(ok)),
+  };
+  const get = fakeGet(routes);
+  const code = await run({
+    httpGet: async (url) =>
+      url.endsWith('/a0.xml')
+        ? ++asked === 1
+          ? { status: 500, headers: {}, body: Buffer.from('') }
+          : { status: 200, headers: {}, body: Buffer.from('<x/>') }
+        : get(url),
+    rawDir: dir,
+    guard: () => {},
+    argv: ['node', 'fetch.mjs', '--folders', FOLDER, '--concurrency', '1'],
+  });
+  assert.equal(code, 0);
+  const index = JSON.parse(fs.readFileSync(path.join(dir, FOLDER, '.index.json'), 'utf8'));
+  assert.deepEqual(index.failed, []);
+  assert.equal(index.files.length, 1000);
+});
+
 test('the tolerated shortfall is a few documents, never a skipped set or a crawl cut short', () => {
   const base = { unfetched: 5, notAttempted: 0, skippedSets: 0, announcedDeclarations: 287000 };
   assert.equal(toleratedShortfall(base), true);
