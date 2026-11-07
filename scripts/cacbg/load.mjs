@@ -582,7 +582,8 @@ let diN = 0,
   immaterialFamily = 0,
   unknownHolder = 0,
   namelessInstitution = 0,
-  namelessPerson = 0;
+  namelessPerson = 0,
+  postDuplicate = 0;
 // §2 ал.3 ПЗР canary (rail #3): every MATERIAL family holding must originate from a PUBLIC asset declaration.
 // parse.mjs builds family scope SOLELY from parseAssets/<PublicPerson> (templateType 'assets'), so this map —
 // material family holdings bucketed by their source declaration's template — must stay 100% 'assets'. Any other
@@ -660,13 +661,20 @@ if (filingFolderDated > 0 || filingUndatable > 0) {
 }
 
 db.exec('BEGIN');
-for (const row of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
+const holdingRows = readJsonl(path.join(STAGING, 'holdings.jsonl'));
+const postKey = (h) =>
+  `${h.folder}|${h.xmlFile}|${companyNameKey(h.entity)}|${h.timing ?? 'annual'}`;
+const declaredPosts = new Set(holdingRows.filter((h) => h.kind === 'management').map(postKey));
+for (const row of holdingRows) {
   // A participation line whose amount is a post („управител“) declares the office, not a stake. It is
-  // recorded and judged as management, so it cannot make the declarant an owner.
-  const h =
-    OWN_KINDS.has(row.kind) && declaresPostNotStake(row.detail)
-      ? { ...row, kind: 'management' }
-      : row;
+  // recorded and judged as management, so it cannot make the declarant an owner. When the same declaration
+  // already lists that post for the company, the line adds nothing and is not recorded twice.
+  const post = row.kind === 'participation' && declaresPostNotStake(row.detail);
+  if (post && declaredPosts.has(postKey(row))) {
+    postDuplicate++;
+    continue;
+  }
+  const h = post ? { ...row, kind: 'management' } : row;
   // A degenerate official name folds to the empty person key (`person:`), which would MERGE every such
   // official into one identity and mis-attribute their links. Can't attribute a stake to a nameless person
   // — skip the row (bad-input, not a resolvable holding).
@@ -1519,6 +1527,7 @@ const S = {
   unknownHolderSkipped: unknownHolder,
   namelessInstitutionSkipped: namelessInstitution,
   namelessPersonSkipped: namelessPerson,
+  postAlreadyDeclaredSkipped: postDuplicate,
 };
 console.log(JSON.stringify(S, null, 2));
 

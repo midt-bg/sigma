@@ -203,6 +203,10 @@ test('a participation detail that names a post, and no quantity or owner, declar
     'Член на УС',
     'Председател на СД',
     'изпълнителен директор',
+    'Член на КС',
+    'Зам. председател на СД',
+    'Изпълнителен директор и член на СД',
+    'управителка',
   ])
     assert.equal(declaresPostNotStake(d), true, d);
   for (const d of [
@@ -212,6 +216,12 @@ test('a participation detail that names a post, and no quantity or owner, declar
     '50% от капитала, управител',
     'съдружник и управител',
     'член',
+    // Any word form of a stake or an owner keeps the line a stake.
+    'дялове',
+    'акционер',
+    'управител и едноличен собственик',
+    'управител, съдружничка',
+    'управител – притежава половината',
     '',
     undefined,
   ])

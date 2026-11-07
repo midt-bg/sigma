@@ -101,6 +101,31 @@ before(() => {
       entity: 'ЧАСТНО ТЕСТ ЕООД',
       detail: '50% от капитала, управител',
     }),
+    // The same post on both lines of one declaration is one post, recorded once.
+    row({
+      xmlFile: 'D.xml',
+      controlHash: 'D1',
+      person: 'Деян Тестов Примеров',
+      entity: 'ЧАСТНО ТЕСТ ЕООД',
+      kind: 'management',
+      detail: 'управител',
+    }),
+    row({
+      xmlFile: 'D.xml',
+      controlHash: 'D1',
+      person: 'Деян Тестов Примеров',
+      entity: 'ЧАСТНО ТЕСТ ЕООД',
+      detail: 'управител',
+    }),
+    // Only the participation line is read this way: a declared block of shares stays shares.
+    row({
+      xmlFile: 'E.xml',
+      controlHash: 'E1',
+      person: 'Елица Тестова Примерова',
+      entity: 'ЧАСТНО ТЕСТ ЕООД',
+      kind: 'shares',
+      detail: 'управител',
+    }),
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -115,7 +140,10 @@ before(() => {
   );
   const registry = {
     300000004: { managers: ['АННА ТЕСТОВА ПРИМЕРОВА'] },
-    300000006: { managers: ['БОРИС ТЕСТОВ ПРИМЕРОВ'], owners: ['ЦВЕТАНА ТЕСТОВА ПРИМЕРОВА'] },
+    300000006: {
+      managers: ['БОРИС ТЕСТОВ ПРИМЕРОВ', 'ДЕЯН ТЕСТОВ ПРИМЕРОВ'],
+      owners: ['ЦВЕТАНА ТЕСТОВА ПРИМЕРОВА', 'ЕЛИЦА ТЕСТОВА ПРИМЕРОВА'],
+    },
   };
   seedVerdicts({
     workDb: DB,
@@ -185,4 +213,18 @@ test('a post on the participation line of a private company is management, not o
 
 test('a share that also names a post stays a share', () => {
   assert.equal(link('300000006', 'Цветана Тестова Примерова').relation, 'owns');
+});
+
+test('the same post on both lines of one declaration is recorded once', () => {
+  assert.equal(link('300000006', 'Деян Тестов Примеров').relation, 'manages');
+  assert.deepEqual(
+    query(
+      "SELECT di.kind, di.detail FROM declared_interests di JOIN declarations d ON d.id=di.declaration_id WHERE d.xml_file='D.xml'",
+    ).map((r) => ({ ...r })),
+    [{ kind: 'management', detail: 'управител' }],
+  );
+});
+
+test('shares that name a post stay shares', () => {
+  assert.equal(link('300000006', 'Елица Тестова Примерова').relation, 'owns');
 });
