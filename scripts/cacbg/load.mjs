@@ -665,10 +665,16 @@ const holdingRows = readJsonl(path.join(STAGING, 'holdings.jsonl'));
 const postKey = (h) =>
   `${h.folder}|${h.xmlFile}|${companyNameKey(h.entity)}|${h.timing ?? 'annual'}`;
 const declaredPosts = new Set(holdingRows.filter((h) => h.kind === 'management').map(postKey));
-// A company the state or a municipality controls, or holds a public stake in.
-const publicEnterprise = (res) =>
-  Boolean(res && !res.ambiguous) &&
-  Boolean(bidderByEik.get(res.eik)?.ownership_kind || publicStakeEik.has(String(res.eik)));
+// A company the state or a municipality controls, or the declarant's own office (ADR-0047 §2). A minority
+// public stake is not enough: the private partners of such a company own it and often run it too.
+const publicEnterprise = (row, res) => {
+  if (!res || res.ambiguous) return false;
+  if (bidderByEik.get(res.eik)?.ownership_kind) return true;
+  const pid = personOf(row);
+  return Boolean(
+    publicEnterpriseOffices.get(pid)?.has(res.eik) || organizationOffices.get(pid)?.has(res.eik),
+  );
+};
 for (const row of holdingRows) {
   // A participation line in a PUBLIC enterprise whose amount is a post („управител“) declares the office,
   // not a stake: its manager cannot be its private owner. It is recorded and judged as management. In a
@@ -677,7 +683,7 @@ for (const row of holdingRows) {
   const post =
     row.kind === 'participation' &&
     declaresPostNotStake(row.detail) &&
-    publicEnterprise(resolveEntity(row.entity));
+    publicEnterprise(row, resolveEntity(row.entity));
   if (post && declaredPosts.has(postKey(row))) {
     postDuplicate++;
     continue;

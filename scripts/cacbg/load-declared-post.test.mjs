@@ -49,10 +49,12 @@ before(() => {
     INSERT INTO tenders VALUES ('t1','auth:1');
     INSERT INTO bidders VALUES
       ('eik:300000004','ДЪРЖАВНО ТЕСТ ЕООД','300000004',1,'София','state'),
-      ('eik:300000006','ЧАСТНО ТЕСТ ЕООД','300000006',1,'София',NULL);
+      ('eik:300000006','ЧАСТНО ТЕСТ ЕООД','300000006',1,'София',NULL),
+      ('eik:300000008','ОФИС ТЕСТ ЕООД','300000008',1,'София',NULL);
     INSERT INTO contracts VALUES
       ('c1','t1','eik:300000004','2024-05-01',50000),
-      ('c2','t1','eik:300000006','2024-05-01',40000);
+      ('c2','t1','eik:300000006','2024-05-01',40000),
+      ('c3','t1','eik:300000008','2024-05-01',30000);
     CREATE TABLE registry_deeds(eik TEXT PRIMARY KEY, name TEXT, legal_form TEXT, outcome TEXT);
     CREATE TABLE registry_company_history(eik TEXT PRIMARY KEY, names_json TEXT, source_hash TEXT, fetched_at TEXT);
     CREATE TABLE registry_identity_snapshots(eik TEXT PRIMARY KEY, source_hash TEXT);
@@ -60,7 +62,8 @@ before(() => {
     CREATE TABLE public_owned_eik(eik TEXT PRIMARY KEY, ownership_kind TEXT);
     INSERT INTO registry_deeds VALUES
       ('300000004','ДЪРЖАВНО ТЕСТ','EOOD','ok'),
-      ('300000006','ЧАСТНО ТЕСТ','EOOD','ok');
+      ('300000006','ЧАСТНО ТЕСТ','EOOD','ok'),
+      ('300000008','ОФИС ТЕСТ','EOOD','ok');
   `);
   for (const m of ['0003_related_persons_foundation', '0009_interest_link_evidence'])
     db.exec(fs.readFileSync(path.join(ROOT, `packages/db/migrations/${m}.sql`), 'utf8'));
@@ -94,12 +97,12 @@ before(() => {
       entity: 'ЧАСТНО ТЕСТ ЕООД',
       detail: 'Член на УС',
     }),
-    // A share stays a share, even beside a word that also names a post.
+    // A share stays a share, even beside a word that also names a post — in a public enterprise too.
     row({
       xmlFile: 'C.xml',
       controlHash: 'C1',
       person: 'Цветана Тестова Примерова',
-      entity: 'ЧАСТНО ТЕСТ ЕООД',
+      entity: 'ДЪРЖАВНО ТЕСТ ЕООД',
       detail: '50% от капитала, управител',
     }),
     // The same post on both lines of one declaration is one post, recorded once.
@@ -123,8 +126,20 @@ before(() => {
       xmlFile: 'E.xml',
       controlHash: 'E1',
       person: 'Елица Тестова Примерова',
-      entity: 'ЧАСТНО ТЕСТ ЕООД',
+      entity: 'ДЪРЖАВНО ТЕСТ ЕООД',
       kind: 'shares',
+      detail: 'управител',
+    }),
+    // The company she files for as a public enterprise is her office, whatever its ownership columns say.
+    row({
+      xmlFile: 'G.xml',
+      controlHash: 'G1',
+      person: 'Галя Тестова Примерова',
+      entity: 'ОФИС ТЕСТ ЕООД',
+      category: 'Ръководители на ОП или ДП',
+      institution: 'ОФИС ТЕСТ ЕООД',
+      work: 'ОФИС ТЕСТ ЕООД',
+      position: 'Управител',
       detail: 'управител',
     }),
   ];
@@ -140,11 +155,12 @@ before(() => {
       .join('\n') + '\n',
   );
   const registry = {
-    300000004: { managers: ['АННА ТЕСТОВА ПРИМЕРОВА', 'ДЕЯН ТЕСТОВ ПРИМЕРОВ'] },
-    300000006: {
-      managers: ['БОРИС ТЕСТОВ ПРИМЕРОВ'],
+    300000004: {
+      managers: ['АННА ТЕСТОВА ПРИМЕРОВА', 'ДЕЯН ТЕСТОВ ПРИМЕРОВ'],
       owners: ['ЦВЕТАНА ТЕСТОВА ПРИМЕРОВА', 'ЕЛИЦА ТЕСТОВА ПРИМЕРОВА'],
     },
+    300000006: { managers: ['БОРИС ТЕСТОВ ПРИМЕРОВ'] },
+    300000008: { managers: ['ГАЛЯ ТЕСТОВА ПРИМЕРОВА'] },
   };
   seedVerdicts({
     workDb: DB,
@@ -219,7 +235,7 @@ test('a post on the participation line of a private company stays as declared', 
 });
 
 test('a share that also names a post stays a share', () => {
-  assert.equal(link('300000006', 'Цветана Тестова Примерова').relation, 'owns');
+  assert.equal(link('300000004', 'Цветана Тестова Примерова').relation, 'owns');
 });
 
 test('the same post on both lines of one declaration is recorded once', () => {
@@ -233,5 +249,11 @@ test('the same post on both lines of one declaration is recorded once', () => {
 });
 
 test('shares that name a post stay shares', () => {
-  assert.equal(link('300000006', 'Елица Тестова Примерова').relation, 'owns');
+  assert.equal(link('300000004', 'Елица Тестова Примерова').relation, 'owns');
+});
+
+test('a post on the participation line of the company the declarant files for is that office', () => {
+  const galya = link('300000008', 'Галя Тестова Примерова');
+  assert.equal(galya.relation, 'manages');
+  assert.equal(galya.interest_class, 'ex_officio_board');
 });
