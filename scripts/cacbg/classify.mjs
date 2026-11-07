@@ -215,3 +215,14 @@ export function interestClassOf({ scope, relation, ownershipKind, publicStake })
   if (relation === 'manages' && (ownershipKind || publicStake)) return 'ex_officio_board';
   return 'private_ownership';
 }
+
+// A post, not a quantity: the words a declarant writes into a stake's amount field when the line records the
+// office held in the company. Anything that also names a quantity or an owner stays a stake.
+const POST_WORDS =
+  /управител|директор|председател|прокурист|ликвидатор|заместник|член на (?:ус|сд|нс|съвета|управителния|надзорния)/u;
+const STAKE_WORDS = /\d|%|дял|акци|капитал|собственик|съдружник|участ/u;
+/** True when a participation row's detail names a post held in the company rather than a stake in it. */
+export function declaresPostNotStake(detail) {
+  const d = String(detail ?? '').toLocaleLowerCase('bg');
+  return POST_WORDS.test(d) && !STAKE_WORDS.test(d);
+}

@@ -30,6 +30,7 @@ import {
   authOwn,
   OWN_RANK,
   interestClassOf,
+  declaresPostNotStake,
 } from './classify.mjs';
 import {
   openCache,
@@ -659,7 +660,13 @@ if (filingFolderDated > 0 || filingUndatable > 0) {
 }
 
 db.exec('BEGIN');
-for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
+for (const row of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
+  // A participation line whose amount is a post („управител“) declares the office, not a stake. It is
+  // recorded and judged as management, so it cannot make the declarant an owner.
+  const h =
+    OWN_KINDS.has(row.kind) && declaresPostNotStake(row.detail)
+      ? { ...row, kind: 'management' }
+      : row;
   // A degenerate official name folds to the empty person key (`person:`), which would MERGE every such
   // official into one identity and mis-attribute their links. Can't attribute a stake to a nameless person
   // — skip the row (bad-input, not a resolvable holding).
