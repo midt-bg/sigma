@@ -34,6 +34,57 @@ export function declaredStakeNoun(links: { relation: string }[]): string {
     : 'собствен дял';
 }
 
+/** The years of an own stake: the declared window where a declaration reports it as held, the years of the
+ *  filings that report it as held only before the relevant moment (where none reports it as held), and the
+ *  years of the filings that report it as transferred. */
+function stakeYears(
+  own: Pick<
+    ConflictLink,
+    'firstDeclaredYear' | 'lastDeclaredYear' | 'priorYears' | 'disposedYears'
+  >[],
+): { held?: string[]; prior?: string[]; disposed?: string[] } {
+  if (!own.length) return {};
+  const declared = own
+    .flatMap((l) => [l.firstDeclaredYear, l.lastDeclaredYear])
+    .filter((y): y is string => y != null)
+    .sort();
+  const held = declared.length ? [...new Set([declared[0]!, declared.at(-1)!])] : [];
+  const prior = held.length ? [] : [...new Set(own.flatMap((l) => l.priorYears ?? []))].sort();
+  const disposed = [...new Set(own.flatMap((l) => l.disposedYears ?? []))].sort();
+  return {
+    ...(held.length ? { held } : {}),
+    ...(prior.length ? { prior } : {}),
+    ...(disposed.length ? { disposed } : {}),
+  };
+}
+
+/** What a person declared about their OWN stake in the companies of a row, with the years: the declared
+ *  window of a stake reported as held, and apart from it the years a declaration reports the stake as
+ *  held before the relevant moment or as transferred — the same words the person's page uses. A stake
+ *  only ever reported as earlier or transferred is never named as a stake the person holds. */
+export function ownStakeLabels(companies: ConflictPersonRow['companies']): string[] {
+  const own = (companies ?? []).filter((c) => c.self);
+  if (!own.length) return ['деклариран собствен дял'];
+  const held = own.flatMap((c) => c.held ?? []).sort();
+  const prior = [...new Set(own.flatMap((c) => c.prior ?? []))].sort();
+  const disposed = [...new Set(own.flatMap((c) => c.disposed ?? []))].sort();
+  const window = held.length
+    ? held[0] === held.at(-1)
+      ? held[0]
+      : `${held[0]}–${held.at(-1)}`
+    : null;
+  const undated = own.some((c) => !c.held && !c.prior && !c.disposed);
+  return [
+    ...(window
+      ? [`деклариран собствен дял (${window})`]
+      : undated
+        ? ['деклариран собствен дял']
+        : []),
+    ...(prior.length ? [`декларирано предходно участие (${prior.join(', ')})`] : []),
+    ...(disposed.length ? [`деклариран прехвърлен дял (${disposed.join(', ')})`] : []),
+  ];
+}
+
 /** The chip in a company's header: what the officials declared about it, never more than every link says.
  *  Management is not a stake, so a company whose officials declared only that they manage it says so. */
 export function declarantsChip(relations: readonly string[]): string {
@@ -133,6 +184,12 @@ export interface ConflictPersonRow {
     declared?: 'stake' | 'manages' | 'family' | 'named' | null;
     /** Registry group: the years whose annual declaration does not name the registered company. */
     missingYears?: string[];
+    /** An own stake's years: `held` — the first and last declared year where a declaration reports it as
+     *  held; `prior` — where none does, the years of the filings that report it as held before the relevant
+     *  moment; `disposed` — the years of the filings that report it as transferred. */
+    held?: string[];
+    prior?: string[];
+    disposed?: string[];
   }[];
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
@@ -289,6 +346,11 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
           ),
           family: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'related')),
           manages: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'manages')),
+          ...stakeYears(
+            groupLinks.filter(
+              (l) => l.eik === eik && (l.relation === 'owns' || l.relation === 'owns+manages'),
+            ),
+          ),
         })),
         contractCount,
         contractValueEur,

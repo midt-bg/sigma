@@ -87,6 +87,8 @@ interface LinkRow {
   own_institution: string;
   first_declared_year: string | null;
   last_declared_year: string | null;
+  prior_years?: string | null;
+  disposed_years?: string | null;
   match_method: string;
   contract_count: number;
   contract_value_eur: number | null;
@@ -170,7 +172,20 @@ export const NOT_REDUNDANT_FAMILY = `NOT (il.interest_class = 'family_ownership'
         AND s.status = 'published' AND s.interest_class = 'private_ownership'))`;
 export const LINK_SELECT = `SELECT
     (SELECT json_group_array(DISTINCT years.reported_year) FROM interest_link_observations years
-      WHERE years.timing='not_listed' AND years.reported_year IS NOT NULL AND ${declarationYearDisputed('il', 'years.reported_year')}) AS disputed_years, il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
+      WHERE years.timing='not_listed' AND years.reported_year IS NOT NULL AND ${declarationYearDisputed('il', 'years.reported_year')}) AS disputed_years,
+    -- A link with no declared year of its own rests only on filings that report the stake as held BEFORE
+    -- the relevant moment, or as transferred. The years of those filings, so the surface names the stake
+    -- for what it is („предходно участие“, „прехвърлен дял“) instead of as a stake the person holds. A
+    -- transfer is named beside the declared years too, so a stake held and then sold reads as both.
+    -- The unary plus keeps SQLite off the (timing, reported_year) index: without ANALYZE it would scan
+    -- every transfer in the corpus for each link instead of seeking the link's own rows.
+    CASE WHEN il.first_declared_year IS NULL THEN (SELECT json_group_array(DISTINCT h.reported_year)
+      FROM interest_link_observations h WHERE h.link_key=il.link_key AND +h.timing='prior'
+        AND h.kind<>'management' AND h.reported_year IS NOT NULL) END AS prior_years,
+    (SELECT json_group_array(DISTINCT h.reported_year)
+      FROM interest_link_observations h WHERE h.link_key=il.link_key AND +h.timing='disposed'
+        AND h.reported_year IS NOT NULL) AS disposed_years,
+    il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
     il.relation, il.contemporaneous, il.own_institution,
     il.first_declared_year, il.last_declared_year, il.match_method,
     il.contract_count, il.contract_value_eur, il.first_contract_year, il.last_contract_year,
@@ -259,6 +274,9 @@ function sealed(rows: LinkRow[]): LinkRow[] {
 
 // own_institution is a 4-value verdict; only the deterministic 'exact' surfaces as true (the
 // name_contains/locality heuristics are disclosed elsewhere, never asserted as fact).
+const years = (json: string | null | undefined): string[] =>
+  (JSON.parse(json ?? '[]') as string[]).filter(Boolean).sort();
+
 function toLink(r: LinkRow): ConflictLink {
   return {
     linkKey: r.link_key,
@@ -275,6 +293,8 @@ function toLink(r: LinkRow): ConflictLink {
     ownInstitution: r.own_institution === 'exact',
     firstDeclaredYear: r.first_declared_year,
     lastDeclaredYear: r.last_declared_year,
+    priorYears: years(r.prior_years),
+    disposedYears: years(r.disposed_years),
     laterDeclarationYear: r.later_declaration_year ?? null,
     registryRoleEndedOn: r.registry_role_ended_on ?? null,
     registryPersonId: r.registry_person_id ?? null,

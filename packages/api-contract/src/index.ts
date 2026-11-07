@@ -865,6 +865,10 @@ export interface ConflictLink {
   ownInstitution: boolean; // ≥1 contract from the official's OWN institution (deterministic 'exact' only)
   firstDeclaredYear: string | null; // declared span — the link is DATED, never asserted "current"
   lastDeclaredYear: string | null; // historical links retain the observed declaration window
+  /** A link with no declared year of its own: the years of the filings that report the stake as held
+   *  before the relevant moment (`priorYears`) or as transferred (`disposedYears`). Empty otherwise. */
+  priorYears?: string[];
+  disposedYears?: string[];
   /** Later comparable filing which omits this stake; NOT a sale date. */
   laterDeclarationYear?: string | null;
   /** The end of the particular registry role cited as evidence; NOT a relative's ownership end. */

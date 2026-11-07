@@ -174,6 +174,47 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
+  it('a link carries the years of its transferred filings, and with no declared year of its earlier ones', () => {
+    withDb((dbPath) => {
+      const dated = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
+      expect(dated.prior_years).toBeNull();
+      expect(JSON.parse(String(dated.disposed_years))).toEqual([]);
+      // A transfer is carried beside the declared years too.
+      sqlite(
+        dbPath,
+        `INSERT INTO interest_link_observations VALUES ('person:ivan|111','decl:i','shares','disposed','2021');`,
+      );
+      const sold = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
+      expect(sold.prior_years).toBeNull();
+      expect(JSON.parse(String(sold.disposed_years))).toEqual(['2021']);
+      sqlite(
+        dbPath,
+        `DELETE FROM interest_link_observations WHERE link_key='person:ivan|111' AND reported_year='2021';`,
+      );
+      sqlite(
+        dbPath,
+        `UPDATE interest_links SET first_declared_year=NULL, last_declared_year=NULL WHERE link_key='person:ivan|111';
+        INSERT INTO interest_link_observations VALUES
+          ('person:ivan|111','decl:i','participation','prior','2018'),
+          ('person:ivan|111','decl:i','shares','disposed','2020'),
+          ('person:ivan|111','decl:i','management','prior','2017');`,
+      );
+      const historical = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
+      expect(JSON.parse(String(historical.prior_years))).toEqual(['2018']);
+      expect(JSON.parse(String(historical.disposed_years))).toEqual(['2020']);
+    });
+  });
+
+  it("seeks a link's own earlier and transferred filings, not every one in the corpus", () => {
+    withDb((dbPath) => {
+      // The served schema has this index (0023); with no ANALYZE, SQLite would take it over the link key.
+      readScript(dbPath, resolve(root, 'packages/db/migrations/0023_read_path_indexes.sql'));
+      const plan = sqlite(dbPath, `EXPLAIN QUERY PLAN ${lit(OFFICIAL_SQL, 'person:ivan')};`);
+      expect(plan).not.toMatch(/SEARCH h USING INDEX idx_interest_observations_timing/);
+      expect(plan.match(/SEARCH h USING INDEX \S+ \(link_key=\?\)/g)).toHaveLength(2);
+    });
+  });
+
   it('proven historical links surface with their sources and unchanged contract window', () => {
     withDb((dbPath) => {
       const before = rows(dbPath, lit(LEADERBOARD_SQL, 100))[0]!;
