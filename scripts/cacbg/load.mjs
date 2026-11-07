@@ -635,25 +635,31 @@ const unresolvedInventoryDocuments = new Set();
 const sourceDocumentId = (r) => `decl:${r.folder}:${r.xmlFile}`;
 // A holder cell that is only the declarant's first name (ADR-0051). On its own it stays unknown: a son or a
 // father often bears the same first name. It is the declarant's own stake where a filing of the SAME year or
-// LATER names the declarant in full in the holder cell of the same company, and the filing itself lists no
-// other line for that company, whoever its holder. Only the asset tables have a holder cell: an interests
-// line (a stake or a post) says nothing about who holds the shares.
+// LATER names the declarant in full in the holder cell of the same company and no other holder of it, and
+// the filing itself lists no other line for that company, whoever its holder. Only the asset tables have a
+// holder cell: an interests line (a stake or a post) says nothing about who holds the shares.
+// The company is the same by its name key or by an ЕИК the name states or names exactly — a name-stem
+// guess drops the legal form and names a company only, not this one.
 const companyTies = (h) => {
   const key = companyNameKey(h.entity);
   const ties = isMatchableKey(key) ? [`key:${key}`] : [];
   const res = resolveEntity(h.entity);
-  if (res?.eik && !res.ambiguous) ties.push(`eik:${res.eik}`);
+  if (res?.eik && !res.ambiguous && res.method !== 'name_stem') ties.push(`eik:${res.eik}`);
   return ties;
 };
 const rowYear = (h) => (Number.isFinite(yr(h.year)) ? yr(h.year) : yr(h.folder));
 const ownedInFull = new Map(); // person|company → [filing, year] of each holder cell naming the person in full
 const companyLines = new Map(); // filing|company → asset lines for it
+const otherHolderLines = new Map(); // filing|company → asset lines for it not held by the declarant in full
 for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   if (h.template !== 'assets' || !isMatchableKey(companyNameKey(h.person))) continue;
   for (const tie of companyTies(h)) {
     const line = `${sourceDocumentId(h)}|${tie}`;
     companyLines.set(line, (companyLines.get(line) ?? 0) + 1);
-    if (h.holderRelation !== 'self') continue;
+    if (h.holderRelation !== 'self') {
+      otherHolderLines.set(line, (otherHolderLines.get(line) ?? 0) + 1);
+      continue;
+    }
     const key = `${personOf(h)}|${tie}`;
     // The confirming year is the declared one: the folder year runs ahead of it and would make an earlier
     // transfer look like the same year. A transfer in year N happened before that year's 31 December
@@ -675,7 +681,11 @@ const confirmHolder = (h) => {
   const pid = personOf(h);
   const confirmed = ties.some((tie) =>
     (ownedInFull.get(`${pid}|${tie}`) ?? []).some(
-      ([other, until]) => other !== doc && Number.isFinite(until) && until >= year,
+      ([other, until]) =>
+        other !== doc &&
+        Number.isFinite(until) &&
+        until >= year &&
+        !ties.some((t) => otherHolderLines.get(`${other}|${t}`)),
     ),
   );
   return confirmed ? { ...h, holderRelation: 'self', holderConfirmed: true } : h;

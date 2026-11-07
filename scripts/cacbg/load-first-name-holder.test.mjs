@@ -26,6 +26,9 @@ const ZDRAVKO = 'Здравко Петров Опитин';
 const HRISTO = 'Христо Иванов Пробин';
 const BORISLAV = 'Борислав Илиев Мострин';
 const STANIMIR = 'Станимир Петров Сондин';
+const VELIN = 'Велин Илиев Пробчев';
+const GENADI = 'Генади Петров Мострич';
+const DOBRI = 'Добри Иванов Сондев';
 
 const row = (over) => ({
   template: 'assets',
@@ -75,6 +78,12 @@ before(() => {
     INSERT INTO contracts VALUES ('c9','t1','eik:300000109','2025-05-01',50000);
     INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000110','СТАН ТЕХ 16 ООД','300000110',1,'София');
     INSERT INTO contracts VALUES ('c10','t1','eik:300000110','2025-05-01',50000);
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000111','ВЕЛ ТЕХ 17 ООД','300000111',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000112','ГАМА ПРОБНА ЕООД','300000112',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:300000113','ДОБРО ТЕХ 18 ООД','300000113',1,'София');
+    INSERT INTO contracts VALUES ('c11','t1','eik:300000111','2025-05-01',50000);
+    INSERT INTO contracts VALUES ('c12','t1','eik:300000112','2025-05-01',50000);
+    INSERT INTO contracts VALUES ('c13','t1','eik:300000113','2025-05-01',50000);
   `);
   db.close();
 
@@ -342,6 +351,80 @@ before(() => {
       holderFirstName: true,
       controlHash: 'N21',
     }),
+    // Велин writes „ВЕЛИН" in 2020. His 2021 filing names him in full for the company, and beside it a
+    // second „ВЕЛИН" line: someone else bears the first name there, so 2021 does not settle 2020.
+    row({
+      folder: '2021',
+      xmlFile: 'V20.xml',
+      year: '2020',
+      person: VELIN,
+      entity: 'ВЕЛ ТЕХ 17 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'V20',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'V21.xml',
+      year: '2021',
+      person: VELIN,
+      entity: 'ВЕЛ ТЕХ 17 ООД',
+      holderRelation: 'self',
+      controlHash: 'V21',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'V21.xml',
+      year: '2021',
+      person: VELIN,
+      entity: 'ВЕЛ ТЕХ 17 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'V21',
+    }),
+    // Генади writes „ГЕНАДИ" on one company in 2020 and his full name on another form of the name in 2021.
+    // The two meet only by a name-stem guess, which names a company only, not this one.
+    row({
+      folder: '2021',
+      xmlFile: 'G20.xml',
+      year: '2020',
+      person: GENADI,
+      entity: 'ГАМА ПРОБНА ЕООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'G20',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'G21.xml',
+      year: '2021',
+      person: GENADI,
+      entity: 'ГАМА ПРОБНА ООД',
+      holderRelation: 'self',
+      controlHash: 'G21',
+    }),
+    // Добри writes „ДОБРИ" in 2020 and his full name on the 2021 transfer, there with the company's ЕИК:
+    // the names differ, the ЕИК is the same company.
+    row({
+      folder: '2021',
+      xmlFile: 'D20.xml',
+      year: '2020',
+      person: DOBRI,
+      entity: 'ДОБРО ТЕХ 18 ООД',
+      holderRelation: 'unknown',
+      holderFirstName: true,
+      controlHash: 'D20',
+    }),
+    row({
+      folder: '2022',
+      xmlFile: 'D21.xml',
+      year: '2021',
+      person: DOBRI,
+      entity: '"ДОБРО ТЕХ 18" ООД, ЕИК 300000113',
+      timing: 'disposed',
+      holderRelation: 'self',
+      controlHash: 'D21',
+    }),
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -374,6 +457,9 @@ before(() => {
     300000108: HRISTO,
     300000109: BORISLAV,
     300000110: STANIMIR,
+    300000111: VELIN,
+    300000112: GENADI,
+    300000113: DOBRI,
   };
   seedVerdicts({
     workDb: DB,
@@ -435,8 +521,8 @@ test('a first name the declarant writes in full elsewhere for the same company i
   const link = ownLink('300000101', PETKO);
   assert.ok(link, 'the own link forms');
   assert.equal(link.first_declared_year, '2020');
-  // Петко and Христо.
-  assert.equal(report.firstNameHolderConfirmed, 2);
+  // Петко, Христо and Добри.
+  assert.equal(report.firstNameHolderConfirmed, 3);
 });
 
 test('a first name no filing writes in full stays unknown and forms nothing', () => {
@@ -474,9 +560,29 @@ test("a transfer confirms only an earlier year: the same year's first name is no
 });
 
 test('a full name for the same holding in another filing of the same year confirms it', () => {
-  // Counted in the first test; here the link stays the one year both filings declare.
+  // A same-year confirmation leaves the link's years as they are; it shows only in the counter, which the
+  // first test pins to exactly Петко, Христо and Добри.
   const link = ownLink('300000108', HRISTO);
   assert.equal(link.first_declared_year, '2021');
+});
+
+test('a confirming filing that names another holder of the company beside the declarant settles nothing', () => {
+  const link = ownLink('300000111', VELIN);
+  assert.ok(link, 'the 2021 holding forms the own link');
+  assert.equal(link.first_declared_year, '2021');
+});
+
+test('a name-stem guess is not the same company', () => {
+  const link = ownLink('300000112', GENADI);
+  assert.ok(link, 'the 2021 holding forms the own link by its stem');
+  assert.equal(link.first_declared_year, '2021');
+  assert.equal(link.match_method, 'name_stem');
+});
+
+test('the same ЕИК under a different name confirms it', () => {
+  const link = ownLink('300000113', DOBRI);
+  assert.ok(link, 'the own link forms');
+  assert.equal(link.first_declared_year, '2020');
 });
 
 test('the same company named a second time by its ЕИК is a second line', () => {
