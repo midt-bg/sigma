@@ -34,7 +34,7 @@ const stake = (over) => ({
 
 // ТЕСТ ДВА: both partidas read. ТЕСТ ТРИ: the second partida is not read yet.
 const PARTIDAS = {
-  300000004: ['МАРИЯ ИВАНОВА ТЕСТОВА', 'ЕЛЕНА ТЕСТОВА ПРИМЕРОВА'],
+  300000004: ['МАРИЯ ИВАНОВА ТЕСТОВА'],
   300000006: ['АННА ТЕСТОВА ПРИМЕРОВА', 'ЦВЕТАН ТЕСТОВ ПРИМЕРОВ', 'ЕЛЕНА ТЕСТОВА ПРИМЕРОВА'],
   300000010: ['БОРИС ТЕСТОВ ПРИМЕРОВ'],
 };
@@ -126,7 +126,7 @@ before(() => {
       holderRelation: 'unknown',
     }),
     // She states the ЕИК of 300000004 in one declaration and writes the bare name in another, while the
-    // register shows her in both partidas — the stated ЕИК is the company; no second one is added.
+    // register shows her in 300000006 only — the stated ЕИК is the company; no second one is added.
     stake({
       xmlFile: 'E.xml',
       controlHash: 'E1',
@@ -255,4 +255,6 @@ test('a stated ЕИК of one namesake is not joined by the register’s pick of 
     links('Елена Тестова Примерова').map((l) => l.eik),
     ['300000004'],
   );
+  assert.deepEqual(companiesOf('E.xml'), [{ eik: '300000004', match_method: 'declared_eik' }]);
+  assert.deepEqual(companiesOf('F.xml'), [], 'the bare name is not shown as the other company');
 });

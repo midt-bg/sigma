@@ -296,6 +296,20 @@ test('a namesake is settled only by the one partida that names the holder in ful
     assert.equal(namesakeResolver(db)(eiks, 'Ивана Тестова'), null, 'two names are not enough');
     assert.equal(namesakeResolver(db)(eiks, undefined), null);
     assert.equal(namesakeResolver(db)(eiks, []), null);
+    // Someone in the other partida who could be the holder is enough to refuse, though not to choose.
+    for (const [other, why] of [
+      ['Ивана Тестова', 'a shorter name'],
+      ['Ивана Петрова Тестова-Примерова', 'a variant spelling'],
+    ]) {
+      add('123456789', 'b'.repeat(64), other);
+      assert.equal(namesakeResolver(db)(eiks, name), null, why);
+      db.prepare('DELETE FROM registry_identity_observations WHERE eik=?').run('123456789');
+    }
+    add('123456789', '1990-01-01', name, 'BirthDate');
+    assert.equal(namesakeResolver(db)(eiks, name), null, 'a birth date for an identifier');
+    db.prepare('DELETE FROM registry_identity_observations WHERE eik=?').run('123456789');
+    add('123456789', 'b'.repeat(64), 'Иван Петров Тестов');
+    assert.equal(namesakeResolver(db)(eiks, name), '987654321', 'a different person');
     add('123456789', 'c'.repeat(64), name);
     assert.equal(namesakeResolver(db)(eiks, name), null, 'named in both partidas');
   } finally {

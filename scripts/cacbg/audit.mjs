@@ -271,7 +271,9 @@ const namesakeOf = namesakeResolver(db);
 // only, so older inputs without these tables still audit.
 const hasTable = (name) => db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(name);
 let holderStmts;
-const holderNames = (l) => {
+// The loader asks the register about the holder the declaration names for THIS stake: for a family stake,
+// the relatives listed against this company, not every relative the person has declared.
+const holderNames = (l, companyNames) => {
   holderStmts ??= {
     person: db.prepare('SELECT name FROM persons WHERE id = ?'),
     sources: hasTable('person_sources')
@@ -280,14 +282,16 @@ const holderNames = (l) => {
         )
       : null,
     relatives: hasTable('related_persons_internal')
-      ? db.prepare(`SELECT rp.related_name name FROM related_persons_internal rp
+      ? db.prepare(`SELECT rp.related_name name, rp.info FROM related_persons_internal rp
           JOIN declarations d ON d.id = rp.declaration_id
           WHERE d.person_id = ? AND rp.related_kind = 'stake_holder'`)
       : null,
   };
   const rows =
     l.relation === 'related'
-      ? (holderStmts.relatives?.all(l.person_id) ?? [])
+      ? (holderStmts.relatives?.all(l.person_id) ?? []).filter((r) =>
+          namesCompany(r.info ?? '', 'registry_namesake', companyNames),
+        )
       : [
           holderStmts.person.get(l.person_id),
           ...(holderStmts.sources?.all(l.person_id, l.person_id) ?? []),
@@ -317,7 +321,7 @@ for (const l of published) {
   } else if (l.match_method === 'registry_namesake') {
     // Several winners share the name; the register picks the one whose partida names the holder.
     // Re-ask it from this database, so a link the register no longer supports cannot stay published.
-    if (namesakeOf([...rec.valid], holderNames(l)) !== l.eik)
+    if (namesakeOf([...rec.valid], holderNames(l, [...rec.names])) !== l.eik)
       flag(
         l,
         'A_namesake_unproven',

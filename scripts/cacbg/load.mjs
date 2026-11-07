@@ -75,7 +75,7 @@ const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — §8's monotonicity gate keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-3';
+const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-4';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very
@@ -1117,7 +1117,11 @@ function interestClass(rec, relation) {
   });
 }
 // A person who states the ЕИК of one namesake in another declaration has said which company the name means:
-// the register's pick for a mention without the ЕИК must not add a second company beside it.
+// the register's pick for a mention without the ЕИК must not add a second company beside it — neither as a
+// link nor as the company those declarations are shown to name.
+const dropNamesakePick = db.prepare(
+  "DELETE FROM declaration_companies WHERE declaration_id=? AND eik=? AND match_method='registry_namesake'",
+);
 for (const [gid, rec] of agg)
   if (
     rec.method === 'registry_namesake' &&
@@ -1129,8 +1133,10 @@ for (const [gid, rec] of agg)
         o.eik !== rec.eik &&
         o.method === 'declared_eik',
     )
-  )
+  ) {
+    for (const o of rec.observations.values()) dropNamesakePick.run(o.declarationId, rec.eik);
     agg.delete(gid);
+  }
 const heldOwnershipOpen = new Set(); // ЕИК whose management link the open ownership holds back
 db.exec('BEGIN');
 for (const rec of agg.values()) {

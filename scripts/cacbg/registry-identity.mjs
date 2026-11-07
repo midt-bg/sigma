@@ -104,13 +104,40 @@ function subjectsNamed(company, person) {
   );
 }
 
+/** Every person a partida shows, by name key, whatever the identifier and however short the name. */
+function anyoneByCompany(registry) {
+  const anyone = new Map();
+  if (
+    !registry
+      .prepare("SELECT 1 FROM sqlite_master WHERE name='registry_identity_observations'")
+      .get()
+  )
+    return anyone;
+  for (const r of registry
+    .prepare(
+      "SELECT eik, name FROM registry_identity_observations WHERE subject_kind='person' AND name IS NOT NULL",
+    )
+    .all())
+    anyone.set(r.eik, (anyone.get(r.eik) ?? new Set()).add(declarantNameKey(r.name)));
+  return anyone;
+}
+/** Could this registered name be the holder: the same key, a variant spelling, or the same first and last name. */
+const couldBe = (holder, registered) => {
+  if (registered === holder || personNamesAlike(holder, registered)) return true;
+  const [a, b] = [holder.split(' '), registered.split(' ')];
+  return b.length >= 2 && a[0] === b[0] && a.at(-1) === b.at(-1);
+};
+
 /** Of several companies under one name, the only one whose partida registers the holder under one of these
  * exact full names — else null. A variant spelling, enough to follow one person, is not enough to choose
- * between two companies. Every partida must have been read: an unread one may hold the very person. */
+ * between two companies; but it is enough to refuse: if another partida shows someone who could be the
+ * holder (a variant, a shorter name, a birth date for an identifier), nothing is chosen. Every partida must
+ * have been read: an unread one may hold the very person. */
 export function namesakeResolver(
   registry,
   people = peopleByCompany(registry),
   read = readPartidas(registry),
+  anyone = anyoneByCompany(registry),
 ) {
   return (eiks, holders) => {
     const names = [holders ?? []]
@@ -119,7 +146,13 @@ export function namesakeResolver(
       .filter((n) => n.split(' ').length >= 3);
     if (!names.length || !eiks.every((eik) => read.has(eik))) return null;
     const named = eiks.filter((eik) => names.some((n) => people.get(eik)?.get(n)?.size));
-    return named.length === 1 ? named[0] : null;
+    if (named.length !== 1) return null;
+    const elsewhere = eiks.some(
+      (eik) =>
+        eik !== named[0] &&
+        [...(anyone.get(eik) ?? [])].some((r) => names.some((n) => couldBe(n, r))),
+    );
+    return elsewhere ? null : named[0];
   };
 }
 
