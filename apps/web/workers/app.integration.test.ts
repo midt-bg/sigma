@@ -173,3 +173,26 @@ describe('handleRequest — /conflicts responses are noindex (HTML + .data twin)
     }
   });
 });
+
+// The browser discovers a page it has no code for by asking `/__manifest?paths=…&version=…`. Without both
+// params React Router answers „version mismatch“: the first click reloads the document, every later one
+// lands on a 404 that never reaches the server. So the pipeline must hand them over untouched.
+describe('handleRequest — route discovery keeps its query', () => {
+  const url = 'http://local/__manifest?paths=%2Fcontracts%2C%2Fpersons%2Fabc&version=abc123';
+
+  it('passes paths and version through to React Router', async () => {
+    await workerFetch(new Request(url), env(underLimit), ctx);
+    const seen = new URL((rrLoader.mock.calls[0] as unknown as [Request])[0].url);
+    expect(seen.searchParams.get('paths')).toBe('/contracts,/persons/abc');
+    expect(seen.searchParams.get('version')).toBe('abc123');
+  });
+
+  it('never reads or stores the answer in the edge cache, whose key would not carry them', async () => {
+    rrLoader.mockResolvedValueOnce(
+      new Response('{}', { status: 200, headers: { 'Cache-Control': 'public, s-maxage=60' } }),
+    );
+    await workerFetch(new Request(url), env(underLimit), ctx);
+    expect(cacheStore.match).not.toHaveBeenCalled();
+    expect(cacheStore.put).not.toHaveBeenCalled();
+  });
+});
