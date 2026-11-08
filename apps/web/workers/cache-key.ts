@@ -4,6 +4,15 @@ import { canonicalSearch } from '../app/lib/query-params';
 import { normalizedPathname } from './rate-limit';
 
 /**
+ * React Router's route discovery (`routeDiscovery.manifestPath`), not a page: it has no entry in the per-route
+ * query lists, yet its whole answer depends on `paths` and `version`. Canonicalized, it would lose both and
+ * answer every browser with „version mismatch“, which ends in a 404 no request ever reaches the server for.
+ */
+export function isRouteManifest(request: Request): boolean {
+  return new URL(request.url).pathname === '/__manifest';
+}
+
+/**
  * The request with only the query its route reads, so the loader renders exactly what the cache key
  * describes: a junk or folded value can never be stored under the key of the canonical URL.
  */

@@ -4,7 +4,7 @@ import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/securi
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { rateLimitAssistantRoute } from './assistant-rate-limit';
 import { normalizedPathname } from './rate-limit';
-import { cacheKey, canonicalRequest } from './cache-key';
+import { cacheKey, canonicalRequest, isRouteManifest } from './cache-key';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import {
@@ -151,7 +151,8 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
 
   // The loader sees only the query its route reads (app/lib/query-params.ts), the same query the cache
   // key carries, so a junk or unknown value neither mints a new key nor renders into a shared one.
-  if (request.method === 'GET') request = canonicalRequest(request);
+  const routeManifest = isRouteManifest(request);
+  if (request.method === 'GET' && !routeManifest) request = canonicalRequest(request);
 
   const csvRateLimitResponse = await rateLimitCsvExport(request, env, import.meta.env.PROD);
   if (csvRateLimitResponse) return csvRateLimitResponse;
@@ -169,6 +170,7 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
   const key =
     !import.meta.env.DEV &&
     request.method === 'GET' &&
+    !routeManifest &&
     !new URL(request.url).searchParams.has('_routes')
       ? cacheKey(request, DEPLOY_TAG)
       : null;
