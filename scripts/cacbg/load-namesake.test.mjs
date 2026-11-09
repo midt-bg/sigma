@@ -45,6 +45,7 @@ const PARTIDAS = {
   // ТЕСТ ВОДА: a state company and its private namesake, both read.
   300000014: ['ВАСИЛ ТЕСТОВ ПРИМЕРОВ'],
   300000016: ['ДИМО ДРУГОВ ЧУЖДЕНЦОВ'],
+  300000018: ['НИКОЛАЙ ИВАНОВ ПРИМЕРОВ'],
 };
 
 before(() => {
@@ -69,14 +70,16 @@ before(() => {
       ('eik:300000010','ТЕСТ ТРИ ООД','300000010',1,'София',NULL),
       ('eik:300000012','ТЕСТ ТРИ ООД','300000012',1,'Варна',NULL),
       ('eik:300000014','ТЕСТ ВОДА ООД','300000014',1,'София','state'),
-      ('eik:300000016','ТЕСТ ВОДА ООД','300000016',1,'Варна',NULL);
+      ('eik:300000016','ТЕСТ ВОДА ООД','300000016',1,'Варна',NULL),
+      ('eik:300000018','ТЕСТ ИСТОРИЯ ЕООД','300000018',1,'София',NULL);
     INSERT INTO contracts VALUES
       ('c1','t1','eik:300000004','2024-05-01',50000),
       ('c2','t1','eik:300000006','2024-05-01',40000),
       ('c3','t1','eik:300000010','2024-05-01',30000),
       ('c4','t1','eik:300000012','2024-05-01',20000),
       ('c5','t1','eik:300000014','2024-05-01',20000),
-      ('c6','t1','eik:300000016','2024-05-01',20000);
+      ('c6','t1','eik:300000016','2024-05-01',20000),
+      ('c7','t1','eik:300000018','2024-05-01',20000);
     CREATE TABLE registry_deeds(eik TEXT PRIMARY KEY, name TEXT, legal_form TEXT, outcome TEXT);
     CREATE TABLE registry_company_history(eik TEXT PRIMARY KEY, names_json TEXT, source_hash TEXT, fetched_at TEXT);
     CREATE TABLE state_owned_eik(eik TEXT PRIMARY KEY, ownership_kind TEXT, canonical_name TEXT);
@@ -86,7 +89,8 @@ before(() => {
       ('300000006','ТЕСТ ДВА','OOD','ok'),
       ('300000010','ТЕСТ ТРИ','OOD','ok'),
       ('300000014','ТЕСТ ВОДА','OOD','ok'),
-      ('300000016','ТЕСТ ВОДА','OOD','ok');
+      ('300000016','ТЕСТ ВОДА','OOD','ok'),
+      ('300000018','ТЕСТ ИСТОРИЯ','EOOD','ok');
   `);
   for (const m of [
     '0003_related_persons_foundation',
@@ -106,9 +110,29 @@ before(() => {
       observe.run(eik, id, id.padStart(64, 'a'), name, name, 'f'.repeat(64));
     }
   }
+  db.prepare('INSERT INTO registry_company_history VALUES(?,?,?,?)').run(
+    '300000018',
+    JSON.stringify([{ name: 'ТЕСТ ИСТОРИЯ', legalForm: 'ООД' }]),
+    'h',
+    '2026-01-01',
+  );
   db.close();
 
   const holdings = [
+    stake({
+      xmlFile: 'N1.xml',
+      controlHash: 'N1',
+      person: 'Николай Иванов Примеров',
+      entity: 'ТЕСТ ИСТОРИЯ',
+    }),
+    stake({
+      xmlFile: 'N2.xml',
+      controlHash: 'N2',
+      folder: '2023',
+      year: '2023',
+      person: 'Николай Иванов Примеров',
+      entity: 'ТЕСТ ИСТОРИЯ ООД, ЕИК 300000018',
+    }),
     // Her own stake: the register shows her in 300000006 only.
     stake({
       xmlFile: 'A.xml',
@@ -247,8 +271,8 @@ before(() => {
         ? {
             registry: fixtureRegistry(eik, {
               owners: PARTIDAS[eik],
-              form: 'OOD',
-              suffix: 'ООД',
+              form: eik === '300000018' ? 'EOOD' : 'OOD',
+              suffix: eik === '300000018' ? 'ЕООД' : 'ООД',
             }),
           }
         : null,
@@ -358,5 +382,22 @@ test('a post in the participation field of a state namesake is the office, not a
         status: 'internal',
       },
     ],
+  );
+});
+
+test('a registry-only historic EIK proof cannot displace a valid winner-name claim', () => {
+  assert.deepEqual(links('Николай Иванов Примеров'), [
+    { eik: '300000018', match_method: 'name_stem', relation: 'owns' },
+  ]);
+  assert.deepEqual(
+    companiesOf('N2.xml'),
+    [],
+    'identity can use the history; winner provenance requires the bidder name',
+  );
+  assert.deepEqual(
+    query(
+      "SELECT first_declared_year,last_declared_year FROM interest_links WHERE eik='300000018'",
+    ),
+    [{ first_declared_year: '2024', last_declared_year: '2024' }],
   );
 });
