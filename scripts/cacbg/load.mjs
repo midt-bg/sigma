@@ -75,7 +75,7 @@ const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — the audit's list of removed links keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-3+tr-1+resolve-5';
+const MATCHER_VERSION = 'cnk-1+classify-3+tr-1+resolve-6';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very

@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import {
   namesakeResolver,
+  declaredCompanyResolver,
   registryIdentityResolver,
   mixedScriptCompanyKey,
   identityInputsDigest,
@@ -140,6 +141,11 @@ test('historic forms resolve only through observed name/form pairs on the same E
       'c'.repeat(64),
       '2026-01-01',
     );
+    // A historic spelling is additional provenance, not a replacement for the matching method.
+    // Link loading must retain an exact match even when identity needs the historical registry proof.
+    const company = declaredCompanyResolver(db)('А Тест Про ООД', [name]);
+    assert.equal(company.method, 'exact_name_key');
+    assert.equal(company.registryCompany.formEntry, historic.formEntry);
     for (const entity of ['А Тест Про ООД', 'А Тест Про ООД, ЕИК 123456789']) {
       const r = registryIdentityResolver(db)(
         { ...doc, interests: [{ ...doc.interests[0], entity }] },

@@ -293,11 +293,7 @@ export function declaredCompanyResolver(registry) {
           : null;
     return {
       ...resolved,
-      ...(mixed
-        ? { method: 'registry_mixed_script' }
-        : !stem && proof
-          ? { method: 'registry_name_history' }
-          : {}),
+      ...(mixed ? { method: 'registry_mixed_script' } : {}),
       ...(proof ? { registryCompany: proof } : {}),
     };
   };
@@ -318,7 +314,11 @@ export function registryCompanyResolver(registry, people = peopleByCompany(regis
       return { reason: 'company_evidence_insufficient' };
     return {
       ...resolved,
-      ...(stem ? { method: 'registry_name_stem' } : {}),
+      ...(stem
+        ? { method: 'registry_name_stem' }
+        : !mixed && resolved.registryCompany
+          ? { method: 'registry_name_history' }
+          : {}),
       reason: 'personal_name_not_observed',
       authorNameConflict: authorIds.size > 1,
     };
