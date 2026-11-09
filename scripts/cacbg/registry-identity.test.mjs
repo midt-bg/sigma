@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import {
   namesakeResolver,
+  declaredCompanyResolver,
   registryIdentityResolver,
   mixedScriptCompanyKey,
   identityInputsDigest,
@@ -140,6 +141,11 @@ test('historic forms resolve only through observed name/form pairs on the same E
       'c'.repeat(64),
       '2026-01-01',
     );
+    // A historic spelling is additional provenance, not a replacement for the matching method.
+    // Link loading must retain an exact match even when identity needs the historical registry proof.
+    const company = declaredCompanyResolver(db)('А Тест Про ООД', [name]);
+    assert.equal(company.method, 'exact_name_key');
+    assert.equal(company.registryCompany.formEntry, historic.formEntry);
     for (const entity of ['А Тест Про ООД', 'А Тест Про ООД, ЕИК 123456789']) {
       const r = registryIdentityResolver(db)(
         { ...doc, interests: [{ ...doc.interests[0], entity }] },
@@ -330,6 +336,40 @@ test('a namesake is settled only by the one partida that names the holder in ful
     assert.equal(namesakeResolver(db)(eiks, name), '987654321', 'a different person');
     add('123456789', 'c'.repeat(64), name);
     assert.equal(namesakeResolver(db)(eiks, name), null, 'named in both partidas');
+  } finally {
+    db.close();
+  }
+});
+
+test('a newly read namesake without the declarant preserves the registry identity and company answer', () => {
+  const { db, add, name, doc } = fixture();
+  try {
+    add('123456789', 'a'.repeat(64), name);
+    db.exec("INSERT INTO registry_identity_snapshots VALUES('123456789','hash','now')");
+    const before = registryIdentityResolver(db)(doc, [name]);
+    db.exec("UPDATE registry_deeds SET name='А ТЕСТ ПРО' WHERE eik='987654321'");
+    db.exec("INSERT INTO registry_identity_snapshots VALUES('987654321','hash','now')");
+    add('987654321', 'b'.repeat(64), 'Петър Димитров Примеров');
+    const after = registryIdentityResolver(db)(doc, [name]);
+    assert.deepEqual(after.evidence, before.evidence);
+    assert.equal(after.companies[0].eik, before.companies[0].eik);
+    assert.equal(after.companies[0].method, 'registry_namesake');
+    // A real competing observation revokes the choice; identities are never made sticky.
+    add('987654321', 'c'.repeat(64), name);
+    assert.deepEqual(registryIdentityResolver(db)(doc, [name]).evidence, []);
+  } finally {
+    db.close();
+  }
+});
+
+test('an unread procurement namesake is visible to identity resolution too', () => {
+  const { db, add, name, doc } = fixture();
+  try {
+    add('123456789', 'a'.repeat(64), name);
+    db.exec("INSERT INTO registry_identity_snapshots VALUES('123456789','hash','now')");
+    db.exec(`CREATE TABLE bidders(name,eik_normalized,eik_valid);
+      INSERT INTO bidders VALUES('А ТЕСТ ПРО ООД','111111111',1);`);
+    assert.equal(registryIdentityResolver(db)(doc, [name]).reason, 'company_not_resolved');
   } finally {
     db.close();
   }

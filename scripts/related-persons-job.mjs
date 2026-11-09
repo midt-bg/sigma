@@ -1,5 +1,6 @@
 // Shared Node pipeline for the Container and the existing Actions job. Local mode never calls Wrangler.
 import { execFileSync } from 'node:child_process';
+import { personSnapshot, reportPersonChanges } from './cacbg/person-changes.mjs';
 import { auditUntilClean } from './cacbg/audit-passes.mjs';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -288,6 +289,22 @@ if (doing('snapshot') && remote) {
   localSource.prepare('VACUUM INTO ?').run(db);
   localSource.close();
 }
+// Preserve the baseline outside the tables the loader rebuilds, including across resumed stages.
+const personBaseline = join(work, 'person-before.json');
+if (doing('snapshot')) {
+  try {
+    const source = new DatabaseSync(db, { readOnly: true });
+    try {
+      writeFileSync(personBaseline, JSON.stringify(personSnapshot(source)));
+    } finally {
+      source.close();
+    }
+  } catch (error) {
+    console.warn(
+      JSON.stringify({ event: 'declarations_person_report_unavailable', reason: String(error) }),
+    );
+  }
+}
 if (doing('extract')) {
   setStage('extract');
   run('scripts/cacbg/extract.mjs'); // registry was hydrated before identity extraction
@@ -340,6 +357,25 @@ if (doing('audit')) {
     });
   } catch (error) {
     stopOn('scripts/cacbg/audit.mjs', error);
+  }
+}
+if (doing('audit')) {
+  // Observability only: a missing baseline or report failure must never stop publication.
+  try {
+    const built = new DatabaseSync(db, { readOnly: true });
+    try {
+      reportPersonChanges(
+        JSON.parse(readFileSync(personBaseline, 'utf8')),
+        built,
+        join(work, 'person-changes.json'),
+      );
+    } finally {
+      built.close();
+    }
+  } catch (error) {
+    console.warn(
+      JSON.stringify({ event: 'declarations_person_report_unavailable', reason: String(error) }),
+    );
   }
 }
 if (doing('publish') && remote) {

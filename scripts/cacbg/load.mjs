@@ -4,8 +4,9 @@ import { rebuildPersonEntities, declarationSourceId } from './person-entities.mj
 import { declarantGuid } from './declarant-guid.mjs';
 import { resolveOffices } from './declaration-office.mjs';
 import { buildPersonRegistryLinks } from './person-registry-links.mjs';
-import { IDENTITY_RULES_VERSION, namesakeResolver } from './registry-identity.mjs';
+import { IDENTITY_RULES_VERSION, declaredCompanyResolver } from './registry-identity.mjs';
 import { recordBuild } from './build-proof.mjs';
+import { namesCompany } from './resolve-company.mjs';
 // Phase 1 — productionized loader/resolver. Reads the extracted staging (holdings.jsonl / related.jsonl),
 // resolves each declared interest to a winning bidder's ЕИК via the ONE production normalizer, and
 // persists the свързани-лица domain (persons / declarations / declared_interests / interest_links /
@@ -44,7 +45,6 @@ import { TR_DB } from '../tr/paths.mjs';
 // which the decision pass (scripts/tr/decide.mjs) reads and this pass does not. It calls them; this pass
 // reads what they decided.
 import { isSealedFact, RULES_VERSION } from '../tr/evidence.mjs';
-import { resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
 import { PUBLIC_OWNER_UNSETTLED_SQL } from '../../apps/etl/src/public-ownership.ts';
 import {
   fingerprint,
@@ -76,7 +76,7 @@ const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — the audit's list of removed links keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-3+tr-1+resolve-4';
+const MATCHER_VERSION = 'cnk-1+classify-3+tr-1+resolve-7';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very
@@ -351,15 +351,30 @@ for (const b of bidders) {
 //                     register shows the holder in exactly one of them. It is asked with the holder's name —
 //                     the declarant's for their own stake, the relative's for a family stake — so it serves
 //                     only the companies a declaration names.
-const byStem = stemIndex([...bidderByEik.values()]);
-const namesake = namesakeResolver(db);
-const resolveEntity = (entity, holders = []) =>
-  resolveDeclaredCompany(entity, {
-    byKey,
-    bidderByEik,
-    byStem,
-    ...(holders.length ? { namesake: (eiks) => namesake(eiks, holders) } : {}),
-  });
+const resolveCompany = declaredCompanyResolver(db);
+const LINK_COMPANY_METHODS = new Set([
+  'exact_name_key',
+  'declared_eik',
+  'extracted_name',
+  'name_stem',
+  'registry_namesake',
+]);
+const resolveEntity = (entity, holders = []) => {
+  const result = resolveCompany(entity, holders);
+  // A resolved company need not be a procurement winner. Link loading accepts only its supported
+  // evidence methods and winners; the identity stage can also use a registered historic spelling.
+  if (result?.eik && (!bidderByEik.has(result.eik) || !LINK_COMPANY_METHODS.has(result.method)))
+    return null;
+  // A stated EIK is stronger than a stem only with the winner-name cross-check the audit requires.
+  // Registry history can prove identity without supplying that separate procurement provenance.
+  // Reject this unsupported claim here, before it can outrank a valid claim in another filing.
+  if (
+    result?.method === 'declared_eik' &&
+    !namesCompany(entity, 'declared_eik', [bidderByEik.get(result.eik).name])
+  )
+    return null;
+  return result;
+};
 // The relatives a declaration names as holders of each family stake: declaration → company key → names.
 const stakeHolders = new Map();
 for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {

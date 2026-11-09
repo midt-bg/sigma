@@ -5,7 +5,7 @@ import { resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
 import { companyNameKey, companyNameStem } from '../../packages/shared/src/company-name-key.ts';
 import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
 
-export const IDENTITY_RULES_VERSION = 'registry-identity-4';
+export const IDENTITY_RULES_VERSION = 'registry-identity-5';
 const HASH = /^[a-f0-9]{64}$/i;
 // Visual Latin/Cyrillic equivalents only, in a Cyrillic-dominant name. This is NOT phonetic transliteration.
 export function mixedScriptCompanyKey(raw) {
@@ -59,6 +59,14 @@ export function identityInputsDigest(registry) {
   const table = (name) =>
     registry.prepare(`SELECT 1 FROM sqlite_master WHERE name='${name}'`).get();
   for (const r of registryIdentityRows(registry)) hash.update(JSON.stringify(Object.values(r)));
+  if (table('bidders'))
+    for (const r of registry
+      .prepare(
+        'SELECT name,eik_normalized,eik_valid FROM bidders ORDER BY eik_normalized,name,eik_valid',
+      )
+      .all())
+      hash.update(JSON.stringify(Object.values(r)));
+
   if (table('registry_deeds'))
     for (const r of registry
       .prepare("SELECT eik,name,legal_form FROM registry_deeds WHERE outcome='ok' ORDER BY eik")
@@ -175,7 +183,7 @@ function readPartidas(registry) {
 
 /** Resolve declared companies against registry data, including declarations of related-person stakes.
  * The company is its ЕИК: the declared one, or the one the declared name leads to. */
-export function registryCompanyResolver(registry, people = peopleByCompany(registry)) {
+export function declaredCompanyResolver(registry) {
   const fullName = (name, suffix) =>
     suffix && !companyNameKey(name).endsWith(` ${suffix}`) ? `${name} ${suffix}` : name;
   const byKey = new Map();
@@ -222,56 +230,95 @@ export function registryCompanyResolver(registry, people = peopleByCompany(regis
       }
     }
   }
+  // Both consumers see the same universe, including winners whose partida has not been read yet.
+  // An unread namesake must block a pick instead of disappearing from the identity stage's index.
+  if (registry.prepare("SELECT 1 FROM sqlite_master WHERE name='bidders'").get()) {
+    for (const b of registry
+      .prepare('SELECT name,eik_normalized eik,eik_valid valid FROM bidders')
+      .all()) {
+      if (!b.eik || !b.valid) continue;
+      let company = bidderByEik.get(b.eik);
+      if (!company) {
+        company = { eik: b.eik, name: b.name, names: [], valid: true };
+        bidderByEik.set(b.eik, company);
+      }
+      company.names.push(b.name);
+      for (const [index, key] of [
+        [byKey, companyNameKey(b.name)],
+        [folded, mixedScriptCompanyKey(b.name)],
+      ]) {
+        const companies = index.get(key) ?? new Map();
+        companies.set(b.eik, company);
+        index.set(key, companies);
+      }
+    }
+  }
   const byStem = stemIndex(
     [...bidderByEik.values()].flatMap((c) =>
       [c.name, ...c.names].map((name) => ({ eik: c.eik, name })),
     ),
   );
-  return (interest, authorName) => {
-    let resolved = resolveDeclaredCompany(interest.entity, { byKey, bidderByEik });
+  const namesake = namesakeResolver(registry);
+  return (entity, holders = []) => {
+    const pick = (index, extra = {}) =>
+      resolveDeclaredCompany(entity, {
+        byKey: index,
+        bidderByEik,
+        namesake: (eiks) => namesake(eiks, holders),
+        ...extra,
+      });
+    let resolved = pick(byKey);
     let mixed = false;
     let stem = false;
     if (!resolved) {
-      resolved = resolveDeclaredCompany(interest.entity, {
-        byKey: folded,
-        bidderByEik,
-        nameKey: mixedScriptCompanyKey,
-      });
+      resolved = pick(folded, { nameKey: mixedScriptCompanyKey });
       mixed = !!resolved && !resolved.ambiguous;
     }
     if (!resolved) {
-      resolved = resolveDeclaredCompany(interest.entity, { byKey: new Map(), bidderByEik, byStem });
+      resolved = pick(new Map(), { byStem });
       stem = !!resolved && !resolved.ambiguous;
     }
-    if (!resolved || resolved.ambiguous) return { reason: 'company_not_resolved' };
+    if (!resolved || resolved.ambiguous) return resolved;
     const company = bidderByEik.get(resolved.eik);
-    const authorIds = subjectsNamed(people.get(resolved.eik), authorName);
-    // A visual spelling or a stem alone is not company evidence: require the original declarant's
-    // personal registry observation in this same partida. Related-person declarations cannot borrow it.
-    if ((mixed || stem) && !(interest.holderRelation === 'self' && authorIds.size === 1))
-      return { reason: 'company_evidence_insufficient' };
-    const nameKey = mixed ? mixedScriptCompanyKey : stem ? companyNameStem : companyNameKey;
-    const keys = new Set([interest.entity, ...companyCandidates(interest.entity)].map(nameKey));
-    const currentName = keys.has(nameKey(company.name));
+    const key = mixed ? mixedScriptCompanyKey : stem ? companyNameStem : companyNameKey;
+    const keys = new Set([entity, ...companyCandidates(entity)].map(key));
     const historic = (history.get(resolved.eik) ?? []).find((n) =>
-      keys.has(nameKey(fullName(n.name, n.legalForm))),
+      keys.has(key(fullName(n.name, n.legalForm))),
     );
-    const companyProof =
+    const proof =
       mixed || stem
         ? (historic ?? { name: company.name })
-        : !currentName && historic
+        : !keys.has(key(company.name)) && historic
           ? historic
           : null;
     return {
       ...resolved,
-      ...(mixed
-        ? { method: 'registry_mixed_script' }
-        : stem
-          ? { method: 'registry_name_stem' }
-          : companyProof
-            ? { method: 'registry_name_history' }
-            : {}),
-      ...(companyProof ? { registryCompany: companyProof } : {}),
+      ...(mixed ? { method: 'registry_mixed_script' } : {}),
+      ...(proof ? { registryCompany: proof } : {}),
+    };
+  };
+}
+
+/** Identity accepts weaker company spellings only with the author's own unique registry observation.
+ * Company selection itself is shared with link loading; evidence thresholds belong to consumers. */
+export function registryCompanyResolver(registry, people = peopleByCompany(registry)) {
+  const resolveCompany = declaredCompanyResolver(registry);
+  return (interest, authorName) => {
+    const holders = interest.holderRelation === 'self' ? [authorName] : [];
+    const resolved = resolveCompany(interest.entity, holders);
+    if (!resolved || resolved.ambiguous) return { reason: 'company_not_resolved' };
+    const mixed = resolved.method === 'registry_mixed_script';
+    const stem = resolved.method === 'name_stem';
+    const authorIds = subjectsNamed(people.get(resolved.eik), authorName);
+    if ((mixed || stem) && !(interest.holderRelation === 'self' && authorIds.size === 1))
+      return { reason: 'company_evidence_insufficient' };
+    return {
+      ...resolved,
+      ...(stem
+        ? { method: 'registry_name_stem' }
+        : !mixed && resolved.registryCompany
+          ? { method: 'registry_name_history' }
+          : {}),
       reason: 'personal_name_not_observed',
       authorNameConflict: authorIds.size > 1,
     };
