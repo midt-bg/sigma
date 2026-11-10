@@ -171,7 +171,9 @@ describe('getSpendingTrend', () => {
     ]);
 
     const series = calls.calls.find((c) => c.sql.includes('GROUP BY period'))!;
-    expect(series.sql).toContain('JOIN tenders t ON t.id = c.tender_id');
+    expect(series.sql).toContain(
+      'JOIN tenders t INDEXED BY idx_tenders_authority ON t.id = c.tender_id',
+    );
     expect(series.sql).toContain('t.authority_id = ?');
     expect(series.binds).toEqual(['2020-01-01', 'auth:111']);
   });
