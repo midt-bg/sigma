@@ -5,6 +5,7 @@ import { FLIGHT_MS, MAX_RENDERING } from './render-gate';
 // render waits on it, as for a slow D1.
 const rendered = vi.hoisted(() => [] as Request[]);
 const held = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
+const reply = vi.hoisted(() => ({ status: 200 }));
 
 // Exercises the REAL edge-cache middleware in app.ts (handleRequest -> cacheKey -> edgeCache
 // match/put) without the SSR build or D1, to gate that app.ts actually keys the cache by cacheKey.
@@ -18,6 +19,12 @@ vi.mock('react-router', () => ({
     rendered.push(request);
     if (held.gate) await held.gate;
     const url = new URL(request.url);
+    if (reply.status !== 200) {
+      return new Response('Temporary failure', {
+        status: reply.status,
+        headers: { 'Content-Type': 'text/html', 'Cache-Control': 'public, s-maxage=1800' },
+      });
+    }
     // A designated path returns 404, to exercise the response.ok cache-put gate (see the „non-ok" test).
     if (url.pathname === '/contracts/missing') {
       return new Response('Not Found', {
@@ -39,7 +46,9 @@ vi.mock('react-router', () => ({
     return new Response(body, {
       status: 200,
       headers: {
-        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Type': url.pathname.endsWith('.data')
+          ? 'text/x-script'
+          : 'text/html; charset=utf-8',
         'Cache-Control': 'public, s-maxage=1800',
       },
     });
@@ -103,6 +112,7 @@ beforeEach(() => {
   fakeCache.store.clear();
   rendered.length = 0;
   held.gate = null;
+  reply.status = 200;
   vi.stubEnv('DEV', false);
 });
 
@@ -119,6 +129,44 @@ async function get(url: string, method = 'GET') {
 }
 
 describe('app.ts edge cache middleware', () => {
+  it.each(['https://x/contracts', 'https://x/contracts.data'])(
+    'revalidates browser responses on MISS, HIT and HEAD while retaining edge TTL: %s',
+    async (url) => {
+      expect((await get(url)).headers.get('Cache-Control')).toBe(
+        'public, max-age=0, must-revalidate',
+      );
+      const hit = await get(url);
+      expect(hit.edge).toBe('HIT');
+      expect(hit.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate');
+      const head = await get(url, 'HEAD');
+      expect(head.edge).toBe('HIT');
+      expect(head.body).toBe('');
+      expect(head.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate');
+      expect([...fakeCache.store.values()][0].headers).toContainEqual([
+        'cache-control',
+        'public, s-maxage=1800',
+      ]);
+      expect(rendered).toHaveLength(1);
+    },
+  );
+
+  it.each([500, 502, 503, 504])(
+    'does not cache a %i and recovers on the next request',
+    async (status) => {
+      reply.status = status;
+      const failed = await get('https://x/contracts.data');
+      expect(failed.status).toBe(status);
+      expect(failed.headers.get('Cache-Control')).toBe('no-store');
+      expect(failed.headers.get('Retry-After')).toBe(status === 503 ? '30' : null);
+      expect(fakeCache.store.size).toBe(0);
+      reply.status = 200;
+      const recovered = await get('https://x/contracts.data');
+      expect(recovered.status).toBe(200);
+      expect(recovered.edge).toBe('MISS');
+      expect(recovered.body).not.toContain('Temporary failure');
+    },
+  );
+
   it('bypasses persisted edge responses in local development across reloads', async () => {
     vi.stubEnv('DEV', true);
     expect((await get('https://x/contracts')).edge).toBe('BYPASS');
