@@ -39,12 +39,20 @@ interface CoverageRow {
 }
 
 // Shared value + sector/funding scope (the date window lives only on the series query).
-function scope(p: TrendParams): { join: string; where: string[]; params: unknown[] } {
+function scope(p: TrendParams): { from: string; join: string; where: string[]; params: unknown[] } {
   // One value basis for the whole site: the rollups (authority_totals / home_totals / flow_pairs) sum
   // amount_eur IS NOT NULL, so the trend must too, or the same total differs between pages.
   const where = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
-  const join = p.sector || p.authorityId ? 'JOIN tenders t ON t.id = c.tender_id' : '';
+  const join =
+    p.sector || p.authorityId
+      ? `JOIN tenders t INDEXED BY ${p.authorityId ? 'idx_tenders_authority' : 'idx_tenders_analytics_cover'} ON t.id = c.tender_id`
+      : '';
+  // Entity profiles retain their selective bidder/tender lookups. National and sector views scan
+  // only covering indexes, avoiding the large source-bearing table rows (migration 0028).
+  const from = p.bidderId
+    ? 'contracts c'
+    : `contracts c INDEXED BY ${join ? 'idx_contracts_analytics_cover' : 'idx_contracts_trend_cover'}`;
   if (p.sector) {
     where.push('substr(t.cpv_code, 1, 2) = ?');
     params.push(p.sector);
@@ -59,7 +67,7 @@ function scope(p: TrendParams): { join: string; where: string[]; params: unknown
   }
   if (p.funding === 'eu') where.push('c.eu_funded = 1');
   else if (p.funding === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
-  return { join, where, params };
+  return { from, join, where, params };
 }
 
 // Continuous period keys (inclusive) for zero-filling gaps, so the chart has no holes.
@@ -95,7 +103,7 @@ export async function getSpendingTrend(
       .prepare(
         `SELECT substr(c.signed_at, 1, ${periodLen}) AS period,
                 COALESCE(SUM(c.amount_eur), 0) AS value_eur, COUNT(*) AS contracts
-         FROM contracts c ${s.join}
+         FROM ${s.from} ${s.join}
          WHERE ${seriesWhere.join(' AND ')}
          GROUP BY period ORDER BY period`,
       )
@@ -109,7 +117,7 @@ export async function getSpendingTrend(
            -- What the series leaves out (no usable date, or one outside its window), so a table can say it.
            COALESCE(SUM(CASE WHEN ${window.join(' AND ')} THEN 0 ELSE 1 END), 0) AS omitted,
            COALESCE(SUM(CASE WHEN ${window.join(' AND ')} THEN 0 ELSE c.amount_eur END), 0) AS omitted_eur
-         FROM contracts c ${s.join} WHERE ${s.where.join(' AND ')}`,
+         FROM ${s.from} ${s.join} WHERE ${s.where.join(' AND ')}`,
       )
       .bind(START, START, ...s.params)
       .first<CoverageRow>(),

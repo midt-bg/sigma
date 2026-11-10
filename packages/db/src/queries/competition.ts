@@ -59,7 +59,11 @@ function scope(p: CompetitionParams): { join: string; where: string[]; params: u
   }
   if (p.funding === 'eu') where.push('c.eu_funded = 1');
   else if (p.funding === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
-  return { join: 'JOIN tenders t ON t.id = c.tender_id', where, params };
+  return {
+    join: `JOIN tenders t INDEXED BY ${p.authorityId ? 'idx_tenders_authority' : 'idx_tenders_analytics_cover'} ON t.id = c.tender_id`,
+    where,
+    params,
+  };
 }
 
 interface TotalsRow {
@@ -98,7 +102,7 @@ export async function competitionTotals(
          SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS single_offer,
          COALESCE(SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_eur,
          COALESCE(SUM(CASE WHEN c.bids_received = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS single_value_eur
-       FROM contracts c ${s.join} WHERE ${where.join(' AND ')}`,
+       FROM contracts c INDEXED BY idx_contracts_analytics_cover ${s.join} WHERE ${where.join(' AND ')}`,
     )
     .bind(...s.params)
     .first<TotalsRow>();
@@ -150,7 +154,7 @@ async function authoritiesBySingleOffer(
               SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS single_offer,
               -- display total: canonical value base to match authority rollups (not a share denominator)
               COALESCE(SUM(c.amount_eur), 0) AS value_eur
-       FROM contracts c ${s.join} JOIN authorities a ON a.id = t.authority_id
+       FROM contracts c INDEXED BY idx_contracts_analytics_cover ${s.join} JOIN authorities a ON a.id = t.authority_id
        WHERE ${where.join(' AND ')}
        GROUP BY t.authority_id
        HAVING COUNT(*) >= ?
@@ -203,7 +207,7 @@ async function authoritiesByConcentration(
       `WITH pair AS (
          SELECT t.authority_id AS authority_id, c.bidder_id AS bidder_id,
                 SUM(c.amount_eur) AS spent, COUNT(*) AS n
-         FROM contracts c ${s.join}
+         FROM contracts c INDEXED BY idx_contracts_analytics_cover ${s.join}
          WHERE ${where.join(' AND ')}
          GROUP BY t.authority_id, c.bidder_id
        ),
@@ -258,7 +262,7 @@ export async function procedureCompetition(
       `SELECT t.procedure_type AS procedure_type,
               COUNT(*) AS contracts,
               COALESCE(SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_eur
-       FROM contracts c ${s.join}
+       FROM contracts c INDEXED BY idx_contracts_analytics_cover ${s.join}
        ${where}
        GROUP BY t.procedure_type`,
     )
@@ -320,7 +324,7 @@ async function authoritiesByDirectAward(
               SUM(CASE WHEN TRIM(t.procedure_type) IN (${directPlaceholders}) THEN 1 ELSE 0 END) AS non_competitive,
               -- display total: canonical value base to match authority rollups (not a share denominator)
               COALESCE(SUM(c.amount_eur), 0) AS value_eur
-       FROM contracts c ${s.join} JOIN authorities a ON a.id = t.authority_id
+       FROM contracts c INDEXED BY idx_contracts_analytics_cover ${s.join} JOIN authorities a ON a.id = t.authority_id
        WHERE ${where.join(' AND ')}
        GROUP BY t.authority_id
        HAVING COUNT(*) >= ?
@@ -390,7 +394,7 @@ async function topRecurringPairs(
         `SELECT t.authority_id AS authority_id, c.bidder_id AS bidder_id, a.name AS authority_name,
                 b.name AS bidder_name, b.kind AS bidder_kind,
                 SUM(c.amount_eur) AS won_eur, COUNT(*) AS contracts
-         FROM contracts c ${s.join} JOIN authorities a ON a.id = t.authority_id
+         FROM contracts c INDEXED BY idx_contracts_analytics_cover ${s.join} JOIN authorities a ON a.id = t.authority_id
          JOIN bidders b ON b.id = c.bidder_id
          WHERE ${where.join(' AND ')}
          GROUP BY t.authority_id, c.bidder_id
