@@ -136,9 +136,30 @@ export default {
 // A HEAD is answered as the GET it describes, headers only: from the GET's cache entry when there is one,
 // and otherwise by rendering (and caching) that GET — never a separate, uncached run of the loaders.
 async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  if (request.method !== 'HEAD') return respond(request, env, ctx);
-  const response = await respond(new Request(request, { method: 'GET' }), env, ctx);
-  return new Response(null, response);
+  const response = await respond(
+    request.method === 'HEAD' ? new Request(request, { method: 'GET' }) : request,
+    env,
+    ctx,
+  );
+  // Apply after respond has cloned the edge entry, including on HIT and single-flight HIT. The
+  // browser must consult this deployment on every navigation; s-maxage/SWR belong only to the
+  // internal edge copy. Otherwise a browser can replay an old response after a deployment rotates
+  // the edge keys. Fingerprinted assets and downloadable resources keep their own cache policy.
+  const headers = new Headers(response.headers);
+  if (response.status >= 500) {
+    headers.set('Cache-Control', 'no-store');
+    if (response.status === 503) headers.set('Retry-After', '30');
+  } else if (
+    (isHtml(response) || new URL(request.url).pathname.endsWith('.data')) &&
+    !/\b(?:no-store|private)\b/i.test(headers.get('Cache-Control') ?? '')
+  ) {
+    headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
+  }
+  return new Response(request.method === 'HEAD' ? null : response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 async function respond(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -245,12 +266,5 @@ async function finish(
   const stored = cacheable ? edgeCache.put(key, hardened.clone()) : Promise.resolve();
   ctx.waitUntil(stored);
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
-  // An overloaded D1 ends the request as a 503 (packages/db, retrying-d1.ts), as does a shed render (above):
-  // say when to come back — a crawler backs off on it, where a 500 reads as a broken page. Never cached:
-  // only an ok response is put.
-  if (hardened.status === 503) {
-    hardened.headers.set('Retry-After', '30');
-    hardened.headers.set('Cache-Control', 'no-store');
-  }
   return { response: hardened, stored };
 }
