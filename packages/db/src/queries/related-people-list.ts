@@ -26,10 +26,12 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   -- The office years of exactly the people listed, read from their own declarations — every declarant the
   -- register proves to be the same identity included — rather than from all of them: a scan of the whole
   -- declarations table was most of what one uncached list cost. CROSS JOIN keeps that order of reading.
+  -- Read links once: DISTINCT below removes repeated years from links and aliases without a nested UNION.
   SELECT DISTINCT COALESCE(pl.registry_indent,d.person_id) identity,d.declared_year year
-  FROM (SELECT person_id FROM links
-        UNION SELECT lp.person_id FROM person_registry_links lp JOIN links lk ON lp.registry_indent=lk.identity) who
-  CROSS JOIN declarations d ON d.person_id=who.person_id
+  FROM links listed
+  LEFT JOIN person_registry_links aliases ON aliases.registry_indent=listed.identity
+  CROSS JOIN json_each(json_array(listed.person_id,aliases.person_id)) who
+  CROSS JOIN declarations d ON d.person_id=who.value
   LEFT JOIN person_registry_links pl ON pl.person_id=d.person_id
   WHERE ${declaredOfficeYear()}
 ), office_bounds AS MATERIALIZED (${officeBounds('d.person_id IN (SELECT person_id FROM links)')}
@@ -57,12 +59,13 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
     MAX(direct AND in_window) d_has_window
   FROM person_contracts GROUP BY identity
 ), representatives AS (
-  SELECT *,ROW_NUMBER() OVER (PARTITION BY identity ORDER BY (own_institution='exact') DESC,
-    last_declared_year DESC,person_id,link_key) rn FROM links
-), grouped_people AS (
-  SELECT l.identity,MAX(l.own_institution='exact') own_institution,
-    MAX(l.interest_class='private_ownership') self_stake,MAX(l.interest_class='family_ownership') family_stake
-  FROM links l JOIN totals t ON t.identity=l.identity GROUP BY l.identity
+  -- Keep group flags on the representative instead of joining the expanded totals CTE twice.
+  -- Re-expanding that tree exceeds D1's nested-select limit before the query can execute.
+  SELECT *,MAX(own_institution='exact') OVER (PARTITION BY identity) own_flag,
+    MAX(interest_class='private_ownership') OVER (PARTITION BY identity) self_stake,
+    MAX(interest_class='family_ownership') OVER (PARTITION BY identity) family_stake,
+    ROW_NUMBER() OVER (PARTITION BY identity ORDER BY (own_institution='exact') DESC,
+      last_declared_year DESC,person_id,link_key) rn FROM links
 )`;
 
 export async function getRelatedPersonRows(db: D1Database, authorityId?: string) {
@@ -85,13 +88,14 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
         ORDER BY ip.identity,d.person_id,d.rowid
       ) GROUP BY identity
     )
-    SELECT p.*,r.name,r.person_id,t.*,
-      COALESCE((SELECT ic.companies FROM identity_companies ic WHERE ic.identity=p.identity),'[]') companies,
+    SELECT r.identity,r.own_flag own_institution,r.self_stake,r.family_stake,r.name,r.person_id,t.*,
+      COALESCE((SELECT ic.companies FROM identity_companies ic WHERE ic.identity=r.identity),'[]') companies,
       (SELECT b.name FROM bidders b WHERE b.eik_normalized=r.eik ORDER BY b.id LIMIT 1) company,r.eik,
-      COALESCE((SELECT io.offices FROM identity_offices io WHERE io.identity=p.identity),'[]') offices
-    FROM grouped_people p JOIN representatives r ON r.identity=p.identity AND r.rn=1 JOIN totals t ON t.identity=p.identity
-    ORDER BY CASE WHEN p.own_institution THEN 2 WHEN t.has_window THEN 1 ELSE 0 END DESC,
-      t.total_eur DESC,p.identity`,
+      COALESCE((SELECT io.offices FROM identity_offices io WHERE io.identity=r.identity),'[]') offices
+    FROM representatives r JOIN totals t ON t.identity=r.identity
+    WHERE r.rn=1
+    ORDER BY CASE WHEN r.own_flag THEN 2 WHEN t.has_window THEN 1 ELSE 0 END DESC,
+      t.total_eur DESC,r.identity`,
     )
     .bind(authorityId ?? null)
     .all<{
