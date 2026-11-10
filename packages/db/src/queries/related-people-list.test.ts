@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
+import { getDb } from '../readonly-d1';
 import { OFFICE_ORGANIZATIONS } from '@sigma/shared';
 import {
   getRelatedPersonRows,
@@ -610,6 +611,54 @@ it('leaves out a seat in a company with a public stake, and keeps a share in it'
         ('${share}','person','СЪДРУЖНИК ТЕСТОВ','partner','333333333','1');`);
     const rows = await getRegistryRolePersonRows(d1FromSqlite(db));
     expect(rows.map((r) => r.official)).toEqual(['Съдружник Тестов']);
+  } finally {
+    db.close();
+  }
+});
+
+it('keeps an unlisted proven alias office year without multiplying contracts across links', async () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+      CREATE TABLE interest_links(link_key,person_id,eik,status,interest_class,relation,own_institution,first_declared_year,last_declared_year);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind,matched_fact);
+      CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+      CREATE TABLE person_registry_links(person_id,registry_indent);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+      CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
+      CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
+      CREATE TABLE tenders(id PRIMARY KEY,authority_id);CREATE TABLE authorities(id PRIMARY KEY);
+      INSERT INTO authorities VALUES('a');INSERT INTO tenders VALUES('t','a');
+      INSERT INTO persons VALUES('listed','Иван Петров Тестов'),('alias','Иван П. Тестов');
+      INSERT INTO person_registry_links VALUES('listed','canonical'),('alias','canonical');
+      INSERT INTO bidders VALUES('b1','111111111','ТЕСТ ЕДНО ООД'),('b2','222222222','ТЕСТ ДВЕ ООД');
+      INSERT INTO interest_links VALUES
+        ('own','listed','111111111','published','private_ownership','owns','none','2019','2021'),
+        ('family','listed','222222222','published','family_ownership','related','exact','2019','2021');
+      INSERT INTO interest_link_evidence VALUES('own','document',NULL),('family','document',NULL);
+      INSERT INTO declarations VALUES
+        ('start','listed','Община Тест','Съветник','2019'),
+        ('end','listed','Община Тест','Съветник','2021'),
+        ('alias-one','alias','Община Тест','Съветник','2020'),
+        ('alias-two','alias','Община Тест','Съветник','2020');
+      INSERT INTO contracts VALUES('owned','b1','t','2020-02-01',100),
+        ('related','b2','t','2020-03-01',200),('before-office','b1','t','2018-01-01',11);`);
+    const rows = await getRelatedPersonRows(getDb({ DB: d1FromSqlite(db) }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      personIdentity: 'canonical',
+      companyCount: 2,
+      contractCount: 3,
+      contractValueEur: 311,
+      contemporaneousValueEur: 300,
+      hasContemporaneous: true,
+      ownInstitution: true,
+      stakeKind: 'mixed',
+    });
+    expect(rows[0]!.companies).toHaveLength(2);
+    // Only the listed source contributes displayed offices; a proved alias also establishes the year.
+    expect(rows[0]!.declaredOffices.map((o) => o.year)).toEqual(['2019', '2021']);
   } finally {
     db.close();
   }
