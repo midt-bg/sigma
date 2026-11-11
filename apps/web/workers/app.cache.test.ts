@@ -50,6 +50,8 @@ vi.mock('react-router', () => ({
           ? 'text/x-script'
           : 'text/html; charset=utf-8',
         'Cache-Control': 'public, s-maxage=1800',
+        ETag: '"test-v1"',
+        'Last-Modified': 'Mon, 02 Nov 2026 00:00:00 GMT',
       },
     });
   },
@@ -79,6 +81,19 @@ function makeFakeCache() {
     async match(req: Request | string) {
       const url = typeof req === 'string' ? req : req.url;
       const e = store.get(url);
+      if (e && typeof req !== 'string') {
+        const headers = new Headers(e.headers);
+        const etag = req.headers.get('If-None-Match');
+        const modifiedSince = req.headers.get('If-Modified-Since');
+        if (
+          (etag && etag === headers.get('ETag')) ||
+          (!etag && modifiedSince && modifiedSince === headers.get('Last-Modified'))
+        ) {
+          // Cloudflare's conditional Cache API HIT omits the original representation's type.
+          headers.delete('Content-Type');
+          return new Response(null, { status: 304, headers });
+        }
+      }
       return e
         ? new Response(e.body, {
             status: e.status,
@@ -116,19 +131,57 @@ beforeEach(() => {
   vi.stubEnv('DEV', false);
 });
 
-async function get(url: string, method = 'GET') {
+async function get(url: string, method = 'GET', headers?: Record<string, string>) {
   const waits: Promise<unknown>[] = [];
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void waits.push(p),
     passThroughOnException: () => {},
   };
-  const res = await worker.fetch(new Request(url, { method }), {}, ctx);
+  const res = await worker.fetch(new Request(url, { method, headers }), {}, ctx);
   const body = await res.clone().text();
   await Promise.all(waits); // let edgeCache.put (ctx.waitUntil) settle before the next request
   return { edge: res.headers.get('X-Edge-Cache'), body, status: res.status, headers: res.headers };
 }
 
 describe('app.ts edge cache middleware', () => {
+  it('does not extend browser freshness if the conditional entry expires during lookup', async () => {
+    await get('https://x/contracts');
+    const match = fakeCache.match.bind(fakeCache);
+    const spy = vi.spyOn(fakeCache, 'match').mockImplementationOnce(async (key) => {
+      const response = await match(key);
+      fakeCache.store.clear();
+      return response;
+    });
+    try {
+      const conditional = await get('https://x/contracts', 'GET', { 'If-None-Match': '"test-v1"' });
+      expect(conditional.status).toBe(304);
+      expect(conditional.body).toBe('');
+      expect(conditional.headers.get('Cache-Control')).toBe('no-store');
+      expect(rendered).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    ['GET', 'If-None-Match', '"test-v1"'],
+    ['HEAD', 'If-None-Match', '"test-v1"'],
+    ['GET', 'If-Modified-Since', 'Mon, 02 Nov 2026 00:00:00 GMT'],
+    ['HEAD', 'If-Modified-Since', 'Mon, 02 Nov 2026 00:00:00 GMT'],
+  ])('keeps browser revalidation on a conditional %s using %s', async (method, name, value) => {
+    await get('https://x/contracts');
+    const conditional = await get('https://x/contracts', method, { [name]: value });
+    expect(conditional.status).toBe(304);
+    expect(conditional.edge).toBe('HIT');
+    expect(conditional.body).toBe('');
+    expect(conditional.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate');
+    expect(rendered).toHaveLength(1);
+    expect([...fakeCache.store.values()][0].headers).toContainEqual([
+      'cache-control',
+      'public, s-maxage=1800',
+    ]);
+  });
+
   it.each(['https://x/contracts', 'https://x/contracts.data'])(
     'revalidates browser responses on MISS, HIT and HEAD while retaining edge TTL: %s',
     async (url) => {
