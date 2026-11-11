@@ -54,6 +54,23 @@ async function cachedResponse(key: Request): Promise<Response | null> {
   const cached = await edgeCache.match(key);
   if (!cached) return null;
   const headers = new Headers(cached.headers);
+  if (cached.status === 304 && !headers.has('Content-Type')) {
+    // Cache API evaluates the browser's validators but omits Content-Type from its 304. Recover the
+    // representation's type so handleRequest applies the same browser policy as for a 200; otherwise
+    // the internal s-maxage/SWR leaks back into the browser's stored HTML. Keep the bodyless 304 and
+    // consult only the edge entry, without another render or database read.
+    const lookup = new Request(key);
+    lookup.headers.delete('If-None-Match');
+    lookup.headers.delete('If-Modified-Since');
+    lookup.headers.delete('Range');
+    const representation = await edgeCache.match(lookup);
+    const contentType = representation?.headers.get('Content-Type');
+    if (contentType) headers.set('Content-Type', contentType);
+    // The entry can expire between the two lookups. Do not extend a browser entry whose type we
+    // cannot establish; the next request can retrieve its full representation.
+    else headers.set('Cache-Control', 'no-store');
+    await representation?.body?.cancel();
+  }
   applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
   headers.set('X-Edge-Cache', 'HIT');
   return new Response(cached.body, {
