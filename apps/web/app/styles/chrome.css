@@ -813,6 +813,13 @@ main.narrow {
   width: 14px;
   height: 14px;
 }
+/* СИГМА Бюджет, the sister site: the arrow of a link to another site, as the budget site marks its link back */
+.site-footer .sister-link::after {
+  content: '↗';
+  margin-left: 6px;
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+}
 .site-footer .freshness {
   color: var(--ink-soft);
   font-size: 0.75rem;

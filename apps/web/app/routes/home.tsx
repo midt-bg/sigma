@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useRouteLoaderData } from 'react-router';
 import { count, date, moneyBare } from '@sigma/shared';
 import { getHomeData, getDb, getPartialStartYear } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
@@ -8,7 +8,7 @@ import { SmartSearch } from '../components/SmartSearch';
 import { TotalsStrip } from '../components/TotalsStrip';
 import { RankedBars } from '../components/RankedBars';
 import { SingleOfferPortion } from '../components/SingleOfferPortion';
-import { Abbr, OwnershipChip } from '../components/ui';
+import { Abbr, NewTabLink, OwnershipChip } from '../components/ui';
 import { ANALYTICS_LENSES } from '../lib/analytics-lenses';
 import { cached } from '../lib/cache';
 import { coverageEndYear, coveragePartialNote, coverageRange } from '../lib/coverage';
@@ -80,6 +80,9 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
+  // СИГМА Бюджет (lib/sister-sites.ts), from the root loader; null while the setting is empty.
+  const budgetUrl = (useRouteLoaderData('root') as { budgetUrl?: string | null } | undefined)
+    ?.budgetUrl;
   const {
     totals,
     topCompanies,
@@ -325,6 +328,25 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           </div>
         </div>
       </section>
+
+      {budgetUrl ? (
+        <section className="section" aria-labelledby="budget">
+          <h2 id="budget">
+            Държавният <em>бюджет</em>
+          </h2>
+          <div className="budget-promo">
+            <p>
+              Обществените поръчки са един от начините, по които държавата харчи. Колко пари събира,
+              за какво ги планира и колко от тях е изразходвала досега показва сестринският сайт{' '}
+              <strong>СИГМА Бюджет</strong>: приходи, разходи, дълг и месечното изпълнение, по
+              официални данни и на разбираем език.
+            </p>
+            <NewTabLink className="budget-promo-link" href={budgetUrl}>
+              Отвори СИГМА Бюджет
+            </NewTabLink>
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }
