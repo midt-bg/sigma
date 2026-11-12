@@ -46,6 +46,10 @@
     // returned, and LIMIT caps only returned rows; once a chat turn's cumulative rows_read crosses
     // this, further run_sql calls are refused. Tune to a few × the largest scannable table.
     "D1_ROWS_READ_BUDGET": "5000000",
+    // СИГМА Бюджет, the sister site on the state budget (app/lib/sister-sites.ts): an https address puts a
+    // link to it in the footer and a block on the home page. Empty leaves both out — fill it in once the
+    // site's address answers.
+    "BUDGET_URL": "",
   },
   // The namespace_ids below are production's. They are account-wide, so every other environment gets its
   // own set from scripts/wrangler-render.mjs (by SIGMA_SHIP_ENV); a new limiter needs an id there too.

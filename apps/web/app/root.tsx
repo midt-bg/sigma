@@ -20,6 +20,7 @@ import { ErrorPage } from './components/ErrorPage';
 import { getCoverageMeta } from './lib/coverage';
 import { serializeJsonForScript } from './lib/json-ld';
 import { canonicalPathname } from './lib/canonical-path';
+import { budgetUrl } from './lib/sister-sites';
 import { sigmaVersion } from './lib/meta';
 import { withDbRetry } from './lib/retry';
 import { useRouteFocus } from './lib/route-focus';
@@ -50,7 +51,11 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   // Wrapped like the leaf loaders: this chrome read runs on every route, so a transient D1 fault
   // here would 500 the whole page (incl. the entity pages this PR targets) without the retry.
   const coverage = await withDbRetry(() => getCoverageMeta(getDb(context.cloudflare.env)));
-  return { ...coverage, origin: url.origin };
+  return {
+    ...coverage,
+    origin: url.origin,
+    budgetUrl: budgetUrl(context.cloudflare.env.BUDGET_URL),
+  };
 }
 
 // Scroll-restoration key for list pages. Filters and sort live in the query string under a stable
@@ -165,6 +170,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
         asOf={loaderData.asOf}
         refreshedAt={loaderData.refreshedAt}
         endYear={loaderData.coverageEndYear}
+        budgetUrl={loaderData.budgetUrl}
       />
       <ScrollToTop />
       <AccessibilityWidget />

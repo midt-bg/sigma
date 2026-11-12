@@ -8,10 +8,13 @@ export function SiteFooter({
   asOf,
   refreshedAt,
   endYear,
+  budgetUrl,
 }: {
   asOf?: string | null;
   refreshedAt?: string | null;
   endYear?: number | null;
+  /** СИГМА Бюджет (lib/sister-sites.ts); null leaves the link out. */
+  budgetUrl?: string | null;
 }) {
   const range = coverageRange(endYear ?? coverageEndYear(asOf));
   return (
@@ -50,6 +53,13 @@ export function SiteFooter({
               Отворен код
             </NewTabLink>
           </li>
+          {budgetUrl ? (
+            <li>
+              <NewTabLink className="sister-link" href={budgetUrl}>
+                СИГМА Бюджет
+              </NewTabLink>
+            </li>
+          ) : null}
         </ul>
       </div>
     </footer>

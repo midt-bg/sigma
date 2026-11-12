@@ -156,3 +156,52 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* СИГМА Бюджет, the sister site: one paragraph and a framed link to the other site */
+.budget-promo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4) var(--s-6);
+}
+.budget-promo p {
+  flex: 1 1 32rem;
+  max-width: 68ch;
+  margin: 0;
+  color: var(--ink-mid);
+}
+.budget-promo strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.budget-promo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-block-size: 44px;
+  padding: 0 var(--s-5);
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  font: 0.75rem/1.3 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.budget-promo-link::after {
+  content: '↗';
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+}
+.budget-promo-link:hover,
+.budget-promo-link:focus-visible {
+  background: var(--ink);
+  color: var(--paper);
+}
+.budget-promo-link:visited {
+  color: var(--ink);
+}
+.budget-promo-link:visited:hover {
+  color: var(--paper);
+}
