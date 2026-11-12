@@ -102,6 +102,11 @@
     "head_sampling_rate": 1,
     "logs": { "enabled": true, "head_sampling_rate": 1, "persist": true, "invocation_logs": false },
     "traces": { "enabled": false, "persist": true, "head_sampling_rate": 1 },
+    // The platform attaches the full request URL (and the parsed query) to every log event, even with
+    // invocation logs off — so a search text would land in the logs although request-log.ts records only
+    // whether a search was made and its length. Strip query strings from the logged URLs; the request
+    // itself is untouched, and the path stays in the log. (/privacy, „Технически записи".)
+    "redact_query_string": true,
     // Real-time Issues (wrangler 4.142+): a 5xx or an uncaught exception becomes an issue that the account's
     // „Real-Time Issue" notification sends by e-mail — the overloaded-database 500s went unnoticed for days.
     "issues": { "enabled": true },
