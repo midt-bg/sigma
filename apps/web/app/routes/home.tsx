@@ -288,7 +288,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <Link to="/analytics">Анализи</Link>
         </h2>
         <p className="section-hint">
-          Избери гледна точка към същите договори: движение на пари, място, време или конкуренция.
+          Избери гледна точка към същите договори: време, място, движение на пари или конкуренция.
         </p>
         <div className="tiles">
           {ANALYTICS_LENSES.map((item) => (
