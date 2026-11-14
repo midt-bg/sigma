@@ -1,0 +1,6 @@
+approval_policy = "never"
+default_permissions = ":danger-full-access"
+model_reasoning_effort = "ultra"
+
+[agents]
+default_subagent_reasoning_effort = "max"
