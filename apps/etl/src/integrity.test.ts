@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, throwingD1 } from '@sigma/test-support';
-import { runServedIntegrityGate, type GateLog } from './integrity';
+import { BREATHER_MS, HEAVY_ROWS, runServedIntegrityGate, type GateLog } from './integrity';
 
 interface Captured {
   level: 'info' | 'warn' | 'error';
@@ -32,6 +32,7 @@ interface Seed {
   rollups?: boolean; // home_totals present (precompute ran) → rollup-reconciliation RUNS, not skips
   homeDrift?: number; // home_totals.value_eur − SUM(amount_eur); non-zero → a caught hard failure
   annexWrong?: number; // annex_total_suspect rows summed at a value other than signing — a hard failure
+  reconcileRowsRead?: number; // what D1 reports the reconciliation read — a table's worth earns a breather
 }
 function servedD1(seed: Seed = {}): D1Database {
   const clean = 1_000_000;
@@ -53,6 +54,7 @@ function servedD1(seed: Seed = {}): D1Database {
     // set, home_totals.value_eur — exactly the drift on a ministry-visible total this check must catch.
     {
       when: 'clean_total',
+      meta: { rows_read: seed.reconcileRowsRead ?? 0 },
       all: [
         {
           clean_total: clean,
@@ -144,6 +146,19 @@ describe('runServedIntegrityGate', () => {
     expect(violation?.event.checks).toEqual([
       expect.objectContaining({ name: 'rollup-reconciliation' }),
     ]);
+  });
+
+  it("waits after a query that read a table's worth of rows, and only after such a query", async () => {
+    const pausesFor = async (seed: Seed): Promise<number[]> => {
+      const pauses: number[] = [];
+      const pause = async (ms: number) => void pauses.push(ms);
+      await expect(runServedIntegrityGate(servedD1(seed), fakeLog(), pause)).resolves.toBe(true);
+      return pauses;
+    };
+    expect(await pausesFor({ rollups: true, reconcileRowsRead: HEAVY_ROWS })).toEqual([
+      BREATHER_MS,
+    ]);
+    expect(await pausesFor({ rollups: true, reconcileRowsRead: HEAVY_ROWS - 1 })).toEqual([]);
   });
 
   it('lets a failed query through: that is not a verdict, and the step retries it', async () => {
