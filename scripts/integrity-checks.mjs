@@ -90,27 +90,37 @@ export async function checkRollupReconciliation(runner) {
     };
   }
 
-  // One combined query, not a dozen round-trips: on D1/wrangler each runner call is a process spawn,
-  // so fold every reconciliation number into a single SELECT of scalar subqueries. The join clauses
-  // mirror precompute's own rollups exactly (authority_totals = tenders→authorities; company_totals =
-  // bidders AND tenders; flow_pairs = tenders→authorities AND bidders); the two orphan counts are the
-  // exact structural exclusions, asserted to be 0 (normalize gives every contract a parent tender —
-  // synthetic if needed — with a non-null authority, and a bidder row).
+  // One combined query, not a dozen round-trips: on D1/wrangler each runner call is a process spawn.
+  // And ONE pass over the clean contracts, not one per number: each contract is read once and looked up
+  // in tenders, authorities and bidders by primary key, and every attributed sum and orphan count is a
+  // conditional aggregate over that single pass. Six separate scalar subqueries each re-read all of the
+  // contracts with their own joins — 3.6 million rows and about six seconds on the served D1, enough to
+  // trip its ten-second resource window on every attempt and leave the cron gate unverified. This reads
+  // a quarter of that. The LEFT JOINs mirror precompute's own inner joins exactly (authority_totals =
+  // tenders→authorities; company_totals = bidders AND tenders; flow_pairs = tenders→authorities AND
+  // bidders): a row counts towards a sum only when every table that rollup joins is present, and the
+  // two orphan counts are the exact structural exclusions, asserted to be 0 (normalize gives every
+  // contract a parent tender — synthetic if needed — with a non-null authority, and a bidder row).
   const r =
     (
       await rows(
         runner,
         'SELECT' +
-          ' (SELECT COALESCE(SUM(amount_eur), 0) FROM contracts WHERE amount_eur IS NOT NULL) AS clean_total,' +
-          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id WHERE c.amount_eur IS NOT NULL) AS auth_attr,' +
+          ' COALESCE(SUM(c.amount_eur), 0) AS clean_total,' +
+          ' COALESCE(SUM(CASE WHEN a.id IS NOT NULL THEN c.amount_eur END), 0) AS auth_attr,' +
           ' (SELECT COALESCE(SUM(spent_eur), 0) FROM authority_totals) AS auth_rollup,' +
-          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL) AS bidder_attr,' +
+          ' COALESCE(SUM(CASE WHEN b.id IS NOT NULL AND t.id IS NOT NULL THEN c.amount_eur END), 0) AS bidder_attr,' +
           ' (SELECT COALESCE(SUM(won_eur), 0) FROM company_totals) AS company_rollup,' +
-          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id WHERE c.amount_eur IS NOT NULL) AS flow_attr,' +
+          ' COALESCE(SUM(CASE WHEN a.id IS NOT NULL AND b.id IS NOT NULL THEN c.amount_eur END), 0) AS flow_attr,' +
           ' (SELECT COALESCE(SUM(won_eur), 0) FROM flow_pairs) AS flow_rollup,' +
           ' (SELECT value_eur FROM home_totals) AS home_value,' +
-          ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tenders t JOIN authorities a ON a.id = t.authority_id WHERE t.id = c.tender_id)) AS orphan_auth_rows,' +
-          ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND (NOT EXISTS (SELECT 1 FROM bidders b WHERE b.id = c.bidder_id) OR NOT EXISTS (SELECT 1 FROM tenders t WHERE t.id = c.tender_id))) AS orphan_bidder_rows',
+          ' COALESCE(SUM(a.id IS NULL), 0) AS orphan_auth_rows,' +
+          ' COALESCE(SUM(b.id IS NULL OR t.id IS NULL), 0) AS orphan_bidder_rows' +
+          ' FROM contracts c' +
+          ' LEFT JOIN tenders t ON t.id = c.tender_id' +
+          ' LEFT JOIN authorities a ON a.id = t.authority_id' +
+          ' LEFT JOIN bidders b ON b.id = c.bidder_id' +
+          ' WHERE c.amount_eur IS NOT NULL',
       )
     )[0] || {};
   const cleanTotal = num(r.clean_total);
