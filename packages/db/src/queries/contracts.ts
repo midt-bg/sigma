@@ -770,7 +770,7 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       procedureGroup(r.procedure_type).label,
       r.signed_at,
       cents(r.amount_eur),
-      r.eu_funded === 1 ? '1' : '0',
+      r.eu_funded == null ? null : r.eu_funded === 1 ? '1' : '0',
       r.bids_received,
       r.framework === FRAMEWORK_AGREEMENT ? cents(r.signing_value_eur) : null,
       r.value_flag,
