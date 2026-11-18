@@ -30,6 +30,9 @@ DROP TABLE IF EXISTS refresh_joint_authority_members;
 DROP TABLE IF EXISTS refresh_joint_tender_sources;
 DROP TABLE IF EXISTS refresh_amendment_winners;
 DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
+DROP TABLE IF EXISTS refresh_amendment_ocids;
+DROP TABLE IF EXISTS refresh_amendment_served_bridge;
+DROP TABLE IF EXISTS refresh_amendment_rekeyed;
 -- The touched sets are the one kind of scratch that carries meaning ACROSS runs, so they are created IF
 -- NOT EXISTS and never dropped or cleared here. Every batch that inserts or re-values a contract records
 -- the contract/bidder/authority ids it touched, and company-totals / authority-totals recompute exactly
@@ -56,8 +59,8 @@ CREATE TABLE IF NOT EXISTS refresh_touched_authorities (authority_id TEXT PRIMAR
 -- #286: recover the УНП for OCDS amendments via the tender.id bridge before any raw_amendments read
 -- below, mirroring derive-amendments.sql (raw_tenders first, then the raw_contracts synthetic-tender
 -- fallback). In the slice path the raw tables hold only the loaded window, so an OCDS amendment whose
--- procedure was staged outside the window stays unbridged until the next full derive — best-effort by
--- design; the full pipeline is authoritative.
+-- procedure was staged outside the window is not bridged by that UPDATE; the slice-only fallback right
+-- after it asks the served `tenders` instead, which hold every procedure ever staged.
 -- KEEP THE BRIDGE UPDATE BELOW IN LOCKSTEP with scripts/derive-amendments.sql: the UPDATE between the
 -- @bridge-lockstep markers must stay byte-for-byte equivalent to the full path (packages/db/src/
 -- amendments-bridge-lockstep.test.ts enforces it). The prefer-EOP dedup INTENTIONALLY DIVERGES from the
@@ -66,6 +69,12 @@ CREATE TABLE IF NOT EXISTS refresh_touched_authorities (authority_id TEXT PRIMAR
 -- scratch. Index raw_contracts(tender_ext_id) so the fallback lookups don't full-scan raw_contracts per
 -- OCDS row (raw_tenders(tender_id) is already indexed); ORDER BY unp keeps the recovered УНП deterministic.
 CREATE INDEX IF NOT EXISTS idx_raw_contracts_tender_ext_id ON raw_contracts(tender_ext_id);
+-- Remember the OCID each OCDS amendment arrived with: the bridges below overwrite it, and the clean-up
+-- after them needs it to find the row an earlier window served under that OCID.
+CREATE TABLE refresh_amendment_ocids AS
+SELECT id, unp AS ocid
+FROM raw_amendments
+WHERE source LIKE 'ocds:%' AND unp LIKE 'ocds-%';
 -- @bridge-lockstep start
 UPDATE raw_amendments
 SET unp = COALESCE(
@@ -91,6 +100,78 @@ WHERE source LIKE 'ocds:%'
     )
   );
 -- @bridge-lockstep end
+
+-- Slice-only fallback for the bridge above. A refresh window holds a few days of the feeds, and an annex
+-- is usually signed long after its procedure was announced — so for most OCDS amendments the procedure
+-- is in neither raw_tenders nor raw_contracts of this window, and the UPDATE above leaves the OCID in
+-- place. Such a row then matched nothing: not its contract, and not the EOP annex it is the twin of, so
+-- the prefer-EOP dedup below let it through and it was served as a dead row beside the real annex.
+--
+-- The served `tenders` are the cumulative form of the same two sources: eop_tender_id is the EOP
+-- tenderId of a header procedure and, for a contract-only procedure, the id folded from its contracts
+-- (normalize-raw.sql §2a/§2b, mirrored further down in this file), and source_id is the УНП. So ask
+-- them — under the same rules as the window bridge:
+--   - only for an amendment the window bridge had nothing to say about. Where the window names the
+--     procedure it has already decided, including a refusal on ambiguity, and the served table does not
+--     overrule it;
+--   - only when the id resolves to exactly ONE served УНП; otherwise the OCID stays as the honest residual;
+--   - never onto an OCDS-only procedure (source_id is itself an OCID) — that is no УНП.
+-- `tenders` has no index on eop_tender_id, so this is written as ONE scan of the table probing the
+-- window's handful of ids, never a lookup per amendment (which is a scan per amendment).
+CREATE TABLE refresh_amendment_served_bridge AS
+SELECT t.eop_tender_id AS tender_ext_id, MIN(t.source_id) AS unp
+FROM tenders t
+WHERE t.eop_tender_id IN (
+    SELECT o.tender_ext_id
+    FROM raw_amendments o
+    WHERE o.source LIKE 'ocds:%'
+      AND o.unp LIKE 'ocds-%'
+      AND o.tender_ext_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM raw_tenders rt
+                        WHERE rt.tender_id = o.tender_ext_id AND rt.unp IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM raw_contracts rc
+                        WHERE rc.tender_ext_id = o.tender_ext_id AND rc.unp IS NOT NULL)
+  )
+  AND t.source_id NOT LIKE 'ocds-%'
+GROUP BY t.eop_tender_id
+HAVING COUNT(DISTINCT t.source_id) = 1;
+
+UPDATE raw_amendments
+SET unp = (
+  SELECT b.unp FROM refresh_amendment_served_bridge b
+  WHERE b.tender_ext_id = raw_amendments.tender_ext_id
+)
+WHERE source LIKE 'ocds:%'
+  AND unp LIKE 'ocds-%'
+  AND tender_ext_id IN (SELECT tender_ext_id FROM refresh_amendment_served_bridge);
+
+-- Converge what earlier windows left behind. A window overlaps the previous ones, so an amendment that
+-- was served under its OCID is staged again — and this time it is bridged. From here on it is either
+-- dropped as the twin of an EOP annex or promoted under its УНП, and in both cases under a natural_key
+-- that no longer matches the old row; nothing below would ever replace or remove that one. Drop it here,
+-- matched on the OCID it was served under plus the contract and document numbers, so only the very row
+-- this amendment used to be goes. A row whose OCID still carries contracts of its own (an OCDS-only
+-- procedure) is left alone: there the OCID is the key the contract hangs on.
+CREATE TABLE refresh_amendment_rekeyed AS
+SELECT o.ocid, r.contract_number, r.document_number
+FROM refresh_amendment_ocids o
+JOIN raw_amendments r ON r.id = o.id
+WHERE r.unp NOT LIKE 'ocds-%';
+
+DELETE FROM amendments
+WHERE source LIKE 'ocds:%'
+  AND unp IN (SELECT ocid FROM refresh_amendment_rekeyed)
+  AND EXISTS (
+    SELECT 1 FROM refresh_amendment_rekeyed k
+    WHERE k.ocid = amendments.unp
+      AND k.contract_number IS amendments.contract_number
+      AND k.document_number IS amendments.document_number
+  )
+  AND NOT EXISTS (SELECT 1 FROM contracts c WHERE c.tender_id = 't:' || amendments.unp);
+
+DROP TABLE IF EXISTS refresh_amendment_ocids;
+DROP TABLE IF EXISTS refresh_amendment_served_bridge;
+DROP TABLE IF EXISTS refresh_amendment_rekeyed;
 
 -- #306: slice-safe value-anchor resolver. Links EOP annexes whose annex-side number is in a different
 -- namespace than the contract's filing number (annex carries an internal number like 148846; the contract
