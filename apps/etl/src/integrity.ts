@@ -33,8 +33,24 @@ const brief = (r: IntegrityResult) => ({ name: r.name, detail: r.detail });
 // staging-reconciliation self-skips (pipeline_stats is not shipped). FX priced-ness is not yet gated —
 // the Worker DOES load FX since #263, so a follow-up check belongs in the shared roster (#154).
 // A query that fails (an overloaded D1) throws: that is not a verdict, and the step retries it.
-export async function runServedIntegrityGate(db: D1Database, log: GateLog): Promise<boolean> {
-  const runner = async (sql: string) => (await db.prepare(sql).all()).results;
+//
+// The served D1 allows only so much work inside any ten seconds, and the gate runs straight after the
+// slice derive has spent most of that. Its heavier checks read the contracts whole, so run back to back
+// they add up to the limit by themselves — and a retry then repeats the same burst and fails the same
+// way. After a query that read a table's worth of rows the gate therefore waits before the next one.
+export const HEAVY_ROWS = 100_000;
+export const BREATHER_MS = 2_000;
+
+export async function runServedIntegrityGate(
+  db: D1Database,
+  log: GateLog,
+  pause: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
+): Promise<boolean> {
+  const runner = async (sql: string) => {
+    const { results, meta } = await db.prepare(sql).all();
+    if (Number(meta?.rows_read ?? 0) >= HEAVY_ROWS) await pause(BREATHER_MS);
+    return results;
+  };
   const results = await runIntegrityChecks(runner);
   const summary = summarizeIntegrity(results, 'cron refresh');
   if (summary.warned.length) {
