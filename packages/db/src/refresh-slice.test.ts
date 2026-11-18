@@ -1028,6 +1028,206 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  it('bridges an OCDS annex through the served tenders when its procedure is outside the window', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-served-bridge-'));
+    try {
+      // A procedure with УНП `unp` / tender.id `tenderId` and one contract. `withHeader: false` stages it
+      // contract-only (no raw_tenders row) — the served tender is then synthetic and takes its EOP id
+      // from the contract.
+      const procedure = (o: {
+        unp: string;
+        tenderId: string;
+        contract: string;
+        eik: string;
+        withHeader?: boolean;
+      }): string =>
+        `${
+          o.withHeader === false
+            ? ''
+            : `INSERT INTO raw_tenders
+           (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+            cpv_code, cpv_description, contract_kind, estimated_value, currency, authority_name,
+            authority_eik, authority_type, published_at)
+         VALUES
+           ('eop:tenders:2026-06-01', 2026, '2026-06-09T00:00:00Z', '${o.unp}', '${o.tenderId}', 'open',
+            'Old tender', '45000000', 'Construction', 'works', 5000, 'BGN',
+            'Authority SB', '${o.eik}', 'public', '2026-06-01');`
+        }
+         INSERT INTO raw_contracts
+           (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+            published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+            cpv_description, contract_kind, estimated_value, procurement_currency, legal_basis,
+            award_criteria, authority_name, authority_eik, authority_type, main_activity, notice_type,
+            lot_id, contract_number, contract_date, signing_value, currency, contract_subject,
+            awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
+            eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
+         VALUES
+           ('eop:contracts:2026-06-01', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-${o.contract}',
+            '2026-06-01', '${o.unp}', '${o.tenderId}', 'open', 'Old tender', '45000000',
+            'Construction', 'works', 5000, 'BGN', 'basis', 'lowest', 'Authority SB', '${o.eik}',
+            'public', 'activity', 'notice', NULL, '${o.contract}', '2026-06-02', 1000, 'BGN',
+            'Old contract', 0, '887777778', 'Bidder SB', 'BG', 'small', 0, 1, 1, 0, 0, 30);`;
+
+      const eopAnnex = (unp: string, contract: string): string =>
+        `INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+            procurement_subject, contract_kind, value_before, value_after, value_delta, currency, description)
+         VALUES
+           ('eop:annexes:2026-06-01', 2026, 'eop', '2026-06-09T00:00:00Z', '1', 'AMD-E-${contract}',
+            '${contract}', '2026-06-02', '2026-06-03', '${unp}', '833456781', 'Authority SB',
+            'Old tender', 'works', 1000, 1500, 500, 'BGN', 'EOP annex');`;
+
+      // The OCDS amendment exactly as a later window stages it: keyed by the OCID, carrying only the
+      // tender.id — and NOTHING else of its procedure in the window.
+      const ocdsAnnex = (o: { ocid: string; tenderId: string; contract: string }): string =>
+        `INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, tender_ext_id, authority_eik,
+            authority_name, procurement_subject, contract_kind, value_before, value_after, value_delta,
+            currency, description)
+         VALUES
+           ('ocds:2026-09-01', 2026, 'ocds', '2026-09-02T00:00:00Z', '1', 'REL-${o.contract}',
+            '${o.contract}', '2026-06-02', '2026-09-01', '${o.ocid}', '${o.tenderId}', '833456781',
+            'Authority SB', 'Old tender', 'works', 1000, NULL, NULL, 'BGN', 'OCDS annex');`;
+
+      const served = (dbPath: string, contract: string) =>
+        sqliteJson<{ unp: string; source: string }>(
+          dbPath,
+          `SELECT unp, CASE WHEN source LIKE 'ocds:%' THEN 'ocds' ELSE 'eop' END AS source
+           FROM amendments WHERE contract_number = '${contract}' ORDER BY source`,
+        );
+      const annexCount = (dbPath: string, contract: string) =>
+        sqliteJson<{ annex_count: number }>(
+          dbPath,
+          `SELECT annex_count FROM contracts WHERE contract_number = '${contract}'`,
+        )[0]?.annex_count;
+      const ocidRows = (dbPath: string) =>
+        sqliteJson<{ n: number }>(
+          dbPath,
+          "SELECT COUNT(*) AS n FROM amendments WHERE unp LIKE 'ocds-%'",
+        )[0]?.n;
+
+      // Twin — the EOP annex is already served; months later the OCDS release of the same annex arrives
+      // alone. It must resolve through the served tender and be dropped as a twin, not served beside it.
+      const twin = resolve(dir, 'twin.sqlite');
+      initWorkDb(twin);
+      sqlite(
+        twin,
+        `${procedure({ unp: 'UNP-SB', tenderId: 'TSB', contract: 'C-SB', eik: '833456781' })}
+         ${eopAnnex('UNP-SB', 'C-SB')}`,
+      );
+      readScript(twin, refreshSlicePath);
+      resetRawStaging(twin);
+      sqlite(twin, ocdsAnnex({ ocid: 'ocds-e82gsb-TSB', tenderId: 'TSB', contract: 'C-SB' }));
+      readScript(twin, refreshSlicePath);
+      expect(served(twin, 'C-SB')).toEqual([{ unp: 'UNP-SB', source: 'eop' }]);
+      expect(ocidRows(twin)).toBe(0);
+      expect(annexCount(twin, 'C-SB')).toBe(1);
+
+      // OCDS-only — no EOP annex exists. The amendment is served on its contract under the УНП, through a
+      // header tender and through a contract-only (synthetic) one alike.
+      for (const withHeader of [true, false]) {
+        const only = resolve(dir, `only-${withHeader}.sqlite`);
+        initWorkDb(only);
+        sqlite(
+          only,
+          procedure({
+            unp: 'UNP-SB',
+            tenderId: 'TSB',
+            contract: 'C-SB',
+            eik: '833456781',
+            withHeader,
+          }),
+        );
+        readScript(only, refreshSlicePath);
+        resetRawStaging(only);
+        sqlite(only, ocdsAnnex({ ocid: 'ocds-e82gsb-TSB', tenderId: 'TSB', contract: 'C-SB' }));
+        readScript(only, refreshSlicePath);
+        expect(served(only, 'C-SB')).toEqual([{ unp: 'UNP-SB', source: 'ocds' }]);
+        expect(annexCount(only, 'C-SB')).toBe(1);
+        expect(sqlite(only, 'PRAGMA foreign_key_check;').trim()).toBe('');
+      }
+
+      // Refusals — the OCID stays as the honest residual when the served tenders do not name exactly one
+      // УНП for the id: no served procedure carries it, or two do.
+      const refused = resolve(dir, 'refused.sqlite');
+      initWorkDb(refused);
+      sqlite(
+        refused,
+        `${procedure({ unp: 'UNP-SB', tenderId: 'TSB', contract: 'C-SB', eik: '833456781' })}
+         ${procedure({ unp: 'UNP-SB-2', tenderId: 'TSB2', contract: 'C-SB-2', eik: '833456781' })}`,
+      );
+      readScript(refused, refreshSlicePath);
+      sqlite(refused, "UPDATE tenders SET eop_tender_id = 'TSB' WHERE source_id = 'UNP-SB-2';");
+      resetRawStaging(refused);
+      sqlite(
+        refused,
+        `${ocdsAnnex({ ocid: 'ocds-e82gsb-TSB', tenderId: 'TSB', contract: 'C-SB' })}
+         ${ocdsAnnex({ ocid: 'ocds-e82gsb-NONE', tenderId: 'T-NONE', contract: 'C-NONE' })}`,
+      );
+      readScript(refused, refreshSlicePath);
+      expect(
+        sqliteJson<{ unp: string }>(
+          refused,
+          "SELECT unp FROM amendments WHERE source LIKE 'ocds:%' ORDER BY unp",
+        ),
+      ).toEqual([{ unp: 'ocds-e82gsb-NONE' }, { unp: 'ocds-e82gsb-TSB' }]);
+      expect(annexCount(refused, 'C-SB')).toBe(0);
+
+      // Convergence — an earlier window served the amendment under its OCID (the state this fallback
+      // ends). When the overlapping next window stages it again it is bridged, and the old row must go
+      // with it: no dead OCID row is left beside the EOP annex, nor beside the re-keyed OCDS-only one.
+      for (const withEop of [true, false]) {
+        const stale = resolve(dir, `stale-${withEop}.sqlite`);
+        initWorkDb(stale);
+        sqlite(
+          stale,
+          `${procedure({ unp: 'UNP-SB', tenderId: 'TSB', contract: 'C-SB', eik: '833456781' })}
+           ${withEop ? eopAnnex('UNP-SB', 'C-SB') : ''}`,
+        );
+        readScript(stale, refreshSlicePath);
+        sqlite(
+          stale,
+          `INSERT INTO amendments (id, natural_key, contract_number, unp, value_before, currency,
+             published_at, document_number, source)
+           VALUES
+             ('am:ocds-e82gsb-TSB:C-SB:REL-C-SB', 'am:ocds-e82gsb-TSB:C-SB:REL-C-SB', 'C-SB',
+              'ocds-e82gsb-TSB', 1000, 'BGN', '2026-09-01', 'REL-C-SB', 'ocds:2026-09-01'),
+             -- another amendment of the same procedure, served under the OCID but NOT staged again:
+             -- nothing in this window speaks for it, so it stays.
+             ('am:ocds-e82gsb-TSB:C-SB:REL-OLDER', 'am:ocds-e82gsb-TSB:C-SB:REL-OLDER', 'C-SB',
+              'ocds-e82gsb-TSB', 900, 'BGN', '2026-08-01', 'REL-OLDER', 'ocds:2026-08-01');`,
+        );
+        resetRawStaging(stale);
+        sqlite(stale, ocdsAnnex({ ocid: 'ocds-e82gsb-TSB', tenderId: 'TSB', contract: 'C-SB' }));
+        readScript(stale, refreshSlicePath);
+        expect(
+          sqliteJson<{ unp: string; document_number: string }>(
+            stale,
+            'SELECT unp, document_number FROM amendments ORDER BY document_number',
+          ),
+        ).toEqual([
+          ...(withEop
+            ? [{ unp: 'UNP-SB', document_number: 'AMD-E-C-SB' }]
+            : [{ unp: 'UNP-SB', document_number: 'REL-C-SB' }]),
+          { unp: 'ocds-e82gsb-TSB', document_number: 'REL-OLDER' },
+        ]);
+        expect(annexCount(stale, 'C-SB')).toBe(1);
+      }
+
+      // The scratch tables of the fallback do not outlive the batch that made them.
+      expect(
+        sqliteJson<{ name: string }>(
+          twin,
+          "SELECT name FROM sqlite_master WHERE name LIKE 'refresh_amendment_%'",
+        ),
+      ).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not insert an OCDS duplicate after an existing EOP contract', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
