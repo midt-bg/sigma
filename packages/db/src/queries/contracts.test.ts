@@ -420,6 +420,21 @@ describe('streamContractsCsv', () => {
     expect(lines[2]).toMatch(/,0\.01,0,3,,value_low$/);
   });
 
+  it.each([
+    { eu_funded: null, expected: '' },
+    { eu_funded: 0, expected: '0' },
+    { eu_funded: 1, expected: '1' },
+  ])('exports eu_funded=$eu_funded as "$expected"', async ({ eu_funded, expected }) => {
+    const row = { ...csvRow, eu_funded };
+    const lines = (await streamContractsCsv(csvDb([[row], []]).db, {}).text())
+      .trimEnd()
+      .split('\n');
+    const column = lines[0]!.split(',').indexOf('eu_funded');
+    expect(column).toBeGreaterThanOrEqual(0);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]!.split(',')[column]).toBe(expected);
+  });
+
   it('emits only the header when the filtered set is empty', async () => {
     const csv = await streamContractsCsv(csvDb([[]]).db, { authority: '999999999' }).text();
     expect(csv.split('\n').filter(Boolean)).toHaveLength(1); // header row only
