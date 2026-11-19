@@ -1,25 +1,16 @@
-// Per-isolate guard in front of the loaders (and so D1) for edge-cache misses:
-//   • single-flight — identical misses wait for the first one's cache entry instead of each reading D1;
-//   • a cap on renders under way, past which a request is shed with a 503 instead of queueing behind D1.
+// Per-isolate single-flight in front of the loaders (and so D1) for edge-cache misses: identical misses wait
+// for the first one's cache entry instead of each reading D1.
 // ponytail: per isolate only. Cloudflare runs many isolates per colo, so this tames one herd on one isolate,
 // not the whole site; coalescing across isolates would need a Durable Object.
-
-// How many renders one isolate runs at once before it sheds. A knob: raise it if 503s show up at load D1
-// still has room for.
-export const MAX_RENDERING = 20;
+// There is deliberately no cap on renders under way. One counted per isolate protected nothing — the
+// database is shared by every isolate — and refused visitors the database had room for.
 
 // How long an identical miss waits for the first render before it renders itself. The first render settles
 // when its cache entry is stored, and a put whose request was cancelled (the visitor left) may never
 // settle: without a bound, every later miss of that page on the isolate waited until its visitor gave up.
 export const FLIGHT_MS = 10_000;
 
-// How long a render holds its slot at most. The runtime drops a request whose visitor left without running
-// the rest of it, `finally` included, so a slot released only there stayed taken for the isolate's life:
-// twenty abandoned renders and the isolate shed every miss after them. A slot this old is free again.
-export const RENDER_MS = 30_000;
-
 const flights = new Map<string, { done: Promise<void>; at: number }>();
-const renders = new Set<{ at: number }>();
 
 /**
  * The identical miss already rendering in this isolate: settles once its cache entry is stored (or not),
@@ -46,20 +37,4 @@ export function claim(key: string): () => void {
     if (flights.get(key) === flight) flights.delete(key);
     settle();
   };
-}
-
-/** Run a render within the cap; `null` when the isolate is already at it. */
-export async function withinCap<T>(render: () => Promise<T>): Promise<T | null> {
-  const now = Date.now();
-  if (renders.size >= MAX_RENDERING) {
-    for (const held of renders) if (now - held.at >= RENDER_MS) renders.delete(held);
-    if (renders.size >= MAX_RENDERING) return null;
-  }
-  const slot = { at: now };
-  renders.add(slot);
-  try {
-    return await render();
-  } finally {
-    renders.delete(slot);
-  }
 }

@@ -14,7 +14,7 @@ import {
   setAllowHeader,
 } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
-import { claim, inFlight, withinCap } from './render-gate';
+import { claim, inFlight } from './render-gate';
 import { withRequestLog } from './request-log';
 
 declare module 'react-router' {
@@ -243,12 +243,7 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
   const settle = key ? claim(key.url) : () => {};
   let stored: Promise<unknown> = Promise.resolve();
   try {
-    const response =
-      (await withinCap(() => requestHandler(request, { cloudflare: { env, ctx } }))) ??
-      new Response('Сайтът е претоварен. Опитайте отново след малко.', {
-        status: 503,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      });
+    const response = await requestHandler(request, { cloudflare: { env, ctx } });
     const hardened = await finish(request, response, key, ctx);
     stored = hardened.stored;
     return hardened.response;

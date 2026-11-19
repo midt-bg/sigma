@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FLIGHT_MS, MAX_RENDERING, RENDER_MS } from './render-gate';
+import { FLIGHT_MS } from './render-gate';
 
 // Every request the stubbed React Router handler (the loaders) receives; while `held.gate` is set, every
 // render waits on it, as for a slow D1.
@@ -303,50 +303,15 @@ describe('app.ts edge cache middleware', () => {
     }
   });
 
-  it('sheds a render past the in-flight cap with a 503 the client is told to retry', async () => {
+  it('renders every concurrent miss of distinct pages: no cap refuses a visitor', async () => {
     let release!: () => void;
     held.gate = new Promise((resolve) => (release = resolve));
-    // Distinct pages, so none waits for another: each holds a render slot.
-    const busy = Array.from({ length: MAX_RENDERING }, (_, i) =>
-      get(`https://x/contracts?bidder=${i}`),
-    );
-    await vi.waitFor(() => expect(rendered).toHaveLength(MAX_RENDERING));
-
-    const shed = await get('https://x/contracts?bidder=over');
-    expect(shed.status).toBe(503);
-    expect(shed.headers.get('Retry-After')).toBe('30');
-    expect(shed.headers.get('Cache-Control')).toBe('no-store');
-    expect(rendered).toHaveLength(MAX_RENDERING);
-
+    // Distinct pages, so none waits for another; far more than any isolate used to admit at once.
+    const busy = Array.from({ length: 60 }, (_, i) => get(`https://x/contracts?bidder=${i}`));
+    await vi.waitFor(() => expect(rendered).toHaveLength(60));
     held.gate = null;
     release();
-    await Promise.all(busy);
-    // The slots are free again.
-    expect((await get('https://x/contracts?bidder=over')).edge).toBe('MISS');
-  });
-
-  it('frees the slot of a render that never finished, so abandoned renders cannot fill the cap for good', async () => {
-    // The visitors left mid-render: the runtime dropped those requests and their slots were never released.
-    let release!: () => void;
-    held.gate = new Promise((resolve) => (release = resolve));
-    const abandoned = Array.from({ length: MAX_RENDERING }, (_, i) =>
-      get(`https://x/contracts?bidder=gone-${i}`),
-    );
-    await vi.waitFor(() => expect(rendered).toHaveLength(MAX_RENDERING));
-    held.gate = null;
-    expect((await get('https://x/contracts?bidder=next')).status).toBe(503);
-
-    vi.useFakeTimers({ toFake: ['Date'] });
-    try {
-      vi.setSystemTime(Date.now() + RENDER_MS);
-      expect((await get('https://x/contracts?bidder=next')).edge).toBe('MISS');
-    } finally {
-      vi.useRealTimers();
-    }
-    // A late finish of an expired render takes nothing from the renders that came after it.
-    release();
-    await Promise.all(abandoned);
-    expect((await get('https://x/contracts?bidder=after')).edge).toBe('MISS');
+    expect((await Promise.all(busy)).map((r) => r.status)).toEqual(Array(60).fill(200));
   });
 
   it('never serves the ?bids=1 body for /contracts (CWE-349, #56)', async () => {
