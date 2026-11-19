@@ -7,7 +7,7 @@
 //   SIGMA_D1_NAME/SIGMA_D1_ID           the idle slot, the only one written
 //   SIGMA_LIVE_D1_NAME/SIGMA_LIVE_D1_ID the live slot, read for the published-link gate
 import { execFileSync, spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -175,6 +175,14 @@ export function slotState(name, runId, read = d1Json, anyRun = false) {
   const where = anyRun ? '' : ` WHERE run_id=${sqlLiteral(runId)}`;
   return new Map(
     read(name, `SELECT stage, detail FROM rebuild_state${where}`).map((r) => [r.stage, r.detail]),
+  );
+}
+
+/** The partidas the live slot has read. A slot that predates the register has none to offer. */
+export function livePartidas(read) {
+  if (!read("SELECT 1 AS found FROM sqlite_master WHERE name='registry_deeds'").length) return [];
+  return read("SELECT eik FROM registry_deeds WHERE outcome='ok' ORDER BY eik").map((r) =>
+    String(r.eik),
   );
 }
 
@@ -541,6 +549,11 @@ async function main() {
     // `--defer-baseline`: the winners are only half the register. The rest — the companies the
     // declarations name — are known after stage 5 reads them, and the catch-up pass there accepts the
     // baseline for both sets. A baseline accepted here would call the register complete too early.
+    // The live slot's partidas come along: a from-scratch build knows the winners and the companies a
+    // declaration names by ЕИК, not the ones the live register reached by name, and the declarations are
+    // read against whatever this stage leaves.
+    const carried = join(work, 'live-partidas.txt');
+    writeFileSync(carried, livePartidas((sql) => d1Json(live.name, sql)).join('\n'));
     await step('registry', [
       'scripts/tr/rebuild-registry.mjs',
       '--db',
@@ -548,6 +561,8 @@ async function main() {
       '--slot',
       target.name,
       '--defer-baseline',
+      '--carried',
+      carried,
     ]);
     // The accepted baseline is written after the last batch, so the cursors travel once more — a
     // resumed rebuild must not inherit a registry that still calls itself "building".
