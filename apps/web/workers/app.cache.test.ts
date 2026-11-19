@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FLIGHT_MS, MAX_RENDERING } from './render-gate';
+import { FLIGHT_MS, MAX_RENDERING, RENDER_MS } from './render-gate';
 
 // Every request the stubbed React Router handler (the loaders) receives; while `held.gate` is set, every
 // render waits on it, as for a slow D1.
@@ -323,6 +323,30 @@ describe('app.ts edge cache middleware', () => {
     await Promise.all(busy);
     // The slots are free again.
     expect((await get('https://x/contracts?bidder=over')).edge).toBe('MISS');
+  });
+
+  it('frees the slot of a render that never finished, so abandoned renders cannot fill the cap for good', async () => {
+    // The visitors left mid-render: the runtime dropped those requests and their slots were never released.
+    let release!: () => void;
+    held.gate = new Promise((resolve) => (release = resolve));
+    const abandoned = Array.from({ length: MAX_RENDERING }, (_, i) =>
+      get(`https://x/contracts?bidder=gone-${i}`),
+    );
+    await vi.waitFor(() => expect(rendered).toHaveLength(MAX_RENDERING));
+    held.gate = null;
+    expect((await get('https://x/contracts?bidder=next')).status).toBe(503);
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + RENDER_MS);
+      expect((await get('https://x/contracts?bidder=next')).edge).toBe('MISS');
+    } finally {
+      vi.useRealTimers();
+    }
+    // A late finish of an expired render takes nothing from the renders that came after it.
+    release();
+    await Promise.all(abandoned);
+    expect((await get('https://x/contracts?bidder=after')).edge).toBe('MISS');
   });
 
   it('never serves the ?bids=1 body for /contracts (CWE-349, #56)', async () => {

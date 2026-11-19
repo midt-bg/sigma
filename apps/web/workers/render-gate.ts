@@ -13,8 +13,13 @@ export const MAX_RENDERING = 20;
 // settle: without a bound, every later miss of that page on the isolate waited until its visitor gave up.
 export const FLIGHT_MS = 10_000;
 
+// How long a render holds its slot at most. The runtime drops a request whose visitor left without running
+// the rest of it, `finally` included, so a slot released only there stayed taken for the isolate's life:
+// twenty abandoned renders and the isolate shed every miss after them. A slot this old is free again.
+export const RENDER_MS = 30_000;
+
 const flights = new Map<string, { done: Promise<void>; at: number }>();
-let rendering = 0;
+const renders = new Set<{ at: number }>();
 
 /**
  * The identical miss already rendering in this isolate: settles once its cache entry is stored (or not),
@@ -45,11 +50,16 @@ export function claim(key: string): () => void {
 
 /** Run a render within the cap; `null` when the isolate is already at it. */
 export async function withinCap<T>(render: () => Promise<T>): Promise<T | null> {
-  if (rendering >= MAX_RENDERING) return null;
-  rendering += 1;
+  const now = Date.now();
+  if (renders.size >= MAX_RENDERING) {
+    for (const held of renders) if (now - held.at >= RENDER_MS) renders.delete(held);
+    if (renders.size >= MAX_RENDERING) return null;
+  }
+  const slot = { at: now };
+  renders.add(slot);
   try {
     return await render();
   } finally {
-    rendering -= 1;
+    renders.delete(slot);
   }
 }
