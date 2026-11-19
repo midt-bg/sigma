@@ -5,6 +5,8 @@ import { FLIGHT_MS } from './render-gate';
 // Every request the stubbed React Router handler (the loaders) receives; while `held.gate` is set, every
 // render waits on it, as for a slow D1.
 const rendered = vi.hoisted(() => [] as Request[]);
+// The env each render was handed, in the same order.
+const envs = vi.hoisted(() => [] as { DB?: unknown }[]);
 const held = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
 const reply = vi.hoisted(() => ({ status: 200, throws: false }));
 // The data generation the worker believes current, and the answer of the page-view limiter (null: allowed).
@@ -19,47 +21,49 @@ const limiter = vi.hoisted(() => ({ refusal: null as Response | null }));
 // Stub the React Router handler: the two URLs return DIFFERENT bodies — the whole reason `bids`
 // must be in the cache key. The import thunk is never invoked, so no real build is loaded.
 vi.mock('react-router', () => ({
-  createRequestHandler: () => async (request: Request) => {
-    rendered.push(request);
-    if (held.gate) await held.gate;
-    if (reply.throws) throw new Error('render failed');
-    const url = new URL(request.url);
-    if (reply.status !== 200) {
-      return new Response('Temporary failure', {
-        status: reply.status,
-        headers: { 'Content-Type': 'text/html', 'Cache-Control': 'public, s-maxage=1800' },
-      });
-    }
-    // A designated path returns 404, to exercise the response.ok cache-put gate (see the „non-ok" test).
-    if (url.pathname === '/contracts/missing') {
-      return new Response('Not Found', {
-        status: 404,
+  createRequestHandler:
+    () => async (request: Request, context: { cloudflare: { env: { DB?: unknown } } }) => {
+      rendered.push(request);
+      envs.push(context.cloudflare.env);
+      if (held.gate) await held.gate;
+      if (reply.throws) throw new Error('render failed');
+      const url = new URL(request.url);
+      if (reply.status !== 200) {
+        return new Response('Temporary failure', {
+          status: reply.status,
+          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'public, s-maxage=1800' },
+        });
+      }
+      // A designated path returns 404, to exercise the response.ok cache-put gate (see the „non-ok" test).
+      if (url.pathname === '/contracts/missing') {
+        return new Response('Not Found', {
+          status: 404,
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'public, s-maxage=1800',
+          },
+        });
+      }
+      const bids = url.searchParams.get('bids');
+      const body = url.searchParams.has('_routes')
+        ? `PARTIAL: ${url.searchParams.get('_routes')} only`
+        : url.pathname === '/' || url.pathname === '/competition'
+          ? `PAGE: ${url.pathname}${url.search}`
+          : bids === '1'
+            ? 'ROWS: single-bid only (2)'
+            : 'ROWS: all contracts (5)';
+      return new Response(body, {
+        status: 200,
         headers: {
-          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Type': url.pathname.endsWith('.data')
+            ? 'text/x-script'
+            : 'text/html; charset=utf-8',
           'Cache-Control': 'public, s-maxage=1800',
+          ETag: '"test-v1"',
+          'Last-Modified': 'Mon, 02 Nov 2026 00:00:00 GMT',
         },
       });
-    }
-    const bids = url.searchParams.get('bids');
-    const body = url.searchParams.has('_routes')
-      ? `PARTIAL: ${url.searchParams.get('_routes')} only`
-      : url.pathname === '/' || url.pathname === '/competition'
-        ? `PAGE: ${url.pathname}${url.search}`
-        : bids === '1'
-          ? 'ROWS: single-bid only (2)'
-          : 'ROWS: all contracts (5)';
-    return new Response(body, {
-      status: 200,
-      headers: {
-        'Content-Type': url.pathname.endsWith('.data')
-          ? 'text/x-script'
-          : 'text/html; charset=utf-8',
-        'Cache-Control': 'public, s-maxage=1800',
-        ETag: '"test-v1"',
-        'Last-Modified': 'Mon, 02 Nov 2026 00:00:00 GMT',
-      },
-    });
-  },
+    },
 }));
 vi.mock('virtual:react-router/server-build', () => ({}));
 // Pass through the log wrapper; disable rate limiters (they need real DO bindings otherwise).
@@ -134,6 +138,7 @@ beforeAll(async () => {
 beforeEach(() => {
   fakeCache.store.clear();
   rendered.length = 0;
+  envs.length = 0;
   held.gate = null;
   reply.status = 200;
   reply.throws = false;
@@ -142,13 +147,18 @@ beforeEach(() => {
   vi.stubEnv('DEV', false);
 });
 
-async function get(url: string, method = 'GET', headers?: Record<string, string>) {
+async function get(
+  url: string,
+  method = 'GET',
+  headers?: Record<string, string>,
+  env: unknown = {},
+) {
   const waits: Promise<unknown>[] = [];
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void waits.push(p),
     passThroughOnException: () => {},
   };
-  const res = await worker.fetch(new Request(url, { method, headers }), {}, ctx);
+  const res = await worker.fetch(new Request(url, { method, headers }), env, ctx);
   const body = await res.clone().text();
   await Promise.all(waits); // let edgeCache.put (ctx.waitUntil) settle before the next request
   return { edge: res.headers.get('X-Edge-Cache'), body, status: res.status, headers: res.headers };
@@ -504,6 +514,30 @@ describe('app.ts edge cache middleware', () => {
     const stale = await later(1801, () => get('https://x/contracts'));
     expect(stale.edge).toBe('STALE');
     expect(notes(stale.headers)).toEqual([]);
+  });
+
+  it('gives each render a D1 session of its own, and opens none for a page it has stored', async () => {
+    const sessions: string[] = [];
+    const DB = {
+      withSession: (constraint: string) => {
+        const n = sessions.push(constraint);
+        return { prepare: () => `statement of session ${n}` };
+      },
+    };
+    const env = { DB, OTHER: 'binding' };
+    await get('https://x/contracts', 'GET', undefined, env);
+    await get('https://x/contracts?bids=1', 'GET', undefined, env);
+    expect(sessions).toEqual(['first-unconstrained', 'first-unconstrained']);
+    // The render reads through its session; every other binding is the worker's own.
+    const handed = envs as { DB: { prepare: (q: string) => unknown }; OTHER: string }[];
+    expect(handed.map((e) => e.DB.prepare('SELECT 1'))).toEqual([
+      'statement of session 1',
+      'statement of session 2',
+    ]);
+    expect(handed.map((e) => e.OTHER)).toEqual(['binding', 'binding']);
+
+    expect((await get('https://x/contracts', 'GET', undefined, env)).edge).toBe('HIT');
+    expect(sessions).toHaveLength(2);
   });
 
   it('never serves the ?bids=1 body for /contracts (CWE-349, #56)', async () => {

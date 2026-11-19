@@ -1,4 +1,5 @@
 import { createRequestHandler } from 'react-router';
+import { inReadSession } from '@sigma/db';
 import { isIndexedHost } from '../app/lib/indexing';
 import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/security';
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
@@ -282,7 +283,9 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
   try {
     let response: Response;
     try {
-      response = await requestHandler(request, { cloudflare: { env, ctx } });
+      // One D1 session for everything this render reads, so a read replica may answer it
+      // (@sigma/db read-session.ts).
+      response = await requestHandler(request, { cloudflare: { env: inReadSession(env), ctx } });
     } catch (error) {
       if (!copy) throw error;
       return lastGood(request, copy, 'threw');

@@ -5,7 +5,7 @@
 // Read from D1 at most once a minute per isolate, and never on a request's own time: a request takes what
 // the isolate already knows and, when that is due, starts the next read behind itself. A read that fails
 // leaves the last known value in place.
-import { getDb } from '@sigma/db';
+import { getDb, inReadSession } from '@sigma/db';
 
 /** How often an isolate asks D1 for the generation. */
 export const CHECK_MS = 60_000;
@@ -45,7 +45,7 @@ export function generationOf(stamps: Stamps | null, now: number): string | null 
 
 // Async, so that a worker without the binding fails the read like a busy database does, not the request.
 async function read(env: { DB: D1Database }): Promise<Stamps | null> {
-  return getDb(env).prepare(QUERY).first<Stamps>();
+  return getDb(inReadSession(env)).prepare(QUERY).first<Stamps>();
 }
 
 /** The current data generation as this isolate knows it; null when it does not, or cannot vouch for it. */
