@@ -3,6 +3,7 @@
 // writer (ADR-0041), ending with the accepted baseline the daily passes continue from (ADR-0048).
 //
 //   node --import ./scripts/cacbg/register-ts.mjs scripts/tr/rebuild-registry.mjs --db <file>
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { parseArgs } from 'node:util';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -19,6 +20,25 @@ import { progress } from '../cacbg/progress.mjs';
 
 const ATTEMPTS = 5;
 
+/** Queue the partidas another slot has already read. A partida once read stays in scope — the daily ETL's
+ * own rule — and some were reached by a company's name alone, which nothing in a build from the contracts
+ * and the declared ЕИК names again. Without them the build drops the people identified through them. */
+export async function queueCarried(d1, eiks, at) {
+  const valid = [...new Set(eiks)].filter((eik) => /^\d{9}$/.test(eik));
+  for (let i = 0; i < valid.length; i += 500)
+    await d1.batch(
+      valid.slice(i, i + 500).map((eik) =>
+        d1
+          .prepare(
+            `INSERT OR IGNORE INTO registry_queue (eik, reason, queued_at)
+             SELECT ?1, 'new', ?2 WHERE NOT EXISTS (SELECT 1 FROM registry_deeds WHERE eik = ?1)`,
+          )
+          .bind(eik, at),
+      ),
+    );
+  return valid.length;
+}
+
 /** Read every winner never read, one partida at a time; a partida that keeps failing stops the import.
  *
  * `complete: false` leaves the baseline open. A full rebuild needs that: the winners are known from the
@@ -28,13 +48,14 @@ const ATTEMPTS = 5;
 export async function importRegistry(
   d1,
   client,
-  { runId, now = () => new Date(), wait = pause, onBatch, complete = true } = {},
+  { runId, now = () => new Date(), wait = pause, onBatch, complete = true, carried = [] } = {},
 ) {
   const startedAt = now().toISOString();
   // The second call finds the baseline already open and continues it; only a foreign one is refused.
   const baseline = await prepareEntryBaseline(d1, registryDay(now()), runId, startedAt);
   if (baseline !== 'building') throw new Error(`The registry is not empty (${baseline})`);
   await queueNewWinners(d1, startedAt, Number.MAX_SAFE_INTEGER);
+  await queueCarried(d1, carried, startedAt);
   let read = 0;
   for (;;) {
     const eiks = await nextQueued(d1, 50, now().toISOString());
@@ -67,6 +88,8 @@ if (import.meta.main) {
       slot: { type: 'string' },
       // Leave the baseline open for the catch-up pass that reads what the declarations named.
       'defer-baseline': { type: 'boolean' },
+      // A file of ЕИК, one per line: the partidas the live slot has read.
+      carried: { type: 'string' },
     },
   });
   if (!values.db) throw new Error('--db required');
@@ -82,6 +105,9 @@ if (import.meta.main) {
     runId: process.env.SIGMA_RUN_ID ?? `rebuild-${Date.now()}`,
     onBatch,
     complete: !values['defer-baseline'],
+    carried: values.carried
+      ? readFileSync(values.carried, 'utf8').split(/\s+/).filter(Boolean)
+      : [],
   });
   db.close();
   console.log(JSON.stringify({ event: 'rebuild_registry_complete', read }));
