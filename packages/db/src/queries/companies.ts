@@ -10,6 +10,8 @@ import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
 import { NAME_KEY, withNameKey } from './name-sort';
+import { prefixIn } from './prefix-in';
+import { pageSql } from './scoped-page';
 import { toCompanyListItem, type CompanyTotalsRow } from './rows';
 import { searchMatchQuery } from './search';
 
@@ -61,8 +63,6 @@ const COUNT_BUCKETS: Record<string, string> = lookup({
   '100+': 'contracts > 100',
 });
 
-const qs = (n: number) => Array.from({ length: n }, () => '?').join(', ');
-
 const COLS = `bidder_id, name, kind, ownership_kind, eik, eik_valid, settlement, won_eur, contracts, authorities, primary_sector, eu_eur, first_date, last_date`;
 
 function normalizeEu(eu: unknown): 'eu' | 'national' | null {
@@ -82,12 +82,14 @@ function source(p: CompanyListParams): { from: string; params: unknown[] } {
   const where: string[] = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
   if (p.sectors?.length) {
-    where.push(`substr(t.cpv_code, 1, 2) IN (${qs(p.sectors.length)})`);
-    params.push(...p.sectors);
+    const sectors = prefixIn('t.cpv_code', 2, p.sectors);
+    where.push(sectors.sql);
+    params.push(...sectors.params);
   }
   if (p.years?.length) {
-    where.push(`substr(c.signed_at, 1, 4) IN (${qs(p.years.length)})`);
-    params.push(...p.years);
+    const years = prefixIn('c.signed_at', 4, p.years);
+    where.push(years.sql);
+    params.push(...years.params);
   }
   const eu = normalizeEu(p.eu);
   if (eu === 'eu') where.push('c.eu_funded = 1');
@@ -157,18 +159,21 @@ export async function listCompanies(
     filterSignature: signature,
     allowedSortCols: Object.values(SORTS).map((s) => s.col),
   });
-  const conds = [ew.sql, ks.whereSql].filter(Boolean).join(' AND ');
-
-  const from = sort.col === NAME_KEY ? withNameKey(src.from) : src.from;
-  const sql = `SELECT ${COLS}, ${sort.col} AS sort_value FROM ${from}${conds ? ' WHERE ' + conds : ''} ${ks.orderSql} LIMIT ?`;
-  const [pageRows, total] = await Promise.all([
+  const scoped = needsBase(p);
+  const sql = pageSql({ cols: COLS, sortCol: sort.col, from: src.from, scoped, where: ew.sql, ks });
+  const binds = [...src.params, ...ew.params, ...ks.params, pageSize + 1];
+  type Row = CompanyTotalsRow & { sort_value: string | number; total?: number };
+  // The rollup is an indexed read and its count a cheap one, so they go side by side. A scoped
+  // aggregation is the expensive part of both: there the page carries its own total (scoped-page.ts).
+  const [pageRows, counted] = await Promise.all([
     db
       .prepare(sql)
-      .bind(...src.params, ...ew.params, ...ks.params, pageSize + 1)
-      .all<CompanyTotalsRow & { sort_value: string | number }>(),
-    countCompanies(db, src, ew),
+      .bind(...binds)
+      .all<Row>(),
+    scoped ? null : countCompanies(db, src, ew),
   ]);
   const { results } = pageRows;
+  const total = counted ?? results[0]?.total ?? (p.cursor ? await countCompanies(db, src, ew) : 0);
 
   const hasMore = results.length > pageSize;
   let rows = results.slice(0, pageSize);

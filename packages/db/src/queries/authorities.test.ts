@@ -146,8 +146,8 @@ describe('listAuthorities — base-source and entity-where branches', () => {
     const { db, sql } = spyDb();
     await listAuthorities(db, { sectors: ['45'], years: ['2024'], eu: 'eu', pageSize: 10 });
     const base = sql.find(usesBaseAggregation)!;
-    expect(base).toContain('substr(t.cpv_code, 1, 2) IN');
-    expect(base).toContain('substr(c.signed_at, 1, 4) IN');
+    expect(base).toContain('(t.cpv_code >= ? AND t.cpv_code < ?)');
+    expect(base).toContain('(c.signed_at >= ? AND c.signed_at < ?)');
     expect(base).toContain('c.eu_funded = 1');
     expect(base).toContain('? AS primary_sector'); // single sector → bound value, not NULL
   });
@@ -194,6 +194,42 @@ describe('listAuthorities — base-source and entity-where branches', () => {
     expect(page.items).toHaveLength(1); // the overflow row is not emitted
     expect(page.total).toBe(5);
     expect(page.nextCursor).toBeTruthy(); // hasMore → a forward cursor is produced
+  });
+});
+
+describe('listAuthorities — a cross-cut in one pass', () => {
+  it('takes the total from the page, without a second aggregation', async () => {
+    const fake = fakeD1([{ when: 'FROM (', all: [{ ...authorityRow, total: 7 }] }]);
+    const page = await listAuthorities(fake.db, { years: ['2024'], pageSize: 10 });
+    expect(page.total).toBe(7);
+    expect(fake.sql).toHaveLength(1);
+    expect(fake.sql[0]).toContain('WITH scoped AS MATERIALIZED');
+  });
+
+  it('counts an empty first page as none, and asks only when a cursor ran past the end', async () => {
+    const empty = fakeD1([{ when: 'AS sort_value', all: [] }]);
+    expect((await listAuthorities(empty.db, { years: ['2024'] })).total).toBe(0);
+    expect(empty.sql).toHaveLength(1);
+
+    const rows = [
+      { ...authorityRow, authority_id: 'auth:1', sort_value: 200 },
+      { ...authorityRow, authority_id: 'auth:2', sort_value: 100 },
+    ];
+    const first = await listAuthorities(fakeD1([{ when: 'FROM (', all: rows }]).db, {
+      years: ['2024'],
+      pageSize: 1,
+    });
+    const past = fakeD1([
+      { when: 'AS sort_value', all: [] },
+      { when: 'COUNT(*) AS n', first: { n: 3 } },
+    ]);
+    const page = await listAuthorities(past.db, {
+      years: ['2024'],
+      pageSize: 1,
+      cursor: first.nextCursor,
+    });
+    expect(page.items).toEqual([]);
+    expect(page.total).toBe(3);
   });
 });
 
