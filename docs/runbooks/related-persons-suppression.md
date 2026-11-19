@@ -130,7 +130,9 @@ served surface until the next data run ships — check the surface, not the comm
    Expect `suppressed`, or no row at all. Anything else means the ship did not carry the decision.
 3. **The page is gone**, allowing for cache: the link's page must 404 and the official's page must not
    list it. `publicCache(3600)` means a reader can still see it for up to an hour after the write — if it
-   is still there beyond that, the takedown did not land. Not willing to wait the hour: a zone Purge
+   is still there beyond that, the takedown did not land. (The hour holds because the ship changes the
+   data generation; while the database cannot answer at all, the worker serves the last good copy, marked
+   `X-Edge-Cache: STALE` — docs/deploy.md.) Not willing to wait the hour: a zone Purge
    Everything on `midt.bg` or a web deploy clears it everywhere (purge by URL does not reach these entries;
    docs/deploy.md, „Уговорка: остаряла страница и изчистване на кеша"). The first request after either
    answers `X-Edge-Cache: MISS`.

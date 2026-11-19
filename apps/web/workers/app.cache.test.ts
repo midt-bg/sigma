@@ -1,11 +1,15 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { KEEP_SECONDS, SAME_DATA_SECONDS } from './edge-entry';
 import { FLIGHT_MS } from './render-gate';
 
 // Every request the stubbed React Router handler (the loaders) receives; while `held.gate` is set, every
 // render waits on it, as for a slow D1.
 const rendered = vi.hoisted(() => [] as Request[]);
 const held = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
-const reply = vi.hoisted(() => ({ status: 200 }));
+const reply = vi.hoisted(() => ({ status: 200, throws: false }));
+// The data generation the worker believes current, and the answer of the page-view limiter (null: allowed).
+const data = vi.hoisted(() => ({ generation: null as string | null }));
+const limiter = vi.hoisted(() => ({ refusal: null as Response | null }));
 
 // Exercises the REAL edge-cache middleware in app.ts (handleRequest -> cacheKey -> edgeCache
 // match/put) without the SSR build or D1, to gate that app.ts actually keys the cache by cacheKey.
@@ -18,6 +22,7 @@ vi.mock('react-router', () => ({
   createRequestHandler: () => async (request: Request) => {
     rendered.push(request);
     if (held.gate) await held.gate;
+    if (reply.throws) throw new Error('render failed');
     const url = new URL(request.url);
     if (reply.status !== 200) {
       return new Response('Temporary failure', {
@@ -66,7 +71,10 @@ vi.mock('./request-log', () => ({
     handler: (r: Request, e: unknown, c: unknown) => Promise<Response>,
   ) => handler(request, env, ctx),
 }));
-vi.mock('./aggregation-rate-limit', () => ({ rateLimitAggregationRoute: async () => null }));
+vi.mock('./aggregation-rate-limit', () => ({
+  rateLimitAggregationRoute: async () => limiter.refusal,
+}));
+vi.mock('./data-generation', () => ({ dataGeneration: () => data.generation }));
 vi.mock('./csv-rate-limit', () => ({ rateLimitCsvExport: async () => null }));
 vi.mock('./search-rate-limit', () => ({ rateLimitSearchRoute: async () => null }));
 
@@ -128,6 +136,9 @@ beforeEach(() => {
   rendered.length = 0;
   held.gate = null;
   reply.status = 200;
+  reply.throws = false;
+  data.generation = null;
+  limiter.refusal = null;
   vi.stubEnv('DEV', false);
 });
 
@@ -147,11 +158,16 @@ describe('app.ts edge cache middleware', () => {
   it('does not extend browser freshness if the conditional entry expires during lookup', async () => {
     await get('https://x/contracts');
     const match = fakeCache.match.bind(fakeCache);
-    const spy = vi.spyOn(fakeCache, 'match').mockImplementationOnce(async (key) => {
-      const response = await match(key);
-      fakeCache.store.clear();
-      return response;
-    });
+    // The first lookup reads the stored copy itself; the entry goes between the conditional one and the
+    // lookup of the representation's type.
+    const spy = vi
+      .spyOn(fakeCache, 'match')
+      .mockImplementationOnce(match)
+      .mockImplementationOnce(async (key) => {
+        const response = await match(key);
+        fakeCache.store.clear();
+        return response;
+      });
     try {
       const conditional = await get('https://x/contracts', 'GET', { 'If-None-Match': '"test-v1"' });
       expect(conditional.status).toBe(304);
@@ -176,10 +192,13 @@ describe('app.ts edge cache middleware', () => {
     expect(conditional.body).toBe('');
     expect(conditional.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate');
     expect(rendered).toHaveLength(1);
-    expect([...fakeCache.store.values()][0].headers).toContainEqual([
+    // The stored copy is kept past the route's freshness, and remembers what the route asked for.
+    const stored = [...fakeCache.store.values()][0].headers;
+    expect(stored).toContainEqual([
       'cache-control',
-      'public, s-maxage=1800',
+      `public, s-maxage=${SAME_DATA_SECONDS + KEEP_SECONDS}`,
     ]);
+    expect(stored).toContainEqual(['x-sigma-cache-control', 'public, s-maxage=1800']);
   });
 
   it.each(['https://x/contracts', 'https://x/contracts.data'])(
@@ -195,10 +214,12 @@ describe('app.ts edge cache middleware', () => {
       expect(head.edge).toBe('HIT');
       expect(head.body).toBe('');
       expect(head.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate');
-      expect([...fakeCache.store.values()][0].headers).toContainEqual([
+      const stored = [...fakeCache.store.values()][0].headers;
+      expect(stored).toContainEqual([
         'cache-control',
-        'public, s-maxage=1800',
+        `public, s-maxage=${SAME_DATA_SECONDS + KEEP_SECONDS}`,
       ]);
+      expect(stored).toContainEqual(['x-sigma-cache-control', 'public, s-maxage=1800']);
       expect(rendered).toHaveLength(1);
     },
   );
@@ -312,6 +333,177 @@ describe('app.ts edge cache middleware', () => {
     held.gate = null;
     release();
     expect((await Promise.all(busy)).map((r) => r.status)).toEqual(Array(60).fill(200));
+  });
+
+  // The mocked route asks for 1800 s; `later` moves the clock that far past a first render and back.
+  async function later<T>(seconds: number, run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + seconds * 1000);
+      return await run();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+  const notes = (headers: Headers) =>
+    [...headers.keys()].filter((name) => name.startsWith('x-sigma-'));
+
+  it.each([500, 503])(
+    'serves the last good copy when an expired page answers %i, and renders again once it can',
+    async (status) => {
+      const first = await get('https://x/contracts');
+      reply.status = status;
+      const stale = await later(1801, () => get('https://x/contracts'));
+      expect(stale.status).toBe(200);
+      expect(stale.edge).toBe('STALE');
+      expect(stale.body).toBe(first.body);
+      expect(stale.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate');
+      expect(rendered).toHaveLength(2);
+
+      reply.status = 200;
+      expect((await later(1801, () => get('https://x/contracts'))).edge).toBe('MISS');
+      expect(rendered).toHaveLength(3);
+    },
+  );
+
+  it('serves the last good copy when the render throws', async () => {
+    await get('https://x/contracts');
+    reply.throws = true;
+    const stale = await later(1801, () => get('https://x/contracts'));
+    expect(stale.status).toBe(200);
+    expect(stale.edge).toBe('STALE');
+  });
+
+  it('lets the failure through when the render throws and there is no copy to give', async () => {
+    reply.throws = true;
+    await expect(get('https://x/contracts')).rejects.toThrow('render failed');
+    // The failed render holds nothing back: the page renders for the next visitor.
+    reply.throws = false;
+    expect((await get('https://x/contracts')).edge).toBe('MISS');
+  });
+
+  it('gives every visitor who waited on a failed render the last good copy', async () => {
+    const first = await get('https://x/contracts');
+    reply.status = 503;
+    const answers = await later(1801, async () => {
+      let release!: () => void;
+      held.gate = new Promise((resolve) => (release = resolve));
+      const both = Promise.all([get('https://x/contracts'), get('https://x/contracts')]);
+      await vi.waitFor(() => expect(rendered).toHaveLength(2));
+      held.gate = null;
+      release();
+      return both;
+    });
+    expect(answers.map((r) => r.edge)).toEqual(['STALE', 'STALE']);
+    expect(answers.map((r) => r.body)).toEqual([first.body, first.body]);
+  });
+
+  it('renders for a visitor who waited on a render that left nothing stored', async () => {
+    let release!: () => void;
+    held.gate = new Promise((resolve) => (release = resolve));
+    const both = Promise.all([
+      get('https://x/contracts/missing'),
+      get('https://x/contracts/missing'),
+    ]);
+    await vi.waitFor(() => expect(rendered).toHaveLength(1));
+    held.gate = null;
+    release();
+    expect((await both).map((r) => r.status)).toEqual([404, 404]);
+    expect(rendered).toHaveLength(2);
+  });
+
+  it('answers a validator that no longer matches with the page itself', async () => {
+    const first = await get('https://x/contracts');
+    const changed = await get('https://x/contracts', 'GET', { 'If-None-Match': '"test-v0"' });
+    expect(changed.status).toBe(200);
+    expect(changed.edge).toBe('HIT');
+    expect(changed.body).toBe(first.body);
+    expect(rendered).toHaveLength(1);
+  });
+
+  it('serves the copy it already holds when the entry goes before the conditional lookup', async () => {
+    const first = await get('https://x/contracts');
+    const match = fakeCache.match.bind(fakeCache);
+    const spy = vi
+      .spyOn(fakeCache, 'match')
+      .mockImplementationOnce(match)
+      .mockImplementationOnce(async () => undefined);
+    try {
+      const answer = await get('https://x/contracts', 'GET', { 'If-None-Match': '"test-v1"' });
+      expect(answer.status).toBe(200);
+      expect(answer.edge).toBe('HIT');
+      expect(answer.body).toBe(first.body);
+      expect(rendered).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('answers a missing page as missing, never with an old copy of it', async () => {
+    await get('https://x/contracts/missing?x=1');
+    await get('https://x/contracts');
+    // The record behind a stored page is gone: its 404 is the current answer.
+    const key = [...fakeCache.store.keys()][0]!;
+    fakeCache.store.set(key.replace('/contracts', '/contracts/missing'), fakeCache.store.get(key)!);
+    const gone = await later(1801, () => get('https://x/contracts/missing'));
+    expect(gone.status).toBe(404);
+    expect(gone.edge).toBe('BYPASS');
+  });
+
+  it('gives a rate-limited visitor the last good copy, and the refusal only when there is none', async () => {
+    await get('https://x/contracts');
+    limiter.refusal = new Response('Too many', { status: 429 });
+    const stale = await later(1801, () => get('https://x/contracts'));
+    expect(stale.status).toBe(200);
+    expect(stale.edge).toBe('STALE');
+    expect(rendered).toHaveLength(1);
+
+    limiter.refusal = new Response('Too many', { status: 429 });
+    expect((await get('https://x/contracts?bids=1')).status).toBe(429);
+  });
+
+  it('keeps a page of the current data generation past the freshness its route asked for', async () => {
+    data.generation = 'refresh-1|publish-1';
+    await get('https://x/contracts');
+    expect((await later(1801, () => get('https://x/contracts'))).edge).toBe('HIT');
+    expect((await later(SAME_DATA_SECONDS - 1, () => get('https://x/contracts'))).edge).toBe('HIT');
+    expect(rendered).toHaveLength(1);
+    // Not for ever: writers that leave no stamp are picked up at the cap.
+    expect((await later(SAME_DATA_SECONDS, () => get('https://x/contracts'))).edge).toBe('MISS');
+  });
+
+  it('renders an expired page again once the data generation has changed', async () => {
+    data.generation = 'refresh-1|publish-1';
+    await get('https://x/contracts');
+    data.generation = 'refresh-2|publish-1';
+    // Within the route's own freshness the page is served as before; past it, it is rendered anew.
+    expect((await later(1799, () => get('https://x/contracts'))).edge).toBe('HIT');
+    expect((await later(1801, () => get('https://x/contracts'))).edge).toBe('MISS');
+  });
+
+  it('takes an unknown data generation as proof of nothing', async () => {
+    data.generation = 'refresh-1|publish-1';
+    await get('https://x/contracts');
+    data.generation = null;
+    expect((await later(1801, () => get('https://x/contracts'))).edge).toBe('MISS');
+
+    // Rendered while the generation was unknown: nothing vouches for it later either.
+    data.generation = 'refresh-1|publish-1';
+    expect((await later(2 * 1801, () => get('https://x/contracts'))).edge).toBe('MISS');
+  });
+
+  it('lets none of its notes on a stored page out of the worker', async () => {
+    data.generation = 'refresh-1|publish-1';
+    expect(notes((await get('https://x/contracts')).headers)).toEqual([]);
+    expect(notes((await get('https://x/contracts')).headers)).toEqual([]);
+    const conditional = await get('https://x/contracts', 'GET', { 'If-None-Match': '"test-v1"' });
+    expect(conditional.status).toBe(304);
+    expect(notes(conditional.headers)).toEqual([]);
+    reply.status = 503;
+    data.generation = null;
+    const stale = await later(1801, () => get('https://x/contracts'));
+    expect(stale.edge).toBe('STALE');
+    expect(notes(stale.headers)).toEqual([]);
   });
 
   it('never serves the ?bids=1 body for /contracts (CWE-349, #56)', async () => {

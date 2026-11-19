@@ -6,6 +6,8 @@ import { rateLimitAssistantRoute } from './assistant-rate-limit';
 import { normalizedPathname } from './rate-limit';
 import { cacheKey, canonicalRequest, isRouteManifest } from './cache-key';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
+import { dataGeneration } from './data-generation';
+import { isFresh, stamped, unstamp } from './edge-entry';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import {
   optionsResponse,
@@ -49,11 +51,47 @@ declare const __SIGMA_DEPLOY_TAG__: string | undefined;
 const DEPLOY_TAG =
   typeof __SIGMA_DEPLOY_TAG__ !== 'undefined' ? __SIGMA_DEPLOY_TAG__ : Date.now().toString(36);
 
-// The stored GET for `key`, as a HIT (security headers re-applied), or null.
+// The request headers the Cache API answers by itself: a validator with a 304, a range with a 206.
+const CONDITIONAL = ['If-None-Match', 'If-Modified-Since', 'Range'];
+
+// The stored GET for `key` in full, whatever the request asks of it, with the worker's notes
+// (edge-entry.ts) still on it — or null. Whether it may be served is for the caller to decide.
+async function storedCopy(key: Request): Promise<Response | null> {
+  const plain = new Request(key);
+  for (const name of CONDITIONAL) plain.headers.delete(name);
+  return (await edgeCache.match(plain)) ?? null;
+}
+
+// A stored copy on its way out: the worker's notes off, security headers re-applied. `HIT` is a fresh
+// copy; `STALE` is the last good one, standing in for a page that could not be rendered just now.
+function served(copy: Response, edge: 'HIT' | 'STALE'): Response {
+  const headers = new Headers(copy.headers);
+  unstamp(headers);
+  applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
+  headers.set('X-Edge-Cache', edge);
+  return new Response(copy.body, { status: copy.status, statusText: copy.statusText, headers });
+}
+
+// A fresh copy for this request: what the Cache API makes of the request's own validators or range when
+// it carries any, the copy itself otherwise.
+async function freshResponse(key: Request, copy: Response): Promise<Response> {
+  if (CONDITIONAL.some((name) => key.headers.has(name))) {
+    const conditional = await cachedResponse(key);
+    if (conditional) {
+      await copy.body?.cancel();
+      return conditional;
+    }
+  }
+  return served(copy, 'HIT');
+}
+
+// The stored GET for `key` as the Cache API answers this very request, as a HIT (security headers
+// re-applied), or null.
 async function cachedResponse(key: Request): Promise<Response | null> {
   const cached = await edgeCache.match(key);
   if (!cached) return null;
   const headers = new Headers(cached.headers);
+  unstamp(headers);
   if (cached.status === 304 && !headers.has('Content-Type')) {
     // Cache API evaluates the browser's validators but omits Content-Type from its 304. Recover the
     // representation's type so handleRequest applies the same browser policy as for a 200; otherwise
@@ -64,6 +102,8 @@ async function cachedResponse(key: Request): Promise<Response | null> {
     lookup.headers.delete('If-Modified-Since');
     lookup.headers.delete('Range');
     const representation = await edgeCache.match(lookup);
+    // A 304 may have lost the worker's notes as well; the route's own policy is on the full copy.
+    if (representation) unstamp(headers, representation.headers);
     const contentType = representation?.headers.get('Content-Type');
     if (contentType) headers.set('Content-Type', contentType);
     // The entry can expire between the two lookups. Do not extend a browser entry whose type we
@@ -212,39 +252,51 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
     !new URL(request.url).searchParams.has('_routes')
       ? cacheKey(request, DEPLOY_TAG)
       : null;
-  const hit = key && (await cachedResponse(key));
-  if (hit) return hit;
+  // A stored page is served as it is while it is fresh (edge-entry.ts). Past that it is rendered again —
+  // and stays at hand as the last good copy, should that render be refused or fail.
+  const began = Date.now();
+  const generation = key ? dataGeneration(env, ctx, began) : null;
+  let copy = key && (await storedCopy(key));
+  if (key && copy && isFresh(copy.headers, began, generation)) return freshResponse(key, copy);
 
-  const aggregationRateLimitResponse = await rateLimitAggregationRoute(
-    request,
-    env,
-    import.meta.env.PROD,
-  );
-  if (aggregationRateLimitResponse) return aggregationRateLimitResponse;
-
-  const searchRateLimitResponse = await rateLimitSearchRoute(request, env, import.meta.env.PROD);
-  if (searchRateLimitResponse) return searchRateLimitResponse;
-
-  const assistantRateLimitResponse = await rateLimitAssistantRoute(
-    request,
-    env,
-    import.meta.env.PROD,
-  );
-  if (assistantRateLimitResponse) return assistantRateLimitResponse;
+  const limited =
+    (await rateLimitAggregationRoute(request, env, import.meta.env.PROD)) ??
+    (await rateLimitSearchRoute(request, env, import.meta.env.PROD)) ??
+    (await rateLimitAssistantRoute(request, env, import.meta.env.PROD));
+  if (limited) return copy ? lastGood(request, copy, limited.status) : limited;
 
   // The same miss is already rendering in this isolate: take its entry instead of a second D1 read. The
   // check and the claim below run with no await between them, so of identical misses exactly one renders.
   const pending = key && inFlight(key.url);
   if (pending) {
     await pending;
-    const stored = await cachedResponse(key);
-    if (stored) return stored;
+    const rendered = await storedCopy(key);
+    if (rendered) {
+      if (copy) await copy.body?.cancel();
+      copy = rendered;
+      if (isFresh(copy.headers, Date.now(), generation)) return freshResponse(key, copy);
+    }
   }
   const settle = key ? claim(key.url) : () => {};
   let stored: Promise<unknown> = Promise.resolve();
   try {
-    const response = await requestHandler(request, { cloudflare: { env, ctx } });
-    const hardened = await finish(request, response, key, ctx);
+    let response: Response;
+    try {
+      response = await requestHandler(request, { cloudflare: { env, ctx } });
+    } catch (error) {
+      if (!copy) throw error;
+      return lastGood(request, copy, 'threw');
+    }
+    if (copy) {
+      // The page cannot be rendered just now — a database that is busy, a fault: the visitor gets the
+      // last good copy instead of the error. Anything below a 5xx is the page's own, current answer.
+      if (response.status >= 500) {
+        await response.body?.cancel();
+        return lastGood(request, copy, response.status);
+      }
+      await copy.body?.cancel();
+    }
+    const hardened = await finish(request, response, key, ctx, began, generation);
     stored = hardened.stored;
     return hardened.response;
   } finally {
@@ -253,11 +305,20 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
   }
 }
 
+// The last good copy in place of an answer the visitor would have been refused; logged, so that how often
+// the site leans on it can be counted.
+function lastGood(request: Request, copy: Response, cause: number | 'threw'): Response {
+  console.warn(JSON.stringify({ edge: 'stale', path: new URL(request.url).pathname, cause }));
+  return served(copy, 'STALE');
+}
+
 async function finish(
   request: Request,
   response: Response,
   key: Request | null,
   ctx: ExecutionContext,
+  began: number,
+  generation: string | null,
 ): Promise<{ response: Response; stored: Promise<unknown> }> {
   // `response.ok` is load-bearing for cache correctness beyond "don't cache errors": cache-key.ts decodes
   // the path (collapsing `%2F` → `/`), so an encoded contract URL (200) and a bogus raw-slash form (404)
@@ -275,7 +336,11 @@ async function finish(
   // Outside the production site (stage, dev, a workers.dev twin) every page is noindex, whatever it names.
   if (isNoindexNamesPath(request) || !isIndexedHost(request))
     hardened.headers.set('X-Robots-Tag', 'noindex');
-  const stored = cacheable ? edgeCache.put(key, hardened.clone()) : Promise.resolve();
+  // Stamped with the moment and the data generation the render BEGAN under: a page that straddles a change
+  // of data counts as the older one.
+  const stored = cacheable
+    ? edgeCache.put(key, stamped(hardened.clone(), began, generation))
+    : Promise.resolve();
   ctx.waitUntil(stored);
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
   return { response: hardened, stored };
