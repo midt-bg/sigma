@@ -22,6 +22,8 @@ import {
 import { cached } from '../lib/cache';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
+import { EmptyDataNotice } from '../components/EmptyDataNotice';
+import { isUnfiltered } from '../lib/no-data';
 
 export function meta({ matches }: Route.MetaArgs) {
   return seoMeta({
@@ -166,9 +168,14 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
               }
             />
             {page.items.length === 0 ? (
-              <p className="muted">
-                Няма резултати за избраните филтри. <Link to="/authorities">Изчисти филтрите</Link>
-              </p>
+              page.total === 0 && isUnfiltered(sp) ? (
+                <EmptyDataNotice />
+              ) : (
+                <p className="muted">
+                  Няма резултати за избраните филтри.{' '}
+                  <Link to="/authorities">Изчисти филтрите</Link>
+                </p>
+              )
             ) : (
               <div aria-busy={busy || undefined}>
                 <DataTable

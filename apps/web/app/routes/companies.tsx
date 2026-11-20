@@ -22,6 +22,8 @@ import {
 import { cached } from '../lib/cache';
 import { getCoverageMeta, yearOptions } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
+import { EmptyDataNotice } from '../components/EmptyDataNotice';
+import { isUnfiltered } from '../lib/no-data';
 
 const COUNT_BUCKETS = [
   { value: '1', label: '1 договор' },
@@ -197,9 +199,13 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
               }
             />
             {page.items.length === 0 ? (
-              <p className="muted">
-                Няма резултати за избраните филтри. <Link to="/companies">Изчисти филтрите</Link>
-              </p>
+              page.total === 0 && isUnfiltered(sp) ? (
+                <EmptyDataNotice />
+              ) : (
+                <p className="muted">
+                  Няма резултати за избраните филтри. <Link to="/companies">Изчисти филтрите</Link>
+                </p>
+              )
             ) : (
               <div aria-busy={busy || undefined}>
                 <DataTable
