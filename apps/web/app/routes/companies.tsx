@@ -5,7 +5,9 @@ import type { CompanyListItem } from '@sigma/api-contract';
 import type { Route } from './+types/companies';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { FilterRail, type FilterGroup } from '../components/FilterRail';
+import { FilterRail } from '../components/FilterRail';
+import { ActiveFilterNotes } from '../components/ActiveFilterNotes';
+import { activeFilterState } from '../lib/active-filters';
 import { ListControls } from '../components/ListControls';
 import { Pagination } from '../components/Pagination';
 import { DataTable, type Column } from '../components/DataTable';
@@ -83,7 +85,8 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
   const csvHref = `/companies.csv${withParams(sp, { cursor: null, page: null })}`;
   const busy = useNavigation().state !== 'idle';
 
-  const groups: FilterGroup[] = [
+  // The rail as the list applies it, and what the address asks for that the rail would not show.
+  const { groups, hidden, ignored } = activeFilterState(sp, [
     buildSectorGroup(
       facets.sectors.map((s) => ({ value: s.value, label: s.label })),
       getMulti(sp, 'sector'),
@@ -122,7 +125,7 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
         { value: 'national', label: 'Само без финансиране от ЕС' },
       ],
     },
-  ];
+  ]);
 
   const columns: Column<CompanyListItem>[] = [
     { key: 'rank', header: '#', isRank: true, cell: (_r, i) => startRank + i + 1 },
@@ -196,6 +199,7 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
                 </>
               }
             />
+            <ActiveFilterNotes hidden={hidden} ignored={ignored} />
             {page.items.length === 0 ? (
               <p className="muted">
                 Няма резултати за избраните филтри. <Link to="/companies">Изчисти филтрите</Link>

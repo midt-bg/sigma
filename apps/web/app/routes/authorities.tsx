@@ -5,7 +5,9 @@ import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { FilterRail, type FilterGroup } from '../components/FilterRail';
+import { FilterRail } from '../components/FilterRail';
+import { ActiveFilterNotes } from '../components/ActiveFilterNotes';
+import { activeFilterState } from '../lib/active-filters';
 import { ListControls } from '../components/ListControls';
 import { Pagination } from '../components/Pagination';
 import { DataTable, type Column } from '../components/DataTable';
@@ -67,7 +69,8 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
   const csvHref = `/authorities.csv${withParams(sp, { cursor: null, page: null })}`;
   const busy = useNavigation().state !== 'idle';
 
-  const groups: FilterGroup[] = [
+  // The rail as the list applies it, and what the address asks for that the rail would not show.
+  const { groups, hidden, ignored } = activeFilterState(sp, [
     {
       key: 'type',
       label: 'Вид институция',
@@ -99,7 +102,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
         { value: 'national', label: 'Само без финансиране от ЕС' },
       ],
     },
-  ];
+  ]);
 
   const columns: Column<AuthorityListItem>[] = [
     { key: 'rank', header: '#', isRank: true, cell: (_r, i) => startRank + i + 1 },
@@ -165,6 +168,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
                 </>
               }
             />
+            <ActiveFilterNotes hidden={hidden} ignored={ignored} />
             {page.items.length === 0 ? (
               <p className="muted">
                 Няма резултати за избраните филтри. <Link to="/authorities">Изчисти филтрите</Link>

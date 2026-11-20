@@ -111,3 +111,57 @@ describe('authorities list', () => {
     expect(data).toMatchObject({ page: emptyPage, coverage: { coverageEndYear: 2025 } });
   });
 });
+
+// A filter the address applies but the rail cannot show — a year outside the coverage window, a type no
+// authority has — is named above the results with a link that removes just that value, and ticked in the rail.
+describe('authorities list — filters the rail has no option for', () => {
+  const notes = () => [...container.querySelectorAll('p.active-filters')].map((p) => p.textContent);
+
+  it('names ?year=1999, ticks it in the rail, and removes only it on a click', async () => {
+    await render('/authorities?q=%D1%82%D0%B5%D1%81%D1%82&year=2024&year=1999&sort=name&page=3');
+    expect(notes()).toEqual(['Активен филтър извън списъка — Година: 1999 · премахни 1999']);
+    const box = container.querySelector<HTMLInputElement>('input[name="year"][value="1999"]')!;
+    expect(box.checked).toBe(true);
+
+    const link = [...container.querySelectorAll('p.active-filters a')][0] as HTMLAnchorElement;
+    const kept = new URLSearchParams(link.getAttribute('href')!.split('?')[1]);
+    expect(kept.getAll('year')).toEqual(['2024']);
+    expect(kept.get('q')).toBe('тест');
+    expect(kept.get('sort')).toBe('name');
+    expect(kept.has('page')).toBe(false);
+
+    await act(async () => link.click());
+    expect(notes()).toEqual([]);
+    expect(container.querySelector('input[name="year"][value="1999"]')).toBeNull();
+    expect(
+      container.querySelector<HTMLInputElement>('input[name="year"][value="2024"]')!.checked,
+    ).toBe(true);
+  });
+
+  it('shows an applied type it has no name for without repeating the raw value', async () => {
+    await render('/authorities?type=%3Cb%3Exyz%3C%2Fb%3E');
+    expect(notes()).toEqual([
+      'Активен филтър извън списъка — Вид институция: непозната стойност · премахни непознатата стойност',
+    ]);
+    expect(container.textContent).not.toContain('xyz');
+  });
+
+  it('names a value it cannot apply as left out, never as a filter', async () => {
+    await render('/authorities?year=abcd&eu=nope');
+    expect(notes()).toEqual([
+      'Пропусната неподдържана стойност за „Година“ — списъкът не е филтриран по нея · махни я от адреса',
+      'Пропусната неподдържана стойност за „Финансиране от ЕС“ — списъкът не е филтриран по нея · махни я от адреса',
+    ]);
+    expect(container.querySelector<HTMLInputElement>('input[name="eu"][value=""]')!.checked).toBe(
+      true,
+    );
+  });
+
+  it('shows nothing for a parameter that is not a filter, and keeps „Изчисти филтрите"', async () => {
+    await render('/authorities?foo=bar&year=2024');
+    expect(notes()).toEqual([]);
+    expect(container.querySelector('aside a[href="/authorities"]')?.textContent).toBe(
+      'Изчисти филтрите',
+    );
+  });
+});
