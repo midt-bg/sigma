@@ -37,14 +37,18 @@ afterEach(() => {
 
 const emptyPage = { items: [], total: 0, nextCursor: null, prevCursor: null };
 
-async function render(url: string, page: object = emptyPage) {
+async function render(
+  url: string,
+  page: object = emptyPage,
+  facets: object = { types: [], sectors: [] },
+) {
   const Stub = createRoutesStub([
     {
       path: '/authorities',
       Component: Authorities as never,
       loader: () => ({
         page,
-        facets: { types: [], sectors: [] },
+        facets,
         coverage: { coverageEndYear: 2025 },
       }),
     },
@@ -76,6 +80,24 @@ const item = (over: Partial<AuthorityListItem> = {}): AuthorityListItem => ({
   contracts: 2,
   avgEur: 500,
   ...over,
+});
+
+// The type counts come from authority_totals for the whole country, not for the current search.
+describe('authorities filter counts', () => {
+  const facets = { types: [{ value: 'община', label: 'Община', count: 265 }], sectors: [] };
+  const rail = () => container.querySelector('aside.filter-rail')!;
+
+  it('shows them on the whole list as the totals in the database', async () => {
+    await render('/authorities', emptyPage, facets);
+    expect(rail().textContent).toContain('Община265');
+    expect(rail().textContent).toContain('Числата до филтрите са общо в базата.');
+  });
+
+  it('leaves them out once a search narrows the list', async () => {
+    await render('/authorities?q=%D1%82%D0%B5%D1%81%D1%82', emptyPage, facets);
+    expect(rail().textContent).not.toContain('265');
+    expect(rail().textContent).toContain('не се показва при търсене или избран филтър');
+  });
 });
 
 describe('authorities list', () => {

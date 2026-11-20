@@ -40,11 +40,16 @@ export function FilterRail({
   sort,
   clearHref,
   csvHref,
+  globalCounts = false,
 }: {
   groups: FilterGroup[];
   sort: string;
   clearHref: string;
   csvHref?: string;
+  /** The counts beside the options are national, precomputed ones (facet_counts / the rollups), not counts
+   *  of the current selection. They are true only for the whole list, so they are left out — and the rail
+   *  says why — once a search or any filter narrows it. */
+  globalCounts?: boolean;
 }) {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
@@ -54,6 +59,10 @@ export function FilterRail({
     sp.getAll(key).map((value) => ({ key, value })),
   );
   const groupKeys = groups.map((g) => g.key);
+  const narrowed = ['q', 'authority', 'bidder', 'bids', ...groupKeys].some((key) =>
+    sp.getAll(key).some((value) => value.trim() !== ''),
+  );
+  const showCounts = !(globalCounts && narrowed);
   const submitForm = (form: HTMLFormElement) => {
     const data = new FormData(form);
     const overrides: Record<string, string | string[] | null> = {
@@ -104,6 +113,13 @@ export function FilterRail({
       </label>
       <Form method="get" onChange={onChange}>
         <input type="hidden" name="sort" value={sort} />
+        {globalCounts && (
+          <p className="small muted">
+            {showCounts
+              ? 'Числата до филтрите са общо в базата.'
+              : 'Броят до филтрите е общо в базата, затова не се показва при търсене или избран филтър.'}
+          </p>
+        )}
         {/* Preserve an active in-table search when filters change without JS (the JS path already
             carries `q` through withParams). */}
         {sp.get('q') && <input type="hidden" name="q" value={sp.get('q')!} />}
@@ -129,7 +145,7 @@ export function FilterRail({
                     onChange={() => {}}
                   />{' '}
                   {g.allLabel ?? 'Всички'}
-                  {g.allCount != null && (
+                  {showCounts && g.allCount != null && (
                     <span className="muted small">{fmtCount(g.allCount)}</span>
                   )}
                 </label>
@@ -164,7 +180,7 @@ export function FilterRail({
                         <details className="filter-subgroup" open={someSelected}>
                           <summary>
                             <span className="filter-subgroup-label">{category.label}</span>
-                            {category.count != null && (
+                            {showCounts && category.count != null && (
                               <span className="muted small">{fmtCount(category.count)}</span>
                             )}
                           </summary>
@@ -178,7 +194,7 @@ export function FilterRail({
                                 onChange={() => {}}
                               />{' '}
                               {o.label}
-                              {o.count != null && (
+                              {showCounts && o.count != null && (
                                 <span className="muted small">{fmtCount(o.count)}</span>
                               )}
                             </label>
@@ -197,7 +213,9 @@ export function FilterRail({
                         onChange={() => {}}
                       />{' '}
                       {o.label}
-                      {o.count != null && <span className="muted small">{fmtCount(o.count)}</span>}
+                      {showCounts && o.count != null && (
+                        <span className="muted small">{fmtCount(o.count)}</span>
+                      )}
                     </label>
                   ))}
             </details>

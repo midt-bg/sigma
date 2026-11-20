@@ -177,7 +177,13 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
           lede="Всяка компания, която е спечелила поне един договор по обществена поръчка. По подразбиране е подреден по общата стойност на спечелените договори."
         />
         <div className="split">
-          <FilterRail groups={groups} sort={sort} clearHref="/companies" csvHref={csvHref} />
+          <FilterRail
+            groups={groups}
+            sort={sort}
+            clearHref="/companies"
+            csvHref={csvHref}
+            globalCounts
+          />
           <section id="results" tabIndex={-1}>
             <ListControls
               base={sp}

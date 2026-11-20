@@ -145,7 +145,13 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
         />
 
         <div className="split">
-          <FilterRail groups={groups} sort={sort} clearHref="/contracts" csvHref={csvHref} />
+          <FilterRail
+            groups={groups}
+            sort={sort}
+            clearHref="/contracts"
+            csvHref={csvHref}
+            globalCounts
+          />
           <section id="results" tabIndex={-1}>
             <ListControls
               base={sp}
