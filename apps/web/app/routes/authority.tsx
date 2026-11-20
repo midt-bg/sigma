@@ -36,6 +36,7 @@ import { cached } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
+import { contractCountNote } from '../lib/contract-counts';
 import { seoMeta } from '../lib/meta';
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
@@ -151,7 +152,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           label="Ключови показатели"
           rows={[
             { term: 'Обща стойност', value: money(a.spentEur) },
-            { term: 'Брой договори', value: count(a.contracts) },
+            { term: 'Брой договори', value: count(a.contracts), sub: contractCountNote(a) },
             { term: 'Период', value: periodRange(a.periodFirst, a.periodLast) },
             { term: 'Изпълнители', value: count(a.suppliers) },
             conflicts.companies > 0 && {
