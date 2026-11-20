@@ -27,6 +27,8 @@ import { cached } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import { FRAMEWORK_HINT, UNVERIFIED_HINT } from '../lib/contractValue';
+import { EmptyDataNotice } from '../components/EmptyDataNotice';
+import { isUnfiltered } from '../lib/no-data';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -234,9 +236,13 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
             )}
 
             {result.items.length === 0 ? (
-              <p className="muted">
-                Няма резултати за избраните филтри. <Link to="/contracts">Изчисти филтрите</Link>
-              </p>
+              result.total === 0 && isUnfiltered(sp) ? (
+                <EmptyDataNotice />
+              ) : (
+                <p className="muted">
+                  Няма резултати за избраните филтри. <Link to="/contracts">Изчисти филтрите</Link>
+                </p>
+              )
             ) : (
               <div className="table-wrap tbl-cards" aria-busy={busy || undefined}>
                 <table>
