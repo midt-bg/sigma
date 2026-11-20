@@ -88,6 +88,11 @@ td .chip {
   margin-top: var(--s-5);
   max-width: 760px;
 }
+/* The Cyrillic reading of a no-match query: a long name typed without spaces is one word, and must not
+   widen the page on a phone. */
+.search-suggestion {
+  overflow-wrap: anywhere;
+}
 .page-search label {
   display: block;
   margin-bottom: var(--s-2);
