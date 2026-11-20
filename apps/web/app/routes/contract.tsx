@@ -11,7 +11,7 @@ import {
   signedPct,
 } from '@sigma/shared';
 import { contractIdFromSlug, contractSlug, getContract, getDb } from '@sigma/db';
-import type { CohortBand, ContractDetail } from '@sigma/api-contract';
+import type { CohortBand, ContractDetail, ContractParty } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -53,6 +53,21 @@ function bidsBreakdown(c: ContractDetail): string | null {
   if (c.bidsSme != null && c.bidsSme > 0) parts.push(`${count(c.bidsSme)} от МСП`);
   if (c.bidsNonEea != null && c.bidsNonEea > 0) parts.push(`${count(c.bidsNonEea)} извън ЕИП`);
   return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/**
+ * The party's totals beside the link to its contracts list. They count the summed contracts only, and the
+ * list also has the framework agreements and the contracts without a value — so the number is said to be
+ * the summed ones, not the size of the list the link opens.
+ */
+function PartyTotals({ party }: { party: Pick<ContractParty, 'totalContracts' | 'totalEur'> }) {
+  if (party.totalContracts <= 0) return null;
+  return (
+    <span className="small muted">
+      ({count(party.totalContracts)} {plural(party.totalContracts, 'договор', 'договора')} със
+      стойност, {money(party.totalEur)})
+    </span>
+  );
 }
 
 /**
@@ -571,10 +586,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <ul className="linklist">
                 <li>
                   <Link to={`/contracts?authority=${c.authority.slug}`}>
-                    → Всички {count(c.authority.totalContracts)}{' '}
-                    {plural(c.authority.totalContracts, 'договор', 'договора')} на институцията (
-                    {money(c.authority.totalEur)})
-                  </Link>
+                    → Всички договори на институцията
+                  </Link>{' '}
+                  <PartyTotals party={c.authority} />
                 </li>
                 <li>
                   <Link to={betweenParties}>
@@ -620,10 +634,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <ul className="linklist">
                 <li>
                   <Link to={`/contracts?bidder=${c.bidder.slug}`}>
-                    → Всички {count(c.bidder.totalContracts)}{' '}
-                    {plural(c.bidder.totalContracts, 'договор', 'договора')} на изпълнителя (
-                    {money(c.bidder.totalEur)})
-                  </Link>
+                    → Всички договори на изпълнителя
+                  </Link>{' '}
+                  <PartyTotals party={c.bidder} />
                 </li>
                 <li>
                   <Link to={betweenParties}>

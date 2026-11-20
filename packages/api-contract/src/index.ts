@@ -138,6 +138,9 @@ export interface CompanyDetail {
   /** Own contracts whose value is probably wrong at the source (value_low, summed as published) or missing
    *  (not summed) — the contracts list's badge for this company. Framework agreements are never in it. */
   suspect: number;
+  /** Own contracts with no value at all (framework agreements aside). Like the agreements, they are in the
+   *  contracts list but not in `contracts`, which counts the summed rows only. */
+  missingValue: number;
   /** Framework agreements this contractor is a party to, and their combined ceiling — the most the
    *  buyers may order under them. Never in the sums above: the orders are separate contracts. */
   frameworkAgreements: number;
@@ -208,6 +211,8 @@ export interface AuthorityDetail {
   periodLast: string | null;
   /** As CompanyDetail.suspect: the contracts list's „вероятно грешна или липсваща стойност" count. */
   suspect: number;
+  /** As CompanyDetail.missingValue: in the contracts list, not in `contracts`. */
+  missingValue: number;
   /** Framework agreements this authority concluded, and their combined ceiling. Never in the spend
    *  above: what the buyers ordered under them are separate contracts. */
   frameworkAgreements: number;
@@ -262,6 +267,8 @@ export interface ContractParty {
   settlement: string | null;
   eik: string | null;
   sector: SectorRef | null;
+  /** The party's summed contracts (authority_totals / company_totals) — framework agreements and contracts
+   *  without a value are not in it, so it is NOT the size of the party's contracts list. */
   totalContracts: number;
   totalEur: number;
 }

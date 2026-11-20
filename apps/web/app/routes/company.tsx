@@ -34,6 +34,7 @@ import { ContractMiniTable } from '../components/ContractMiniTable';
 import { CompanyRolesTables, RegistrySource } from '../components/RegistryRoles';
 import { ShareBar, Chip, OwnershipChip, Section, RegistryCta } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { contractCountNote } from '../lib/contract-counts';
 import { declarantsChip } from '../lib/conflicts';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
@@ -279,7 +280,11 @@ export default function Company({ loaderData }: Route.ComponentProps) {
               value: `${count(jointContracts.length)} ${plural(jointContracts.length, 'договор', 'договора')}`,
               sub: 'Индивидуалният дял от стойността не е установен.',
             },
-            c.contracts > 0 && { term: 'Брой договори', value: count(c.contracts) },
+            c.contracts > 0 && {
+              term: 'Брой договори',
+              value: count(c.contracts),
+              sub: contractCountNote(c),
+            },
             c.contracts > 0 && { term: 'Период', value: periodRange(c.periodFirst, c.periodLast) },
             c.contracts > 0 && { term: 'Възложители', value: count(c.authorities) },
             c.sector && {
