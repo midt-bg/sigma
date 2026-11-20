@@ -7,6 +7,7 @@ import { dirname, resolve } from 'node:path';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
 const seedFile = resolve(root, 'scripts/seed.sql');
+const precomputeFile = resolve(root, 'scripts/precompute.sql');
 
 function run(cmd, args, cwd = root) {
   console.log(`==> ${cmd} ${args.join(' ')}`);
@@ -21,6 +22,8 @@ run('pnpm', ['install']);
 try {
   run('wrangler', ['d1', 'migrations', 'apply', 'sigma', '--local'], apiDir);
   run('wrangler', ['d1', 'execute', 'sigma', '--local', '--file', seedFile], apiDir);
+  // The explorer reads rollups, not the base tables: build them from the seed, as the import does.
+  run('wrangler', ['d1', 'execute', 'sigma', '--local', '--file', precomputeFile], apiDir);
   console.log('\n==> Done. Start everything with: pnpm dev');
 } catch {
   console.error(

@@ -1,16 +1,18 @@
 -- Sample data for local development. Idempotent (INSERT OR IGNORE).
--- Dev-only smoke seed: these ids/statuses do not exercise the production identity keys or rollup
--- conventions used by the admin/OCDS normalization pipeline.
+-- Dev-only smoke seed. Ids follow the production identity keys (`auth:<ЕИК>` authorities, `c:<id>` contracts,
+-- see packages/db/src/queries/identity.ts) so the explorer routes resolve them. Only the base tables are
+-- seeded here; the read-optimised rollups (home totals, leaderboards, facets) are built from them by
+-- scripts/precompute.sql, which `pnpm run setup` runs right after this file.
 
 INSERT OR IGNORE INTO authorities (id, name, bulstat, region) VALUES
-  ('auth-sofia', 'Община София', '000696327', 'София-град'),
-  ('auth-mrrb', 'Министерство на регионалното развитие', '831661388', 'София-град');
+  ('auth:000696327', 'Община София', '000696327', 'София-град'),
+  ('auth:831661388', 'Министерство на регионалното развитие', '831661388', 'София-град');
 
 INSERT OR IGNORE INTO tenders
   (id, source_id, title, authority_id, cpv_code, estimated_value, currency, procedure_type, status, published_at, deadline_at)
 VALUES
-  ('demo-tender', 'AOP-2026-0001', 'Доставка на хранителни продукти за детски градини', 'auth-sofia', '15000000', 1200000, 'BGN', 'открита процедура', 'published', '2026-03-01', '2026-04-01'),
-  ('t-build-01', 'AOP-2026-0002', 'Ремонт на общински път', 'auth-mrrb', '45000000', 3500000, 'BGN', 'открита процедура', 'evaluation', '2026-02-15', '2026-03-20');
+  ('demo-tender', 'AOP-2026-0001', 'Доставка на хранителни продукти за детски градини', 'auth:000696327', '15000000', 1200000, 'BGN', 'открита процедура', 'published', '2026-03-01', '2026-04-01'),
+  ('t-build-01', 'AOP-2026-0002', 'Ремонт на общински път', 'auth:831661388', '45000000', 3500000, 'BGN', 'открита процедура', 'evaluation', '2026-02-15', '2026-03-20');
 
 INSERT OR IGNORE INTO bidders (id, name, bulstat) VALUES
   ('bidder-a', 'Алфа ЕООД', '111111111'),
@@ -33,14 +35,14 @@ INSERT OR IGNORE INTO bidders (id, name, bulstat) VALUES
 -- visible as a before/after rather than as an empty page either way.
 
 INSERT OR IGNORE INTO authorities (id, name, bulstat, region) VALUES
-  ('auth-plovdiv', 'Община Пример', '131223340', 'Пловдив');
+  ('auth:131223340', 'Община Пример', '131223340', 'Пловдив');
 
 INSERT OR IGNORE INTO tenders
   (id, source_id, title, authority_id, cpv_code, estimated_value, currency, procedure_type, status, published_at, deadline_at)
 VALUES
-  ('t-conflict-01', 'AOP-2022-0101', 'Строителен надзор на общински обекти', 'auth-plovdiv', '71520000', 900000, 'BGN', 'открита процедура', 'closed', '2022-01-10', '2022-02-10'),
-  ('t-conflict-02', 'AOP-2022-0102', 'Консултантски услуги по проект', 'auth-sofia', '79400000', 400000, 'BGN', 'открита процедура', 'closed', '2022-04-05', '2022-05-05'),
-  ('t-conflict-03', 'AOP-2022-0103', 'Доставка на офис оборудване', 'auth-mrrb', '30190000', 250000, 'BGN', 'открита процедура', 'closed', '2022-06-01', '2022-07-01');
+  ('t-conflict-01', 'AOP-2022-0101', 'Строителен надзор на общински обекти', 'auth:131223340', '71520000', 900000, 'BGN', 'открита процедура', 'closed', '2022-01-10', '2022-02-10'),
+  ('t-conflict-02', 'AOP-2022-0102', 'Консултантски услуги по проект', 'auth:000696327', '79400000', 400000, 'BGN', 'открита процедура', 'closed', '2022-04-05', '2022-05-05'),
+  ('t-conflict-03', 'AOP-2022-0103', 'Доставка на офис оборудване', 'auth:831661388', '30190000', 250000, 'BGN', 'открита процедура', 'closed', '2022-06-01', '2022-07-01');
 
 -- eik_valid=1 so these behave like resolved winners; settlement feeds the seat-confirmation rung.
 INSERT OR IGNORE INTO bidders (id, name, bulstat, eik_normalized, eik_valid, legal_form, settlement) VALUES
@@ -49,9 +51,9 @@ INSERT OR IGNORE INTO bidders (id, name, bulstat, eik_normalized, eik_valid, leg
   ('eik:204556676', 'ГАМА ИНВЕСТ АД', '204556676', '204556676', 1, 'АД', 'Варна');
 
 INSERT OR IGNORE INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
-  ('c-conflict-01', 't-conflict-01', 'eik:201122335', 840000, 'BGN', '2022-03-14', 'Д-2022-101', 429000),
-  ('c-conflict-02', 't-conflict-02', 'eik:203445566', 372000, 'BGN', '2022-06-20', 'Д-2022-102', 190000),
-  ('c-conflict-03', 't-conflict-03', 'eik:204556676', 236000, 'BGN', '2022-08-02', 'Д-2022-103', 120000);
+  ('c:conflict-01', 't-conflict-01', 'eik:201122335', 840000, 'BGN', '2022-03-14', 'Д-2022-101', 429000),
+  ('c:conflict-02', 't-conflict-02', 'eik:203445566', 372000, 'BGN', '2022-06-20', 'Д-2022-102', 190000),
+  ('c:conflict-03', 't-conflict-03', 'eik:204556676', 236000, 'BGN', '2022-08-02', 'Д-2022-103', 120000);
 
 -- person id = 'person:' || key(name) || '|' || key(institution) — (name, institution), never a bare
 -- name (ADR-0026), so two namesakes at different bodies stay distinct.
@@ -94,8 +96,8 @@ VALUES
    '2021', '2023', 1, 120000, '2022', '2022', 'held');
 
 INSERT OR IGNORE INTO interest_link_authorities (link_key, authority_id, authority_name, contract_count, value_eur, own) VALUES
-  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|201122335', 'auth-plovdiv', 'Община Пример', 1, 429000, 'exact'),
-  ('person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|203445566|family', 'auth-sofia', 'Община София', 1, 190000, 'exact');
+  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|201122335', 'auth:131223340', 'Община Пример', 1, 429000, 'exact'),
+  ('person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|203445566|family', 'auth:000696327', 'Община София', 1, 190000, 'exact');
 
 -- Trade Register evidence seals (#279, ADR-0033, migration 0006). NOT optional decoration: since the
 -- evidence ladder landed, SURFACED_OWNERSHIP requires a publishing seal, so a seeded link without one
