@@ -19,7 +19,11 @@ vi.mock('react-router', async (importOriginal) => ({
 vi.mock('virtual:react-router/server-build', () => ({ default: {} }));
 
 // app.ts reads `caches.default` at module-init, so the global must exist before it is imported.
-const cacheStore = { match: vi.fn(async () => undefined), put: vi.fn(async () => undefined) };
+const cacheStore = {
+  match: vi.fn(async () => undefined),
+  put: vi.fn(async () => undefined),
+  delete: vi.fn(async () => false),
+};
 (globalThis as unknown as { caches: unknown }).caches = { default: cacheStore };
 
 // A limiter binding that always reports the key is over the limit (deterministic — the real binding
@@ -115,29 +119,32 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
 // stamp X-Robots-Tag on BOTH the HTML and the single-fetch `.data` twin — the twin is JSON with no <head> to
 // carry a route <meta robots>, and a resource route's loader `data(..., {headers})` doesn't propagate to it.
 // The env binds no limiter, so the fail-open limiters let each request reach the (mocked) loader.
-describe('handleRequest — /conflicts responses are noindex (HTML + .data twin)', () => {
+describe('handleRequest — production indexing policy (HTML + .data twin)', () => {
   const noindexed = [
-    'http://local/conflicts',
-    'http://local/conflicts.data', // leaderboard twin
-    'http://local/conflicts/official/ivan-petrov-1',
-    'http://local/conflicts/company/123456789',
+    '/conflicts',
+    '/conflicts.data', // leaderboard twin
+    '/conflicts/official/test-person',
+    '/conflicts/company/000000000',
     // The exact gap Playwright caught: the resource-route twin, whose loader header never propagated.
-    'http://local/conflicts/link/self/ivan-petrov-1/123456789/contracts.data',
+    '/conflicts/link/self/test-person/000000000/contracts.data',
     // Search now surfaces свързани-лица officials by name → its HTML, its .data twin, and the
     // /search/suggest typeahead JSON (a headless resource route) all name individuals.
-    'http://local/persons/abc',
-    'http://local/persons/abc.data',
-    'http://local/contracts.csv',
-    'http://local/companies.data',
-    'http://local/conflicts/methodology.data',
-    'http://local/search?q=ivan',
-    'http://local/search.data?q=ivan',
-    'http://local/search/suggest?q=ivan',
+    '/persons/abc',
+    '/persons/abc.data',
+    '/contracts.csv',
+    '/companies.data',
+    '/conflicts/methodology.data',
+    '/search?q=fixture',
+    '/search.data?q=fixture',
+    '/search/suggest?q=fixture',
   ];
-  for (const url of noindexed) {
-    it(`sets X-Robots-Tag: noindex on ${url.replace('http://local', '')}`, async () => {
-      const req = new Request(url, { headers: { 'CF-Connecting-IP': '203.0.113.50' } });
+  for (const path of noindexed) {
+    it(`sets X-Robots-Tag: noindex on ${path}`, async () => {
+      const req = new Request(`https://sigma.midt.bg${path}`, {
+        headers: { 'CF-Connecting-IP': '203.0.113.50' },
+      });
       const res = await workerFetch(req, env(underLimit), ctx);
+      expect(res.status).toBe(200);
       expect(res.headers.get('X-Robots-Tag')).toBe('noindex');
     });
   }

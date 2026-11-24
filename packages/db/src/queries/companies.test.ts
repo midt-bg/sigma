@@ -52,7 +52,7 @@ const unfilteredRows: (CompanyTotalsRow & { sort_value: number })[] = [
 
 // The scoped base-aggregation CTE a sector/year/EU cross-cut switches the FROM source to, as opposed
 // to the plain company_totals rollup.
-const FILTERED_SOURCE = ['FROM (', 'substr(t.cpv_code, 1, 2)'];
+const FILTERED_SOURCE = ['FROM (', 't.cpv_code >= ?'];
 
 /** Keyset page: everything after the `bidder_id` the query bound as its cursor. */
 const after = (rows: (CompanyTotalsRow & { sort_value: number })[]) => (call: FakeD1Call) =>
@@ -205,8 +205,8 @@ describe('listCompanies — source and entity-where branches', () => {
   it('adds year, EU, and single-sector predicates to the base aggregation', async () => {
     const { db, sql } = capDb();
     await listCompanies(db, { sectors: ['45'], years: ['2024'], eu: 'eu', pageSize: 10 });
-    const base = sql.find((s) => s.includes('FROM (') && s.includes('substr(t.cpv_code, 1, 2)'))!;
-    expect(base).toContain('substr(c.signed_at, 1, 4) IN');
+    const base = sql.find((s) => s.includes('FROM (') && s.includes('t.cpv_code >= ?'))!;
+    expect(base).toContain("(c.signed_at >= ? AND c.signed_at < '2025')");
     expect(base).toContain('c.eu_funded = 1');
     expect(base).toContain('? AS primary_sector'); // single sector → bound value
   });
@@ -217,8 +217,8 @@ describe('listCompanies — source and entity-where branches', () => {
     const { db, sql } = capDb();
     await listCompanies(db, { years: ['2024'], pageSize: 10 });
     const base = sql.find((s) => s.includes('FROM ('))!;
-    expect(base).toContain('substr(c.signed_at, 1, 4) IN');
-    expect(base).not.toContain('substr(t.cpv_code, 1, 2) IN');
+    expect(base).toContain("(c.signed_at >= ? AND c.signed_at < '2025')");
+    expect(base).not.toContain('t.cpv_code');
   });
 
   it('uses NULL primary_sector for a multi-sector filter and the national funding predicate', async () => {
@@ -250,6 +250,40 @@ describe('listCompanies — source and entity-where branches', () => {
     const page = await listCompanies(db, {}); // no pageSize → default of 25
     expect(page.items).toHaveLength(1);
     expect(page.total).toBe(0);
+  });
+
+  it('reads a cross-cut once: the page carries the total, and no second aggregation runs', async () => {
+    const fake = fakeD1([{ when: 'FROM (', all: [{ ...filteredRows[0]!, total: 7 }] }]);
+    const page = await listCompanies(fake.db, { sectors: ['45'], pageSize: 10 });
+    expect(page.total).toBe(7);
+    expect(fake.sql).toHaveLength(1);
+    expect(fake.sql[0]).toContain('WITH scoped AS MATERIALIZED');
+  });
+
+  it('counts an empty first page of a cross-cut as none, and asks only when a cursor ran past the end', async () => {
+    const empty = fakeD1([{ when: 'AS sort_value', all: [] }]);
+    expect((await listCompanies(empty.db, { sectors: ['45'] })).total).toBe(0);
+    expect(empty.sql).toHaveLength(1);
+
+    const rows = [
+      { ...filteredRows[0]!, bidder_id: 'eik:1', sort_value: 200 },
+      { ...filteredRows[0]!, bidder_id: 'eik:2', sort_value: 100 },
+    ];
+    const first = await listCompanies(fakeD1([{ when: 'FROM (', all: rows }]).db, {
+      sectors: ['45'],
+      pageSize: 1,
+    });
+    const past = fakeD1([
+      { when: 'AS sort_value', all: [] },
+      { when: 'COUNT(*) AS n', first: { n: 3 } },
+    ]);
+    const page = await listCompanies(past.db, {
+      sectors: ['45'],
+      pageSize: 1,
+      cursor: first.nextCursor,
+    });
+    expect(page.items).toEqual([]);
+    expect(page.total).toBe(3);
   });
 
   it('slices to pageSize and reports a next cursor when the query overflows the page', async () => {

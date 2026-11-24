@@ -134,20 +134,24 @@ describe('cacheKey', () => {
     expect(second.search).toBe(first.search);
   });
 
-  it('canonicalizes percent-encoded path variants', () => {
-    const encoded = cacheUrl('http://local/contracts/e%3AUNP-1%3ACONTRACT-1');
-    const decoded = cacheUrl('http://local/contracts/e:UNP-1:CONTRACT-1');
+  it('preserves escaped segments and distinguishes an encoded slash from a path separator', () => {
+    const singleSegment = cacheUrl('http://local/contracts/test%2Fcontract');
+    const twoSegments = cacheUrl('http://local/contracts/test/contract');
+    const doubleEscaped = cacheUrl('http://local/contracts/test%252Fcontract');
 
-    expect(encoded.toString()).toBe(decoded.toString());
-    expect(encoded.pathname).toBe('/contracts/e:UNP-1:CONTRACT-1');
+    expect(singleSegment.pathname).toBe('/contracts/test%2Fcontract');
+    expect(new Set([singleSegment.href, twoSegments.href, doubleEscaped.href]).size).toBe(3);
   });
 
-  it('lowercases the static first segment only, keeping the case of identifiers', () => {
-    expect(cacheUrl('http://local/NETWORK').toString()).toBe(
-      cacheUrl('http://local/network').toString(),
+  it('folds only the contract JSON suffix across equivalent router spellings', () => {
+    const canonical = cacheUrl('http://local/contracts/Test%2Fslug%3F.json');
+    expect(cacheUrl('http://local/contracts/Test%2Fslug%3F%2eJs%6fn').href).toBe(canonical.href);
+    expect(cacheUrl('http://local/contracts/Test%2Fslug%3F%2edata').pathname).toBe(
+      '/contracts/Test%2Fslug%3F%2edata',
     );
-    expect(cacheUrl('http://local/Competition.data').pathname).toBe('/competition.data');
-    expect(cacheUrl('http://local/CONTRACTS/e:UNP-1:Ab').pathname).toBe('/contracts/e:UNP-1:Ab');
+    expect(cacheUrl('http://local/contracts/Test%zz%2ejson').pathname).toBe(
+      '/contracts/Test%zz%2ejson',
+    );
   });
 
   it('keeps genuinely distinct paths distinct', () => {

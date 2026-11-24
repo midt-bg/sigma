@@ -19,7 +19,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     return withDataSource(
       Response.json(
         { error: 'not_found' },
-        { status: 404, headers: { 'Content-Type': JSON_TYPE } },
+        { status: 404, headers: { 'Content-Type': JSON_TYPE, 'X-Robots-Tag': 'noindex' } },
       ),
       true,
     );
@@ -33,6 +33,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
       headers: {
         'Content-Type': JSON_TYPE,
         'X-Content-Type-Options': 'nosniff',
+        'X-Robots-Tag': 'noindex',
         'Cache-Control': publicCache(3600),
       },
     }),

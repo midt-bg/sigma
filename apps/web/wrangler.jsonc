@@ -4,6 +4,8 @@
   // mock with the SSR explorer. The ETL refresh is a separate worker (sigma-etl).
   "name": "sigma",
   "compatibility_date": "2025-04-04",
+  // The render gate uses the incoming request's abort signal to replace a disconnected owner.
+  "compatibility_flags": ["enable_request_signal"],
   "main": "./workers/app.ts",
   // The explorer reads D1 directly via @sigma/db (no hop through apps/api). Same `sigma` database +
   // database_id as apps/api so local dev shares one miniflare D1 file (see vite.config.ts persistState).

@@ -31,9 +31,8 @@ class ReadonlyD1 implements D1Database {
     throw new Error('@sigma/db: batch() is not available on the read-only D1 handle');
   }
 
-  // Note: this forecloses the D1 Sessions API, i.e. read-replica routing — a deliberate least-privilege
-  // tradeoff for now (web is not replica-scaled). If read-heavy scaling later needs replicas, route reads
-  // through a guarded session handle here rather than dropping the wrapper.
+  // A session handle is unguarded, so none is handed out. Read replicas are reached the other way round:
+  // the binding this wraps already reads through a session of the request's own (read-session.ts).
   withSession(_constraintOrBookmark?: D1SessionBookmark | D1SessionConstraint): D1DatabaseSession {
     throw new Error('@sigma/db: withSession() is not available on the read-only D1 handle');
   }

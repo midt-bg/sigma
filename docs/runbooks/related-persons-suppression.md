@@ -128,11 +128,22 @@ served surface until the next data run ships — check the surface, not the comm
      --command "SELECT status FROM interest_links WHERE link_key = '<key>'"
    ```
    Expect `suppressed`, or no row at all. Anything else means the ship did not carry the decision.
-3. **The page is gone**, allowing for cache: the link's page must 404 and the official's page must not
-   list it. `publicCache(3600)` means a reader can still see it for up to an hour after the write — if it
-   is still there beyond that, the takedown did not land. Not willing to wait the hour: a zone Purge
-   Everything on `midt.bg` or a web deploy clears it everywhere (purge by URL does not reach these entries;
-   docs/deploy.md, „Уговорка: остаряла страница и изчистване на кеша"). The first request after either
-   answers `X-Edge-Cache: MISS`.
+3. **The public responses reflect the withdrawal.** Verify the link resource and the person page,
+   including full `.data` responses, search and suggestions, and any company, authority or network
+   view that showed the link. Check the affected query variants and public hosts. A previously
+   cached positive can still be served within its route's `s-maxage` (up to an hour on person and link
+   routes). On a miss these routes read the primary. An expired entry cannot stand in for a 5xx or
+   429. To withdraw fresh copies, deploy a fresh web build against the verified corrected slot.
+   A link-only correction outside the procurement CSV exports uses this web-only path. If the
+   correction also changes procurement CSV data, prepare and verify the affected exports.
+   [CSV procedure](release-rollback.md#csv-при-оттегляне)
+
+   Confirm the rollout on every host that serves the data before treating the withdrawal as
+   effective there. A render already running under the same tag can finish a write after Purge
+   Everything. A first request can be `MISS` for a cacheable response or `BYPASS`
+   for a 404, 410, redirect or `no-store` answer. Repeat the checks after the first request. Use
+   the [targeted web deploy](release-rollback.md#целеви-web-deploy) for the fresh build and the
+   [rollback procedure for withdrawals](release-rollback.md#връщане-след-оттегляне) if the
+   release must be reverted. See [deployment cache behavior](../deploy.md#уговорка-остаряла-страница-и-изчистване-на-кеша).
 4. **It stays gone.** Re-run the next scheduled load and repeat step 2: the list is what makes a takedown
    survive a rebuild, and this is the only step that proves the survival rather than assuming it.

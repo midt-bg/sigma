@@ -1,55 +1,143 @@
-// Per-isolate guard in front of the loaders (and so D1) for edge-cache misses:
-//   • single-flight — identical misses wait for the first one's cache entry instead of each reading D1;
-//   • a cap on renders under way, past which a request is shed with a 503 instead of queueing behind D1.
-// ponytail: per isolate only. Cloudflare runs many isolates per colo, so this tames one herd on one isolate,
-// not the whole site; coalescing across isolates would need a Durable Object.
+// Signals cross request contexts. Responses, timers and Cache API I/O belong to each caller.
+export const FOLLOWER_WAIT_MS = 10_000;
+// A disconnected invocation can vanish without running finally. Allow one replacement while
+// its origin work winds down, then keep that overlap allowance occupied for at most 30 seconds.
+const ABANDONED_MS = 30_000;
 
-// How many renders one isolate runs at once before it sheds. A knob: raise it if 503s show up at load D1
-// still has room for.
-export const MAX_RENDERING = 20;
+export type FlightOutcome = 'put-complete' | 'bypass' | 'abandoned' | number;
 
-// How long an identical miss waits for the first render before it renders itself. The first render settles
-// when its cache entry is stored, and a put whose request was cancelled (the visitor left) may never
-// settle: without a bound, every later miss of that page on the isolate waited until its visitor gave up.
-export const FLIGHT_MS = 10_000;
+type Flight = {
+  listeners: Set<(outcome: FlightOutcome) => void>;
+  outcome?: FlightOutcome;
+  abandonedUntil?: number;
+  put?: { takeoverAt: number; expires: number };
+  recovery?: Flight;
+};
 
-const flights = new Map<string, { done: Promise<void>; at: number }>();
-let rendering = 0;
+type Slot = { current?: Flight; predecessor?: Flight };
+const flights = new Map<string, Slot>();
+let nextSweep = 0;
 
-/**
- * The identical miss already rendering in this isolate: settles once its cache entry is stored (or not),
- * or when the flight runs out of time, whichever comes first.
- */
-export function inFlight(key: string): Promise<void> | undefined {
-  const flight = flights.get(key);
-  const left = flight ? flight.at + FLIGHT_MS - Date.now() : 0;
-  if (!flight || left <= 0) return undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>((resolve) => (timer = setTimeout(resolve, left)));
-  return Promise.race([flight.done, timeout]).finally(() => clearTimeout(timer));
+function prune(slot: Slot, now: number): void {
+  const predecessorUntil = slot.predecessor?.abandonedUntil;
+  if (predecessorUntil !== undefined && predecessorUntil <= now) delete slot.predecessor;
+  const current = slot.current;
+  if (!current) return;
+  const expires = current.abandonedUntil ?? current.put?.expires;
+  if (expires !== undefined && expires <= now) {
+    delete slot.current;
+    finish(current, 'abandoned');
+  }
 }
 
-/** Become the render the next identical misses wait for; call the returned function when done. */
-export function claim(key: string): () => void {
-  const current = flights.get(key);
-  if (current && Date.now() - current.at < FLIGHT_MS) return () => {};
-  let settle!: () => void;
-  const flight = { done: new Promise<void>((resolve) => (settle = resolve)), at: Date.now() };
-  flights.set(key, flight);
-  return () => {
-    // A late settle of a timed-out flight must not drop the one that replaced it.
-    if (flights.get(key) === flight) flights.delete(key);
-    settle();
+function sweep(now: number): void {
+  if (now < nextSweep) return;
+  nextSweep = now + FOLLOWER_WAIT_MS;
+  for (const [key, slot] of flights) {
+    prune(slot, now);
+    if (!slot.current && !slot.predecessor) flights.delete(key);
+  }
+}
+
+function finish(flight: Flight, outcome: FlightOutcome): void {
+  if (flight.outcome !== undefined) return;
+  flight.outcome = outcome;
+  for (const notify of flight.listeners) notify(outcome);
+  flight.listeners.clear();
+}
+
+async function waitFor(flight: Flight, signal: AbortSignal): Promise<FlightOutcome | 'timeout'> {
+  if (flight.outcome !== undefined) return flight.outcome;
+
+  let notify!: (outcome: FlightOutcome | 'timeout') => void;
+  const result = new Promise<FlightOutcome | 'timeout'>((resolve) => (notify = resolve));
+  const stopWaiting = () => {
+    flight.listeners.delete(notify);
+    notify('timeout');
+  };
+  const timer = setTimeout(stopWaiting, FOLLOWER_WAIT_MS);
+  flight.listeners.add(notify);
+  signal.addEventListener('abort', stopWaiting, { once: true });
+  try {
+    return await result;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', stopWaiting);
+  }
+}
+
+export interface RenderOwner {
+  isCurrent(): boolean;
+  beginPut(expires: number): void;
+  settle(outcome: FlightOutcome): void;
+}
+
+interface Follower {
+  wait: Promise<FlightOutcome | 'timeout'>;
+  recover(): RenderAdmission;
+}
+
+type RenderAdmission = RenderOwner | Follower | null;
+
+function follow(key: string, flight: Flight, signal: AbortSignal): Follower {
+  return {
+    wait: waitFor(flight, signal),
+    recover: () => admit(key, signal, flight),
   };
 }
 
-/** Run a render within the cap; `null` when the isolate is already at it. */
-export async function withinCap<T>(render: () => Promise<T>): Promise<T | null> {
-  if (rendering >= MAX_RENDERING) return null;
-  rendering += 1;
-  try {
-    return await render();
-  } finally {
-    rendering -= 1;
+export function enterFlight(key: string, signal: AbortSignal): RenderAdmission {
+  return admit(key, signal);
+}
+
+function admit(key: string, signal: AbortSignal, previous?: Flight): RenderAdmission {
+  if (signal.aborted) return null;
+  if (previous?.recovery) return follow(key, previous.recovery, signal);
+
+  const now = Date.now();
+  sweep(now);
+  const slot = flights.get(key) ?? {};
+  prune(slot, now);
+  const current = slot.current;
+  if (current) {
+    if (current.abandonedUntil !== undefined) {
+      if (slot.predecessor) return null;
+      slot.predecessor = current;
+    } else if (!current.put || now < current.put.takeoverAt) {
+      // Follower patience does not invalidate a healthy render or start competing origin work.
+      if (current === previous) return null;
+      if (previous) previous.recovery = current;
+      return follow(key, current, signal);
+    }
   }
+
+  const flight: Flight = { listeners: new Set() };
+  slot.current = flight;
+  flights.set(key, slot);
+  if (previous) previous.recovery = flight;
+  if (current) finish(current, 'abandoned');
+
+  const abandon = () => {
+    if (slot.current !== flight) return;
+    flight.abandonedUntil = Date.now() + ABANDONED_MS;
+    finish(flight, 'abandoned');
+  };
+  signal.addEventListener('abort', abandon, { once: true });
+
+  return {
+    isCurrent: () => slot.current === flight && flight.abandonedUntil === undefined,
+    beginPut: (expires) => {
+      // Origin work finished. A stuck waitUntil put can be superseded without a second D1 attempt
+      // running alongside it. Its separate read fence still covers the outstanding write.
+      signal.removeEventListener('abort', abandon);
+      flight.put = { takeoverAt: Date.now() + FOLLOWER_WAIT_MS, expires };
+    },
+    settle: (outcome) => {
+      signal.removeEventListener('abort', abandon);
+      if (slot.current === flight) delete slot.current;
+      if (slot.predecessor === flight) delete slot.predecessor;
+      if (!slot.current && !slot.predecessor && flights.get(key) === slot) flights.delete(key);
+      finish(flight, outcome);
+    },
+  };
 }
