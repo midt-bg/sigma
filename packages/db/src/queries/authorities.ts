@@ -10,6 +10,8 @@ import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
 import { NAME_KEY, withNameKey } from './name-sort';
+import { prefixIn } from './prefix-in';
+import { pageSql } from './scoped-page';
 import { toAuthorityListItem, typeLabel, type AuthorityTotalsRow } from './rows';
 import { searchMatchQuery } from './search';
 
@@ -69,12 +71,14 @@ function source(p: AuthorityListParams): { from: string; params: unknown[] } {
   const where: string[] = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
   if (p.sectors?.length) {
-    where.push(`substr(t.cpv_code, 1, 2) IN (${qs(p.sectors.length)})`);
-    params.push(...p.sectors);
+    const sectors = prefixIn('t.cpv_code', 2, p.sectors);
+    where.push(sectors.sql);
+    params.push(...sectors.params);
   }
   if (p.years?.length) {
-    where.push(`substr(c.signed_at, 1, 4) IN (${qs(p.years.length)})`);
-    params.push(...p.years);
+    const years = prefixIn('c.signed_at', 4, p.years);
+    where.push(years.sql);
+    params.push(...years.params);
   }
   const eu = normalizeEu(p.eu);
   if (eu === 'eu') where.push('c.eu_funded = 1');
@@ -140,21 +144,27 @@ export async function listAuthorities(
     filterSignature: signature,
     allowedSortCols: Object.values(SORTS).map((s) => s.col),
   });
-  const conds = [ew.sql, ks.whereSql].filter(Boolean).join(' AND ');
-
-  const from = sort.col === NAME_KEY ? withNameKey(src.from) : src.from;
-  const sql = `SELECT ${COLS}, ${sort.col} AS sort_value FROM ${from}${conds ? ' WHERE ' + conds : ''} ${ks.orderSql} LIMIT ?`;
-  const [pageRows, totalRow] = await Promise.all([
+  const scoped = needsBase(p);
+  const sql = pageSql({ cols: COLS, sortCol: sort.col, from: src.from, scoped, where: ew.sql, ks });
+  const binds = [...src.params, ...ew.params, ...ks.params, pageSize + 1];
+  type Row = AuthorityTotalsRow & { sort_value: string | number; total?: number };
+  const count = async () =>
+    (
+      await db
+        .prepare(`SELECT COUNT(*) AS n FROM ${src.from}${ew.sql ? ' WHERE ' + ew.sql : ''}`)
+        .bind(...src.params, ...ew.params)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+  // As in listCompanies: the rollup and its count side by side, a scoped aggregation in one pass.
+  const [pageRows, counted] = await Promise.all([
     db
       .prepare(sql)
-      .bind(...src.params, ...ew.params, ...ks.params, pageSize + 1)
-      .all<AuthorityTotalsRow & { sort_value: string | number }>(),
-    db
-      .prepare(`SELECT COUNT(*) AS n FROM ${src.from}${ew.sql ? ' WHERE ' + ew.sql : ''}`)
-      .bind(...src.params, ...ew.params)
-      .first<{ n: number }>(),
+      .bind(...binds)
+      .all<Row>(),
+    scoped ? null : count(),
   ]);
   const { results } = pageRows;
+  const total = counted ?? results[0]?.total ?? (p.cursor ? await count() : 0);
 
   const hasMore = results.length > pageSize;
   let rows = results.slice(0, pageSize);
@@ -167,7 +177,7 @@ export async function listAuthorities(
     cursor: ks.cursor,
     sortToken: ks.cursorToken,
   });
-  return { items: rows.map(toAuthorityListItem), total: totalRow?.n ?? 0, ...cursors };
+  return { items: rows.map(toAuthorityListItem), total, ...cursors };
 }
 
 export interface AuthorityFacets {
