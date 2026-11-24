@@ -14,6 +14,7 @@ import {
   ownershipStatements,
   parentsFirst,
   registryBatchSql,
+  livePartidas,
   registryTables,
   rehydrate,
   shippedTables,
@@ -365,4 +366,14 @@ test('the finished build clears what the slot holds before it ships, by the slot
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the live slot offers the partidas it has read, and a slot without a register offers none', () => {
+  const db = new DatabaseSync(':memory:');
+  const read = (sql) => db.prepare(sql).all();
+  assert.deepEqual(livePartidas(read), []);
+  db.exec(`CREATE TABLE registry_deeds (eik TEXT PRIMARY KEY, outcome TEXT NOT NULL);
+    INSERT INTO registry_deeds VALUES ('222222222','ok'),('111111111','ok'),('333333333','absent');`);
+  assert.deepEqual(livePartidas(read), ['111111111', '222222222']);
+  db.close();
 });

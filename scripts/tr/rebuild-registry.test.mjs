@@ -69,3 +69,32 @@ test('a deferred baseline is accepted only after the declarations name their com
   assert.equal(db.prepare('SELECT baseline_status s FROM registry_entry_state').get().s, 'ready');
   db.close();
 });
+
+test('the partidas another slot has read are read here too, once, and only the well-formed', async () => {
+  const db = new DatabaseSync(':memory:');
+  for (const f of readdirSync('packages/db/migrations').sort())
+    if (f.endsWith('.sql')) db.exec(readFileSync(`packages/db/migrations/${f}`, 'utf8'));
+  db.exec(`
+    INSERT INTO authorities (id, name) VALUES ('a:1','ОБЩИНА');
+    INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:1','u','Т','a:1','открита');
+    INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
+      ('eik:111111111','ЕДНО','111111111','111111111',1,'company');
+    INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
+      ('c:1','t:1','eik:111111111',1,'EUR','2024-01-01','1',1);`);
+  const calls = [];
+  const client = { deed: async (eik) => (calls.push(eik), { status: 'absent' }) };
+  const d1 = d1FromSqlite(db);
+
+  // A company no contract and no declared ЕИК names — the live slot reached it by its name. The winner
+  // is in the list as well, a repeat and a malformed line with it.
+  const carried = ['444444444', '111111111', '444444444', 'not-an-eik', '12345'];
+  assert.equal(await importRegistry(d1, client, { runId: 'r', complete: false, carried }), 2);
+  assert.deepEqual(calls, ['111111111', '444444444']);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM registry_queue').get().n, 0);
+
+  // The catch-up pass is handed nothing and reads nothing twice.
+  assert.equal(await importRegistry(d1, client, { runId: 'r' }), 0);
+  assert.deepEqual(calls, ['111111111', '444444444']);
+  assert.equal(db.prepare('SELECT baseline_status s FROM registry_entry_state').get().s, 'ready');
+  db.close();
+});
