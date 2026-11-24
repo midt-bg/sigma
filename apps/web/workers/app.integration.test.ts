@@ -19,7 +19,11 @@ vi.mock('react-router', async (importOriginal) => ({
 vi.mock('virtual:react-router/server-build', () => ({ default: {} }));
 
 // app.ts reads `caches.default` at module-init, so the global must exist before it is imported.
-const cacheStore = { match: vi.fn(async () => undefined), put: vi.fn(async () => undefined) };
+const cacheStore = {
+  match: vi.fn(async () => undefined),
+  put: vi.fn(async () => undefined),
+  delete: vi.fn(async () => false),
+};
 (globalThis as unknown as { caches: unknown }).caches = { default: cacheStore };
 
 // A limiter binding that always reports the key is over the limit (deterministic — the real binding

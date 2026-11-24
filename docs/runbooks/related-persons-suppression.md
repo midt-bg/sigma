@@ -128,11 +128,15 @@ served surface until the next data run ships — check the surface, not the comm
      --command "SELECT status FROM interest_links WHERE link_key = '<key>'"
    ```
    Expect `suppressed`, or no row at all. Anything else means the ship did not carry the decision.
-3. **The page is gone**, allowing for cache: the link's page must 404 and the official's page must not
-   list it. `publicCache(3600)` means a reader can still see it for up to an hour after the write — if it
-   is still there beyond that, the takedown did not land. Not willing to wait the hour: a zone Purge
-   Everything on `midt.bg` or a web deploy clears it everywhere (purge by URL does not reach these entries;
-   docs/deploy.md, „Уговорка: остаряла страница и изчистване на кеша"). The first request after either
-   answers `X-Edge-Cache: MISS`.
+3. **The public responses reflect the withdrawal.** Verify the link resource and the person page,
+   including full `.data` responses, search and suggestions, and any company, authority or network
+   view that showed the link. Check the affected query variants and public hosts. A previously
+   cached positive can still be served within its route's `s-maxage` (up to an hour on person and link
+   routes). On a miss these routes read the primary. An expired entry cannot stand in for a 5xx or
+   429. For immediate withdrawal, build and deploy web against the verified slot to rotate the
+   cache keys. Purge Everything clears the zone cache, and a render already running under the same
+   tag can still finish a write. A first request can be `MISS` for a cacheable response or `BYPASS` for
+   a 404, redirect or `no-store` answer. Repeat the checks after the first request. Use a verified
+   slot and a fresh build if rolling back. See [deployment cache behavior](../deploy.md#уговорка-остаряла-страница-и-изчистване-на-кеша).
 4. **It stays gone.** Re-run the next scheduled load and repeat step 2: the list is what makes a takedown
    survive a rebuild, and this is the only step that proves the survival rather than assuming it.

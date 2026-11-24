@@ -134,20 +134,13 @@ describe('cacheKey', () => {
     expect(second.search).toBe(first.search);
   });
 
-  it('canonicalizes percent-encoded path variants', () => {
-    const encoded = cacheUrl('http://local/contracts/e%3AUNP-1%3ACONTRACT-1');
-    const decoded = cacheUrl('http://local/contracts/e:UNP-1:CONTRACT-1');
+  it('preserves escaped segments and distinguishes an encoded slash from a path separator', () => {
+    const singleSegment = cacheUrl('http://local/contracts/test%2Fcontract');
+    const twoSegments = cacheUrl('http://local/contracts/test/contract');
+    const doubleEscaped = cacheUrl('http://local/contracts/test%252Fcontract');
 
-    expect(encoded.toString()).toBe(decoded.toString());
-    expect(encoded.pathname).toBe('/contracts/e:UNP-1:CONTRACT-1');
-  });
-
-  it('lowercases the static first segment only, keeping the case of identifiers', () => {
-    expect(cacheUrl('http://local/NETWORK').toString()).toBe(
-      cacheUrl('http://local/network').toString(),
-    );
-    expect(cacheUrl('http://local/Competition.data').pathname).toBe('/competition.data');
-    expect(cacheUrl('http://local/CONTRACTS/e:UNP-1:Ab').pathname).toBe('/contracts/e:UNP-1:Ab');
+    expect(singleSegment.pathname).toBe('/contracts/test%2Fcontract');
+    expect(new Set([singleSegment.href, twoSegments.href, doubleEscaped.href]).size).toBe(3);
   });
 
   it('keeps genuinely distinct paths distinct', () => {

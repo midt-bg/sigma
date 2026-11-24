@@ -1,4 +1,5 @@
 import { createRequestHandler } from 'react-router';
+import { inReadSession } from '@sigma/db';
 import { isIndexedHost } from '../app/lib/indexing';
 import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/security';
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
@@ -6,6 +7,7 @@ import { rateLimitAssistantRoute } from './assistant-rate-limit';
 import { normalizedPathname } from './rate-limit';
 import { cacheKey, canonicalRequest, isRouteManifest } from './cache-key';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
+import { edgeTtl, entryId, isFresh, stamped, unstamp } from './edge-entry';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import {
   optionsResponse,
@@ -14,7 +16,7 @@ import {
   setAllowHeader,
 } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
-import { claim, inFlight, withinCap } from './render-gate';
+import { enterFlight, trackWrite, writePending, type RenderOwner } from './render-gate';
 import { withRequestLog } from './request-log';
 
 declare module 'react-router' {
@@ -49,28 +51,49 @@ declare const __SIGMA_DEPLOY_TAG__: string | undefined;
 const DEPLOY_TAG =
   typeof __SIGMA_DEPLOY_TAG__ !== 'undefined' ? __SIGMA_DEPLOY_TAG__ : Date.now().toString(36);
 
-// The stored GET for `key`, as a HIT (security headers re-applied), or null.
+// The request headers the Cache API answers by itself: a validator with a 304, a range with a 206.
+const CONDITIONAL = ['If-None-Match', 'If-Modified-Since', 'Range'];
+
+function discard(response: Response): void {
+  void response.body?.cancel().catch(() => {});
+}
+
 async function cachedResponse(key: Request): Promise<Response | null> {
-  const cached = await edgeCache.match(key);
-  if (!cached) return null;
-  const headers = new Headers(cached.headers);
-  if (cached.status === 304 && !headers.has('Content-Type')) {
-    // Cache API evaluates the browser's validators but omits Content-Type from its 304. Recover the
-    // representation's type so handleRequest applies the same browser policy as for a 200; otherwise
-    // the internal s-maxage/SWR leaks back into the browser's stored HTML. Keep the bodyless 304 and
-    // consult only the edge entry, without another render or database read.
-    const lookup = new Request(key);
-    lookup.headers.delete('If-None-Match');
-    lookup.headers.delete('If-Modified-Since');
-    lookup.headers.delete('Range');
-    const representation = await edgeCache.match(lookup);
-    const contentType = representation?.headers.get('Content-Type');
-    if (contentType) headers.set('Content-Type', contentType);
-    // The entry can expire between the two lookups. Do not extend a browser entry whose type we
-    // cannot establish; the next request can retrieve its full representation.
-    else headers.set('Cache-Control', 'no-store');
-    await representation?.body?.cancel();
+  if (writePending(key.url)) return null;
+  const copy = await edgeCache.match(new Request(key.url));
+  if (!copy) return null;
+  if (writePending(key.url) || !isFresh(copy.headers, Date.now())) {
+    discard(copy);
+    return null;
   }
+
+  let cached = copy;
+  if (CONDITIONAL.some((name) => key.headers.has(name))) {
+    const conditional = await edgeCache.match(key);
+    discard(copy);
+    // A second lookup may have raced expiry, eviction or replacement. Its headers and body
+    // are usable only when they still describe the full entry we already checked.
+    if (
+      !conditional ||
+      entryId(conditional.headers) !== entryId(copy.headers) ||
+      writePending(key.url) ||
+      !isFresh(copy.headers, Date.now())
+    ) {
+      if (conditional) discard(conditional);
+      return null;
+    }
+    cached = conditional;
+  }
+
+  const headers = new Headers(cached.headers);
+  if (cached !== copy) {
+    headers.set('Cache-Control', copy.headers.get('Cache-Control') ?? 'no-store');
+    for (const name of ['Content-Type', 'Content-Security-Policy', 'X-Robots-Tag']) {
+      const value = copy.headers.get(name);
+      if (value !== null) headers.set(name, value);
+    }
+  }
+  unstamp(headers);
   applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
   headers.set('X-Edge-Cache', 'HIT');
   return new Response(cached.body, {
@@ -84,13 +107,21 @@ function applySecurityHeaders(headers: Headers, security: Headers): void {
   for (const [key, value] of security) headers.set(key, value);
 }
 
-function isAnonymous(request: Request, response: Response): boolean {
-  return (
-    !request.headers.has('Authorization') &&
-    !request.headers.has('Cookie') &&
-    !response.headers.has('Set-Cookie')
-  );
+function hasCredentials(request: Request): boolean {
+  return request.headers.has('Authorization') || request.headers.has('Cookie');
 }
+
+// Only these procurement summaries may tolerate replica lag. Entity, search and related-person
+// surfaces (including .data and link resources) use the bare binding for all of their reads.
+const REPLICA_ROUTES = new Set([
+  '/',
+  '/_root',
+  '/analytics',
+  '/competition',
+  '/flows',
+  '/map',
+  '/trends',
+]);
 
 function isHtml(response: Response): boolean {
   return (response.headers.get('Content-Type') ?? '').toLowerCase().includes('text/html');
@@ -166,12 +197,17 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (response.status >= 500) {
     headers.set('Cache-Control', 'no-store');
     if (response.status === 503) headers.set('Retry-After', '30');
+  } else if (response.status === 429 || (hasCredentials(request) && edgeTtl(headers) > 0)) {
+    headers.set('Cache-Control', 'no-store');
   } else if (
-    (isHtml(response) || new URL(request.url).pathname.endsWith('.data')) &&
+    (isHtml(response) ||
+      new URL(request.url).pathname.endsWith('.data') ||
+      (edgeTtl(headers) > 0 && isNoindexNamesPath(request))) &&
     !/\b(?:no-store|private)\b/i.test(headers.get('Cache-Control') ?? '')
   ) {
     headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
   }
+  if (request.method === 'HEAD') discard(response);
   return new Response(request.method === 'HEAD' ? null : response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -200,7 +236,7 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
   // HTML-cache heuristics on *.workers.dev; TTL is driven by s-maxage. The X-Edge-Cache:
   // HIT|MISS|BYPASS header lets `curl -I` verify which path a request took.
   // A persisted emulator cache must not mix an old loader payload with a hot-reloaded UI.
-  // Production caching is unchanged; local development always reads its current database/code.
+  // Local development always reads its current database/code.
   // A `.data` request with `_routes` asks React Router for SOME of the route loaders only. The key does not
   // carry `_routes`, so storing that partial answer would serve it as the whole page's data to every later
   // navigation in the colo — and serving the whole answer to it would be wrong the other way. Neither is
@@ -209,79 +245,153 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
     !import.meta.env.DEV &&
     request.method === 'GET' &&
     !routeManifest &&
+    !hasCredentials(request) &&
     !new URL(request.url).searchParams.has('_routes')
       ? cacheKey(request, DEPLOY_TAG)
       : null;
   const hit = key && (await cachedResponse(key));
   if (hit) return hit;
 
-  const aggregationRateLimitResponse = await rateLimitAggregationRoute(
-    request,
-    env,
-    import.meta.env.PROD,
-  );
-  if (aggregationRateLimitResponse) return aggregationRateLimitResponse;
+  const limited =
+    (await rateLimitAggregationRoute(request, env, import.meta.env.PROD)) ??
+    (await rateLimitSearchRoute(request, env, import.meta.env.PROD)) ??
+    (await rateLimitAssistantRoute(request, env, import.meta.env.PROD));
+  if (limited) return limited;
 
-  const searchRateLimitResponse = await rateLimitSearchRoute(request, env, import.meta.env.PROD);
-  if (searchRateLimitResponse) return searchRateLimitResponse;
+  if (!key) return render(request, env, ctx);
 
-  const assistantRateLimitResponse = await rateLimitAssistantRoute(
-    request,
-    env,
-    import.meta.env.PROD,
-  );
-  if (assistantRateLimitResponse) return assistantRateLimitResponse;
-
-  // The same miss is already rendering in this isolate: take its entry instead of a second D1 read. The
-  // check and the claim below run with no await between them, so of identical misses exactly one renders.
-  const pending = key && inFlight(key.url);
-  if (pending) {
-    await pending;
-    const stored = await cachedResponse(key);
-    if (stored) return stored;
-  }
-  const settle = key ? claim(key.url) : () => {};
-  let stored: Promise<unknown> = Promise.resolve();
-  try {
-    const response =
-      (await withinCap(() => requestHandler(request, { cloudflare: { env, ctx } }))) ??
-      new Response('Сайтът е претоварен. Опитайте отново след малко.', {
-        status: 503,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      });
-    const hardened = await finish(request, response, key, ctx);
-    stored = hardened.stored;
-    return hardened.response;
-  } finally {
-    // Waiting identical misses look the entry up once it is stored (or known not to be).
-    void stored.then(settle, settle);
+  // After a failed flight, followers get the failure status without sharing a request's body or
+  // rerunning its queries. After a timeout one requester can take over, with at most one retry
+  // per waiter. When an answer could not be shared, elect again atomically.
+  let retried = false;
+  for (;;) {
+    const flight = enterFlight(key.url);
+    if (!('wait' in flight)) return render(request, env, ctx, key, flight);
+    const outcome = await flight.wait;
+    if (typeof outcome === 'number') return renderFailure(outcome, request);
+    if (outcome === 'timeout') {
+      if (retried) return renderFailure(503, request);
+      retried = true;
+    }
+    if (outcome === 'stored') {
+      const stored = await cachedResponse(key);
+      if (stored) return stored;
+    }
   }
 }
 
-async function finish(
-  request: Request,
-  response: Response,
-  key: Request | null,
-  ctx: ExecutionContext,
-): Promise<{ response: Response; stored: Promise<unknown> }> {
-  // `response.ok` is load-bearing for cache correctness beyond "don't cache errors": cache-key.ts decodes
-  // the path (collapsing `%2F` → `/`), so an encoded contract URL (200) and a bogus raw-slash form (404)
-  // share ONE key. Because a non-ok response is never put, the 404 form can't poison the encoded entry
-  // (#221/#213). Don't drop this gate without re-keying on the raw pathname — the „never caches a non-ok
-  // response" test in app.cache.test.ts guards it.
-  const cacheable =
-    key !== null &&
-    response.ok &&
-    isAnonymous(request, response) &&
-    /s-maxage=\d/.test(response.headers.get('Cache-Control') ?? '');
-  const hardened = await hardenResponse(response, cacheable);
-  // Set BEFORE the cache put so the stored copy carries it — the HIT path (above) rebuilds headers from the
-  // cached response, so a noindex baked into the cached entry is preserved on every subsequent HIT.
-  // Outside the production site (stage, dev, a workers.dev twin) every page is noindex, whatever it names.
+function renderFailure(status: number, request: Request): Response {
+  const headers = baseSecurityHeaders(import.meta.env.PROD);
+  headers.set('Cache-Control', 'no-store');
+  headers.set('Content-Type', 'text/plain; charset=utf-8');
+  headers.set('X-Edge-Cache', 'BYPASS');
   if (isNoindexNamesPath(request) || !isIndexedHost(request))
-    hardened.headers.set('X-Robots-Tag', 'noindex');
-  const stored = cacheable ? edgeCache.put(key, hardened.clone()) : Promise.resolve();
-  ctx.waitUntil(stored);
-  hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
-  return { response: hardened, stored };
+    headers.set('X-Robots-Tag', 'noindex');
+  return new Response(
+    status === 503
+      ? 'Сайтът е временно недостъпен. Опитайте отново след малко.'
+      : 'Възникна грешка при зареждането на страницата.',
+    { status, headers },
+  );
+}
+
+function withdrawsEntry(request: Request, response: Response): boolean {
+  const { status } = response;
+  if (response.headers.has('Set-Cookie')) return false;
+  // React Router's single-fetch transport sends redirects using 202 and a streamed payload.
+  const redirect =
+    (status >= 300 && status < 400 && status !== 304) ||
+    (status === 202 && new URL(request.url).pathname.endsWith('.data'));
+  const optedOut =
+    status === 200 &&
+    /\b(?:private|no-store|no-cache)\b/i.test(response.headers.get('Cache-Control') ?? '');
+  return redirect || optedOut || status === 404 || status === 410;
+}
+
+async function render(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  key?: Request,
+  owner?: RenderOwner,
+): Promise<Response> {
+  const began = Date.now();
+  let writing = false;
+  let outcome: 'bypass' | number = 'bypass';
+  try {
+    const readEnv = REPLICA_ROUTES.has(normalizedPathname(request)) ? inReadSession(env) : env;
+    const response = await requestHandler(request, { cloudflare: { env: readEnv, ctx } });
+    if (response.status >= 500) outcome = response.status;
+    const ttl = edgeTtl(response.headers);
+    const cacheable = response.status === 200 && ttl > 0 && !response.headers.has('Set-Cookie');
+    const hardened = await hardenResponse(response, Boolean(key && cacheable));
+
+    if (isNoindexNamesPath(request) || !isIndexedHost(request))
+      hardened.headers.set('X-Robots-Tag', 'noindex');
+    hardened.headers.set('X-Edge-Cache', 'BYPASS');
+    if (!key || !owner) return hardened;
+
+    // A superseded render can finish after its successor has withdrawn the page. Its result must
+    // neither replace the successor's cache entry nor go out as a cacheable response.
+    if (!owner.isCurrent()) {
+      discard(hardened);
+      outcome = 503;
+      return renderFailure(503, request);
+    }
+
+    if (!cacheable) {
+      if (withdrawsEntry(request, hardened)) {
+        hardened.headers.set('Cache-Control', 'no-store');
+        await edgeCache.delete(new Request(key.url)).catch(() => {});
+      }
+      return hardened;
+    }
+
+    const expires = began + ttl * 1000;
+    if (expires <= Date.now() || writePending(key.url)) {
+      hardened.headers.set('Cache-Control', 'no-store');
+      return hardened;
+    }
+    const stored = stamped(hardened.clone(), expires);
+    ctx.waitUntil(storeCopy(key.url, stored, owner, expires));
+    writing = true;
+    hardened.headers.set('X-Edge-Cache', 'MISS');
+    return hardened;
+  } catch {
+    // This also covers failures while buffering HTML for the CSP rewrite. Once a resource has
+    // started streaming, a later body error still reaches its consumer through the stream.
+    outcome = 500;
+    return renderFailure(500, request);
+  } finally {
+    if (!writing) owner?.settle(outcome);
+  }
+}
+
+async function storeCopy(
+  url: string,
+  stored: Response,
+  owner: RenderOwner,
+  expires: number,
+): Promise<void> {
+  const release = trackWrite(url, expires);
+  const key = new Request(url);
+  let outcome: 'stored' | number = 500;
+  try {
+    await edgeCache.put(key, stored);
+    outcome = 'stored';
+  } catch {
+    // A failed stream/cache write wakes its waiters without sending them back to the database.
+  }
+  try {
+    if (!owner.isCurrent() && Date.now() < expires) {
+      await edgeCache.delete(key);
+      outcome = 503;
+    }
+    release();
+  } catch {
+    // Retain the read fence through the old entry's freshness limit if cleanup failed.
+    outcome = 503;
+  } finally {
+    owner.settle(outcome);
+  }
 }

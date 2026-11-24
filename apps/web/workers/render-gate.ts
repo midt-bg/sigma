@@ -1,55 +1,75 @@
-// Per-isolate guard in front of the loaders (and so D1) for edge-cache misses:
-//   • single-flight — identical misses wait for the first one's cache entry instead of each reading D1;
-//   • a cap on renders under way, past which a request is shed with a 503 instead of queueing behind D1.
-// ponytail: per isolate only. Cloudflare runs many isolates per colo, so this tames one herd on one isolate,
-// not the whole site; coalescing across isolates would need a Durable Object.
-
-// How many renders one isolate runs at once before it sheds. A knob: raise it if 503s show up at load D1
-// still has room for.
-export const MAX_RENDERING = 20;
-
-// How long an identical miss waits for the first render before it renders itself. The first render settles
-// when its cache entry is stored, and a put whose request was cancelled (the visitor left) may never
-// settle: without a bound, every later miss of that page on the isolate waited until its visitor gave up.
+// Per-isolate single flight. Only signals cross request contexts. Bodies and Cache API I/O stay
+// in their owning requests. The deadline lets a later request replace an abandoned render.
 export const FLIGHT_MS = 10_000;
+export type FlightOutcome = 'stored' | 'bypass' | number;
 
-const flights = new Map<string, { done: Promise<void>; at: number }>();
-let rendering = 0;
+type Flight = { done: Promise<FlightOutcome>; deadline: number };
+const flights = new Map<string, Flight>();
+const writes = new Map<string, { expires: number }>();
+let nextSweep = 0;
 
-/**
- * The identical miss already rendering in this isolate: settles once its cache entry is stored (or not),
- * or when the flight runs out of time, whichever comes first.
- */
-export function inFlight(key: string): Promise<void> | undefined {
-  const flight = flights.get(key);
-  const left = flight ? flight.at + FLIGHT_MS - Date.now() : 0;
-  if (!flight || left <= 0) return undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>((resolve) => (timer = setTimeout(resolve, left)));
-  return Promise.race([flight.done, timeout]).finally(() => clearTimeout(timer));
+function sweep(now: number): void {
+  if (now < nextSweep) return;
+  nextSweep = now + FLIGHT_MS;
+  for (const [key, flight] of flights) {
+    if (flight.deadline <= now) flights.delete(key);
+  }
+  for (const [key, write] of writes) {
+    if (write.expires <= now) writes.delete(key);
+  }
 }
 
-/** Become the render the next identical misses wait for; call the returned function when done. */
-export function claim(key: string): () => void {
+async function waitFor(flight: Flight, ms: number): Promise<FlightOutcome | 'timeout'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms);
+  });
+  try {
+    return await Promise.race([flight.done, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface RenderOwner {
+  isCurrent(): boolean;
+  settle(outcome: FlightOutcome): void;
+}
+
+export function enterFlight(
+  key: string,
+): RenderOwner | { wait: Promise<FlightOutcome | 'timeout'> } {
+  const now = Date.now();
+  sweep(now);
   const current = flights.get(key);
-  if (current && Date.now() - current.at < FLIGHT_MS) return () => {};
-  let settle!: () => void;
-  const flight = { done: new Promise<void>((resolve) => (settle = resolve)), at: Date.now() };
+  if (current && now < current.deadline) {
+    return { wait: waitFor(current, current.deadline - now) };
+  }
+  let resolve!: (outcome: FlightOutcome) => void;
+  const done = new Promise<FlightOutcome>((settle) => (resolve = settle));
+  const flight = { done, deadline: now + FLIGHT_MS };
   flights.set(key, flight);
-  return () => {
-    // A late settle of a timed-out flight must not drop the one that replaced it.
-    if (flights.get(key) === flight) flights.delete(key);
-    settle();
+  return {
+    isCurrent: () => flights.get(key) === flight && Date.now() < flight.deadline,
+    settle: (outcome) => {
+      if (flights.get(key) === flight) flights.delete(key);
+      resolve(outcome);
+    },
   };
 }
 
-/** Run a render within the cap; `null` when the isolate is already at it. */
-export async function withinCap<T>(render: () => Promise<T>): Promise<T | null> {
-  if (rendering >= MAX_RENDERING) return null;
-  rendering += 1;
-  try {
-    return await render();
-  } finally {
-    rendering -= 1;
-  }
+// A Cache API put already issued cannot be canceled. Until it settles and any late write is
+// deleted, this isolate reads the origin and skips puts for this key. If the put never settles,
+// the old entry's absolute freshness limit lets us forget the fence safely.
+export function writePending(key: string): boolean {
+  const write = writes.get(key);
+  return write !== undefined && Date.now() < write.expires;
+}
+
+export function trackWrite(key: string, expires: number): () => void {
+  const write = { expires };
+  writes.set(key, write);
+  return () => {
+    if (writes.get(key) === write) writes.delete(key);
+  };
 }
