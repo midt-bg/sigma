@@ -133,10 +133,12 @@ served surface until the next data run ships — check the surface, not the comm
    view that showed the link. Check the affected query variants and public hosts. A previously
    cached positive can still be served within its route's `s-maxage` (up to an hour on person and link
    routes). On a miss these routes read the primary. An expired entry cannot stand in for a 5xx or
-   429. For immediate withdrawal, build and deploy web against the verified slot to rotate the
-   cache keys. Purge Everything clears the zone cache, and a render already running under the same
-   tag can still finish a write. A first request can be `MISS` for a cacheable response or `BYPASS` for
-   a 404, redirect or `no-store` answer. Repeat the checks after the first request. Use a verified
-   slot and a fresh build if rolling back. See [deployment cache behavior](../deploy.md#уговорка-остаряла-страница-и-изчистване-на-кеша).
+   429. To withdraw fresh copies, build and deploy web against the verified corrected slot with a
+   fresh cache namespace. Confirm the rollout on every host that serves the data before treating
+   the withdrawal as effective there. A render already running under the same tag can finish a
+   write after Purge Everything. A first request can be `MISS` for a cacheable response or `BYPASS`
+   for a 404, 410, redirect or `no-store` answer. Repeat the checks after the first request. Use
+   the [rollback procedure for withdrawals](release-rollback.md#връщане-след-оттегляне) if the
+   release must be reverted. See [deployment cache behavior](../deploy.md#уговорка-остаряла-страница-и-изчистване-на-кеша).
 4. **It stays gone.** Re-run the next scheduled load and repeat step 2: the list is what makes a takedown
    survive a rebuild, and this is the only step that proves the survival rather than assuming it.

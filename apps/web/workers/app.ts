@@ -6,6 +6,7 @@ import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { rateLimitAssistantRoute } from './assistant-rate-limit';
 import { normalizedPathname } from './rate-limit';
 import { cacheKey, canonicalRequest, isRouteManifest } from './cache-key';
+import { cacheReadToken, trackWrite, withdraw } from './cache-fence';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { edgeTtl, entryId, isFresh, stamped, unstamp } from './edge-entry';
 import { rateLimitCsvExport } from './csv-rate-limit';
@@ -16,7 +17,7 @@ import {
   setAllowHeader,
 } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
-import { enterFlight, trackWrite, writePending, type RenderOwner } from './render-gate';
+import { enterFlight, type FlightOutcome, type RenderOwner } from './render-gate';
 import { withRequestLog } from './request-log';
 
 declare module 'react-router' {
@@ -59,34 +60,40 @@ function discard(response: Response): void {
 }
 
 async function cachedResponse(key: Request): Promise<Response | null> {
-  if (writePending(key.url)) return null;
-  const copy = await edgeCache.match(new Request(key.url));
-  if (!copy) return null;
-  if (writePending(key.url) || !isFresh(copy.headers, Date.now())) {
-    discard(copy);
-    return null;
-  }
+  const token = cacheReadToken(key.url);
+  if (!token) return null;
 
-  let cached = copy;
-  if (CONDITIONAL.some((name) => key.headers.has(name))) {
-    const conditional = await edgeCache.match(key);
-    discard(copy);
-    // A second lookup may have raced expiry, eviction or replacement. Its headers and body
-    // are usable only when they still describe the full entry we already checked.
-    if (
-      !conditional ||
-      entryId(conditional.headers) !== entryId(copy.headers) ||
-      writePending(key.url) ||
-      !isFresh(copy.headers, Date.now())
-    ) {
-      if (conditional) discard(conditional);
-      return null;
+  let copy: Response | undefined;
+  let conditional: Response | undefined;
+  let cached: Response | undefined;
+  try {
+    copy = await edgeCache.match(new Request(key.url));
+    if (!copy || !token.unchanged() || !isFresh(copy.headers, Date.now())) return null;
+
+    if (CONDITIONAL.some((name) => key.headers.has(name))) {
+      conditional = await edgeCache.match(key);
+      // A second lookup can race withdrawal, expiry, eviction or replacement. Its response
+      // must still describe the full entry we checked, under the same withdrawal token.
+      if (
+        !conditional ||
+        entryId(conditional.headers) !== entryId(copy.headers) ||
+        !token.unchanged() ||
+        !isFresh(copy.headers, Date.now())
+      )
+        return null;
     }
-    cached = conditional;
+    cached = conditional ?? copy;
+  } catch {
+    // Cache API errors are misses. Release any body acquired before the failing lookup.
+    return null;
+  } finally {
+    token.release();
+    if (copy && copy !== cached) discard(copy);
+    if (conditional && conditional !== cached) discard(conditional);
   }
 
   const headers = new Headers(cached.headers);
-  if (cached !== copy) {
+  if (copy && cached !== copy) {
     headers.set('Cache-Control', copy.headers.get('Cache-Control') ?? 'no-store');
     for (const name of ['Content-Type', 'Content-Security-Policy', 'X-Robots-Tag']) {
       const value = copy.headers.get(name);
@@ -111,17 +118,9 @@ function hasCredentials(request: Request): boolean {
   return request.headers.has('Authorization') || request.headers.has('Cookie');
 }
 
-// Only these procurement summaries may tolerate replica lag. Entity, search and related-person
-// surfaces (including .data and link resources) use the bare binding for all of their reads.
-const REPLICA_ROUTES = new Set([
-  '/',
-  '/_root',
-  '/analytics',
-  '/competition',
-  '/flows',
-  '/map',
-  '/trends',
-]);
+// These summaries only expose regional and time aggregates. Home, analytics, competition and
+// flows surface individual contracts or named entities, including in their full .data responses.
+const REPLICA_ROUTES = new Set(['/map', '/trends']);
 
 function isHtml(response: Response): boolean {
   return (response.headers.get('Content-Type') ?? '').toLowerCase().includes('text/html');
@@ -188,6 +187,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     request.method === 'HEAD' ? new Request(request, { method: 'GET' }) : request,
     env,
     ctx,
+    request.signal,
   );
   // Apply after respond has cloned the edge entry, including on HIT and single-flight HIT. The
   // browser must consult this deployment on every navigation; s-maxage/SWR belong only to the
@@ -197,7 +197,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (response.status >= 500) {
     headers.set('Cache-Control', 'no-store');
     if (response.status === 503) headers.set('Retry-After', '30');
-  } else if (response.status === 429 || (hasCredentials(request) && edgeTtl(headers) > 0)) {
+  } else if (response.status === 429 || hasCredentials(request)) {
     headers.set('Cache-Control', 'no-store');
   } else if (
     (isHtml(response) ||
@@ -218,7 +218,12 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   });
 }
 
-async function respond(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function respond(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  signal: AbortSignal,
+): Promise<Response> {
   const httpsRedirect = redirectCleartextHttp(request, import.meta.env.PROD);
   if (httpsRedirect) return httpsRedirect;
   const canonicalRedirect = redirectToCanonicalPath(request, import.meta.env.PROD);
@@ -263,24 +268,19 @@ async function respond(request: Request, env: Env, ctx: ExecutionContext): Promi
 
   if (!key) return render(request, env, ctx);
 
-  // After a failed flight, followers get the failure status without sharing a request's body or
-  // rerunning its queries. After a timeout one requester can take over, with at most one retry
-  // per waiter. When an answer could not be shared, elect again atomically.
-  let retried = false;
-  for (;;) {
-    const flight = enterFlight(key.url);
+  let flight = enterFlight(key.url, signal);
+  // A cohort shares at most one recovery flight. Even a fulfilled put may have stored nothing.
+  for (let attempt = 0; flight; attempt++) {
     if (!('wait' in flight)) return render(request, env, ctx, key, flight);
     const outcome = await flight.wait;
     if (typeof outcome === 'number') return renderFailure(outcome, request);
-    if (outcome === 'timeout') {
-      if (retried) return renderFailure(503, request);
-      retried = true;
-    }
-    if (outcome === 'stored') {
+    if (outcome === 'put-complete') {
       const stored = await cachedResponse(key);
       if (stored) return stored;
     }
+    flight = attempt === 0 ? flight.recover() : null;
   }
+  return renderFailure(503, request);
 }
 
 function renderFailure(status: number, request: Request): Response {
@@ -320,7 +320,7 @@ async function render(
 ): Promise<Response> {
   const began = Date.now();
   let writing = false;
-  let outcome: 'bypass' | number = 'bypass';
+  let outcome: FlightOutcome = 'bypass';
   try {
     const readEnv = REPLICA_ROUTES.has(normalizedPathname(request)) ? inReadSession(env) : env;
     const response = await requestHandler(request, { cloudflare: { env: readEnv, ctx } });
@@ -334,8 +334,7 @@ async function render(
     hardened.headers.set('X-Edge-Cache', 'BYPASS');
     if (!key || !owner) return hardened;
 
-    // A superseded render can finish after its successor has withdrawn the page. Its result must
-    // neither replace the successor's cache entry nor go out as a cacheable response.
+    // Once ownership ends, the response can no longer be delivered or change this cache key.
     if (!owner.isCurrent()) {
       discard(hardened);
       outcome = 503;
@@ -345,18 +344,32 @@ async function render(
     if (!cacheable) {
       if (withdrawsEntry(request, hardened)) {
         hardened.headers.set('Cache-Control', 'no-store');
-        await edgeCache.delete(new Request(key.url)).catch(() => {});
+        const release = withdraw(key.url);
+        try {
+          await edgeCache.delete(new Request(key.url));
+          release();
+        } catch {
+          // Keep the withdrawal fence until any superseded entry is ineligible to serve.
+        }
       }
       return hardened;
     }
 
     const expires = began + ttl * 1000;
-    if (expires <= Date.now() || writePending(key.url)) {
+    const release = trackWrite(key.url, expires);
+    if (!release) {
       hardened.headers.set('Cache-Control', 'no-store');
       return hardened;
     }
-    const stored = stamped(hardened.clone(), expires);
-    ctx.waitUntil(storeCopy(key.url, stored, owner, expires));
+    try {
+      const stored = stamped(hardened.clone(), expires);
+      owner.beginPut(expires);
+      ctx.waitUntil(storeCopy(key.url, stored, owner, expires, release));
+    } catch (error) {
+      release();
+      discard(hardened);
+      throw error;
+    }
     writing = true;
     hardened.headers.set('X-Edge-Cache', 'MISS');
     return hardened;
@@ -375,15 +388,16 @@ async function storeCopy(
   stored: Response,
   owner: RenderOwner,
   expires: number,
+  release: () => void,
 ): Promise<void> {
-  const release = trackWrite(url, expires);
   const key = new Request(url);
-  let outcome: 'stored' | number = 500;
+  let outcome: FlightOutcome = 500;
   try {
     await edgeCache.put(key, stored);
-    outcome = 'stored';
+    outcome = 'put-complete';
   } catch {
-    // A failed stream/cache write wakes its waiters without sending them back to the database.
+    discard(stored);
+    // A rejected write wakes its waiters without sending them back to the database.
   }
   try {
     if (!owner.isCurrent() && Date.now() < expires) {

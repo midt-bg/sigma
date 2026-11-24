@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { edgeTtl, entryId, isFresh, stamped, unstamp } from './edge-entry';
+import { edgeTtl, entryId, isFresh, MAX_SERVING_MS, stamped, unstamp } from './edge-entry';
 
 const began = Date.UTC(2000, 0, 1);
 const page = (policy: string) => new Response('page', { headers: { 'Cache-Control': policy } });
@@ -23,6 +23,13 @@ describe('edge entry', () => {
     unstamp(first);
     expect(entryId(first)).toBeNull();
     expect(isFresh(first, began)).toBe(false);
+  });
+
+  it('caps serving time independently of the storage policy', () => {
+    const policy = 'public, s-maxage=86400';
+    const response = page(policy);
+    expect(edgeTtl(response.headers) * 1000).toBe(MAX_SERVING_MS);
+    expect(stamped(response, began + MAX_SERVING_MS).headers.get('Cache-Control')).toBe(policy);
   });
 
   it.each(['private, s-maxage=120', 'NO-STORE, s-maxage=120', 's-maxage=0', 'max-age=120'])(

@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDb } from '@sigma/db';
 import { fakeD1 } from '@sigma/test-support';
-import { FLIGHT_MS } from './render-gate';
+import { FOLLOWER_WAIT_MS } from './render-gate';
 
 // Every request the stubbed React Router handler (the loaders) receives; while `held.gate` is set, every
 // render waits on it, as for a slow D1.
@@ -203,19 +203,136 @@ async function get(
   method = 'GET',
   headers?: Record<string, string>,
   env: unknown = {},
+  signal?: AbortSignal,
 ) {
   const waits: Promise<unknown>[] = [];
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void waits.push(p),
     passThroughOnException: () => {},
   };
-  const res = await worker.fetch(new Request(url, { method, headers }), env, ctx);
+  const res = await worker.fetch(new Request(url, { method, headers, signal }), env, ctx);
   const body = await res.clone().text();
   await Promise.all(waits); // let edgeCache.put (ctx.waitUntil) settle before the next request
   return { edge: res.headers.get('X-Edge-Cache'), body, status: res.status, headers: res.headers };
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => (resolve = done));
+  return { promise, resolve };
+}
+
 describe('app.ts edge cache middleware', () => {
+  it.each([
+    ['full snapshot', {}],
+    ['conditional snapshot', { 'If-None-Match': '"test-v1"' }],
+    ['range snapshot', { Range: 'bytes=0-3' }],
+  ] as const)(
+    'rejects a delayed %s after a successful withdrawal delete',
+    async (_label, headers) => {
+      const url = 'https://x/persons/test-person';
+      await get(url);
+      const match = fakeCache.match.bind(fakeCache);
+      const captured = deferred();
+      const resume = deferred();
+      const matches = vi.spyOn(fakeCache, 'match');
+      if (Object.keys(headers).length) matches.mockImplementationOnce(match);
+      matches
+        .mockImplementationOnce(async (request) => {
+          const snapshot = await match(request);
+          captured.resolve();
+          await resume.promise;
+          return snapshot;
+        })
+        .mockResolvedValueOnce(undefined);
+      try {
+        const delayed = get(url, 'GET', headers);
+        await captured.promise;
+        reply.status = 410;
+        expect((await get(url)).status).toBe(410);
+        expect(fakeCache.store.size).toBe(0);
+        reply.status = 503;
+        resume.resolve();
+        const result = await delayed;
+        expect(result.status).toBe(503);
+        expect(result.edge).toBe('BYPASS');
+      } finally {
+        resume.resolve();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it('does not return a fresh positive after the withdrawal delete rejects', async () => {
+    const url = 'https://x/persons/failed-delete.data';
+    await get(url);
+    vi.spyOn(fakeCache, 'match').mockResolvedValueOnce(undefined);
+    vi.spyOn(fakeCache, 'delete').mockRejectedValueOnce(new Error('Cache API failure'));
+    try {
+      reply.status = 410;
+      expect((await get(url)).status).toBe(410);
+      expect(fakeCache.store.size).toBe(1);
+      reply.status = 503;
+      const result = await get(url);
+      expect(result.status).toBe(503);
+      expect(result.edge).toBe('BYPASS');
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it.each([200, 410])('delivers an unsuperseded %i owner after eleven seconds', async (status) => {
+    vi.useFakeTimers();
+    const load = deferred();
+    try {
+      reply.status = status;
+      held.gate = load.promise;
+      const owner = get('https://x/persons/slow-owner.data');
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(rendered).toHaveLength(1);
+      load.resolve();
+      const response = await owner;
+      expect(response.status).toBe(status);
+      expect(response.edge).toBe(status === 200 ? 'MISS' : 'BYPASS');
+    } finally {
+      load.resolve();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it.each(['silent put drop', 'withdrawal'])('bounds cohort renders on %s', async (mode) => {
+    const url = 'https://x/persons/burst.data';
+    const load = deferred();
+    held.gate = load.promise;
+    if (mode === 'silent put drop') {
+      vi.spyOn(fakeCache, 'put').mockImplementation(async (_key, response) => {
+        await response.text();
+      });
+    } else {
+      reply.status = 410;
+    }
+    try {
+      const cohort = Promise.all(Array.from({ length: 9 }, () => get(url)));
+      await vi.waitFor(() => expect(rendered).toHaveLength(1));
+      held.gate = null;
+      load.resolve();
+      const responses = await cohort;
+      expect(rendered).toHaveLength(2);
+      expect(responses.filter((response) => response.status === 503)).toHaveLength(7);
+      expect(
+        responses.filter((response) => response.status === (mode === 'withdrawal' ? 410 : 200)),
+      ).toHaveLength(2);
+      vi.restoreAllMocks();
+      reply.status = 200;
+      expect((await get(url)).edge).toBe('MISS');
+      expect((await get(url)).edge).toBe('HIT');
+    } finally {
+      load.resolve();
+      vi.restoreAllMocks();
+    }
+  });
+
   it('rerenders when an eviction lands between the full and conditional lookups', async () => {
     await get('https://x/contracts');
     const match = fakeCache.match.bind(fakeCache);
@@ -231,6 +348,24 @@ describe('app.ts edge cache middleware', () => {
     expect(conditional.headers.get('Cache-Control')).toBe('no-store');
     expect(rendered).toHaveLength(2);
     vi.restoreAllMocks();
+  });
+
+  it('releases the full response when a conditional cache lookup rejects', async () => {
+    const url = 'https://x/persons/conditional-error';
+    await get(url);
+    const match = fakeCache.match.bind(fakeCache);
+    const copy = await match([...fakeCache.store.keys()][0]!);
+    const cancel = vi.spyOn(copy!.body!, 'cancel');
+    vi.spyOn(fakeCache, 'match')
+      .mockResolvedValueOnce(copy)
+      .mockRejectedValueOnce(new Error('synthetic conditional cache failure'));
+    try {
+      reply.status = 503;
+      expect((await get(url, 'GET', { 'If-None-Match': '"test-v1"' })).status).toBe(503);
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it.each([
@@ -428,101 +563,157 @@ describe('app.ts edge cache middleware', () => {
     },
   );
 
-  it('elects one successor after a timed-out refresh and fences a late positive render', async () => {
+  it('releases a rejected cache write and settles followers without a recovery render', async () => {
     vi.useFakeTimers();
+    const url = 'https://x/persons/rejected-put.data';
+    const load = deferred();
+    const reject = deferred();
+    const cancel = vi.fn();
+    const put = vi.spyOn(fakeCache, 'put').mockImplementationOnce(async (_key, response) => {
+      vi.spyOn(response.body!, 'cancel').mockImplementation(async () => cancel());
+      await reject.promise;
+      throw new Error('synthetic cache write failure');
+    });
     try {
-      const url = 'https://x/persons/test-person.data';
-      await get(url);
-      vi.setSystemTime(Date.now() + 1800_000);
-      let release!: () => void;
-      held.gate = new Promise((resolve) => (release = resolve));
-      const old = get(url);
-      await vi.waitFor(() => expect(rendered).toHaveLength(2));
-      const followers = Array.from({ length: 8 }, () => get(url));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(rendered).toHaveLength(2);
-      held.gate = null;
-      reply.status = 404;
-      await vi.advanceTimersByTimeAsync(FLIGHT_MS);
-      // Allow the elected authoritative response to invalidate the key before the old render returns.
-      await vi.waitFor(() => expect(rendered.length).toBeGreaterThan(2));
-      release();
-      expect((await old).status).toBe(503);
-      expect((await Promise.all(followers)).map((r) => r.status)).toEqual(Array(8).fill(404));
-      expect(fakeCache.store.size).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('does not fan out timed-out followers into independent database reads', async () => {
-    vi.useFakeTimers();
-    try {
-      const url = 'https://x/search.data?q=synthetic';
-      await get(url);
-      vi.setSystemTime(Date.now() + 1800_000);
-      let release!: () => void;
-      held.gate = new Promise((resolve) => (release = resolve));
+      held.gate = load.promise;
       const owner = get(url);
-      await vi.waitFor(() => expect(rendered).toHaveLength(2));
-      const followers = Array.from({ length: 8 }, () => get(url));
+      const follower = get(url);
       await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(FLIGHT_MS);
-      expect(rendered).toHaveLength(3);
-      await vi.advanceTimersByTimeAsync(FLIGHT_MS);
-      expect((await Promise.all(followers.slice(1))).map((r) => r.status)).toEqual(
-        Array(7).fill(503),
-      );
-      held.gate = null;
-      release();
-      expect((await Promise.all([owner, followers[0]!])).map((r) => r.status)).toEqual([503, 503]);
-      expect(rendered).toHaveLength(3);
+      expect(rendered).toHaveLength(1);
+      load.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(put).toHaveBeenCalledOnce();
+      reject.resolve();
+      expect((await owner).status).toBe(200);
+      expect((await follower).status).toBe(500);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(rendered).toHaveLength(1);
       expect((await get(url)).edge).toBe('MISS');
     } finally {
+      load.resolve();
+      reject.resolve();
       vi.useRealTimers();
+      vi.restoreAllMocks();
     }
   });
 
-  it('deletes a late Cache API put that crossed an authoritative withdrawal', async () => {
+  it('rejects a physically stored copy when a late put has exhausted its serving TTL', async () => {
     vi.useFakeTimers();
+    const store = deferred();
     const put = fakeCache.put.bind(fakeCache);
-    let release!: () => void;
-    const delayPut = new Promise<void>((resolve) => (release = resolve));
-    const remove = fakeCache.delete.bind(fakeCache);
-    let releaseDelete!: () => void;
-    const delayDelete = new Promise<void>((resolve) => (releaseDelete = resolve));
-    vi.spyOn(fakeCache, 'delete')
-      .mockImplementationOnce(remove)
-      .mockImplementationOnce(async (key) => {
-        await delayDelete;
-        return remove(key);
-      });
     vi.spyOn(fakeCache, 'put').mockImplementationOnce(async (key, response) => {
-      await delayPut;
+      await store.promise;
       await put(key, response);
     });
     try {
-      const url = 'https://x/persons/test-person.data';
-      const waits: Promise<unknown>[] = [];
-      const ctx = { waitUntil: (p: Promise<unknown>) => void waits.push(p) };
-      const old = await worker.fetch(new Request(url), {}, ctx);
-      expect(old.headers.get('X-Edge-Cache')).toBe('MISS');
-      void old.body?.cancel();
-
-      await vi.advanceTimersByTimeAsync(FLIGHT_MS);
-      reply.status = 404;
-      expect((await get(url)).status).toBe(404);
-      release();
-      await vi.waitFor(() => expect(fakeCache.store.size).toBe(1));
+      const url = 'https://x/persons/late-expiry.data';
+      reply.policy = 'public, s-maxage=60';
+      const old = get(url);
+      await vi.advanceTimersByTimeAsync(60_000);
+      store.resolve();
+      expect((await old).edge).toBe('MISS');
+      expect(fakeCache.store.size).toBe(1);
       reply.status = 503;
       expect((await get(url)).status).toBe(503);
-      releaseDelete();
-      await Promise.all(waits);
-      expect(fakeCache.store.size).toBe(0);
-      expect((await get(url)).status).toBe(503);
     } finally {
-      release();
-      releaseDelete();
+      store.resolve();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('elects one successor after an owner disconnects and fences its late positive', async () => {
+    const url = 'https://x/persons/disconnected.data';
+    const load = deferred();
+    const controller = new AbortController();
+    held.gate = load.promise;
+    const old = get(url, 'GET', undefined, {}, controller.signal);
+    try {
+      await vi.waitFor(() => expect(rendered).toHaveLength(1));
+      held.gate = null;
+      reply.status = 410;
+      controller.abort();
+      expect((await get(url)).status).toBe(410);
+      load.resolve();
+      expect((await old).status).toBe(503);
+      expect(rendered).toHaveLength(2);
+      expect(fakeCache.store.size).toBe(0);
+    } finally {
+      load.resolve();
+    }
+  });
+
+  it('times out a waiting cohort without replacing a healthy render', async () => {
+    vi.useFakeTimers();
+    const load = deferred();
+    try {
+      const url = 'https://x/search.data?q=slow-fixture';
+      held.gate = load.promise;
+      const owner = get(url);
+      await vi.advanceTimersByTimeAsync(0);
+      const followers = Array.from({ length: 8 }, () => get(url));
+      await vi.advanceTimersByTimeAsync(FOLLOWER_WAIT_MS);
+      expect((await Promise.all(followers)).map((r) => r.status)).toEqual(Array(8).fill(503));
+      expect(rendered).toHaveLength(1);
+      load.resolve();
+      expect((await owner).status).toBe(200);
+      expect((await get(url)).edge).toBe('HIT');
+    } finally {
+      load.resolve();
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a lookup started before an outstanding put even after its cleanup finishes', async () => {
+    vi.useFakeTimers();
+    const put = fakeCache.put.bind(fakeCache);
+    const remove = fakeCache.delete.bind(fakeCache);
+    const match = fakeCache.match.bind(fakeCache);
+    const startSnapshot = deferred();
+    const captured = deferred();
+    const resumeSnapshot = deferred();
+    const resumePut = deferred();
+    const resumeCleanup = deferred();
+    vi.spyOn(fakeCache, 'match').mockImplementationOnce(async (key) => {
+      await startSnapshot.promise;
+      const copy = await match(key);
+      if (copy) captured.resolve();
+      await resumeSnapshot.promise;
+      return copy;
+    });
+    vi.spyOn(fakeCache, 'delete')
+      .mockImplementationOnce(remove)
+      .mockImplementationOnce(async (key) => {
+        await resumeCleanup.promise;
+        return remove(key);
+      });
+    vi.spyOn(fakeCache, 'put').mockImplementationOnce(async (key, response) => {
+      await resumePut.promise;
+      await put(key, response);
+    });
+    try {
+      const url = 'https://x/persons/pending-put.data';
+      const delayed = get(url);
+      await vi.advanceTimersByTimeAsync(0);
+      const old = get(url);
+      await vi.advanceTimersByTimeAsync(FOLLOWER_WAIT_MS);
+      reply.status = 410;
+      expect((await get(url)).status).toBe(410);
+      resumePut.resolve();
+      await vi.waitFor(() => expect(fakeCache.store.size).toBe(1));
+      startSnapshot.resolve();
+      await captured.promise;
+      resumeCleanup.resolve();
+      expect((await old).edge).toBe('MISS');
+      expect(fakeCache.store.size).toBe(0);
+      reply.status = 503;
+      resumeSnapshot.resolve();
+      expect((await delayed).status).toBe(503);
+    } finally {
+      startSnapshot.resolve();
+      resumeSnapshot.resolve();
+      resumePut.resolve();
+      resumeCleanup.resolve();
       vi.useRealTimers();
       vi.restoreAllMocks();
     }
@@ -587,7 +778,7 @@ describe('app.ts edge cache middleware', () => {
     expect(rendered).toHaveLength(1);
   });
 
-  it.each([404, 302, 202, 200])(
+  it.each([404, 410, 302, 202, 200])(
     'evicts exactly the canonical variant for an authoritative %i or no-store',
     async (status) => {
       const data = status === 202 || status === 200 ? '.data' : '';
@@ -648,6 +839,14 @@ describe('app.ts edge cache middleware', () => {
       });
     };
     const urls = [
+      '/',
+      '/_root.data',
+      '/analytics',
+      '/analytics.data',
+      '/competition',
+      '/competition.data',
+      '/flows',
+      '/flows.data',
       '/persons/test-person',
       '/persons/test-person.data?year=2012',
       '/search?q=synthetic',
@@ -726,8 +925,8 @@ describe('app.ts edge cache middleware', () => {
       },
     };
     const env = { DB, OTHER: 'binding' };
-    await get('https://x/competition', 'GET', undefined, env);
-    await get('https://x/competition.data?sector=45', 'GET', undefined, env);
+    await get('https://x/trends', 'GET', undefined, env);
+    await get('https://x/trends.data?sector=45', 'GET', undefined, env);
     expect(sessions).toEqual(['first-unconstrained', 'first-unconstrained']);
     const handed = envs as { DB: { prepare: (q: string) => unknown }; OTHER: string }[];
     expect(handed.map((e) => e.DB.prepare('SELECT 1'))).toEqual([
@@ -736,19 +935,43 @@ describe('app.ts edge cache middleware', () => {
     ]);
     expect(handed.map((e) => e.OTHER)).toEqual(['binding', 'binding']);
 
-    expect((await get('https://x/competition', 'GET', undefined, env)).edge).toBe('HIT');
+    expect((await get('https://x/trends', 'GET', undefined, env)).edge).toBe('HIT');
     expect(sessions).toHaveLength(2);
   });
 
-  it('bypasses shared reads and writes on requests with credentials', async () => {
-    const url = 'https://x/persons/test-person';
-    await get(url);
-    reply.policy = 'private, s-maxage=1800';
-    const credentialed = await get(url, 'GET', { Cookie: 'synthetic=1' });
-    expect(credentialed.edge).toBe('BYPASS');
-    expect(rendered).toHaveLength(2);
-    expect((await get(url)).edge).toBe('HIT');
-  });
+  it.each([
+    [{ Cookie: 'synthetic=1' }, 'public, s-maxage=1800'],
+    [{ Authorization: 'Bearer fixture' }, 'public, s-maxage=1800'],
+    [{ Cookie: 'synthetic=1' }, 'public, max-age=1800'],
+  ] as const)(
+    'bypasses shared and downstream caching on a credentialed response',
+    async (headers, policy) => {
+      const url = 'https://x/persons/test-person';
+      const anonymous = await get(url);
+      const match = vi.spyOn(fakeCache, 'match');
+      const put = vi.spyOn(fakeCache, 'put');
+      const remove = vi.spyOn(fakeCache, 'delete');
+      try {
+        reply.custom = async () =>
+          new Response('credentialed fixture', {
+            headers: { 'Content-Type': 'text/html', 'Cache-Control': policy },
+          });
+        const credentialed = await get(url, 'GET', headers);
+        expect(credentialed.edge).toBe('BYPASS');
+        expect(credentialed.headers.get('Cache-Control')).toBe('no-store');
+        expect(credentialed.body).toBe('credentialed fixture');
+        expect(match).not.toHaveBeenCalled();
+        expect(put).not.toHaveBeenCalled();
+        expect(remove).not.toHaveBeenCalled();
+        const hit = await get(url);
+        expect(hit.edge).toBe('HIT');
+        expect(hit.body).toBe(anonymous.body);
+        expect(rendered).toHaveLength(2);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
 
   it('preserves a resource policy that only sets browser freshness', async () => {
     reply.custom = async () =>

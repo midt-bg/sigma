@@ -1,15 +1,18 @@
+// The longest route policy is six hours. This ceiling also bounds a failed withdrawal delete.
+export const MAX_SERVING_MS = 6 * 60 * 60 * 1000;
+
 // Cacheability requires an explicit, positive edge TTL. Privacy directives take precedence.
 export function edgeTtl(headers: Headers): number {
   const policy = headers.get('Cache-Control') ?? '';
   if (/\b(?:private|no-store|no-cache)\b/i.test(policy)) return 0;
   const seconds = Number(/(?:^|,)\s*s-maxage=(\d+)\s*(?:,|$)/i.exec(policy)?.[1]);
-  return Number.isSafeInteger(seconds) ? seconds : 0;
+  return Number.isSafeInteger(seconds) ? Math.min(seconds, MAX_SERVING_MS / 1000) : 0;
 }
 
 const ENTRY = 'X-Sigma-Cache-Entry';
 
-// Keep the route's own Cache API TTL. Also age an entry from the start of the render so a delayed
-// write cannot reset its freshness. The ID lets conditional and range lookups verify the same entry.
+// Cache API storage TTL starts at insertion. The serving deadline starts at render time, so
+// a delayed write cannot extend eligibility. The ID binds conditional and range lookups to a copy.
 export function stamped(response: Response, expires: number): Response {
   const headers = new Headers(response.headers);
   headers.set(ENTRY, `${expires}:${crypto.randomUUID()}`);

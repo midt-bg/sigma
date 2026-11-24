@@ -1,54 +1,58 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { enterFlight, FLIGHT_MS, trackWrite, writePending } from './render-gate';
+import { enterFlight, FOLLOWER_WAIT_MS } from './render-gate';
 
 afterEach(() => vi.useRealTimers());
 
+const signal = () => new AbortController().signal;
+
 describe('single flight', () => {
-  it('chooses one leader and gives every follower its failure status', async () => {
-    const owner = enterFlight('error');
-    const first = enterFlight('error');
-    const second = enterFlight('error');
-    expect(owner).toHaveProperty('settle');
-    expect(first).toHaveProperty('wait');
-    expect(second).toHaveProperty('wait');
-    if ('wait' in owner || !('wait' in first) || !('wait' in second))
+  it('chooses one leader and gives all followers its failure status', async () => {
+    const owner = enterFlight('error', signal());
+    const first = enterFlight('error', signal());
+    const second = enterFlight('error', signal());
+    if (!owner || 'wait' in owner || !first || !('wait' in first) || !second || !('wait' in second))
       throw new Error('Wrong owner');
 
     owner.settle(503);
     expect(await Promise.all([first.wait, second.wait])).toEqual([503, 503]);
-    const next = enterFlight('error');
-    expect(next).toHaveProperty('settle');
-    if ('settle' in next) next.settle('bypass');
-  });
-
-  it('lets one requester take over after a deadline and fences the previous owner', async () => {
-    vi.useFakeTimers();
-    const owner = enterFlight('abandoned');
-    const waiter = enterFlight('abandoned');
-    if ('wait' in owner || !('wait' in waiter)) throw new Error('Wrong owner');
-    await vi.advanceTimersByTimeAsync(FLIGHT_MS);
-    expect(await waiter.wait).toBe('timeout');
-
-    const next = enterFlight('abandoned');
-    if ('wait' in next) throw new Error('No successor');
-    expect(owner.isCurrent()).toBe(false);
-    owner.settle('stored');
-    expect(next.isCurrent()).toBe(true);
+    const next = enterFlight('error', signal());
+    if (!next || 'wait' in next) throw new Error('No later owner');
     next.settle('bypass');
   });
 
-  it('holds the read fence for an issued put only while its entry could still be fresh', () => {
+  it('keeps the owner after follower patience runs out', async () => {
     vi.useFakeTimers();
-    const expires = Date.now() + 1000;
-    const release = trackWrite('cache-write', expires);
-    expect(writePending('cache-write')).toBe(true);
-    vi.advanceTimersByTime(1000);
-    expect(writePending('cache-write')).toBe(false);
+    const owner = enterFlight('slow-render', signal());
+    const follower = enterFlight('slow-render', signal());
+    if (!owner || 'wait' in owner || !follower || !('wait' in follower))
+      throw new Error('Wrong owner');
 
-    const releaseNext = trackWrite('cache-write', expires + 1000);
-    release();
-    expect(writePending('cache-write')).toBe(true);
-    releaseNext();
-    expect(writePending('cache-write')).toBe(false);
+    await vi.advanceTimersByTimeAsync(FOLLOWER_WAIT_MS);
+    expect(await follower.wait).toBe('timeout');
+    expect(follower.recover()).toBeNull();
+    expect(owner.isCurrent()).toBe(true);
+    owner.settle('put-complete');
+  });
+
+  it('allows only one overlapping origin attempt after consecutive disconnects', async () => {
+    const first = new AbortController();
+    const second = new AbortController();
+    const owner = enterFlight('disconnect', first.signal);
+    const waiter = enterFlight('disconnect', second.signal);
+    if (!owner || 'wait' in owner || !waiter || !('wait' in waiter)) throw new Error('Wrong owner');
+    first.abort();
+    expect(await waiter.wait).toBe('abandoned');
+
+    const successor = waiter.recover();
+    if (!successor || 'wait' in successor) throw new Error('No successor');
+    expect(owner.isCurrent()).toBe(false);
+    second.abort();
+    expect(enterFlight('disconnect', signal())).toBeNull();
+    owner.settle('bypass');
+    const third = enterFlight('disconnect', signal());
+    if (!third || 'wait' in third) throw new Error('No third owner after work settled');
+    successor.settle('bypass');
+    expect(third.isCurrent()).toBe(true);
+    third.settle('bypass');
   });
 });
