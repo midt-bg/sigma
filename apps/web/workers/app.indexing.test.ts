@@ -2,12 +2,17 @@ import { fakeD1 } from '@sigma/test-support';
 import type { ServerBuild } from 'react-router';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@sigma/db', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@sigma/db')>()),
-  getContract: async (_db: D1Database, id: string) => ({
+const { getContract, csvLoader } = vi.hoisted(() => ({
+  getContract: vi.fn(async (_db: D1Database, id: string) => ({
     id,
     bidder: { displayName: 'ТЕСТ', legalForm: id === 'c:sole-trader' ? 'ET' : 'EOOD' },
-  }),
+  })),
+  csvLoader: vi.fn(),
+}));
+
+vi.mock('@sigma/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@sigma/db')>()),
+  getContract,
   getCompany: async (_db: D1Database, id: string) => ({
     displayName: 'ТЕСТ',
     legalForm: id === 'eik:000000002' ? 'ET' : 'EOOD',
@@ -23,8 +28,10 @@ vi.mock('@sigma/db', async (importOriginal) => ({
 // renderer is replaced so HTML header propagation can be tested without SSR assets.
 vi.mock('virtual:react-router/server-build', async () => {
   const { default: routeConfig } = await import('../app/routes');
+  const csvRoute = await import('../app/routes/companies.csv');
+  csvLoader.mockImplementation(csvRoute.loader);
   const modules = {
-    'routes/companies.csv.tsx': await import('../app/routes/companies.csv'),
+    'routes/companies.csv.tsx': { ...csvRoute, loader: csvLoader },
     'routes/company.tsx': await import('../app/routes/company'),
     'routes/contract.json.tsx': await import('../app/routes/contract.json'),
     'routes/contract.tsx': await import('../app/routes/contract'),
@@ -71,13 +78,19 @@ vi.mock('virtual:react-router/server-build', async () => {
 
 const production = 'https://sigma.midt.bg';
 const entries = new Map<string, Response>();
+const cache = {
+  match: vi.fn(async (key: Request) => entries.get(key.url)?.clone()),
+  put: vi.fn(async (key: Request, response: Response) => entries.set(key.url, response.clone())),
+  delete: vi.fn(async (key: Request) => entries.delete(key.url)),
+};
 const pending: Promise<unknown>[] = [];
 const ctx = {
   waitUntil(promise: Promise<unknown>) {
     pending.push(promise);
   },
 } as unknown as ExecutionContext;
-const limiter = { limit: async () => ({ success: true }) } as unknown as RateLimit;
+const limit = vi.fn(async () => ({ success: true }));
+const limiter = { limit } as RateLimit;
 const { db: DB } = fakeD1([
   { when: 'FROM home_totals', first: { as_of: null, refreshed_at: null } },
   { when: 'ORDER BY bidder_id LIMIT ?', all: [] },
@@ -101,19 +114,13 @@ let fetchWorker: (request: Request, env: Env, ctx: ExecutionContext) => Promise<
 beforeAll(async () => {
   vi.stubEnv('DEV', false);
   vi.stubEnv('PROD', true);
-  vi.stubGlobal('caches', {
-    default: {
-      match: async (key: Request) => entries.get(key.url)?.clone(),
-      put: async (key: Request, response: Response) => entries.set(key.url, response.clone()),
-      delete: async (key: Request) => entries.delete(key.url),
-    },
-  });
+  vi.stubGlobal('caches', { default: cache });
   fetchWorker = (await import('./app')).default.fetch as unknown as typeof fetchWorker;
 });
 
 beforeEach(() => {
   entries.clear();
-  r2Get.mockClear();
+  vi.clearAllMocks();
 });
 
 async function get(path: string, headers?: HeadersInit): Promise<Response> {
@@ -161,6 +168,21 @@ describe('indexing on the production host', () => {
     },
   );
 
+  it.each(['/companies.csv.data', '/companies%2Ecsv.data'])(
+    'refuses %s before the cache, limiter or CSV loader',
+    async (path) => {
+      const response = await get(path);
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe('Not Found');
+      expect(cache.match).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+      expect(cache.delete).not.toHaveBeenCalled();
+      expect(limit).not.toHaveBeenCalled();
+      expect(csvLoader).not.toHaveBeenCalled();
+      expect(r2Get).not.toHaveBeenCalled();
+    },
+  );
+
   it('marks 200 and 304 responses from R2 on the encoded CSV resource', async () => {
     const full = await get('/companies%2Ecsv');
     expect(full.status).toBe(200);
@@ -183,6 +205,46 @@ describe('indexing on the production host', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Type')).toMatch(/^text\/html/);
     expect(response.headers.get('X-Robots-Tag')).toBe(directive);
+  });
+
+  it.each([
+    ['%2Edata', 'data'],
+    ['.%64ata', 'data'],
+    ['.DATA', 'DATA'],
+  ])('keeps the literal .data transport separate from the %s document', async (suffix, decoded) => {
+    const transportPath = '/contracts/fixture.data';
+    const documentPath = `/contracts/fixture${suffix}`;
+    const transport = await get(transportPath);
+    const document = await get(documentPath);
+    expect(transport.status).toBe(200);
+    expect(document.status).toBe(200);
+    expect(transport.headers.get('Content-Type')).toMatch(/^text\/x-script/);
+    expect(document.headers.get('Content-Type')).toMatch(/^text\/html/);
+    expect(transport.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(document.headers.get('X-Robots-Tag')).toBeNull();
+    expect(transport.headers.get('X-Edge-Cache')).toBe('MISS');
+    expect(document.headers.get('X-Edge-Cache')).toBe('MISS');
+    const payload = await transport.text();
+    expect(payload).toContain('"c:fixture"');
+    expect(await document.text()).toBe('<html>Fixture</html>');
+    expect(getContract.mock.calls.map(([, id]) => id)).toEqual([
+      'c:fixture',
+      `c:fixture.${decoded}`,
+    ]);
+    expect([...entries.keys()].map((key) => new URL(key).pathname)).toEqual([
+      transportPath,
+      documentPath,
+    ]);
+
+    const cachedTransport = await get(transportPath);
+    const cachedDocument = await get(documentPath);
+    expect(cachedTransport.headers.get('X-Edge-Cache')).toBe('HIT');
+    expect(cachedDocument.headers.get('X-Edge-Cache')).toBe('HIT');
+    expect(cachedTransport.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(cachedDocument.headers.get('X-Robots-Tag')).toBeNull();
+    expect(await cachedTransport.text()).toBe(payload);
+    expect(await cachedDocument.text()).toBe('<html>Fixture</html>');
+    expect(getContract).toHaveBeenCalledTimes(2);
   });
 
   it.each(['/Companies', '/companies/', '/C%6Fmpanies'])(
