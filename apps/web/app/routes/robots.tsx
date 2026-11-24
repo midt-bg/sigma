@@ -1,11 +1,28 @@
 import type { Route } from './+types/robots';
 import { isIndexedHost } from '../lib/indexing';
 
+// Limit crawl volume on query variants of public lists and explorers. Match their canonical paths
+// followed by the query delimiter so detail pages and paged sitemaps remain crawlable.
+// Crawlers must be able to fetch person profiles, conflicts, search and technical responses to
+// see their existing noindex directives.
+const PRODUCTION_RULES = [
+  'User-agent: *',
+  'Allow: /',
+  'Disallow: /authorities?',
+  'Disallow: /companies?',
+  'Disallow: /competition?',
+  'Disallow: /contracts?',
+  'Disallow: /flows?',
+  'Disallow: /map?',
+  'Disallow: /network?',
+  'Disallow: /trends?',
+];
+
 export function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   // Outside the production site (stage, dev, a workers.dev twin) the whole host is off limits.
   const body = isIndexedHost(url)
-    ? `User-agent: *\nAllow: /\nSitemap: ${url.origin}/sitemap.xml\n`
+    ? `${PRODUCTION_RULES.join('\n')}\nSitemap: ${url.origin}/sitemap.xml\n`
     : 'User-agent: *\nDisallow: /\n';
   return new Response(body, {
     headers: {
