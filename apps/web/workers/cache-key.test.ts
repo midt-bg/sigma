@@ -143,6 +143,17 @@ describe('cacheKey', () => {
     expect(new Set([singleSegment.href, twoSegments.href, doubleEscaped.href]).size).toBe(3);
   });
 
+  it('folds only the contract JSON suffix across equivalent router spellings', () => {
+    const canonical = cacheUrl('http://local/contracts/Test%2Fslug%3F.json');
+    expect(cacheUrl('http://local/contracts/Test%2Fslug%3F%2eJs%6fn').href).toBe(canonical.href);
+    expect(cacheUrl('http://local/contracts/Test%2Fslug%3F%2edata').pathname).toBe(
+      '/contracts/Test%2Fslug%3F%2edata',
+    );
+    expect(cacheUrl('http://local/contracts/Test%zz%2ejson').pathname).toBe(
+      '/contracts/Test%zz%2ejson',
+    );
+  });
+
   it('keeps genuinely distinct paths distinct', () => {
     const first = cacheUrl('http://local/contracts/e:UNP-1:CONTRACT-1');
     const second = cacheUrl('http://local/contracts/e:UNP-1:CONTRACT-2');

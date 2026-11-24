@@ -1,4 +1,5 @@
 import type { Route } from './+types/robots';
+import { CRAWL_FILTERED_PATHS } from '../lib/canonical-path';
 import { isIndexedHost } from '../lib/indexing';
 
 // Limit crawl volume on query variants of public lists and explorers. Match their canonical paths
@@ -8,14 +9,7 @@ import { isIndexedHost } from '../lib/indexing';
 const PRODUCTION_RULES = [
   'User-agent: *',
   'Allow: /',
-  'Disallow: /authorities?',
-  'Disallow: /companies?',
-  'Disallow: /competition?',
-  'Disallow: /contracts?',
-  'Disallow: /flows?',
-  'Disallow: /map?',
-  'Disallow: /network?',
-  'Disallow: /trends?',
+  ...CRAWL_FILTERED_PATHS.map((path) => `Disallow: ${path}?`),
 ];
 
 export function loader({ request }: Route.LoaderArgs) {

@@ -56,6 +56,7 @@ function hasSearchFilter(params: object): boolean {
 function markCsvCache(response: Response, cache: CsvCacheState): Response {
   const withSource = withDataSource(response, true);
   withSource.headers.set('X-Csv-Cache', cache);
+  withSource.headers.set('X-Robots-Tag', 'noindex');
   return withSource;
 }
 

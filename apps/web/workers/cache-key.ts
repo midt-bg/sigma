@@ -34,6 +34,22 @@ export function cacheKey(request: Request, deployTag: string): Request {
 
   // Keep the router's path segments intact. Decoding the whole pathname would alias an encoded
   // slash inside a slug with a real path separator, so a miss or eviction could affect another route.
+  // The contract JSON suffix is static and case-insensitive in the router. Fold equivalent spellings
+  // of that suffix only. A malformed slug leaves the router on the raw pathname.
+  const jsonAlias = /^(\/contracts\/[^/]+?)(?:\.|%2e)(?:[a-z]|%[0-9a-f]{2}){4}$/i.exec(
+    url.pathname,
+  );
+  if (jsonAlias) {
+    try {
+      const prefix = jsonAlias[1]!;
+      decodeURIComponent(prefix);
+      if (decodeURIComponent(url.pathname.slice(prefix.length)).toLowerCase() === '.json') {
+        url.pathname = `${prefix}.json`;
+      }
+    } catch {
+      // Leave malformed paths in their original namespace.
+    }
+  }
   params.set('_dt', deployTag);
   url.search = params.toString();
 

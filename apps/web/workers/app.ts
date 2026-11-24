@@ -202,7 +202,10 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   } else if (
     (isHtml(response) ||
       new URL(request.url).pathname.endsWith('.data') ||
-      (edgeTtl(headers) > 0 && isNoindexNamesPath(request))) &&
+      (edgeTtl(headers) > 0 &&
+        (isNoindexNamesPath(request) ||
+          (headers.get('X-Robots-Tag') === 'noindex' &&
+            headers.get('Content-Type')?.startsWith('application/json'))))) &&
     !/\b(?:no-store|private)\b/i.test(headers.get('Cache-Control') ?? '')
   ) {
     headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
