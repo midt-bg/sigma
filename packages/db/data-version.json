@@ -1,12 +1,18 @@
 {
-  "version": 3,
+  "version": 4,
   "computedBy": [
     "scripts/normalize-raw.sql",
     "scripts/refresh-slice.sql",
+    "scripts/work-staging-schema.sql",
     "scripts/precompute.sql",
     "scripts/promote-amendments.sql",
     "scripts/derive-amendments.sql",
     "scripts/resolve-amendment-contracts.sql",
+    "scripts/load-eop.mjs",
+    "packages/ingest/src/base.ts",
+    "packages/ingest/src/ocds.ts",
+    "packages/ingest/src/fx.ts",
+    "scripts/load-fx.mjs",
     "apps/etl/src/public-ownership.ts"
   ]
 }

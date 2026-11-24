@@ -9,6 +9,7 @@ import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import { FRAMEWORK_AGREEMENT } from './framework';
 import {
+  authorityIdFromSlug,
   authoritySlug,
   bareContractId,
   bidderIdFromSlug,
@@ -187,7 +188,7 @@ function buildFilters(p: ContractListParams): { sql: string; params: unknown[] }
   if (p.bids === 'one') where.push(`c.bids_received = 1`);
   if (p.authority) {
     where.push(`t.authority_id = ?`);
-    params.push('auth:' + p.authority);
+    params.push(authorityIdFromSlug(p.authority));
   }
   if (p.bidder) {
     const id = bidderIdFromSlug(p.bidder);

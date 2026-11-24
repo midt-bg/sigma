@@ -4,22 +4,22 @@
 counts, suspect/annex/review tallies, the clean total, freshness). Printing is not asserting —
 nothing failed on drift. On a minister-visible site, silent numeric drift is unacceptable. This gate
 promotes those printed numbers into **hard asserts that fail the import/CI with a non-zero exit
-code**, generalising the single prior guard (the FX check, `assertFxPopulated*` in `import.mjs`).
+code**, generalising the single prior guard (the full import check for available but unused FX rates, `assertFxValued` in `import.mjs`).
 
 ## Where it runs
 
 `scripts/integrity-checks.mjs` exports pure check functions over an injected `runner(sql) => rows[]`,
 so the same logic runs against D1 (wrangler) and local sqlite. `assertIntegrity(runner)` runs every
 check, prints one line each, and ends the process non-zero on the first real violation. It is wired
-in after the rollups are (re)built — mirroring how `assertFxPopulated()` is called per backend:
+in after the rollups are built when the backend publishes them:
 
 | Call site | Backend | Notes |
 |---|---|---|
 | `import.mjs` → `runFullDerive()` | D1 | after `precompute.sql` |
 | `import.mjs` → `runSliceDerive()` | D1 | after the refresh-slice batches |
-| `import.mjs` → `runWorkBackfill()` | sqlite work DB | after `assertFxPopulatedSqlite`; rollup checks self-skip (rollups are built later, on the served D1) |
+| `import.mjs` → `runWorkBackfill()` | sqlite work DB | after `assertFxValued`; rollup checks self-skip (rollups are built later, on the served D1) |
 | `ship-domain.mjs` | served D1 | after `precompute.sql` on the database users read |
-| `apps/etl` Workflow → `integrity-gate` step | served D1 (async runner) | the 6-hourly cron refresh, after each slice derive; runs `runIntegrityChecks` and fails the step on a violation. FX priced-ness is **not** gated here (the Worker loads no FX rates — see #154). |
+| `apps/etl` Workflow → `integrity-gate` step | served D1 (async runner) | the 6-hourly cron refresh, after each slice derive; runs `runIntegrityChecks` and retains the window for replay on a violation. FX coverage is checked before derive. |
 
 The runner the checks receive may be **synchronous** (the sqlite3/wrangler CLI orchestrators return rows
 directly) or **asynchronous** (the Workflow runs `env.DB.prepare(sql).all()`, a Promise). The checks

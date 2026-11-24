@@ -234,14 +234,17 @@ export function streamAuthoritiesCsv(db: D1Database, p: AuthorityListParams): Re
     CHUNK,
     async () => {
       const { results } = await db
-        .prepare(`SELECT ${COLS} FROM ${src.from} WHERE ${conds} ORDER BY authority_id LIMIT ?`)
+        .prepare(
+          `SELECT ${COLS}, (SELECT a.bulstat FROM authorities a WHERE a.id = totals.authority_id) AS bulstat
+           FROM ${src.from} AS totals WHERE ${conds} ORDER BY authority_id LIMIT ?`,
+        )
         .bind(...src.params, ...ew.params, afterId, CHUNK)
-        .all<AuthorityTotalsRow>();
+        .all<AuthorityTotalsRow & { bulstat: string | null }>();
       if (results.length) afterId = results[results.length - 1]!.authority_id;
       return results;
     },
     (r) => [
-      r.authority_id.replace(/^auth:/, ''),
+      r.bulstat,
       r.name,
       r.type_group,
       r.settlement,

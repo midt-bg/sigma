@@ -1,6 +1,7 @@
 // OCDS adapter helpers for the procurement ETL. The pure release flatteners here are the single
 // source of truth used by both the Worker-side ingest package and the CLI loaders.
 
+import { createHash } from 'node:crypto';
 import { clean, toISODate, validYear } from './base.ts';
 import { addDays } from './fx.ts';
 
@@ -117,6 +118,8 @@ export interface ContractStagingRow {
   unp: string | null;
   authority_eik: string | null;
   authority_name: string | null;
+  buyer_appearance: string | null;
+  buyer_is_supplier: number;
   procurement_subject: string | null;
   contract_kind: string | null;
   eu_funded: number | null;
@@ -178,7 +181,10 @@ export interface PartyStagingRow {
   fetched_at: string;
   ocid: string | null;
   party_id: string | null;
+  party_id_copies_eik: number;
   eik: string | null;
+  is_supplier: number;
+  appearance: string | null;
   scheme: string | null;
   name: string | null;
   roles: string | null;
@@ -214,13 +220,36 @@ function metaBase(meta: OcdsMeta) {
   };
 }
 
+type OcdsParty = NonNullable<OcdsRelease['parties']>[number];
+
+function supplierReferences(rel: OcdsRelease) {
+  return new Set((rel.awards ?? []).flatMap((a) => (a.suppliers ?? []).map((s) => s.id)));
+}
+
+function isSupplier(party: OcdsParty, refs: Set<string | undefined>): boolean {
+  return (party.roles ?? []).includes('supplier') || Boolean(party.id && refs.has(party.id));
+}
+
+// An exact equality witness for the internal role ledger. It is never a public reference.
+// A positional reference on its own cannot establish continuity between releases.
+function appearanceOf(ocid: string | undefined, party: OcdsParty): string | null {
+  if (!ocid || !party.id || !party.identifier?.id) return null;
+  return createHash('sha256')
+    .update(JSON.stringify([ocid, party.id, party.identifier.id]))
+    .digest('hex');
+}
+
 function relContext(rel: OcdsRelease, meta: OcdsMeta) {
-  const party: Record<string, { eik: string | null; name: string | null }> = {};
+  const party = new Map<string, OcdsParty>();
   for (const p of rel.parties ?? []) {
-    if (p.id) party[p.id] = { eik: p.identifier?.id ?? null, name: p.name ?? null };
+    if (p.id) party.set(p.id, p);
   }
   const t = rel.tender ?? {};
-  const buyerParty = rel.buyer?.id ? party[rel.buyer.id] : null;
+  const buyerParty = rel.buyer?.id ? party.get(rel.buyer.id) : undefined;
+  const buyerWithIdentifier =
+    buyerParty?.identifier?.id != null
+      ? buyerParty
+      : (rel.parties ?? []).find((p) => (p.roles ?? []).includes('buyer'));
   return {
     party,
     tender: t,
@@ -228,11 +257,9 @@ function relContext(rel: OcdsRelease, meta: OcdsMeta) {
       (t.mainProcurementCategory && KIND_CATEGORY[t.mainProcurementCategory]) ||
       t.mainProcurementCategory ||
       null,
-    authority_eik:
-      buyerParty?.eik ??
-      (rel.parties ?? []).find((p) => (p.roles ?? []).includes('buyer'))?.identifier?.id ??
-      null,
+    authority_eik: buyerWithIdentifier?.identifier?.id ?? null,
     authority_name: rel.buyer?.name || buyerParty?.name || null,
+    buyerWithIdentifier,
     published_at: dateOnly(rel.date ?? meta.publishedDate),
   };
 }
@@ -244,9 +271,9 @@ function supplierOf(
 ) {
   const award = (rel.awards ?? []).find((a) => a.id === contract?.awardID);
   const s = (award?.suppliers ?? [])[0];
-  const sp = s?.id ? ctx.party[s.id] : null;
+  const sp = s?.id ? ctx.party.get(s.id) : null;
   return {
-    eik: sp?.eik ?? s?.identifier?.id ?? null,
+    eik: sp?.identifier?.id ?? s?.identifier?.id ?? null,
     name: s?.name || sp?.name || null,
     awardTitle: award?.title || null,
   };
@@ -262,6 +289,9 @@ export function releaseToContracts(rel: OcdsRelease, meta: OcdsMeta): ContractSt
     (t.items ?? []).map((i) => i.classification).find((c) => c && /cpv/i.test(c.scheme ?? ''))
       ?.id ?? null;
   const bids = finiteNum((rel.bids?.statistics ?? []).find((s) => s.measure === 'bids')?.value);
+  const buyer = ctx.buyerWithIdentifier;
+  const buyerAppearance = buyer ? appearanceOf(rel.ocid, buyer) : null;
+  const buyerIsSupplier = buyer && isSupplier(buyer, supplierReferences(rel)) ? 1 : 0;
   return (rel.contracts ?? []).map((c) => {
     const sup = supplierOf(rel, ctx, c);
     return {
@@ -276,6 +306,8 @@ export function releaseToContracts(rel: OcdsRelease, meta: OcdsMeta): ContractSt
       unp: rel.ocid ?? null,
       authority_eik: ctx.authority_eik,
       authority_name: ctx.authority_name,
+      buyer_appearance: buyerAppearance,
+      buyer_is_supplier: buyerIsSupplier,
       procurement_subject: t.title ?? null,
       contract_kind: ctx.contract_kind,
       eu_funded: null,
@@ -351,14 +383,20 @@ export function releaseToAmendments(rel: OcdsRelease, meta: OcdsMeta): Amendment
 }
 
 export function releaseToParties(rel: OcdsRelease, meta: OcdsMeta): PartyStagingRow[] {
+  const supplierIds = supplierReferences(rel);
   return (rel.parties ?? []).map((p) => {
     const a = p.address ?? {};
     const cp = p.contactPoint ?? {};
+    const copiesIdentifier = p.id != null && p.id === p.identifier?.id;
     return {
       ...metaBase(meta),
       ocid: rel.ocid ?? null,
-      party_id: p.id ?? null,
+      // The staging source_party_id column reconstructs an exact copy from the raw identifier.
+      party_id: copiesIdentifier ? null : (p.id ?? null),
+      party_id_copies_eik: copiesIdentifier ? 1 : 0,
       eik: p.identifier?.id ?? null,
+      is_supplier: isSupplier(p, supplierIds) ? 1 : 0,
+      appearance: appearanceOf(rel.ocid, p),
       scheme: p.identifier?.scheme ?? null,
       name: p.name ?? null,
       roles: (p.roles ?? []).join(',') || null,
@@ -459,6 +497,8 @@ export const CONTRACT_STAGING_COLS: (keyof ContractStagingRow)[] = [
   'unp',
   'authority_eik',
   'authority_name',
+  'buyer_appearance',
+  'buyer_is_supplier',
   'procurement_subject',
   'contract_kind',
   'eu_funded',
@@ -516,7 +556,10 @@ export const PARTY_STAGING_COLS: (keyof PartyStagingRow)[] = [
   'fetched_at',
   'ocid',
   'party_id',
+  'party_id_copies_eik',
   'eik',
+  'is_supplier',
+  'appearance',
   'scheme',
   'name',
   'roles',

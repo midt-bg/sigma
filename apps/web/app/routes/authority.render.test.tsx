@@ -143,16 +143,36 @@ afterEach(() => {
   container.remove();
 });
 
-async function mount(loaderData: unknown) {
+async function mount(loaderData: unknown, slug = authority.slug) {
   const Stub = createRoutesStub([
     { path: '/authorities/:eik', Component: Authority, loader: () => loaderData },
   ]);
   await act(async () => {
-    root.render(<Stub initialEntries={['/authorities/000000000']} />);
+    root.render(<Stub initialEntries={[`/authorities/${slug}`]} />);
   });
 }
 
 const section = (id: string) => container.querySelector(`#${id}`)?.closest('section') ?? null;
+
+describe('authority identifiers', () => {
+  it.each([
+    ['ocds-auth:74657374', null],
+    ['123456786', '123456786'],
+  ])('uses the identifier for the header and the slug for navigation (%s)', async (slug, eik) => {
+    await mount(
+      { ...baseData, authority: { ...authority, slug, eik, name: 'ТЕСТ ВЪЗЛОЖИТЕЛ ЕООД' } },
+      slug,
+    );
+    const header = container.querySelector('main .page-header')!;
+    const registryLink = header.querySelector('a.source-cta');
+    expect([
+      header.querySelector('abbr')?.textContent ?? null,
+      Boolean(registryLink),
+      Boolean(container.querySelector(`a[href="/contracts?authority=${slug}"]`)),
+    ]).toEqual([eik ? 'ЕИК' : null, Boolean(eik), true]);
+    if (eik) expect(header.textContent).toContain(eik);
+  });
+});
 
 describe('/authorities/:eik — the direct-award share', () => {
   it('shows one direct-award percentage, with the groups its base leaves out named beside it', async () => {

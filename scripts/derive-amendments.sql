@@ -121,50 +121,19 @@ WHERE source LIKE 'ocds:%'
 
 UPDATE raw_contracts SET annex_count = 0, current_value = NULL;
 
-WITH keyed AS (
-  SELECT
-    *,
-    -- #306: key on the ORIGINAL annex-side number (contract_number_raw) when the value resolver rewrote a
-    -- row, so a resolved annex keeps a stable identity and never collides with a native annex that shares
-    -- document_number on the target contract (review nikimilenkov MEDIUM 3). NULL raw → the plain number,
-    -- so unresolved rows and the slice path (which never resolves) produce byte-identical keys.
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
-      COALESCE(
-        NULLIF(document_number, ''),
-        NULLIF(correction_number, ''),
-        NULLIF(seq_no, ''),
-        'content:' || COALESCE(published_at, '') || ':' ||
-          COALESCE(CAST(value_before AS TEXT), '') || ':' ||
-          COALESCE(CAST(value_after AS TEXT), '') || ':' ||
-          COALESCE(CAST(value_delta AS TEXT), '') || ':' ||
-          COALESCE(currency, '') || ':' ||
-          COALESCE(description, '')
-      ) AS natural_key
-  FROM raw_amendments
-), dedup AS (
-  SELECT *,
-    ROW_NUMBER() OVER (
-      PARTITION BY natural_key
-      ORDER BY source DESC, id DESC
-    ) AS rn
-  FROM keyed
-)
+WITH dedup AS MATERIALIZED (SELECT * FROM raw_amendment_publications)
 UPDATE raw_contracts
 SET
   annex_count = (
     SELECT COUNT(*) FROM dedup a
     WHERE a.unp = raw_contracts.unp
       AND a.contract_number = raw_contracts.contract_number
-      AND a.rn = 1
   ),
-  -- #305 Tier-2: a text-confirmed double-count carries the corrected total in value_after_restated; use
-  -- it as the effective after so current_value reflects the true total, not the raw doubled value_after.
   current_value = (
-    SELECT COALESCE(a.value_after_restated, a.value_after) FROM dedup a
+    SELECT a.effective_after FROM dedup a
     WHERE a.unp = raw_contracts.unp
       AND a.contract_number = raw_contracts.contract_number
-      AND a.value_after IS NOT NULL
-      AND a.rn = 1
+      AND a.effective_after IS NOT NULL
     ORDER BY a.published_at DESC, a.natural_key DESC
     LIMIT 1
   )
@@ -172,7 +141,6 @@ WHERE EXISTS (
   SELECT 1 FROM dedup a
   WHERE a.unp = raw_contracts.unp
     AND a.contract_number = raw_contracts.contract_number
-    AND a.rn = 1
 );
 
 -- Summary (printed by wrangler)

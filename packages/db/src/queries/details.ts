@@ -285,6 +285,7 @@ export async function getParticipantContracts(db: D1Database, bidderId: string) 
 
 interface AuthorityTotalsFull {
   authority_id: string;
+  bulstat: string | null;
   name: string;
   type_group: string | null;
   settlement: string | null;
@@ -304,7 +305,11 @@ export async function getAuthority(
   authorityId: string,
 ): Promise<AuthorityDetail | null> {
   const row = await db
-    .prepare(`SELECT * FROM authority_totals WHERE authority_id = ?`)
+    .prepare(
+      `SELECT totals.*, NULLIF(a.bulstat, '') AS bulstat
+       FROM authority_totals totals JOIN authorities a ON a.id = totals.authority_id
+       WHERE totals.authority_id = ?`,
+    )
     .bind(authorityId)
     .first<AuthorityTotalsFull>();
   if (!row) return null;
@@ -409,7 +414,7 @@ export async function getAuthority(
   return {
     slug: authoritySlug(authorityId),
     name: cleanName(row.name),
-    eik: authoritySlug(authorityId),
+    eik: row.bulstat,
     typeGroup: row.type_group,
     typeLabel: typeLabel(row.type_group),
     settlement: row.settlement,
@@ -486,6 +491,7 @@ interface ContractDetailRow {
   end_date: string | null;
   // authority
   authority_id: string;
+  authority_eik: string | null;
   authority_name: string;
   source_authority_name: string | null;
   authority_type_group: string | null;
@@ -556,7 +562,8 @@ export async function getContract(
               t.eop_tender_id,
               t.estimated_value, t.currency AS tender_currency, t.start_date, t.end_date,
               (SELECT f.eur_per_unit FROM fx_rates f WHERE f.base_currency = t.currency AND f.rate_date = c.signed_at) AS tender_fx_rate,
-              t.authority_id, a.name AS authority_name, a.type_group AS authority_type_group,
+              t.authority_id, NULLIF(a.bulstat, '') AS authority_eik,
+              a.name AS authority_name, a.type_group AS authority_type_group,
               a.settlement AS authority_settlement,
               c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, b.eik_normalized AS bidder_eik,
               b.settlement AS bidder_settlement, b.legal_form AS bidder_legal_form,
@@ -631,10 +638,11 @@ export async function getContract(
   const currentValueDoubled = r.value_flag === 'annex_total_suspect';
   const signingEur =
     r.signing_value_eur ?? eurFromNative(r.signing_value, r.contract_currency, r.fx_rate);
+  const currentCurrency = r.current_value_currency || r.contract_currency;
+  const currentFxRate = currentCurrency === r.contract_currency ? r.fx_rate : null;
   const currentRaw = currentValueDoubled
     ? null
-    : (r.current_value_eur ??
-      eurFromNative(r.current_value, r.current_value_currency || r.contract_currency, r.fx_rate));
+    : (r.current_value_eur ?? eurFromNative(r.current_value, currentCurrency, currentFxRate));
   const procedureEstimatedEur = eurFromNative(
     r.estimated_value,
     r.tender_currency,
@@ -691,7 +699,7 @@ export async function getContract(
     estimatedEur: currentLotEstimatedEur ?? procedureEstimatedEur,
     procedureEstimatedEur,
     signingEur,
-    currentEur: currentValueDoubled ? null : (currentRaw ?? signingEur),
+    currentEur: !currentValueDoubled && r.current_value == null ? signingEur : currentRaw,
     deltaPct:
       !suspect && currentRaw != null && signingEur != null && signingEur !== 0
         ? (currentRaw - signingEur) / signingEur
@@ -711,7 +719,7 @@ export async function getContract(
         : null,
     typeLabel: typeLabel(r.authority_type_group),
     settlement: r.authority_settlement,
-    eik: authoritySlug(r.authority_id),
+    eik: r.authority_eik,
     sector: null,
     totalContracts: authTotals?.contracts ?? 0,
     totalEur: authTotals?.spent_eur ?? 0,

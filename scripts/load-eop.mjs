@@ -26,6 +26,7 @@ import {
   baseSqlLiteral,
   escapeSqlText,
   mapBaseRecord,
+  supplierIdSqlLiteral,
 } from '../packages/ingest/src/base.ts';
 import {
   AMENDMENT_STAGING_COLS,
@@ -86,8 +87,12 @@ const SQL_INT_COLS = new Set([
   'bids_received',
   'needs_enrichment',
   'supplier_count',
+  'is_supplier',
+  'buyer_is_supplier',
+  'party_id_copies_eik',
 ]);
 function sqlLiteral(col, value) {
+  if (col === 'contractor_eik') return supplierIdSqlLiteral(value);
   if (value === null || value === undefined) return 'NULL';
   if (SQL_REAL_COLS.has(col) || SQL_INT_COLS.has(col)) {
     const n = Number(value);
@@ -533,7 +538,12 @@ async function loadOcds(days, concurrency, failures, skips) {
       let lN = 0;
       for (const rel of packageReleases(pkg)) {
         for (const row of releaseToContracts(rel, meta)) {
-          await cb.push(`(${CONTRACT_STAGING_COLS.map((c) => sqlLiteral(c, row[c])).join(',')})`);
+          const values = CONTRACT_STAGING_COLS.map((c) =>
+            c === 'authority_eik' && row.buyer_is_supplier && row.buyer_appearance === null
+              ? supplierIdSqlLiteral(row[c])
+              : sqlLiteral(c, row[c]),
+          );
+          await cb.push(`(${values.join(',')})`);
           cN++;
         }
         for (const row of releaseToAmendments(rel, meta)) {
@@ -541,7 +551,10 @@ async function loadOcds(days, concurrency, failures, skips) {
           aN++;
         }
         for (const row of releaseToParties(rel, meta)) {
-          await pb.push(`(${PARTY_STAGING_COLS.map((c) => sqlLiteral(c, row[c])).join(',')})`);
+          const values = PARTY_STAGING_COLS.map((c) =>
+            c === 'eik' || c === 'party_id' ? supplierIdSqlLiteral(row[c]) : sqlLiteral(c, row[c]),
+          );
+          await pb.push(`(${values.join(',')})`);
           pN++;
         }
         for (const row of releaseToLots(rel, meta)) {

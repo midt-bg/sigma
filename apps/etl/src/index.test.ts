@@ -25,8 +25,15 @@ const BGN_VALUE = 1000;
 // ECB business-day rates only up to 2026-07-07: the contract date itself has no rate, so the
 // derive must carry the latest prior rate forward (the 10-day lookback in refresh-slice.sql).
 const USD_RATES: Record<string, { EUR: number }> = {
-  '2026-07-04': { EUR: 0.86 },
+  '2026-07-06': { EUR: 0.86 },
   '2026-07-07': { EUR: 0.87 },
+};
+const USD_SERIES = {
+  amount: 1,
+  base: 'USD',
+  start_date: '2026-07-06',
+  end_date: '2026-07-07',
+  rates: USD_RATES,
 };
 const EXPECTED_USD_EUR = USD_VALUE * 0.87;
 const BGN_PEG = 1.95583;
@@ -97,7 +104,7 @@ function stubFetchRoutes(): { frankfurterCalls: () => number } {
       frankfurterCalls += 1;
       const base = new URL(url).searchParams.get('base');
       if (base === 'USD') {
-        return new Response(JSON.stringify({ base: 'USD', rates: USD_RATES }), { status: 200 });
+        return Response.json(USD_SERIES);
       }
       return new Response(JSON.stringify({ message: 'not found' }), { status: 404 });
     }
@@ -180,6 +187,124 @@ describe('RefreshWorkflow FX loading (#158)', () => {
     // drops out of every rollup and total.
     expect(usd.amount_eur).not.toBeNull();
     expect(usd.amount_eur).toBeCloseTo(EXPECTED_USD_EUR, 2);
+  });
+
+  it.each([
+    { failure: () => new Response('unavailable', { status: 503 }), error: 'HTTP 503' },
+    { failure: () => Response.json({ message: 'unavailable' }), error: 'malformed FX series' },
+    {
+      failure: () => Response.json({ ...USD_SERIES, base: undefined }),
+      error: 'invalid series metadata',
+    },
+    {
+      failure: () => Response.json({ ...USD_SERIES, end_date: '2026-07-05' }),
+      error: 'invalid series metadata',
+    },
+  ])('requests FX before writes and recovers from $error', async ({ failure, error }) => {
+    const db = freshServedDb();
+    const annexKey = `анекси-${BUCKET_DAY}.json`;
+    const base = {
+      ...bucketContracts[0],
+      contractNumber: 'TEST-FX-ANCHOR',
+      contractCurrency: 'EUR',
+      contractValue: '10000',
+      supplierRegisterNumber: '0000000000015',
+    };
+    const anchor = {
+      ...base,
+      noticeId: 'TEST-ANCHOR',
+      contractNumber: 'TEST-FOREIGN-NUMBER',
+      lastContractValue: '10000',
+      currentContractValue: '11000',
+      contractValueDifference: '1000',
+    };
+    const dollarAnnex = {
+      ...anchor,
+      noticeId: 'TEST-USD',
+      contractCurrency: 'USD',
+      lastContractValue: '12000',
+      currentContractValue: '15000',
+      contractValueDifference: '3000',
+    };
+    const note = { ...base, noticeId: 'TEST-METADATA' };
+    let key = BUCKET_KEY;
+    let records: object[] = [base];
+    let fail = true;
+    const fxRequests: string[] = [];
+    const bucket = `https://storage.eop.bg/open-data-${BUCKET_DAY}/`;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === bucket)
+        return new Response(
+          `<ListBucketResult><Contents><Key>${key}</Key></Contents></ListBucketResult>`,
+        );
+      if (url === bucket + encodeURIComponent(key)) return Response.json(records);
+      if (url.startsWith(FRANKFURTER_API)) {
+        fxRequests.push(url);
+        return fail ? failure() : Response.json(USD_SERIES);
+      }
+      return new Response('no such bucket', { status: 404 });
+    });
+    const workflow = makeWorkflow(db);
+    await runRefresh(workflow);
+    expect(fxRequests).toEqual([]);
+    const home = () => db.prepare('SELECT as_of, value_eur FROM home_totals').get();
+    expect(home()).toEqual({ as_of: CONTRACT_DATE, value_eur: 10_000 });
+
+    key = annexKey;
+    records = [anchor, dollarAnnex];
+    await expect(runRefresh(workflow)).rejects.toThrow(
+      new RegExp(`FX load failed with coverage gaps remaining: USD.*${error}`),
+    );
+    const expectedRequest = `${FRANKFURTER_API}/2026-06-28..2026-07-08?base=USD&symbols=EUR`;
+    expect(fxRequests).toEqual([expectedRequest]);
+    expect(home()).toEqual({ as_of: CONTRACT_DATE, value_eur: 10_000 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM amendments').get()?.n).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM refresh_pending_window').get()?.n).toBe(1);
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sqlite_schema WHERE name GLOB 'raw_*'
+            OR name IN ('refresh_amendment_rekeyed', 'contractor_identity')`,
+        )
+        .get()?.n,
+    ).toBe(0);
+
+    fail = false;
+    await runRefresh(workflow);
+    expect(fxRequests).toEqual([expectedRequest, expectedRequest]);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM refresh_pending_window').get()?.n).toBe(0);
+    expect(
+      db
+        .prepare(
+          'SELECT contract_number, contract_number_raw, link_method FROM amendments ORDER BY document_number',
+        )
+        .all(),
+    ).toEqual(
+      Array(2).fill({
+        contract_number: 'TEST-FX-ANCHOR',
+        contract_number_raw: 'TEST-FOREIGN-NUMBER',
+        link_method: 'value_anchor',
+      }),
+    );
+    expect(home()).toEqual({ as_of: CONTRACT_DATE, value_eur: 13_050 });
+
+    records = [note];
+    await runRefresh(workflow);
+    expect(fxRequests).toEqual([expectedRequest, expectedRequest]);
+    expect(home()).toEqual({ as_of: CONTRACT_DATE, value_eur: 13_050 });
+    expect(
+      db
+        .prepare(
+          'SELECT current_value, current_value_currency, current_value_eur, value_flag FROM contracts',
+        )
+        .get(),
+    ).toEqual({
+      current_value: 15_000,
+      current_value_currency: 'USD',
+      current_value_eur: 13_050,
+      value_flag: 'ok',
+    });
   });
 
   it('keeps BGN contracts on the fixed peg (no FX regression)', async () => {

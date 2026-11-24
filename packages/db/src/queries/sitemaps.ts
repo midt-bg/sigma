@@ -3,7 +3,7 @@
 // the same slugs as the routes (companySlug encodes name-keyed bidders).
 
 import { isNaturalPersonProfileName } from '@sigma/shared';
-import { companySlug, contractSlug } from './identity';
+import { authoritySlug, companySlug, contractSlug } from './identity';
 
 const HEAD =
   '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
@@ -110,7 +110,7 @@ export function streamAuthoritySitemap(db: D1Database, origin: string): Response
     const slugs = results.map((r) =>
       urlEntry(
         origin,
-        `/authorities/${r.authority_id.replace(/^auth:/, '')}`,
+        `/authorities/${authoritySlug(r.authority_id)}`,
         lastmod(r.last_date ?? fallback),
       ),
     );

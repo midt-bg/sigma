@@ -9,8 +9,9 @@ import {
 } from './authorities';
 
 const authorityRow = {
-  authority_id: 'auth:000695089',
-  name: 'Министерство на финансите',
+  authority_id: 'auth:123456786',
+  bulstat: '123456786',
+  name: 'Тестово министерство',
   type_group: 'министерство',
   settlement: 'София',
   region: 'Столична',
@@ -61,7 +62,7 @@ describe('listAuthorities', () => {
 
     expect(page.items).toHaveLength(1);
     expect(page.total).toBe(1);
-    expect(page.items[0]!.slug).toBe('000695089');
+    expect(page.items[0]!.slug).toBe('123456786');
     expect(page.items[0]!.spentEur).toBe(1000000);
   });
 
@@ -126,6 +127,40 @@ describe('getAuthorityFacets', () => {
 });
 
 describe('streamAuthoritiesCsv', () => {
+  it.each([{}, { years: ['2024'] }])(
+    'uses the database identifier for CSV with %o',
+    async (params) => {
+      const rows = [
+        {
+          ...authorityRow,
+          authority_id: 'auth:TEST-ROUTING-KEY',
+          bulstat: '123456786',
+          name: 'Test Registered Buyer',
+        },
+        {
+          ...authorityRow,
+          authority_id: 'ocds-auth:74657374',
+          bulstat: null,
+          name: 'Test Scoped Buyer',
+        },
+      ];
+      const db = fakeD1([
+        { when: 'FROM authority_totals', all: rows },
+        { when: 'FROM (', all: rows },
+      ]).db;
+      const body = await streamAuthoritiesCsv(db, params).text();
+      expect(
+        body
+          .split('\n')
+          .slice(1, 3)
+          .map((line) => line.split(',').slice(0, 2)),
+      ).toEqual([
+        ['123456786', 'Test Registered Buyer'],
+        ['', 'Test Scoped Buyer'],
+      ]);
+    },
+  );
+
   it('returns a Response with CSV content-type and attachment disposition', () => {
     const db = fakeD1([
       { when: 'FROM authority_totals', all: [] },
@@ -307,11 +342,12 @@ describe('getAuthorityFacets — unmapped type label', () => {
 });
 
 describe('streamAuthoritiesCsv — streamed body', () => {
-  it('streams a BOM header + one row per authority (auth: stripped, avg rounded) and closes', async () => {
+  it('streams a BOM header + one row per authority (identifier, rounded average) and closes', async () => {
     const rows = [
       {
-        authority_id: 'auth:000695089',
-        name: 'Министерство',
+        authority_id: 'auth:123456786',
+        bulstat: '123456786',
+        name: 'Тестово министерство',
         type_group: 'министерство',
         settlement: 'София',
         region: 'Столична',
@@ -337,7 +373,7 @@ describe('streamAuthoritiesCsv — streamed body', () => {
     expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]); // UTF-8 BOM
     const csv = new TextDecoder().decode(bytes);
     expect(csv.startsWith('eik,name,type_group')).toBe(true);
-    expect(csv).toContain('000695089'); // auth: prefix stripped
+    expect(csv).toContain('123456786'); // database identifier
     expect(csv).toContain('10001'); // avg_eur rounded
     expect(csv.endsWith('\n')).toBe(true);
   });

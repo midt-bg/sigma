@@ -70,14 +70,19 @@ export function registryPersonIdFromSlug(slug: string): string | null {
   return /^[0-9a-f]{64}$/.test(id) ? id : null;
 }
 
-/** authority id (`auth:ЕИК`) → `/authorities/:eik` segment. */
+// Keep the full legacy id if removing its prefix would collide with a procedure-scoped slug.
+const scopedAuthoritySlug = /^(?:auth:)*ocds-auth:(?:[0-9a-f]{2})+$/;
+
+/** authority id → `/authorities/:eik` segment. */
 export function authoritySlug(authorityId: string): string {
-  return authorityId.startsWith('auth:') ? authorityId.slice(5) : authorityId;
+  if (!authorityId.startsWith('auth:')) return authorityId;
+  const bare = authorityId.slice(5);
+  return scopedAuthoritySlug.test(bare) ? authorityId : bare;
 }
 
 /** `/authorities/:eik` segment → authority id. */
 export function authorityIdFromSlug(slug: string): string {
-  return 'auth:' + slug;
+  return scopedAuthoritySlug.test(slug) ? slug : 'auth:' + slug;
 }
 
 /** contract id (`c:*`) → bare id without the leading `c:` prefix. This is the raw, un-encoded form

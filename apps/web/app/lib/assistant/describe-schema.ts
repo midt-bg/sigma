@@ -13,6 +13,80 @@
 // of `SUM(amount_eur)` returns a garbage total attributed to АОП — defamation/disinfo by accident.
 // Grounded in packages/db/migrations/0000_init.sql; keep in sync when the schema changes.
 
+// Explicit assistant field contracts for the two procurement tables. The existing columns keep
+// their order and names for wildcard queries and report bindings.
+export const PUBLIC_PROCUREMENT_FIELDS = {
+  contracts: [
+    'id',
+    'tender_id',
+    'bidder_id',
+    'amount',
+    'currency',
+    'signed_at',
+    'contract_number',
+    'signing_value',
+    'current_value',
+    'annex_count',
+    'eu_funded',
+    'bids_received',
+    'contract_kind',
+    'awarded_to_group',
+    'value_flag',
+    'date_flag',
+    'amount_eur',
+    'fx_converted',
+    'fx_rate',
+    'signing_value_eur',
+    'current_value_eur',
+    'lot_id',
+    'document_number',
+    'published_at',
+    'contract_subject',
+    'eu_programme',
+    'duration_days',
+    'winner_size',
+    'contractor_country',
+    'bids_sme',
+    'bids_rejected',
+    'bids_non_eea',
+    'subcontractor_eik',
+    'subcontractor_name',
+    'subcontract_value',
+    'eauction',
+    'framework',
+    'accelerated',
+    'strategic',
+    'created_at',
+    'current_value_currency',
+    'ordering_unit_name',
+  ],
+  amendments: [
+    'id',
+    'natural_key',
+    'contract_number',
+    'unp',
+    'value_before',
+    'value_after',
+    'value_delta',
+    'currency',
+    'published_at',
+    'document_number',
+    'description',
+    'source',
+    'value_restated',
+    'value_treatment',
+    'value_suspect',
+    'contract_number_raw',
+    'link_method',
+  ],
+} as const;
+
+export type ProjectedProcurementTable = keyof typeof PUBLIC_PROCUREMENT_FIELDS;
+
+function procurementColumns(table: ProjectedProcurementTable, notes: Record<string, string>) {
+  return PUBLIC_PROCUREMENT_FIELDS[table].map((field) => notes[field] ?? field).join(', ');
+}
+
 // Imperative rules — stated as MUST/NEVER so the model treats them as hard constraints, not hints.
 export const DATA_TRAPS: string[] = [
   'Парични агрегати: СУМИРАЙ САМО `contracts.amount_eur` (каноничен EUR, безопасен за сумиране). ' +
@@ -72,15 +146,31 @@ export const TABLES: TableDoc[] = [
   {
     name: 'contracts',
     grain: 'един възложен договор (на ниво лот)',
-    columns:
-      'id, tender_id→tenders, bidder_id→bidders, amount (display, в `currency`), currency, ' +
-      'amount_eur (КАНОНИЧЕН EUR, SAFE TO SUM; сумирай с amount_eur IS NOT NULL), value_flag, date_flag, ' +
-      'fx_converted, fx_rate, signed_at, bids_received, eu_funded, ' +
-      'framework (1 = поръчка по рамково споразумение; 2 = самото споразумение — таванът му е в ' +
-      'signing_value_eur, а amount_eur е NULL: НИКОГА не го сумирай)',
+    columns: procurementColumns('contracts', {
+      tender_id: 'tender_id→tenders',
+      bidder_id: 'bidder_id→bidders',
+      amount: 'amount (за показване, в currency)',
+      amount_eur: 'amount_eur (каноничен EUR; сумирай с amount_eur IS NOT NULL)',
+      framework:
+        'framework (1 = поръчка по рамково споразумение; 2 = самото споразумение — таванът му е в ' +
+        'signing_value_eur, а amount_eur е NULL; таванът не се сумира)',
+    }),
   },
-  { name: 'amendments', grain: 'един анекс', columns: 'id, contract_id→contracts, …' },
-  { name: 'parties', grain: 'роля по OCDS преписка', columns: 'ocid (≠ УНП!), role, …' },
+  {
+    name: 'amendments',
+    grain: 'един анекс',
+    columns: procurementColumns('amendments', {
+      unp: 'unp (УНП→tenders.source_id)',
+      contract_number: 'contract_number (за връзка с contracts използвай и УНП на процедурата)',
+    }),
+  },
+  {
+    name: 'parties',
+    grain: 'страна по OCDS преписка',
+    columns:
+      'party_key, eik, source, ocid (≠ УНП!), party_id, name, street_address, locality, ' +
+      'region_nuts, contact_email, contact_phone',
+  },
   {
     name: 'authority_totals',
     grain: 'rollup на възложител',

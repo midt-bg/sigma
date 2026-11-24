@@ -1,5 +1,8 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { fakeD1, throwingD1 } from '@sigma/test-support';
+import { d1FromSqlite, fakeD1, throwingD1 } from '@sigma/test-support';
 import {
   ASSISTANT_TOOLS,
   DEFAULT_ROWS_READ_BUDGET,
@@ -55,6 +58,111 @@ describe('run_sql', () => {
     expect(out).toContain('R1');
     expect(c.results).toHaveLength(1);
     expect(c.results[0]).toMatchObject({ handle: 'R1', columns: ['total_eur'], rows: [[2124567]] });
+  });
+
+  it('keeps the released contract and amendment fields in model results and bound reports', async () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      const migrations = resolve(import.meta.dirname, '../../../../../packages/db/migrations');
+      const files = readdirSync(migrations)
+        .filter((file) => file.endsWith('.sql'))
+        .sort();
+      for (const file of files.filter((file) => file.slice(0, 4) <= '0028')) {
+        db.exec(readFileSync(resolve(migrations, file), 'utf8'));
+      }
+      const releasedFields = (table: string) =>
+        db
+          .prepare(`PRAGMA table_info(${table})`)
+          .all()
+          .map((row) => String(row.name));
+      const contractFields = releasedFields('contracts');
+      const amendmentFields = releasedFields('amendments');
+      for (const file of files.filter((file) => file.slice(0, 4) > '0028')) {
+        db.exec(readFileSync(resolve(migrations, file), 'utf8'));
+      }
+      db.exec(`
+        INSERT INTO authorities (id, name) VALUES ('a:test', 'Test buyer');
+        INSERT INTO bidders (id, name) VALUES ('b:test', 'Test supplier');
+        INSERT INTO tenders (id, source_id, title, authority_id, procedure_type)
+          VALUES ('t:test', 'TEST-UNP', 'Test procedure', 'a:test', 'open');
+        INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, amount_eur, contract_number,
+            own_estimate_source, signing_contractor_status, signing_contractor_eik)
+          VALUES ('c:test', 't:test', 'b:test', 10000, 'EUR', 10000, 'TEST-C', 'ocds:test', 'valid', '123456786');
+        INSERT INTO amendments (id, natural_key, unp, contract_number, source, value_delta,
+            value_evidence_known, raw_value_delta, contractor_id_status)
+          VALUES ('am:test', 'test', 'TEST-UNP', 'TEST-C', 'eop:test', 500, 1, 550, 'absent');
+      `);
+      const context: ToolContext = { db: d1FromSqlite(db), results: [], rowsRead: 0 };
+
+      const contracts = await runTool('run_sql', { sql: 'SELECT * FROM contracts' }, context);
+      const amendments = await runTool(
+        'run_sql',
+        { sql: 'WITH selected AS (SELECT a.* FROM amendments a) SELECT * FROM selected' },
+        context,
+      );
+      expect(context.results.map((result) => result.columns)).toEqual([
+        contractFields,
+        amendmentFields,
+      ]);
+      expect(contracts).toContain(contractFields.join(', '));
+      expect(amendments).toContain(amendmentFields.join(', '));
+      expect(contracts).not.toContain('123456786');
+      expect(amendments).not.toContain('raw_value_delta');
+
+      await runTool(
+        'run_sql',
+        {
+          sql:
+            'SELECT SUM(c.amount_eur) AS spent_eur, SUM(am.value_delta) AS delta ' +
+            'FROM contracts c JOIN tenders t ON t.id = c.tender_id ' +
+            'JOIN amendments am ON am.unp = t.source_id AND am.contract_number = c.contract_number',
+        },
+        context,
+      );
+      expect(context.results[2]).toMatchObject({
+        columns: ['spent_eur', 'delta'],
+        rows: [[10_000, 500]],
+      });
+
+      const report = finalizeReport(
+        {
+          title: 'Test report',
+          question: 'What changed?',
+          blocks: [
+            {
+              type: 'table',
+              resultId: 'R2',
+              columns: [
+                { key: 'contract_number', header: 'Contract', format: 'text' },
+                { key: 'value_delta', header: 'Change', format: 'money' },
+              ],
+            },
+          ],
+        },
+        context,
+      );
+      expect(report).toMatchObject({
+        ok: true,
+        report: { blocks: [{ type: 'table', rows: [{ cells: ['TEST-C', 500] }] }] },
+      });
+
+      const dictionary = await runTool('describe_schema', {}, context);
+      const procurement = dictionary
+        .split('\n')
+        .filter((line, index, lines) =>
+          /^- (contracts|amendments) — /.test(lines[index - 1] ?? ''),
+        );
+      expect(procurement).toHaveLength(2);
+      for (const [index, fields] of [contractFields, amendmentFields].entries()) {
+        for (const field of fields)
+          expect(procurement[index]).toMatch(new RegExp(`\\b${field}\\b`));
+      }
+      expect(procurement.join('\n')).not.toMatch(
+        /own_estimate_source|raw_value_delta|contract_id→/,
+      );
+    } finally {
+      db.close();
+    }
   });
 
   it('rejects a non-read-only statement and retains nothing', async () => {

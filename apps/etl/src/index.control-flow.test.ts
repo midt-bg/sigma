@@ -43,7 +43,10 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
     dropTransientStaging: vi.fn(async () => {}),
     refreshDerivedContractCount: vi.fn(async () => 42),
     pendingTouchedRows: vi.fn(async () => ({ contracts: 0, bidders: 0, authorities: 0, total: 0 })),
-    refreshSliceStatementGroups: vi.fn(() => [{ name: 'g1', statements: ['a', 'b'] }]),
+    refreshSliceStatementGroups: vi.fn(() => [
+      { name: 'resolve-annexes', statements: ['a'] },
+      { name: 'g1', statements: ['b'] },
+    ]),
     runRefreshSliceStatementGroup: vi.fn(async () => {}),
     loadFxRates: vi.fn(async () => ({
       inserted: 0,
@@ -141,11 +144,12 @@ describe('RefreshWorkflow.run — control flow', () => {
     expect(result).toMatchObject({ from: '2026-05-29', days: 1, staged: 28, derived: 42 });
     expect(ingest.createTransientStaging).toHaveBeenCalledWith(DB, 'WORK_STAGING_SCHEMA_SQL');
     expect(ingest.loadFxRates).toHaveBeenCalledOnce(); // FX loaded before derive (#158)
-    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(1);
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(2);
     expect(ingest.refreshDerivedContractCount).toHaveBeenCalledOnce();
     expect(integrity.runServedIntegrityGate).toHaveBeenCalledOnce();
     expect(names).toContain('load-fx');
-    expect(names).toContain('derive-slice:g1');
+    expect(names.indexOf('derive-slice:resolve-annexes')).toBeLessThan(names.indexOf('load-fx'));
+    expect(names.indexOf('load-fx')).toBeLessThan(names.indexOf('derive-slice:g1'));
     expect(names).toContain('integrity-gate');
     expect(names).toContain('drop-transient-staging'); // finally always drops
   });
@@ -262,7 +266,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
     expect(result).toMatchObject({ days: 1, staged: 0, derived: 42, pendingTouched: 6 });
     expect(ingest.loadFxRates).toHaveBeenCalledTimes(1);
-    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(1); // g1 ran
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(2); // g1 ran
     expect(integrity.runServedIntegrityGate).toHaveBeenCalledTimes(1);
     const warned = warn.mock.calls.map((c) => String(c[0]));
     expect(warned.some((l) => l.includes('etl_zero_ingest_pending_touched'))).toBe(true);
@@ -354,11 +358,11 @@ describe('RefreshWorkflow.run — control flow', () => {
   it('ends the run on a lease lost before the check, instead of calling it unverified', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
-    // drop-stale, record-window, create, ingest, load-fx, derive g1, count renew fine; the gate's
+    // drop-stale, record-window, create, ingest, resolve-annexes, load-fx, derive g1 and count renew. The gate's
     // fence and the finally's check find the new holder.
     const ours = { acquired: true, holder: 'wf-60', expiresAt: '2026-06-07T00:30:00.000Z' };
     const theirs = { acquired: false, holder: 'wf-61', expiresAt: '2026-06-07T00:45:00.000Z' };
-    for (let i = 0; i < 7; i++) ingest.renewRefreshLease.mockResolvedValueOnce(ours);
+    for (let i = 0; i < 8; i++) ingest.renewRefreshLease.mockResolvedValueOnce(ours);
     ingest.renewRefreshLease.mockResolvedValueOnce(theirs).mockResolvedValueOnce(theirs);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -469,9 +473,9 @@ describe('RefreshWorkflow.run — lease fence', () => {
 
     await wf.run({ payload: {}, instanceId: 'wf-50' } as never, fakeStep(names) as never);
 
-    // drop-stale, record-window, create, ingest, load-fx, derive g1, count, gate, clear-window = 9
+    // drop-stale, record-window, create, ingest, resolve-annexes, load-fx, derive g1, count, gate, clear-window = 10
     // fenced steps, + the finally's own check before dropping staging
-    expect(ingest.renewRefreshLease).toHaveBeenCalledTimes(10);
+    expect(ingest.renewRefreshLease).toHaveBeenCalledTimes(11);
     expect(ingest.renewRefreshLease).toHaveBeenCalledWith(DB, 'wf-50', expect.any(Date));
     // plan-catchup and pending-touched only read: not fenced
     expect(names).toEqual(
@@ -488,12 +492,13 @@ describe('RefreshWorkflow.run — lease fence', () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
     // drop-stale, create, ingest renew fine; the renew before load-fx finds a new holder; so does the finally's.
-    // One-shot answers, so nothing leaks into the next test: the four renewals before load-fx
-    // (drop-stale, record-window, create, ingest) succeed; load-fx's fence and the finally's check
+    // One-shot answers, so nothing leaks into the next test: the five renewals before load-fx
+    // (drop-stale, record-window, create, ingest, resolve-annexes) succeed; load-fx's fence and the finally's check
     // find the new holder.
     const ours = { acquired: true, holder: 'wf-51', expiresAt: '2026-06-07T00:30:00.000Z' };
     const theirs = { acquired: false, holder: 'wf-52', expiresAt: '2026-06-07T00:45:00.000Z' };
     ingest.renewRefreshLease
+      .mockResolvedValueOnce(ours)
       .mockResolvedValueOnce(ours)
       .mockResolvedValueOnce(ours)
       .mockResolvedValueOnce(ours)
@@ -509,7 +514,7 @@ describe('RefreshWorkflow.run — lease fence', () => {
     ).rejects.toThrow(/refresh lease lost before load-fx: now held by wf-52/);
 
     expect(ingest.loadFxRates).not.toHaveBeenCalled(); // the fence fired before the body
-    expect(ingest.runRefreshSliceStatementGroup).not.toHaveBeenCalled();
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledOnce(); // resolution only
     // the staging tables belong to wf-52 now: only the drop-stale call at the start, none in finally
     expect(ingest.dropTransientStaging).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls.map((c) => String(c[0]))).toEqual(
@@ -694,7 +699,7 @@ describe('RefreshWorkflow.run — inherited windows are never certified by an em
 
     expect(result.staged).toBe(0);
     expect(names).not.toContain('settle-windows-empty'); // no short-circuit
-    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(1); // the derive ran
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(2); // the derive ran
     expect(integrity.runServedIntegrityGate).toHaveBeenCalledTimes(1); // and was verified
     expect(names.indexOf('settle-windows')).toBeGreaterThan(names.indexOf('integrity-gate'));
   });

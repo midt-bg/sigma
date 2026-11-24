@@ -7,6 +7,7 @@ import {
   baseSqlLiteral,
   escapeSqlText,
   mapBaseRecord,
+  supplierIdSqlLiteral,
   toBool,
   toISODate,
   toInt,
@@ -212,6 +213,18 @@ describe('offline SQL literal hardening', () => {
     expect(baseSqlLiteral('contracts', 'procurement_subject', "'; DROP TABLE x;--")).toBe(
       "'''; DROP TABLE x;--'",
     );
+  });
+
+  it('keeps supplier controls in staging and encodes them as SQL TEXT', () => {
+    const meta = { day: '2026-06-01', fetchedAt: '2026-06-01' };
+    const input = { contractNumber: 'FIXTURE', supplierRegisterNumber: '\t\0\u0085' };
+    for (const category of ['contracts', 'annexes'] as const) {
+      const id = mapBaseRecord(category, input, meta)?.contractor_eik;
+      expect(id).toBe(input.supplierRegisterNumber);
+      expect(baseSqlLiteral(category, 'contractor_eik', id)).toBe("CAST(X'0900c285' AS TEXT)");
+      expect(baseSqlLiteral(category, 'contractor_eik', '000000018')).toBe("'000000018'");
+    }
+    expect(supplierIdSqlLiteral(null)).toBe('NULL');
   });
 
   it('strips NUL and every C0/C1 control char while preserving printable Unicode', () => {

@@ -25,6 +25,7 @@ import {
   fullClearTables,
   refreshSliceStatementGroups,
 } from '../packages/ingest/src/refresh.ts';
+import { FX_LOOKBACK_DAYS } from '../packages/ingest/src/fx.ts';
 import { assertIntegrity } from './integrity-checks.mjs';
 import { buildAnomalyReport, formatAnomalyReport } from './anomaly-report.mjs';
 
@@ -133,19 +134,28 @@ function safeD1(sql) {
   }
 }
 
-// A framework agreement's own record has no amount_eur on purpose (its ceiling is not spending).
-const FX_MISSING_SQL =
-  "SELECT COUNT(*) AS missing_fx FROM contracts WHERE currency NOT IN ('BGN','EUR') " +
-  "AND amount_eur IS NULL AND value_flag <> 'value_suspect' AND framework IS NOT 2";
+// An unsupported quote may leave an honest NULL. Check the effective amount's currency and date
+// so that a rate present in fx_rates still cannot be silently missed during a full derive.
+const FX_MISSING_SQL = `
+  WITH unpriced AS (
+    SELECT signed_at,
+      CASE WHEN current_value IS NULL OR value_flag IN ('annex_suspect', 'annex_total_suspect')
+        THEN currency ELSE COALESCE(NULLIF(current_value_currency, ''), currency) END AS price_currency
+    FROM contracts
+    WHERE amount_eur IS NULL AND value_flag <> 'value_suspect' AND framework IS NOT 2
+  )
+  SELECT COUNT(*) AS missing_fx FROM unpriced u
+  WHERE u.price_currency NOT IN ('BGN', 'EUR') AND EXISTS (
+    SELECT 1 FROM fx_rates f WHERE f.base_currency = u.price_currency
+      AND f.rate_date BETWEEN date(u.signed_at, '-${FX_LOOKBACK_DAYS} days') AND u.signed_at
+  )`;
 
-function assertFxPopulated() {
-  const rows = d1(FX_MISSING_SQL);
-  const missing = Number(rows[0]?.missing_fx ?? 0);
+function assertFxValued(query) {
+  const missing = Number(query(FX_MISSING_SQL)[0]?.missing_fx ?? 0);
   if (missing > 0) {
-    console.error(
-      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
+    throw new Error(
+      `FX assertion failed: ${missing} contracts have an available rate but NULL amount_eur`,
     );
-    process.exit(1);
   }
 }
 
@@ -159,17 +169,6 @@ function sqliteJson(dbPath, sql) {
     maxBuffer: 64 * 1024 * 1024,
   }).trim();
   return out ? JSON.parse(out) : [];
-}
-
-function assertFxPopulatedSqlite(dbPath) {
-  const rows = sqliteJson(dbPath, FX_MISSING_SQL);
-  const missing = Number(rows[0]?.missing_fx ?? 0);
-  if (missing > 0) {
-    console.error(
-      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
-    );
-    process.exit(1);
-  }
 }
 
 function latestLoadedDate() {
@@ -224,8 +223,8 @@ function resolveCatchupPlan() {
     // below is right. But the two witnesses latestLoadedDate consults are both transient, and they can
     // fall silent together for a completely different reason:
     //   • raw_contracts is the transient staging, torn down in a finally after every load;
-    //   • refresh-slice.sql NULLs data_freshness.as_of in its FIRST batch (`setup`, so a half-refreshed
-    //     surface never advertises freshness) and rewrites it only in `globals`, eighteen batches later.
+    //   • refresh-slice.sql NULLs data_freshness.as_of in `setup`, before any served rows change,
+    //     and rewrites it only in `globals` after the writes.
     //     Every batch is its own atomic statement group, so ANY failure in between leaves as_of NULL.
     // So an INTERRUPTED derive is indistinguishable from a cold start by watermark alone, and the
     // consequences differ sharply: a cold start wants the whole feed, while an interrupted derive over a
@@ -352,25 +351,28 @@ async function runFullDerive() {
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
   execSql(resolve(root, 'scripts/normalize-raw.sql'));
   execSql(resolve(root, 'scripts/promote-amendments.sql'));
-  assertFxPopulated();
+  assertFxValued(d1);
   execSql(resolve(root, 'scripts/precompute.sql'));
   await assertIntegrity(d1, { label: 'full derive (D1)' });
   reportAnomalies(d1, 'full derive (D1)');
 }
 
 async function runSliceDerive() {
-  execSql(resolve(root, 'scripts/derive-amendments.sql'));
-  run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
-  execSql(resolve(root, 'scripts/load-nuts.sql'));
-  execSql(resolve(root, 'scripts/seed-state-owned.sql'));
-  runRefreshSliceBatches();
+  runRefreshSliceBatches(() => {
+    run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
+    execSql(resolve(root, 'scripts/load-nuts.sql'));
+    execSql(resolve(root, 'scripts/seed-state-owned.sql'));
+  });
   await assertIntegrity(d1, { label: 'slice derive (D1)' });
   reportAnomalies(d1, 'slice derive (D1)');
 }
 
-function runRefreshSliceBatches() {
+function runRefreshSliceBatches(afterResolution) {
   const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
   const groups = refreshSliceStatementGroups(readFileSync(refreshSlicePath, 'utf8'));
+  if (groups[0]?.name !== 'resolve-annexes') {
+    throw new Error('refresh must resolve annexes before loading FX');
+  }
   const batchDirParent = resolve(root, 'data/work');
   mkdirSync(batchDirParent, { recursive: true });
   const batchDir = mkdtempSync(resolve(batchDirParent, 'refresh-slice-'));
@@ -379,6 +381,7 @@ function runRefreshSliceBatches() {
       const file = resolve(batchDir, `${group.name}.sql`);
       writeFileSync(file, `${group.statements.join(';\n\n')};\n`, 'utf8');
       execSql(file, `refresh-slice:${group.name}`);
+      if (group.name === 'resolve-annexes') afterResolution();
     }
   } finally {
     rmSync(batchDir, { recursive: true, force: true });
@@ -459,7 +462,7 @@ async function runWorkBackfill() {
   sqliteFile(workDb, resolve(root, 'scripts/seed-state-owned.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/normalize-raw.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/promote-amendments.sql'));
-  assertFxPopulatedSqlite(workDb);
+  assertFxValued((sql) => sqliteJson(workDb, sql));
   // Rollup checks self-skip here: the work DB's rollups are built later by precompute on the served
   // D1 (ship-domain.mjs), which runs its own assertIntegrity. This validates the work DB's
   // contract-level invariants and the staging→domain reconciliation before shipping.
@@ -535,9 +538,12 @@ if (catchup) {
 validateDeriveMode(deriveMode);
 assertDeriveWindowSafe(deriveMode, windowFrom);
 
-run('node', ['scripts/load-eop.mjs', '--apply', ...loadFlags, ...passthru]);
-if (deriveMode === 'slice') await runSliceDerive();
-else await runFullDerive();
-execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+try {
+  run('node', ['scripts/load-eop.mjs', '--apply', ...loadFlags, ...passthru]);
+  if (deriveMode === 'slice') await runSliceDerive();
+  else await runFullDerive();
+} finally {
+  execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+}
 
 console.log('\n==> import complete.');

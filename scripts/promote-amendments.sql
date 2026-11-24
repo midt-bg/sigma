@@ -1,116 +1,35 @@
--- Promote work-DB staging amendments into the served domain table.
--- Backfill deliberately keeps derive-amendments.sql as the source for
--- contracts.current_value and contracts.annex_count before normalize, because
--- value_flag depends on that legacy staging rollup. The live refresh path will
--- switch contracts to the served amendments rollup in the next phase.
-
+-- Promote the source publication alongside the effective values read by the public timeline.
 DELETE FROM amendments;
 
-INSERT OR REPLACE INTO amendments (
+DELETE FROM raw_contract_value_annexes;
+INSERT INTO raw_contract_value_annexes SELECT * FROM raw_contract_value_staged_annexes;
+DELETE FROM raw_contract_value_inputs;
+-- Read the contract projection selected by normalize-raw, including its source precedence.
+INSERT INTO raw_contract_value_inputs (id, unp, contract_number, signing_value, signing_currency)
+SELECT c.id, k.unp, k.contract_number, c.signing_value, c.currency
+FROM (SELECT DISTINCT unp, contract_number FROM raw_contract_value_annexes) k
+CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number;
+
+INSERT INTO amendments (
   id, natural_key, contract_number, contract_number_raw, link_method, unp,
   value_before, value_after, value_delta, currency,
   published_at, document_number, description, source,
-  value_restated, value_treatment, value_suspect
+  value_restated, value_treatment, value_suspect, value_evidence_known, raw_value_after, raw_value_delta,
+  value_anchor_kind, value_anchor_contractor_eik, contractor_id_status
 )
-WITH keyed AS (
-  SELECT
-    *,
-    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
-    -- row — MUST match derive-amendments.sql's rollup key byte-for-byte, else annex_count and the served
-    -- timeline disagree (review nikimilenkov MEDIUM 3). NULL raw → the plain number.
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
-      COALESCE(
-        NULLIF(document_number, ''),
-        NULLIF(correction_number, ''),
-        NULLIF(seq_no, ''),
-        'content:' || COALESCE(published_at, '') || ':' ||
-          COALESCE(CAST(value_before AS TEXT), '') || ':' ||
-          COALESCE(CAST(value_after AS TEXT), '') || ':' ||
-          COALESCE(CAST(value_delta AS TEXT), '') || ':' ||
-          COALESCE(currency, '') || ':' ||
-          COALESCE(description, '')
-      ) AS natural_key
-  FROM raw_amendments
-), dedup AS (
-  SELECT *,
-    ROW_NUMBER() OVER (
-      PARTITION BY natural_key
-      ORDER BY source DESC, id DESC
-    ) AS rn
-  FROM keyed
-)
+WITH suppliers AS MATERIALIZED (SELECT * FROM raw_supplier_evidence)
 SELECT
-  natural_key,
-  natural_key,
-  contract_number,
-  contract_number_raw,   -- #306 provenance: the annex-side number before the value resolver rewrote it
-  link_method,           -- #306 provenance: 'value_anchor' for value-linked rows, else NULL
-  unp,
-  value_before,
-  -- #305 Tier-2: serve the effective (text-corrected) after and a self-consistent delta; a restated
-  -- annex carries the true total, an untreated one is unchanged.
-  COALESCE(value_after_restated, value_after),
-  COALESCE(value_after_restated, value_after) - value_before,
-  currency,
-  published_at,
-  document_number,
-  description,
-  source,
-  CASE WHEN value_after_restated IS NOT NULL THEN 1 ELSE 0 END,
-  value_treatment,
-  -- #305 residual: mark a suspected double-count that is NOT already text-treated so the UI suppresses
-  -- the untrusted value_after. Mirrors normalize-raw.sql's annex_total_suspect arithmetic gate, but
-  -- joined to raw_contracts for the contract's signing_value/currency (this served INSERT has no
-  -- contract row to read). value_treatment IS NULL keeps a restated/genuine row out (value_restated
-  -- already owns those). No current_value tie here: the tie in normalize-raw only decides whether the
-  -- CONTRACT is flagged; the per-row marker suppresses any row whose after is an unbridgeable double.
-  CASE WHEN value_treatment IS NULL
-        AND value_before > 0
-        AND value_after >= 2 * value_before AND value_after < 10 * value_before
-        -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
-        AND (value_delta IS NULL OR ABS(value_after - (value_before + value_delta)) < 0.01 * value_after)
-        AND EXISTS (
-          SELECT 1 FROM raw_contracts rc
-          WHERE rc.unp = dedup.unp AND rc.contract_number = dedup.contract_number
-            AND rc.signing_value > 0
-            -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
-            -- value_after), not signing. Anchor to signing OR a legitimately-grown prior total (prev not
-            -- itself a double); a single ≥2× step violates ЗОП чл.116 wherever it sits (see normalize-raw.sql).
-            AND (
-              ABS(dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - rc.signing_value * (CASE COALESCE(NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                < 0.01 * rc.signing_value * (CASE COALESCE(NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-              OR EXISTS (
-                SELECT 1 FROM raw_amendments prev
-                WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
-                  AND prev.value_after > 0
-                  AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                    < 0.01 * dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-                  -- ...and that prior total was itself reached legitimately (prev not a ≥2× double).
-                  AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
-              )
-              -- #305 84818-class: EXACT single-step 2× on an ORPHAN base (value_before ties neither signing
-              -- nor any prior annex) — mark the row suspect; never rewrites (see normalize-raw.sql). The
-              -- orphan guard leaves compounding chains untouched.
-              OR (
-                ABS(dedup.value_after - 2 * dedup.value_before) < 0.005 * dedup.value_before
-                AND NOT EXISTS (
-                  SELECT 1 FROM raw_amendments prev
-                  WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
-                    AND prev.value_after > 0
-                    AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                      < 0.01 * dedup.value_before * (CASE COALESCE(NULLIF(dedup.currency, ''), NULLIF(rc.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-                )
-              )
-            )
-            -- Same currency, or lev and euro across the changeover: the comparisons above go through the
-            -- fixed peg, so a euro annex on a lev contract is weighed in the same money.
-            AND (COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
-                   = COALESCE(NULLIF(rc.currency, ''), 'BGN')
-                 OR (dedup.currency IN ('BGN', 'EUR') AND COALESCE(NULLIF(rc.currency, ''), 'BGN') IN ('BGN', 'EUR')))
-        )
-       THEN 1 ELSE 0 END
-FROM dedup
-WHERE rn = 1;
+  a.natural_key, a.natural_key, a.contract_number, a.contract_number_raw, a.link_method, a.unp,
+  a.value_before, a.effective_after, a.effective_after - a.value_before, a.currency,
+  a.published_at, a.document_number, a.description, a.source,
+  a.restated, a.value_treatment, s.natural_key IS NOT NULL, 1, a.raw_after, a.raw_delta,
+  a.value_anchor_kind, CASE WHEN a.value_anchor_kind = 'direct' THEN ids.eik END, ids.evidence_status
+FROM raw_amendment_publications a
+JOIN suppliers ids ON ids.eik_raw IS a.contractor_eik
+LEFT JOIN (SELECT DISTINCT natural_key FROM raw_contract_suspect_annexes) s USING (natural_key);
+
+DELETE FROM raw_contract_value_inputs;
+DELETE FROM raw_contract_value_annexes;
 
 SELECT
   (SELECT COUNT(*) FROM amendments) AS amendments,

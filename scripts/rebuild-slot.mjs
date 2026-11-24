@@ -46,7 +46,9 @@ export function shippedTables(tables, stagingSql) {
   );
   return tables.filter(
     (t) =>
-      !/^(sqlite_|_cf_|rp_next_|rp_prev_|d1_migrations$|search_index_)/.test(t) && !staging.has(t),
+      !/^(sqlite_|_cf_|rp_next_|rp_prev_|d1_migrations$|search_index_)/.test(t) &&
+      t !== 'contractor_identity' &&
+      !staging.has(t),
   );
 }
 

@@ -20,7 +20,8 @@
 
 -- ── 0) Per-contract EUR value timeline ────────────────────────────────────────────────────────
 -- signing/current in EUR for the contract page's estimated→signing→current strip.
--- BGN at the fixed peg (÷1.95583), EUR as-is, foreign at the row's stored fx_rate (eur_per_unit).
+-- BGN at the fixed peg (÷1.95583), EUR as-is. Signing uses the stored signing rate. A foreign
+-- current value uses the signing-date rate for the annex's own currency.
 -- Display rule: NULL where the figure is suspect, so the caller renders „данните се преглеждат",
 -- never a fabricated number. signing suppressed for value_suspect; current suppressed for value_,
 -- annex_suspect or annex_total_suspect (#305; the suspect annex is the bad part). estimated_value_eur
@@ -29,16 +30,24 @@
 UPDATE contracts SET
   signing_value_eur = CASE
     WHEN value_flag = 'value_suspect' OR signing_value IS NULL THEN NULL
-    WHEN COALESCE(currency,'BGN') = 'EUR' THEN signing_value
-    WHEN COALESCE(currency,'BGN') = 'BGN' THEN signing_value / 1.95583
+    WHEN COALESCE(NULLIF(currency, ''), 'BGN') = 'EUR' THEN signing_value
+    WHEN COALESCE(NULLIF(currency, ''), 'BGN') = 'BGN' THEN signing_value / 1.95583
     WHEN fx_rate IS NOT NULL THEN signing_value * fx_rate
     ELSE NULL END,
   current_value_eur = CASE
     WHEN value_flag IN ('value_suspect','annex_suspect','annex_total_suspect') OR current_value IS NULL THEN NULL
     WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'EUR' THEN current_value
     WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'BGN' THEN current_value / 1.95583
-    WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
-    ELSE NULL END;
+    WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN')
+      = COALESCE(NULLIF(currency, ''), 'BGN') AND fx_rate IS NOT NULL THEN current_value * fx_rate
+    ELSE current_value * (
+      SELECT f.eur_per_unit
+      FROM fx_rates f
+      WHERE f.base_currency = COALESCE(NULLIF(contracts.current_value_currency, ''), NULLIF(contracts.currency, ''), 'BGN')
+        AND f.rate_date BETWEEN date(contracts.signed_at, '-10 days') AND contracts.signed_at
+      ORDER BY f.rate_date DESC
+      LIMIT 1
+    ) END;
 
 -- ── 1) home_totals shell (filled after company/authority rollups exist) ──────────────────────────
 CREATE TABLE IF NOT EXISTS home_totals (
@@ -434,7 +443,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
 );
 DELETE FROM search_index;
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
-SELECT 'authority', at.authority_id, at.name, COALESCE(substr(at.authority_id, 6), ''),
+SELECT 'authority', at.authority_id, at.name, CASE WHEN at.authority_id LIKE 'auth:%' THEN substr(at.authority_id, 6) ELSE '' END,
   COALESCE(at.settlement, ''), at.spent_eur
 FROM authority_totals at;
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)

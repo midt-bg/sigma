@@ -81,6 +81,7 @@ beforeEach(() => {
   readScript(db, restatedMigration);
   readScript(db, valueSuspectMigration);
   readScript(db, provenanceMigration);
+  readScript(db, resolve(root, 'packages/db/migrations/0029_contract_value_evidence.sql'));
   readScript(db, workStagingSchema);
 });
 
@@ -345,14 +346,13 @@ describe('#306 amendment→contract value-anchor resolver', () => {
   });
 
   it('applies an EIK guard — a value match onto a different contractor is refused (review MEDIUM 5)', () => {
-    // Same unp, value, currency, but the annex is contractor 222222222 and the only value-matching contract
-    // is contractor 111111111 → the row's own EIK contradicts the target → no link.
+    // Same procedure, value and currency, but the synthetic EIKs differ and both pass validation.
     sqlite(
       db,
       `INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency, contractor_eik) VALUES
-         ('eop:contracts:2026-03-05','2026-03-05','00080-2020-0001','FILING-8',9000,'BGN','111111111');
+         ('eop:contracts:2026-03-05','2026-03-05','00080-2020-0001','FILING-8',9000,'BGN','0000000000015');
        INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, document_number, value_before, value_after, currency, contractor_eik) VALUES
-         ('eop:annexes:2026-03-05','2026-03-05','00080-2020-0001','44001','2026-03-05','A1',9000,8500,'BGN','222222222');`,
+         ('eop:annexes:2026-03-05','2026-03-05','00080-2020-0001','44001','2026-03-05','A1',9000,8500,'BGN','0000000000023');`,
     );
     runFullDerive(db);
 

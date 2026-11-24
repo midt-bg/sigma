@@ -315,11 +315,29 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         );
       }
 
-      // FX rates BEFORE the derive (#158): the CLI paths run scripts/load-fx.mjs first, but this
-      // cron path never did — foreign-currency contracts staged here derived with a NULL
-      // amount_eur and silently dropped out of every rollup. loadFxRates fetches only actual
-      // coverage gaps (idempotent upsert into fx_rates) and throws — failing the run loudly —
-      // when rates that plausibly exist could not be loaded.
+      const [resolution, ...groups] = refreshSliceStatementGroups(refreshSliceSql);
+      if (resolution?.name !== 'resolve-annexes') {
+        throw new Error('refresh must resolve annexes before loading FX');
+      }
+      const runGroup = async (group: (typeof groups)[number]) => {
+        await fenced(`derive-slice:${group.name}`, async () => {
+          const startedAt = Date.now();
+          await runRefreshSliceStatementGroup(this.env.DB, group);
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'etl_derive_slice_batch',
+              batch: group.name,
+              statements: group.statements.length,
+              elapsedMs: Date.now() - startedAt,
+            }),
+          );
+        });
+      };
+      await runGroup(resolution);
+
+      // Query the resolved keys and affected history before invalidating freshness or
+      // writing served rows. A transient FX failure leaves the current slice intact.
       await fenced('load-fx', async () => {
         const fx = await loadFxRates(this.env.DB, { fetchedAt });
         console.log(
@@ -344,21 +362,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         return { inserted: fx.inserted, uncovered: fx.uncovered.length };
       });
 
-      for (const group of refreshSliceStatementGroups(refreshSliceSql)) {
-        await fenced(`derive-slice:${group.name}`, async () => {
-          const startedAt = Date.now();
-          await runRefreshSliceStatementGroup(this.env.DB, group);
-          console.log(
-            JSON.stringify({
-              level: 'info',
-              event: 'etl_derive_slice_batch',
-              batch: group.name,
-              statements: group.statements.length,
-              elapsedMs: Date.now() - startedAt,
-            }),
-          );
-        });
-      }
+      for (const group of groups) await runGroup(group);
       derived = await fenced('derive-slice:count', async () =>
         refreshDerivedContractCount(this.env.DB),
       );

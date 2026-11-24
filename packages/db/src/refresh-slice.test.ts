@@ -26,8 +26,6 @@ const personMigrationPaths = [
 const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
 // #305 residual: served amendments gained value_suspect (refresh-slice promotes it).
 const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
-// #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
-const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
 const deriveAmendmentsPath = resolve(root, 'scripts/derive-amendments.sql');
@@ -204,7 +202,6 @@ function initWorkDb(dbPath: string): void {
   for (const path of personMigrationPaths) readScript(dbPath, path);
   readScript(dbPath, migration6Path);
   readScript(dbPath, migration7Path);
-  readScript(dbPath, migration8Path);
   readScript(dbPath, workStagingSchemaPath);
 }
 
@@ -763,7 +760,6 @@ describe('refresh-slice EOP base derivation', () => {
       for (const path of personMigrationPaths) readScript(dbPath, path);
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       seedEopBaseDay(dbPath);
 
@@ -852,7 +848,6 @@ describe('refresh-slice EOP base derivation', () => {
       for (const path of personMigrationPaths) readScript(dbPath, path);
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
 
       // An EOP procedure (tender + base contract) with УНП UNP-SLICE / tender.id TENDER-SLICE. An
@@ -1240,7 +1235,6 @@ describe('refresh-slice EOP base derivation', () => {
       for (const path of personMigrationPaths) readScript(dbPath, path);
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       seedEopOnlySharedNumber(dbPath);
       readScript(dbPath, refreshSlicePath);
@@ -1296,7 +1290,6 @@ describe('refresh-slice EOP base derivation', () => {
       for (const path of personMigrationPaths) readScript(dbPath, path);
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -1352,7 +1345,6 @@ describe('refresh-slice EOP base derivation', () => {
       for (const path of personMigrationPaths) readScript(dbPath, path);
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -1486,6 +1478,164 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  it('preserves value_low precedence and compares amendment amounts in euros in both derives', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-contract-value-parity-'));
+    try {
+      const cases: Array<{
+        key: string;
+        signed: number | null;
+        currency: string;
+        before?: number;
+        after?: number;
+        delta?: number;
+        annex?: string;
+        ceiling?: boolean;
+      }> = [
+        // Symbolic signing still takes precedence over an implausible annex-to-signing multiple.
+        { key: 'LOW', signed: 1, currency: 'BGN', after: 100, annex: 'EUR' },
+        // 125x in native units, but only ~64x in EUR. There is no recorded 10x annex step.
+        { key: 'RATIO', signed: 2000, currency: 'EUR', after: 250000, annex: 'BGN' },
+        // A doubled annex falls back to signing and hides the suspect current amount.
+        {
+          key: 'DOUBLE',
+          signed: 19558.3,
+          currency: 'BGN',
+          before: 10000,
+          after: 20000,
+          annex: 'EUR',
+        },
+        // A conflicting source delta invalidates the arithmetic model, even after promotion.
+        {
+          key: 'DELTA',
+          signed: 10000,
+          currency: 'EUR',
+          before: 10000,
+          after: 20000,
+          delta: 1000,
+          annex: 'EUR',
+        },
+        // Foreign annexes use their own signing-date rate, with the existing 10-day bound.
+        { key: 'FX', signed: 10000, currency: 'EUR', after: 15000, annex: 'USD' },
+        { key: 'NO-FX', signed: 10000, currency: 'EUR', after: 15000, annex: 'CHF' },
+        { key: 'STORED-FX', signed: 10000, currency: 'CAD', after: 12000, annex: 'CAD' },
+        { key: 'NEG', signed: 2000, currency: 'EUR', after: -10, annex: 'EUR' },
+        { key: 'ZERO', signed: 0, currency: 'EUR' },
+        { key: 'NULL', signed: null, currency: 'EUR' },
+        { key: 'CEILING', signed: 5000, currency: 'EUR', after: 5500, annex: 'EUR', ceiling: true },
+      ];
+      const paths = ['full derive', 'daily derive', 'annex-only refresh'] as const;
+      const results = paths.map((path, index) => {
+        const dbPath = resolve(dir, `${index}.sqlite`);
+        initWorkDb(dbPath);
+        sqlite(
+          dbPath,
+          `INSERT INTO fx_rates VALUES
+             ('USD', '2026-06-01', 0.8, 'test', '2026-06-01'),
+             ('CAD', '2026-06-01', 0.5, 'test', '2026-06-01'),
+             ('CHF', '2026-05-22', 1.1, 'test', '2026-05-22'),
+             ('CHF', '2026-06-03', 1.2, 'test', '2026-06-03');`,
+        );
+        for (const { key, signed, currency, before, after, delta, annex, ceiling } of cases) {
+          sqlite(
+            dbPath,
+            `INSERT INTO raw_tenders (source, fetched_at, unp, authority_eik, authority_name,
+                 estimated_value, currency)
+             VALUES ('eop:tenders:2026-06-01', '2026-06-01', '${key}', 'TEST', 'Община Тест', 100000, 'EUR');
+             INSERT INTO raw_contracts (source, fetched_at, unp, authority_eik, authority_name,
+                 contract_number, contract_date, signing_value, currency, estimated_value,
+                 procurement_currency, contractor_name, framework_notice)
+             VALUES ('eop:contracts:2026-06-01', '2026-06-01', '${key}', 'TEST', 'Община Тест',
+                 '${key}', '2026-06-02', ${sqlValue(signed)}, '${currency}', 100000, 'EUR', 'ТЕСТ ГРУП ЕООД',
+                 ${ceiling ? 1 : 0});`,
+          );
+          if (after !== undefined) {
+            sqlite(
+              dbPath,
+              `INSERT INTO raw_amendments (source, fetched_at, unp, document_number, contract_number,
+                   published_at, value_before, value_after, value_delta, currency)
+               VALUES ('eop:annexes:2026-06-03', '2026-06-03', '${key}', 'A-${key}', '${key}',
+                   '2026-06-03', ${sqlValue(before ?? null)}, ${after}, ${sqlValue(delta ?? null)},
+                   ${sqlValue(annex ?? null)});`,
+            );
+          }
+        }
+        if (path === 'full derive') {
+          readScript(dbPath, deriveAmendmentsPath);
+          readScript(dbPath, normalizePath);
+          readScript(dbPath, promoteAmendmentsPath);
+          readScript(dbPath, precomputePath);
+        } else if (path === 'annex-only refresh') {
+          sqlite(
+            dbPath,
+            'CREATE TABLE test_later_annexes AS SELECT * FROM raw_amendments; DELETE FROM raw_amendments;',
+          );
+          readScript(dbPath, normalizePath);
+          readScript(dbPath, precomputePath);
+          resetRawStaging(dbPath);
+          // Older served contracts can still have a signing quote after the reference row is gone.
+          sqlite(
+            dbPath,
+            "INSERT INTO raw_amendments SELECT * FROM test_later_annexes; DELETE FROM fx_rates WHERE base_currency = 'CAD';",
+          );
+          readScript(dbPath, refreshSlicePath);
+        } else {
+          readScript(dbPath, refreshSlicePath);
+        }
+        return sqliteJson(
+          dbPath,
+          `SELECT contract_number, value_flag, ROUND(amount_eur, 2) AS amount_eur,
+             ROUND(current_value_eur, 2) AS current_value_eur
+           FROM contracts ORDER BY contract_number`,
+        );
+      });
+      const expected = [
+        { contract_number: 'CEILING', value_flag: 'ok', amount_eur: null, current_value_eur: 5500 },
+        { contract_number: 'DELTA', value_flag: 'ok', amount_eur: 20000, current_value_eur: 20000 },
+        {
+          contract_number: 'DOUBLE',
+          value_flag: 'annex_total_suspect',
+          amount_eur: 10000,
+          current_value_eur: null,
+        },
+        { contract_number: 'FX', value_flag: 'ok', amount_eur: 12000, current_value_eur: 12000 },
+        {
+          contract_number: 'LOW',
+          value_flag: 'value_low',
+          amount_eur: 100,
+          current_value_eur: 100,
+        },
+        {
+          contract_number: 'NEG',
+          value_flag: 'value_low',
+          amount_eur: -10,
+          current_value_eur: -10,
+        },
+        { contract_number: 'NO-FX', value_flag: 'ok', amount_eur: null, current_value_eur: null },
+        {
+          contract_number: 'RATIO',
+          value_flag: 'ok',
+          amount_eur: 127822.97,
+          current_value_eur: 127822.97,
+        },
+        {
+          contract_number: 'STORED-FX',
+          value_flag: 'ok',
+          amount_eur: 6000,
+          current_value_eur: 6000,
+        },
+        {
+          contract_number: 'ZERO',
+          value_flag: 'value_low',
+          amount_eur: 0,
+          current_value_eur: null,
+        },
+      ];
+      paths.forEach((path, index) => expect.soft(results[index], path).toEqual(expected));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('classifies amendment rollups from the contract-row estimated value', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
@@ -1498,7 +1648,6 @@ describe('refresh-slice EOP base derivation', () => {
       for (const path of personMigrationPaths) readScript(dbPath, path);
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
-      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
