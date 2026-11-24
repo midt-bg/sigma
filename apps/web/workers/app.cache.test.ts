@@ -622,6 +622,65 @@ describe('app.ts edge cache middleware', () => {
     }
   });
 
+  it('delivers a slow render without storing it when its freshness expired before the put', async () => {
+    vi.useFakeTimers();
+    const load = deferred();
+    const put = vi.spyOn(fakeCache, 'put');
+    try {
+      const url = 'https://x/contracts/expired-before-put';
+      reply.policy = 'public, s-maxage=1';
+      held.gate = load.promise;
+      const pending = get(url);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(rendered).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      load.resolve();
+
+      const result = await pending;
+      expect(result.status).toBe(200);
+      expect(result.body).toBe('ROWS: all contracts (5)');
+      expect(result.edge).toBe('BYPASS');
+      expect(result.headers.get('Cache-Control')).toBe('no-store');
+      expect(put).not.toHaveBeenCalled();
+      expect((await get(url)).edge).toBe('MISS');
+      expect(rendered).toHaveLength(2);
+    } finally {
+      load.resolve();
+      vi.useRealTimers();
+      put.mockRestore();
+    }
+  });
+
+  it('serves a private session response without replacing or evicting the shared entry', async () => {
+    const url = 'https://x/contracts/session-fixture';
+    const publicPage = await get(url);
+    const match = vi.spyOn(fakeCache, 'match').mockResolvedValueOnce(undefined);
+    const remove = vi.spyOn(fakeCache, 'delete');
+    try {
+      reply.custom = async () =>
+        new Response('Session-only content', {
+          headers: {
+            'Content-Type': 'text/html',
+            'Cache-Control': 'private, no-store',
+            'Set-Cookie': 'fixture-session=assigned; Secure; HttpOnly',
+          },
+        });
+      const personal = await get(url);
+      expect(personal.edge).toBe('BYPASS');
+      expect(personal.body).toBe('Session-only content');
+      expect(personal.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(personal.headers.get('Set-Cookie')).toContain('fixture-session=assigned');
+      expect(remove).not.toHaveBeenCalled();
+      const shared = await get(url);
+      expect(shared.edge).toBe('HIT');
+      expect(shared.body).toBe(publicPage.body);
+      expect(shared.headers.has('Set-Cookie')).toBe(false);
+    } finally {
+      match.mockRestore();
+      remove.mockRestore();
+    }
+  });
+
   it('elects one successor after an owner disconnects and fences its late positive', async () => {
     const url = 'https://x/persons/disconnected.data';
     const load = deferred();
@@ -716,6 +775,47 @@ describe('app.ts edge cache middleware', () => {
       resumeCleanup.resolve();
       vi.useRealTimers();
       vi.restoreAllMocks();
+    }
+  });
+
+  it('does not serve the superseded copy if cleanup of a delayed put fails', async () => {
+    vi.useFakeTimers();
+    const url = 'https://x/persons/failed-put-cleanup.data';
+    const resumePut = deferred();
+    const started = deferred();
+    const put = fakeCache.put.bind(fakeCache);
+    const remove = fakeCache.delete.bind(fakeCache);
+    const putSpy = vi.spyOn(fakeCache, 'put').mockImplementationOnce(async (key, response) => {
+      started.resolve();
+      await resumePut.promise;
+      await put(key, response);
+    });
+    const removeSpy = vi
+      .spyOn(fakeCache, 'delete')
+      .mockImplementationOnce(remove)
+      .mockRejectedValueOnce(new Error('Cache API cleanup failure'));
+    try {
+      const old = get(url);
+      await started.promise;
+      await vi.advanceTimersByTimeAsync(FOLLOWER_WAIT_MS);
+      reply.status = 410;
+      expect((await get(url)).status).toBe(410);
+
+      resumePut.resolve();
+      await old;
+      expect(removeSpy).toHaveBeenCalledTimes(2);
+      expect(fakeCache.store.size).toBe(1);
+
+      reply.status = 503;
+      const next = await get(url);
+      expect(next.status).toBe(503);
+      expect(next.edge).toBe('BYPASS');
+      expect(next.headers.get('Cache-Control')).toBe('no-store');
+    } finally {
+      resumePut.resolve();
+      putSpy.mockRestore();
+      removeSpy.mockRestore();
+      vi.useRealTimers();
     }
   });
 

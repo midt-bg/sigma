@@ -126,6 +126,20 @@ describe('robots.txt', () => {
     ).toEqual([[45_000, 90_000, 5_000]]);
   });
 
+  it.each(['0', '-1', '1.5', '02', ''])(
+    'returns 404 for invalid sitemap page %j without querying contracts',
+    async (page) => {
+      const { db, calls } = fakeD1([]);
+      const response = contractSitemap({
+        request: new Request(`${origin}/sitemap-contracts.xml?p=${page}`),
+        context: { cloudflare: { env: { DB: db } } },
+      } as Parameters<typeof contractSitemap>[0]);
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe('Not found');
+      expect(calls).toEqual([]);
+    },
+  );
+
   it.each([
     'https://sigma-stage.midt.bg',
     'https://sigma-dev.cf-midt.workers.dev',

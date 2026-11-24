@@ -115,18 +115,24 @@ beforeAll(async () => {
   vi.stubEnv('DEV', false);
   vi.stubEnv('PROD', true);
   vi.stubGlobal('caches', { default: cache });
+  // Load the test build with its real route modules before the first request's assertions.
+  await import('virtual:react-router/server-build');
   fetchWorker = (await import('./app')).default.fetch as unknown as typeof fetchWorker;
-});
+}, 15_000);
 
 beforeEach(() => {
   entries.clear();
   vi.clearAllMocks();
 });
 
-async function get(path: string, headers?: HeadersInit): Promise<Response> {
-  const response = await fetchWorker(new Request(`${production}${path}`, { headers }), env, ctx);
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  const response = await fetchWorker(new Request(`${production}${path}`, init), env, ctx);
   await Promise.all(pending.splice(0));
   return response;
+}
+
+function get(path: string, headers?: HeadersInit): Promise<Response> {
+  return request(path, { headers });
 }
 
 describe('indexing on the production host', () => {
@@ -183,6 +189,16 @@ describe('indexing on the production host', () => {
     },
   );
 
+  it('answers HEAD on the CSV single-fetch twin without opening the export', async () => {
+    const response = await request('/companies%2Ecsv.data', { method: 'HEAD' });
+    expect(response.status).toBe(404);
+    expect(response.body).toBeNull();
+    expect(cache.match).not.toHaveBeenCalled();
+    expect(limit).not.toHaveBeenCalled();
+    expect(csvLoader).not.toHaveBeenCalled();
+    expect(r2Get).not.toHaveBeenCalled();
+  });
+
   it('marks 200 and 304 responses from R2 on the encoded CSV resource', async () => {
     const full = await get('/companies%2Ecsv');
     expect(full.status).toBe(200);
@@ -206,6 +222,23 @@ describe('indexing on the production host', () => {
     expect(response.headers.get('Content-Type')).toMatch(/^text\/html/);
     expect(response.headers.get('X-Robots-Tag')).toBe(directive);
   });
+
+  it.each([
+    ['/contracts/fixture', null],
+    ['/contracts/fixture.data', 'noindex'],
+  ])(
+    'returns an uncached retry response when %s disconnects before rendering',
+    async (path, directive) => {
+      const response = await request(path, { signal: AbortSignal.abort() });
+      expect(response.status).toBe(503);
+      expect(response.headers.get('X-Edge-Cache')).toBe('BYPASS');
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(response.headers.get('Retry-After')).toBe('30');
+      expect(response.headers.get('X-Robots-Tag')).toBe(directive);
+      expect(getContract).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ['%2Edata', 'data'],

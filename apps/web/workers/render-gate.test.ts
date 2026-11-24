@@ -55,4 +55,28 @@ describe('single flight', () => {
     expect(third.isCurrent()).toBe(true);
     third.settle('bypass');
   });
+
+  it('reopens the slot when disconnected attempts never settle', () => {
+    vi.useFakeTimers();
+    const key = 'disconnect-without-cleanup';
+    const first = new AbortController();
+    const second = new AbortController();
+    const owner = enterFlight(key, first.signal);
+    if (!owner || 'wait' in owner) throw new Error('No first owner');
+    first.abort();
+    const successor = enterFlight(key, second.signal);
+    if (!successor || 'wait' in successor) throw new Error('No replacement owner');
+    second.abort();
+
+    // The invocations disappear without running finally. They stop holding the slot after 30 s.
+    vi.advanceTimersByTime(29_999);
+    expect(enterFlight(key, signal())).toBeNull();
+    vi.advanceTimersByTime(1);
+    const fresh = enterFlight(key, signal());
+    if (!fresh || 'wait' in fresh) throw new Error('Slot did not reopen');
+    owner.settle('put-complete');
+    successor.settle('put-complete');
+    expect(fresh.isCurrent()).toBe(true);
+    fresh.settle('bypass');
+  });
 });

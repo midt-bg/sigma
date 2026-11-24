@@ -41,3 +41,34 @@ it('holds an outstanding put fence through its own deadline and retains newer wr
   next();
   expect(cacheReadToken(url)?.unchanged()).toBe(true);
 });
+
+it('quarantines the cache when a withdrawal arrives with all fence records occupied', async () => {
+  vi.useFakeTimers();
+  // Start with a fresh isolate so earlier tests' live readers cannot affect its capacity.
+  vi.resetModules();
+  const { cacheReadToken, trackWrite, withdraw } = await import('./cache-fence');
+  const capacity = 8_192;
+  const key = (n: number) => `https://example.invalid/contracts/fixture-${n}`;
+  const readers = Array.from({ length: capacity }, (_, i) => cacheReadToken(key(i)));
+  expect(readers.every((reader) => reader != null)).toBe(true);
+
+  const untracked = key(capacity);
+  expect(cacheReadToken(untracked)).toBeNull();
+  expect(trackWrite(untracked, Date.now() + 1_000)).toBeNull();
+  const captured = readers[0]!;
+  expect(captured.unchanged()).toBe(true);
+
+  const finishWithdrawal = withdraw(untracked);
+  finishWithdrawal();
+  expect(captured.unchanged()).toBe(false);
+  expect(cacheReadToken(key(0))).toBeNull();
+  vi.advanceTimersByTime(MAX_SERVING_MS - 1);
+  expect(cacheReadToken(untracked)).toBeNull();
+  vi.advanceTimersByTime(1);
+  expect(captured.unchanged()).toBe(false);
+  const fresh = cacheReadToken(untracked);
+  expect(fresh?.unchanged()).toBe(true);
+
+  fresh?.release();
+  for (const reader of readers) reader?.release();
+});
