@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   allOfficesFormer,
   describeOffices,
+  officeFilingDaysText,
   officialWord,
   officeLine,
   officePeriodsText,
@@ -46,7 +47,9 @@ describe('describeOffices', () => {
       2026,
     );
     expect(office!.status).toEqual({ kind: 'unknown', lastYear: '2022' });
-    expect(officeLine(office!)).toBe('Кмет · Община Тестово · декларации за 2021–2022');
+    expect(officeLine(office!)).toBe(
+      'Кмет · Община Тестово · декларации за 2021–2022, последна за 2022',
+    );
     expect(officeLine(office!)).not.toMatch(/настоящ|бивш/i);
   });
 
@@ -114,6 +117,63 @@ describe('describeOffices', () => {
       // One filing each way: on a tie the longer spelling is shown.
       ['Общински съвет Тестово', { kind: 'former', year: '2016' }],
     ]);
+  });
+
+  // „First the current one" as far as the filings carry it: an annual declaration for a year is filed the
+  // year after by somebody still in the office, so an office filed for up to last year stands before one
+  // left this year — and an office last filed for long ago does not stand before one that ended recently.
+  it('puts an office the filings still support before one that has ended', () => {
+    const order = (filings: OfficeFiling[]) =>
+      describeOffices(filings, 2026).map((o) => `${o.institution}: ${o.status.kind}`);
+    expect(
+      order([
+        f('2025', 'Entry', '2025-02-01', 'Община Тестово', 'кмет'),
+        f('2026', 'Vacate', '2026-03-01', 'Община Тестово', 'кмет'),
+        f('2024', 'Annualy', null, 'Агенция за тестове', 'член на съвет'),
+        f('2025', 'Annualy', null, 'Агенция за тестове', 'член на съвет'),
+      ]),
+    ).toEqual(['Агенция за тестове: unknown', 'Община Тестово: former']);
+    expect(
+      order([
+        f('2019', 'Annualy', null, 'Община Тестово', 'кмет'),
+        f('2023', 'Vacate', '2023-11-10', 'Община Тестово', 'кмет'),
+        f('2011', 'Annualy', null, 'Агенция за тестове', 'директор'),
+        f('2012', 'Annualy', null, 'Агенция за тестове', 'директор'),
+      ]),
+    ).toEqual(['Община Тестово: former', 'Агенция за тестове: unknown']);
+    // Every office ended: the latest leads.
+    expect(
+      order([
+        f('2015', 'Vacate', '2015-11-10', 'Агенция за тестове', 'директор'),
+        f('2023', 'Vacate', '2023-11-10', 'Община Тестово', 'кмет'),
+      ]),
+    ).toEqual(['Община Тестово: former', 'Агенция за тестове: former']);
+  });
+
+  it('keeps the days of the entry and the exit declaration as filing days, for the latest period', () => {
+    const [former] = describeOffices(
+      [
+        f('2015', 'Entry', '2015-11-20'),
+        f('2019', 'Vacate', '2019-11-15'),
+        f('2023', 'Entry', '2023-11-20'),
+        f('2024', 'Vacate', '2024-12-05'),
+      ],
+      2026,
+    );
+    expect([former!.entryOn, former!.exitOn]).toEqual(['2023-11-20', '2024-12-05']);
+    expect(officeFilingDaysText(former!)).toBe(
+      'встъпителна декларация от 20.11.2023, финална от 05.12.2024',
+    );
+    const [open] = describeOffices([f('2023', 'Entry', '2023-11-20'), f('2024', 'Annualy')], 2026);
+    expect(officeFilingDaysText(open!)).toBe('встъпителна декларация от 20.11.2023');
+    // An exit that a later filing reopens closes nothing, and an undated filing gives no day.
+    const [undated] = describeOffices([f('2023', 'Entry'), f('2024', 'Annualy')], 2026);
+    expect(officeFilingDaysText(undated!)).toBeNull();
+    const [exitOnly] = describeOffices(
+      [f('2020', 'Annualy'), f('2021', 'Vacate', '2021-03-01')],
+      2026,
+    );
+    expect(officeFilingDaysText(exitOnly!)).toBe('финална декларация от 01.03.2021');
   });
 
   it('a later filing in the same institution, under another position, keeps the office open', () => {
@@ -184,7 +244,7 @@ describe('officesLine', () => {
     );
     expect(officesLine(offices)).toBe('Бивш кмет · Община Тестово · 2015, 2019 · още 1 длъжност');
     expect(officesLine(describeOffices([f('2023', 'Annualy')], 2026))).toBe(
-      'Кмет · Община Тестово · декларация за 2023',
+      'Кмет · Община Тестово · последна декларация за 2023',
     );
     expect(officesLine([])).toBeNull();
   });

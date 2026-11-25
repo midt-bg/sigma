@@ -185,7 +185,7 @@ describe('/conflicts route — render', () => {
     expect(bodyRows()[0].textContent).toContain('2018–2019');
     expect(bodyRows()[0].textContent).toContain('Бивш съветник · Община Тестово · 2018–2019');
     expect(bodyRows()[0].textContent).toContain(
-      'Народен представител · Народно събрание · декларация за 2025',
+      'Народен представител · Народно събрание · последна декларация за 2025',
     );
     expect(bodyRows()[0].textContent).not.toMatch(/настоящ/i);
     expect(bodyRows()[0].textContent).toContain('Община Тестово');

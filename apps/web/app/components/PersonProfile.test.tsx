@@ -288,8 +288,11 @@ describe('PersonProfile', () => {
     const header = c.querySelector('header, .page-header') ?? c;
     const offices = header.querySelector('.person-institutions')!.textContent;
     // One plain line per office: the status is a word in front of the position, not a second line.
-    expect(offices).toContain('Член · Съвет за тестове · декларация за 2023');
-    expect(offices).toContain('Бивш член · Агенция за тестове · 2018–2019');
+    expect(offices).toContain('Член · Съвет за тестове · последна декларация за 2023');
+    // The profile has room for the day of the exit declaration, named as a declaration.
+    expect(offices).toContain(
+      'Бивш член · Агенция за тестове · 2018–2019 (финална декларация от 01.06.2019)',
+    );
     expect(offices).not.toMatch(/настоящ/i);
     // One office has no end on record, so the heading keeps the plain word.
     expect(c.querySelector('.kicker')!.textContent).toBe('Длъжностно лице · декларации');

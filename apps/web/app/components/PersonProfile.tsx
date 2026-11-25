@@ -60,7 +60,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           {p.aliases.length > 0 && (
             <p className="muted small">Среща се и като {p.aliases.map(personName).join(', ')}</p>
           )}
-          {filed && <PublicOffices filings={p.declarations} />}
+          {filed && <PublicOffices filings={p.declarations} filingDays />}
         </PageHeader>
         <nav className="profile-nav" aria-label="В профила">
           {official && <a href="#declared-overview">Декларирани интереси</a>}

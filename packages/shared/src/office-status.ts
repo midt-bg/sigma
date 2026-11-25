@@ -11,11 +11,13 @@ import { identityInstitution } from './institution';
  *    (type `Vacate`) that nothing later reopens: no entry declaration after it and no filing for a later year
  *    in the same institution. An entry in the same year that cannot be dated after the exit (no date on
  *    either, or the same day — a re-election files both) leaves the end unestablished.
- *  - Without that, the end is unknown and the words say only what is on record: the last year with a filing.
- *    The absence of a newer filing does not prove leaving; the absence of an exit declaration does not prove
- *    a current mandate. Nothing here ever says „настоящ".
+ *  - Without that, the end is unknown and the words say only what is on record: the last year with a filing
+ *    („последна декларация за 2021"). The absence of a newer filing does not prove leaving; the absence of an
+ *    exit declaration does not prove a current mandate. Nothing here ever says „настоящ".
  *  - Different institutions stay separate offices, and one institution left and later entered again shows
  *    its periods separately.
+ *  - Several offices are listed with the one the filings still support first (`officeOrder`); when every one
+ *    has ended, the latest leads, with its „бивш".
  *
  * Institutions fold by `identityInstitution`, the same key the list's filter uses — a fold that cannot join two
  * different bodies. Positions inside one institution are listed, not given statuses of their own: a position's
@@ -65,6 +67,11 @@ export interface PublicOffice {
   positions: string[];
   periods: OfficePeriod[];
   status: OfficeStatus;
+  /** The day of the entry declaration that opens the latest period, when there is a dated one. A FILING day,
+   *  shown as such: the law gives a month to file, so it is never the first day of the office. */
+  entryOn?: string | null;
+  /** The day of the exit declaration that closes a former office. A filing day, as above. */
+  exitOn?: string | null;
 }
 
 const YEAR = /^\d{4}$/;
@@ -376,23 +383,45 @@ export function describeOffices(
       const periods = periodsOf(g.dated);
       const last = periods.at(-1);
       if (last) last.ended = former;
+      // The entry declaration of the latest period: the earliest dated one from that period's first year on.
+      const opened = last?.spans[0]?.[0] ?? '';
+      const entryOn =
+        g.dated
+          .filter((f) => f.kind === 'entry' && f.day && f.year >= opened)
+          .map((f) => f.day!)
+          .sort()[0] ?? null;
       return {
         institution,
         spellings,
         positions,
         periods,
         status: former ? { kind: 'former', year: latestExit.year } : { kind: 'unknown', lastYear },
+        entryOn,
+        exitOn: former ? latestExit.day : null,
       };
     })
     .sort(
       (a, b) =>
-        lastYearOf(b).localeCompare(lastYearOf(a)) ||
+        officeOrder(b) - officeOrder(a) ||
+        Number(a.status.kind === 'former') - Number(b.status.kind === 'former') ||
         a.institution.localeCompare(b.institution, 'bg'),
     );
 }
 
-const lastYearOf = (o: PublicOffice): string =>
-  o.status.kind === 'former' ? o.status.year : o.status.kind === 'unknown' ? o.status.lastYear : '';
+/**
+ * How far the filings carry an office, for the order of the lines — never for a claim about it. A former
+ * office is on record up to the year of its exit declaration. An office with no end on record is carried one
+ * year past its last filing: an annual declaration for a year is filed the year after, by somebody still in
+ * the office. So an office somebody still files for stands before one they left this year or the last, and an
+ * office last filed for long ago does not stand before one that ended recently. On a tie the office with no
+ * end on record leads.
+ */
+const officeOrder = (o: PublicOffice): number =>
+  o.status.kind === 'former'
+    ? Number(o.status.year)
+    : o.status.kind === 'unknown'
+      ? Number(o.status.lastYear) + 1
+      : 0;
 
 /** „2015–2019, 2021; 2022–2023" — spans inside a period by commas, periods by semicolons. */
 export function officePeriodsText(o: PublicOffice): string {
@@ -438,14 +467,31 @@ export function officeTitle(o: PublicOffice): string | null {
 
 /**
  * The years as the status allows them to be read. A former office has an end on record, so its years stand as
- * a period: „2023–2024". For any other office they are only the years somebody filed for — „декларации за
- * 2019–2023" — which says neither that the office goes on nor that it ended.
+ * a period: „2023–2024". For any other office they are only the years somebody filed for, and the line names
+ * the last of them — „декларации за 2019–2023, последна за 2023", „последна декларация за 2021" — so that it
+ * reads as where the record stops, neither as an office that goes on nor as one that ended.
  */
 export function officeYearsText(o: PublicOffice): string | null {
   const periods = officePeriodsText(o);
   if (!periods) return null;
-  if (o.status.kind === 'former') return periods;
-  return `${/^\d{4}$/.test(periods) ? 'декларация' : 'декларации'} за ${periods}`;
+  if (o.status.kind !== 'unknown') return periods;
+  return /^\d{4}$/.test(periods)
+    ? `последна декларация за ${periods}`
+    : `декларации за ${periods}, последна за ${o.status.lastYear}`;
+}
+
+/**
+ * The filing days that bound the latest period, for the one place with room for them (the profile):
+ * „встъпителна декларация от 20.11.2023, финална от 05.12.2024". Days of FILING, named as declarations so
+ * they are not read as the first and the last day of the office. Null when neither is dated.
+ */
+export function officeFilingDaysText(o: PublicOffice): string | null {
+  const day = (iso: string): string => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+  if (o.entryOn && o.exitOn)
+    return `встъпителна декларация от ${day(o.entryOn)}, финална от ${day(o.exitOn)}`;
+  if (o.entryOn) return `встъпителна декларация от ${day(o.entryOn)}`;
+  if (o.exitOn) return `финална декларация от ${day(o.exitOn)}`;
+  return null;
 }
 
 /** One office in one line: „Бивш кмет · Община Тестово · 2015–2019". */
