@@ -280,10 +280,7 @@ describe('/conflicts route — render', () => {
     );
     const group = container.querySelector('details[aria-label="Разшири списъка"]')!;
     const labels = [...group.querySelectorAll('label')].map((l) => l.textContent!.trim());
-    expect(labels).toEqual([
-      'с договори извън периода на длъжността1',
-      'с членове на управителни органи1',
-    ]);
+    expect(labels).toEqual(['с договори извън периода1', 'с членове на управителни органи1']);
     expect(group.querySelector<HTMLInputElement>('input[value="boards"]')!.checked).toBe(true);
     expect(group.querySelector<HTMLInputElement>('input[value="outside"]')!.checked).toBe(true);
     expect(text()).toContain('членство в съвет по Търговския регистър');

@@ -339,7 +339,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       options: [
         {
           value: 'outside',
-          label: 'с договори извън периода на длъжността',
+          label: 'с договори извън периода',
           count: f.include?.outside,
         },
         {

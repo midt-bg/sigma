@@ -119,7 +119,7 @@ it('puts every control in the filter column, in one form, with the scope boxes o
   ]);
   // Short labels, no paragraph inside the group: the period is explained once, under the heading.
   expect([...scope.querySelectorAll('label')].map((l) => l.textContent!.trim())).toEqual([
-    'с договори извън периода на длъжността1',
+    'с договори извън периода1',
     'с членове на управителни органи1',
   ]);
   expect(scope.querySelector('.filter-hint')).toBeNull();
