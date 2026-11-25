@@ -12,7 +12,7 @@ import {
   officeBounds,
   withinOffice,
 } from './queries/declaration-source';
-import { BOARD_SEAT } from './queries/related-people-list';
+import { BOARD_SEAT, registryPeriodSums } from './queries/related-people-list';
 
 // Integration test for the search-side свързани-лица SQL. The queries/search unit tests use a fake D1 and
 // never run the real FTS + joins; this runs the EXACT exported SEARCH_HITS_SQL (which is used for EVERY kind,
@@ -323,6 +323,10 @@ describe('search свързани-лица SQL', () => {
         declaredOfficeYear('dy'),
         `NOT ${declarationYearDisputed('il', `strftime('%Y',${signedAt})`)}`,
         `LEFT JOIN (${officeBounds("d.person_id IN (SELECT person_id FROM interest_links WHERE status='published')")} ) ob ON ob.person_id = il.person_id`,
+        // The register's part of the figure — the companies the register alone records the person in — is the
+        // list's own text too, the public-stake and own-office exclusions included.
+        `LEFT JOIN (${registryPeriodSums("SELECT person_id FROM interest_links WHERE status='published'")} ) rg ON rg.person_id = il.person_id`,
+        '+ COALESCE(MAX(rg.amount),0), MAX(rg.amount))',
       ])
         expect(block, file).toContain(norm(fragment));
     }
