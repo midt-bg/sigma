@@ -290,18 +290,14 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       header: 'Признаци',
       // The column states the facts the reader has no other column for, and says „—“ when there are
       // none. Carrying the own-institution chip alone left it blank on 98% of the rows, which reads as
-      // a broken column rather than as „nothing to note here“.
+      // a broken column rather than as „nothing to note here“. A contract in the period is not one of these
+      // facts: the default list requires it, and a company without one carries its own marker.
       cell: (r) => {
         const disputed = r.companies?.some((c) => c.missingYears?.length);
         const chips = [
           r.ownInstitution && (
             <Chip key="own" tone="strong">
               от собствената институция
-            </Chip>
-          ),
-          r.hasContemporaneous && (
-            <Chip key="window" tone="window">
-              в декларирания период
             </Chip>
           ),
           r.stakeKind === 'registry' && !r.companies?.some((c) => c.declared) && (

@@ -462,7 +462,9 @@ describe('/conflicts route — render', () => {
         .querySelector('td[data-label="Признаци"]')!;
     expect(cell('Тихомир Тестов').textContent).toBe('—');
     expect(cell('Тихомир Тестов').querySelectorAll('.chip').length).toBe(0);
-    expect(cell('Периодин Тестов').textContent).toContain('в декларирания период');
+    // A contract in the period is what the default list requires, so a chip saying so marked every row and
+    // told nothing; the companies without one say so themselves.
+    expect(cell('Периодин Тестов').textContent).toBe('—');
   });
 
   it('признаци stay visible and a flag sourced from a SECOND link still renders', async () => {
