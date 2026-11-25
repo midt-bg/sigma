@@ -310,4 +310,13 @@ describe('a page whose footer read D1 refuses', () => {
     // The footer needs one row, not the per-year coverage scan the data pages read.
     expect(sql).toEqual([expect.stringContaining(FOOTER_SQL)]);
   });
+
+  it('still redirects a non-canonical path before it reads anything', async () => {
+    const { db, sql } = database('overloaded');
+    const page = await get('/accessibility/', db);
+
+    expect(page.status).toBe(301);
+    expect(page.headers.get('Location')).toBe('/accessibility');
+    expect(sql).toEqual([]);
+  });
 });
