@@ -291,6 +291,20 @@ describe('PersonProfile', () => {
     expect(offices).toContain('Член · Съвет за тестове · декларация за 2023');
     expect(offices).toContain('Бивш член · Агенция за тестове · 2018–2019');
     expect(offices).not.toMatch(/настоящ/i);
+    // One office has no end on record, so the heading keeps the plain word.
+    expect(c.querySelector('.kicker')!.textContent).toBe('Длъжностно лице · декларации');
+
+    // Every office with an exit declaration nothing reopens: the heading says former, as the line does.
+    const gone = render(
+      profile({
+        person: null,
+        declarations: [
+          declaration('2018', 'Annualy', null, 'Агенция за тестове'),
+          declaration('2019', 'Vacate', '2019-06-01', 'Агенция за тестове'),
+        ],
+      }),
+    );
+    expect(gone.querySelector('.kicker')!.textContent).toBe('Бивше длъжностно лице · декларации');
   });
 
   it('labels a contract from the person’s own institution in the contracts table as the timeline does', () => {

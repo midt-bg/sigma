@@ -490,6 +490,20 @@ export function sharedOfficeYears(
  * its institution and its years, then how many more offices there are.
  * „Бивш кмет · Община Тестово · 2015–2019 · още 1 длъжност".
  */
+/**
+ * Whether every office on record is former — the one case in which the person is called „бивше длъжностно
+ * лице“ rather than „длъжностно лице“. One office without an end on record is enough to keep the plain word:
+ * the filings do not say the person left it. No offices at all says nothing either way.
+ */
+export function allOfficesFormer(offices: PublicOffice[]): boolean {
+  return offices.length > 0 && offices.every((o) => o.status.kind === 'former');
+}
+
+/** The general word for a declarant, by the same rule the office lines follow. */
+export function officialWord(offices: PublicOffice[]): string {
+  return allOfficesFormer(offices) ? 'бивше длъжностно лице' : 'длъжностно лице';
+}
+
 export function officesLine(offices: PublicOffice[]): string | null {
   const [o] = offices;
   if (!o) return null;

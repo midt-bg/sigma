@@ -10,6 +10,7 @@ import {
   describeOffices,
   entityName,
   officesLine,
+  allOfficesFormer,
   parseConsortiumMembers,
   searchTokens,
   type OfficeFiling,
@@ -330,8 +331,10 @@ async function peopleGroup(
       const byPerson = new Map<string, OfficeFiling[]>();
       for (const r of results) byPerson.set(r.person_id, [...(byPerson.get(r.person_id) ?? []), r]);
       hits.forEach((hit, i) => {
-        const line = officesLine(describeOffices(byPerson.get(refs[i]!) ?? []));
+        const offices = describeOffices(byPerson.get(refs[i]!) ?? []);
+        const line = officesLine(offices);
         if (line) hit.subtitle = line;
+        if (allOfficesFormer(offices)) hit.formerOfficial = true;
       });
     } catch {
       // An env without the declarations tables keeps the index's own line.

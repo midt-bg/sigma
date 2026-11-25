@@ -824,6 +824,8 @@ export interface SearchHit {
   memberCount?: number | null;
   hasConflict?: boolean; // company: has ≥1 PUBLISHED свързани-лица link → badge linking on to /conflicts/company/:eik
   subtitle: string | null;
+  /** person kinds: every office in the person's declarations is former (an exit declaration nothing reopens). */
+  formerOfficial?: boolean;
   amountEur: number | null;
   amountLabel: string; // „общо похарчено" / „общо спечелено" / „стойност" / „по договори"
 }

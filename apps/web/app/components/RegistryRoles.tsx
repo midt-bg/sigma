@@ -1,6 +1,14 @@
 import { Link } from 'react-router';
 import type { CompanyRole, PersonRole } from '@sigma/api-contract';
-import { count, date, describeOffices, pct, sharedOfficeYears, yearsText } from '@sigma/shared';
+import {
+  count,
+  date,
+  describeOffices,
+  officialWord,
+  pct,
+  sharedOfficeYears,
+  yearsText,
+} from '@sigma/shared';
 import { DataTable, type Column } from './DataTable';
 import { ROLE_LABEL } from '../lib/registry-roles';
 import { roleRowId } from '../lib/profile-navigation';
@@ -74,7 +82,8 @@ function Holder({ holder, role }: { holder: CompanyRole['holder']; role?: Compan
       {holder.official && (
         <>
           {' '}
-          <Chip>длъжностно лице</Chip>
+          {/* The word follows the office lines under it: former only when every office there is former. */}
+          <Chip>{officialWord(describeOffices(holder.offices ?? []))}</Chip>
         </>
       )}
       {holder.offices && <HolderOffices filings={holder.offices} role={role} />}

@@ -128,6 +128,10 @@ describe('CompanyRolesTables', () => {
     expect(vera).toContain('Директор · Агенция за тестове · декларация за 2012');
     expect(vera).not.toContain('Ролята е вписана');
     expect(vera).not.toMatch(/настоящ/i);
+    // The general word follows the office line: former only where every office has an exit on record.
+    expect(anna).toContain('бивше длъжностно лице');
+    expect(vera).toContain('длъжностно лице');
+    expect(vera).not.toContain('бивше длъжностно лице');
   });
 
   // aria-label on a role-less <span> is not read, so the „no share" dash says it in hidden text.

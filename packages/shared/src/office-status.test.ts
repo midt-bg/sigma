@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allOfficesFormer,
   describeOffices,
+  officialWord,
   officeLine,
   officePeriodsText,
   officeTitle,
@@ -185,6 +187,31 @@ describe('officesLine', () => {
       'Кмет · Община Тестово · декларация за 2023',
     );
     expect(officesLine([])).toBeNull();
+  });
+});
+
+describe('the general word for a declarant', () => {
+  const filing = (institution: string, year: string, type: string) => ({
+    institution,
+    position: 'кмет',
+    year,
+    type,
+  });
+
+  it('says former only when every office has an exit nothing reopens', () => {
+    const left = describeOffices([filing('Община Тестово', '2019', 'Vacate')], 2026);
+    expect(allOfficesFormer(left)).toBe(true);
+    expect(officialWord(left)).toBe('бивше длъжностно лице');
+    // A second office with no end on record keeps the plain word: the filings do not say it ended.
+    const mixed = describeOffices(
+      [filing('Община Тестово', '2019', 'Vacate'), filing('Агенция за тестове', '2023', 'Annualy')],
+      2026,
+    );
+    expect(allOfficesFormer(mixed)).toBe(false);
+    expect(officialWord(mixed)).toBe('длъжностно лице');
+    // Nothing on record says nothing either way.
+    expect(allOfficesFormer([])).toBe(false);
+    expect(officialWord([])).toBe('длъжностно лице');
   });
 });
 

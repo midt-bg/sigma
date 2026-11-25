@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, money } from '@sigma/shared';
+import { count, describeOffices, money, officialWord } from '@sigma/shared';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { Breadcrumbs } from './Breadcrumbs';
 import { PageHeader } from './PageHeader';
@@ -22,6 +22,9 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
   // Declared stakes make the person a related-persons case; any declaration makes them an official.
   const official = p.links.length > 0;
   const filed = official || p.declarations.length > 0;
+  // The heading follows the office lines under the name: „Бивше“ only when every office there is former.
+  const word = officialWord(describeOffices(p.declarations));
+  const officialKicker = word.charAt(0).toUpperCase() + word.slice(1);
   // A declarant with no company at all gets no contracts section: it would be a heading over filters
   // that count nothing, which reads as a broken panel rather than as „there is nothing here".
   const hasCompanies = p.totals.companies > 0;
@@ -41,9 +44,9 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           title={name}
           kicker={
             official
-              ? 'Длъжностно лице · декларирани интереси'
+              ? `${officialKicker} · декларирани интереси`
               : filed
-                ? 'Длъжностно лице · декларации'
+                ? `${officialKicker} · декларации`
                 : p.person
                   ? 'Лице · Търговски регистър'
                   : 'Длъжностно лице'
