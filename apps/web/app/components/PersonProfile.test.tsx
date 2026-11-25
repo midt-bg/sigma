@@ -412,10 +412,14 @@ describe('PersonProfile', () => {
     ]);
     expect(facts).toEqual([
       ['Свързани дружества', '1'],
-      // The figure the list and the search give for the person leads; the wider one says what it is.
-      ['Договори в периода на длъжността', `1 · ${money(12_000)}`],
+      // The row carries the name of the contracts filter and the timeline's marks, whose figure it is; the
+      // list and the search count less for a declared company, and the page says so.
+      ['Договори в периода на длъжността и участието', `1 · ${money(12_000)}`],
       ['Договори в декларирания период', `2 · ${money(30_000)}`],
     ]);
+    expect(section('declared-overview')!.textContent).toContain(
+      'Сумата в списъка и в търсенето може да е по-малка: за декларирано дружество там се броят само декларираните години, а местата в колективни органи се добавят при поискване.',
+    );
     expect(section('declared-overview')!.textContent).toContain(
       '„В декларирания период“ са всички договори в годините на декларираното участие, и когато лицето не е било на длъжност.',
     );
