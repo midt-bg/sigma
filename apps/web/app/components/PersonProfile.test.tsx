@@ -361,8 +361,8 @@ describe('PersonProfile', () => {
       [...c.querySelectorAll('tbody tr')]
         .find((r) => r.textContent?.includes(`Договор ${id}`))!
         .querySelector('td[data-label="Основание за връзката"]')!.textContent;
-    expect(basis('a')).toContain('Същата институция · в съвпадение');
-    expect(basis('b')).toContain('Същата институция · в периода на длъжността');
+    expect(basis('a')).toContain('Договор от институцията в периода на длъжността и участието');
+    expect(basis('b')).toContain('Същата институция · периодът не е установен');
     expect(basis('c')).not.toContain('Същата институция');
   });
 

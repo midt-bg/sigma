@@ -6,7 +6,7 @@ import { authoritySlug, contractSlug } from '@sigma/db';
 import { count, money, date, plural } from '@sigma/shared';
 import { Section, Chip } from './ui';
 import { DataTable, type Column } from './DataTable';
-import { PERIOD_LABEL } from './PersonTimeline';
+import { PERIOD_LABEL, shownPeriod } from './PersonTimeline';
 
 /** Where a contract with one of the person's own institutions falls against the office there; null for any
  *  other buyer. */
@@ -39,8 +39,8 @@ const columns = (ownPeriod?: OwnContractPeriod): Column<PersonContractRow>[] => 
     key: 'period',
     header: 'Основание за връзката',
     cell: (r) => {
-      // The same four cases the timeline marks draw, in the same words. A payload cached before `tied`
-      // existed falls back to its parts.
+      // The same three cases the timeline marks draw, in the same words; only the established one is
+      // emphasised. A payload cached before `tied` existed falls back to its parts.
       const own = ownPeriod?.({
         authorityId: r.authorityId,
         signedAt: r.signedAt,
@@ -48,7 +48,11 @@ const columns = (ownPeriod?: OwnContractPeriod): Column<PersonContractRow>[] => 
       });
       return (
         <>
-          {own && <Chip tone="strong">{PERIOD_LABEL[own]}</Chip>}
+          {own && (
+            <Chip tone={own === 'overlap' ? 'strong' : undefined}>
+              {PERIOD_LABEL[shownPeriod(own)]}
+            </Chip>
+          )}
           {r.duringOfficeYear && <Chip tone="window">година с данни за длъжността</Chip>}
           {r.duringRole && <Chip>лична роля в ТР</Chip>}
           {(r.declarationBasis & 1) !== 0 && <Chip>деклариран собствен дял</Chip>}
