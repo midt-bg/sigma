@@ -9,12 +9,15 @@ export function SiteFooter({
   refreshedAt,
   endYear,
   budgetUrl,
+  unavailable = false,
 }: {
   asOf?: string | null;
   refreshedAt?: string | null;
   endYear?: number | null;
   /** СИГМА Бюджет (lib/sister-sites.ts); null leaves the link out. */
   budgetUrl?: string | null;
+  /** The figures could not be read (D1 refused): say so rather than show a fallback range. */
+  unavailable?: boolean;
 }) {
   const range = coverageRange(endYear ?? coverageEndYear(asOf));
   return (
@@ -22,9 +25,16 @@ export function SiteFooter({
       <div className="site-footer-inner">
         <span>
           Източник (CC-BY 4.0): <Abbr>АОП</Abbr> / <Abbr>ЦАИС ЕОП</Abbr> — отворени данни
-          (storage.eop.bg) · {range}
-          {asOf ? ` · последен договор ${date(asOf)}` : ''}
-          {refreshedAt ? ` · данни обновени ${date(refreshedAt)}` : ''}
+          (storage.eop.bg) ·{' '}
+          {unavailable ? (
+            'обхватът и датите на данните временно не са налични'
+          ) : (
+            <>
+              {range}
+              {asOf ? ` · последен договор ${date(asOf)}` : ''}
+              {refreshedAt ? ` · данни обновени ${date(refreshedAt)}` : ''}
+            </>
+          )}
         </span>
         {/* One list, so the links wrap as a group whatever the length of the line above, and stay
             separate words when the accessibility widget's text-only mode drops the stylesheets. */}

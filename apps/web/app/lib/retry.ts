@@ -45,3 +45,12 @@ export async function withDbRetry<T>(fn: () => Promise<T>, attempts = 3): Promis
   }
   throw lastError;
 }
+
+/**
+ * D1 refused the read because it is overloaded: the raw error, or the 503 `Response` the retry
+ * layers above turn it into. Nothing else — a missing table, a bad query or an exhausted retry of
+ * another fault is not back-pressure and must still fail the request.
+ */
+export function isD1Refusal(error: unknown): boolean {
+  return error instanceof Response ? error.status === 503 : isD1Overloaded(error);
+}

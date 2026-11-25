@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { withDbRetry } from './retry';
+import { isD1Refusal, withDbRetry } from './retry';
 
 describe('withDbRetry', () => {
   it('returns the result without retrying when the fetch succeeds', async () => {
@@ -81,5 +81,25 @@ describe('withDbRetry', () => {
     setTimeoutSpy.mockRestore();
     warn.mockRestore();
     vi.useRealTimers();
+  });
+});
+
+describe('isD1Refusal', () => {
+  it('recognises an overloaded D1, raw or as the 503 the retry layers make of it', async () => {
+    const overloaded = new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.');
+    expect(isD1Refusal(overloaded)).toBe(true);
+    expect(isD1Refusal(new Error('D1_ERROR: Requests queued for too long'))).toBe(true);
+    const refusal = await withDbRetry(() => Promise.reject(overloaded)).catch((e: unknown) => e);
+    expect(isD1Refusal(refusal)).toBe(true);
+  });
+
+  it.each([
+    new Error('D1_ERROR: no such table: home_totals'),
+    new TypeError("Cannot read properties of undefined (reading 'as_of')"),
+    new Response('Not Found', { status: 404 }),
+    new Response(null, { status: 301, headers: { Location: '/' } }),
+    'string fault',
+  ])('does not take %s for back-pressure', (error) => {
+    expect(isD1Refusal(error)).toBe(false);
   });
 });
