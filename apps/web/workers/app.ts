@@ -8,7 +8,15 @@ import { normalizedPathname } from './rate-limit';
 import { cacheKey, canonicalRequest, isRouteManifest } from './cache-key';
 import { cacheReadToken, trackWrite, withdraw } from './cache-fence';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
-import { edgeTtl, entryId, isFresh, stamped, unstamp } from './edge-entry';
+import {
+  degraded,
+  type DegradedPart,
+  edgeTtl,
+  entryId,
+  isFresh,
+  stamped,
+  unstamp,
+} from './edge-entry';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import {
   optionsResponse,
@@ -26,6 +34,9 @@ declare module 'react-router' {
       env: Env;
       ctx: ExecutionContext;
     };
+    /** A loader that served the page without one of its parts (D1 refused that read) says so here;
+     *  the response then stays at the edge only briefly. Absent outside the worker. */
+    markDegraded?: (part: DegradedPart) => void;
   }
 }
 
@@ -323,7 +334,12 @@ async function render(
   let outcome: FlightOutcome = 'bypass';
   try {
     const readEnv = REPLICA_ROUTES.has(normalizedPathname(request)) ? inReadSession(env) : env;
-    const response = await requestHandler(request, { cloudflare: { env: readEnv, ctx } });
+    let part = null as DegradedPart | null;
+    const rendered = await requestHandler(request, {
+      cloudflare: { env: readEnv, ctx },
+      markDegraded: (missing) => void (part = missing),
+    });
+    const response = part ? degraded(rendered, part) : rendered;
     if (response.status >= 500) outcome = response.status;
     const ttl = edgeTtl(response.headers);
     const cacheable = response.status === 200 && ttl > 0 && !response.headers.has('Set-Cookie');

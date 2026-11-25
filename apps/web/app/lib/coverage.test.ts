@@ -7,6 +7,7 @@ import {
   coveragePartialNote,
   coverageRange,
   getCoverageMeta,
+  getFooterCoverage,
   yearOptions,
 } from './coverage';
 
@@ -89,6 +90,29 @@ describe('getCoverageMeta', () => {
       refreshedAt: null,
       coverageEndYear: FALLBACK_END_YEAR,
       partialStartYear: null,
+    });
+  });
+});
+
+describe('getFooterCoverage', () => {
+  it('reads only the singleton metadata row, not the per-year counts', async () => {
+    const { db, sql } = fakeD1([
+      { when: 'FROM home_totals', first: { as_of: '2025-12-15', refreshed_at: '2026-01-02' } },
+    ]);
+    await expect(getFooterCoverage(db)).resolves.toEqual({
+      asOf: '2025-12-15',
+      refreshedAt: '2026-01-02',
+      coverageEndYear: 2025,
+    });
+    expect(sql).toEqual(['SELECT as_of, refreshed_at FROM home_totals WHERE id = 1']);
+  });
+
+  it('uses null dates and the fallback year when the row is absent', async () => {
+    const { db } = fakeD1([{ when: 'FROM home_totals', first: null }]);
+    await expect(getFooterCoverage(db)).resolves.toEqual({
+      asOf: null,
+      refreshedAt: null,
+      coverageEndYear: FALLBACK_END_YEAR,
     });
   });
 });

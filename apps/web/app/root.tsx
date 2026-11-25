@@ -17,12 +17,12 @@ import { SiteFooter } from './components/SiteFooter';
 import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { ScrollToTop } from './components/ScrollToTop';
 import { ErrorPage } from './components/ErrorPage';
-import { getCoverageMeta } from './lib/coverage';
+import { getFooterCoverage, type FooterCoverage } from './lib/coverage';
 import { serializeJsonForScript } from './lib/json-ld';
 import { canonicalPathname } from './lib/canonical-path';
 import { budgetUrl } from './lib/sister-sites';
 import { sigmaVersion } from './lib/meta';
-import { withDbRetry } from './lib/retry';
+import { isD1Refusal, withDbRetry } from './lib/retry';
 import { useRouteFocus } from './lib/route-focus';
 import stylesheet from './app.css?url';
 
@@ -40,7 +40,7 @@ export const links: Route.LinksFunction = () => [
   { rel: 'stylesheet', href: '/assets/accessibility/accessibility.css' },
 ];
 
-// One cheap read for the chrome: coverage and refresh metadata shown in the footer on every page.
+// One cheap read for the chrome: the coverage and refresh dates shown in the footer on every page.
 export async function loader({ context, request }: Route.LoaderArgs) {
   // Canonicalise the path: `/companies/` (which otherwise silently renders the list and triggers a
   // hydration mismatch), `/Companies` and an upper-case person id redirect to the one canonical URL.
@@ -50,9 +50,19 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   if (pathname !== url.pathname) throw redirect(pathname + url.search, 301);
   // Wrapped like the leaf loaders: this chrome read runs on every route, so a transient D1 fault
   // here would 500 the whole page (incl. the entity pages this PR targets) without the retry.
-  const coverage = await withDbRetry(() => getCoverageMeta(getDb(context.cloudflare.env)));
+  // An overloaded D1 is not retried (lib/retry.ts) — and the footer is not worth a page: the page
+  // renders without the figures and the worker keeps that copy at the edge only briefly
+  // (workers/app.ts). Its own loader, if it has one, still decides whether the page itself fails.
+  let coverage: FooterCoverage | null = null;
+  try {
+    coverage = await withDbRetry(() => getFooterCoverage(getDb(context.cloudflare.env)));
+  } catch (error) {
+    if (!isD1Refusal(error)) throw error;
+    context.markDegraded?.('footer');
+  }
   return {
-    ...coverage,
+    ...(coverage ?? { asOf: null, refreshedAt: null, coverageEndYear: null }),
+    coverageUnavailable: coverage === null,
     origin: url.origin,
     budgetUrl: budgetUrl(context.cloudflare.env.BUDGET_URL),
   };
@@ -170,6 +180,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
         asOf={loaderData.asOf}
         refreshedAt={loaderData.refreshedAt}
         endYear={loaderData.coverageEndYear}
+        unavailable={loaderData.coverageUnavailable}
         budgetUrl={loaderData.budgetUrl}
       />
       <ScrollToTop />

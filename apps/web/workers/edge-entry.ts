@@ -9,6 +9,30 @@ export function edgeTtl(headers: Headers): number {
   return Number.isSafeInteger(seconds) ? Math.min(seconds, MAX_SERVING_MS / 1000) : 0;
 }
 
+// What a page can be served without: today only the footer's coverage figures (app/root.tsx).
+export type DegradedPart = 'footer';
+
+// As long as a 503 asks a client to wait (Retry-After, app.ts): long enough to shield an overloaded
+// D1 from the same page again, short enough that the full page is back soon after it recovers.
+export const DEGRADED_TTL_SECONDS = 30;
+
+// A page rendered without one of its parts is still worth serving, but never as the complete page
+// for the route's whole lifetime. Only a 200 the route already lets the edge keep is shortened; any
+// other response keeps its own policy. The header names the missing part, on a HIT as on a MISS.
+export function degraded(response: Response, part: DegradedPart): Response {
+  if (response.status !== 200) return response;
+  const headers = new Headers(response.headers);
+  headers.set('X-Sigma-Degraded', part);
+  const ttl = edgeTtl(headers);
+  if (ttl > 0)
+    headers.set('Cache-Control', `public, s-maxage=${Math.min(ttl, DEGRADED_TTL_SECONDS)}`);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 const ENTRY = 'X-Sigma-Cache-Entry';
 
 // Cache API storage TTL starts at insertion. The serving deadline starts at render time, so

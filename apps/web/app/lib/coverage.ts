@@ -46,16 +46,22 @@ export function yearOptions(endYear: number | null | undefined): string[] {
   return years;
 }
 
+/** The footer's figures: one row, written only when a refresh publishes. */
+export type FooterCoverage = Pick<CoverageMeta, 'asOf' | 'refreshedAt' | 'coverageEndYear'>;
+
+/** What the site footer shows on every page — without the per-year scan the data pages need. */
+export async function getFooterCoverage(db: D1Database): Promise<FooterCoverage> {
+  const row = await db
+    .prepare('SELECT as_of, refreshed_at FROM home_totals WHERE id = 1')
+    .first<CoverageRow>();
+  const asOf = row?.as_of ?? null;
+  return { asOf, refreshedAt: row?.refreshed_at ?? null, coverageEndYear: coverageEndYear(asOf) };
+}
+
 export async function getCoverageMeta(db: D1Database): Promise<CoverageMeta> {
-  const [row, partialStartYear] = await Promise.all([
-    db.prepare('SELECT as_of, refreshed_at FROM home_totals WHERE id = 1').first<CoverageRow>(),
+  const [totals, partialStartYear] = await Promise.all([
+    getFooterCoverage(db),
     getPartialStartYear(db),
   ]);
-  const asOf = row?.as_of ?? null;
-  return {
-    asOf,
-    refreshedAt: row?.refreshed_at ?? null,
-    coverageEndYear: coverageEndYear(asOf),
-    partialStartYear,
-  };
+  return { ...totals, partialStartYear };
 }
