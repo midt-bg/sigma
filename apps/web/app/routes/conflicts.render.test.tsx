@@ -225,7 +225,7 @@ describe('/conflicts route — render', () => {
     await renderConflicts([familyLink, link()], null, '/conflicts?sort=total');
     expect(container.querySelector('.filter-rail')).not.toBeNull();
     for (const label of [
-      'Обхват на списъка',
+      'Разшири списъка',
       'Източник на връзката',
       'Възложител на договорите',
       'Институция на лицето',
@@ -236,12 +236,12 @@ describe('/conflicts route — render', () => {
       expect(container.querySelector(`details[aria-label="${label}"]`)).toBeNull();
     const names = bodyRows().map((r) => r.querySelector('a')?.textContent);
     expect(names).toEqual(['Иван Петров', 'Кмет Тестов']); // €88M before €250k
-    for (const label of [
-      'стойност в периода на длъжността',
-      'стойност за всички години',
-      'брой договори за всички години',
-    ])
+    for (const label of ['стойност в периода', 'стойност за всички години', 'брой договори'])
       expect(text()).toContain(label);
+    // The sort names are short enough to stand on one line beside the count.
+    expect(container.querySelector('.list-controls')!.textContent).toContain(
+      'Подреди: стойност в периода · стойност за всички години · брой договори',
+    );
     const sorts = [...container.querySelectorAll('.list-controls p.small a')];
     expect(
       sorts.map((a) =>
@@ -278,11 +278,11 @@ describe('/conflicts route — render', () => {
       '/conflicts?include=boards&include=outside&source=registry',
       [seat],
     );
-    const group = container.querySelector('details[aria-label="Обхват на списъка"]')!;
+    const group = container.querySelector('details[aria-label="Разшири списъка"]')!;
     const labels = [...group.querySelectorAll('label')].map((l) => l.textContent!.trim());
     expect(labels).toEqual([
-      'Включи и връзки без договори в периода на длъжността1',
-      'Включи и членство в управителни органи1',
+      'с договори извън периода на длъжността1',
+      'с членове на управителни органи1',
     ]);
     expect(group.querySelector<HTMLInputElement>('input[value="boards"]')!.checked).toBe(true);
     expect(group.querySelector<HTMLInputElement>('input[value="outside"]')!.checked).toBe(true);
@@ -464,12 +464,11 @@ describe('/conflicts route — render', () => {
         .querySelector('td[data-label="Признаци"]')!;
     expect(cell('Тихомир Тестов').textContent).toBe('—');
     expect(cell('Тихомир Тестов').querySelectorAll('.chip').length).toBe(0);
-    // In the widened scope the rows with a contract in the period stand beside the rows without one, so the
-    // chip tells them apart.
+    // The rows with a contract in the period carry the chip; the rows without one carry nothing about it.
     expect(cell('Периодин Тестов').textContent).toContain('с договори в периода на длъжността');
   });
 
-  it('the default list, which requires a contract in the period, does not repeat it on every row', async () => {
+  it('the default list marks a row with contracts in the period in the positive, as the widened one does', async () => {
     const inPeriod = link({
       officialSlug: 'period',
       official: 'Периодин Тестов',
@@ -483,7 +482,10 @@ describe('/conflicts route — render', () => {
     const cell = bodyRows()
       .find((r) => r.textContent?.includes('Периодин Тестов'))!
       .querySelector('td[data-label="Признаци"]')!;
-    expect(cell.textContent).toBe('—');
+    expect([...cell.querySelectorAll('.chip')].map((c) => c.textContent)).toEqual([
+      'с договори в периода на длъжността',
+    ]);
+    expect(text()).not.toContain('без договори');
   });
 
   it('признаци stay visible and a flag sourced from a SECOND link still renders', async () => {
@@ -526,9 +528,9 @@ describe('/conflicts route — render', () => {
   it('a zero-contract / null-value person renders 0 договори and no NaN', async () => {
     await renderConflicts([zeroContractLink], null, '/conflicts?include=outside');
     const row = bodyRows()[0];
-    expect(
-      row.querySelector('td[data-label="Брой договори за всички години"]')!.textContent,
-    ).toContain('0');
+    expect(row.querySelector('td[data-label="Договори за всички години"]')!.textContent).toContain(
+      '0',
+    );
     expect(text()).not.toContain('NaN');
     expect(
       row.querySelector('td[data-label="Стойност в периода на длъжността"]')!.textContent,

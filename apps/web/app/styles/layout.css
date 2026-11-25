@@ -136,6 +136,9 @@ p.small.muted {
 .split aside label.check .small.muted {
   margin-left: auto;
   padding-left: var(--s-2);
+  /* A count is one number: the label's `overflow-wrap: anywhere` otherwise breaks it digit by digit. */
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 .split aside .filter-hint {
   margin: var(--s-2) 0 0;

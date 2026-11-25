@@ -177,7 +177,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
 
 // The columns of the /conflicts person leaderboard (#287, plan §3.2). Rank is the corner badge on phone
 // (isRank); the person name+institution becomes the card heading (isTitle).
-function personColumns(startRank: number, widened: boolean): Column<ConflictPersonRow>[] {
+function personColumns(startRank: number): Column<ConflictPersonRow>[] {
   return [
     { key: 'rank', header: '№', isRank: true, cell: (_r, i) => startRank + i + 1 },
     {
@@ -281,7 +281,7 @@ function personColumns(startRank: number, widened: boolean): Column<ConflictPers
     },
     {
       key: 'contracts',
-      header: 'Брой договори за всички години',
+      header: 'Договори за всички години',
       align: 'money',
       cell: (r) => count(r.contractCount),
     },
@@ -290,9 +290,8 @@ function personColumns(startRank: number, widened: boolean): Column<ConflictPers
       header: 'Признаци',
       // The column states the facts the reader has no other column for, and says „—“ when there are
       // none. Carrying the own-institution chip alone left it blank on 98% of the rows, which reads as
-      // a broken column rather than as „nothing to note here“. A contract in the period is such a fact only
-      // in the widened scope, where rows with and without one stand side by side; the default list requires
-      // it, so there the chip would mark every row.
+      // a broken column rather than as „nothing to note here“. A contract in the period is said here, as a
+      // fact about the person's row, and only ever in the positive: its absence is not a label.
       cell: (r) => {
         const disputed = r.companies?.some((c) => c.missingYears?.length);
         const chips = [
@@ -301,7 +300,7 @@ function personColumns(startRank: number, widened: boolean): Column<ConflictPers
               от собствената институция
             </Chip>
           ),
-          widened && r.hasContemporaneous && (
+          r.hasContemporaneous && (
             <Chip key="window" tone="window">
               с договори в периода на длъжността
             </Chip>
@@ -331,7 +330,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
     {
       // Both off by default; each widens the list on its own, so all four combinations are a choice.
       key: 'include',
-      label: 'Обхват на списъка',
+      label: 'Разшири списъка',
       type: 'checkbox',
       selected: [
         ...(filters.period === 'any' ? ['outside'] : []),
@@ -340,38 +339,37 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       options: [
         {
           value: 'outside',
-          label: 'Включи и връзки без договори в периода на длъжността',
+          label: 'с договори извън периода на длъжността',
           count: f.include?.outside,
         },
         {
           value: 'boards',
-          label: 'Включи и членство в управителни органи',
+          label: 'с членове на управителни органи',
           count: f.include?.boards,
         },
       ],
-      hint: 'Периодът обхваща годините с налични декларации за съответната публична длъжност.',
     },
     {
       key: 'source',
       label: 'Източник на връзката',
       type: 'radio',
-      allLabel: 'всички източници',
+      allLabel: 'всички',
       allCount: f.source?.all,
       selected: filters.stake ? [filters.stake] : [],
       options: [
         {
           value: 'self',
-          label: 'декларация за собствено участие',
+          label: 'собствено участие',
           count: f.source?.self,
         },
         {
           value: 'family',
-          label: 'декларация за дял на свързано лице',
+          label: 'дял на свързано лице',
           count: f.source?.family,
         },
         {
           value: 'registry',
-          label: 'само вписване в Търговския регистър',
+          label: 'само Търговски регистър',
           count: f.source?.registry,
         },
       ],
@@ -380,13 +378,13 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       key: 'buyer',
       label: 'Възложител на договорите',
       type: 'radio',
-      allLabel: 'всички институции',
+      allLabel: 'всички',
       allCount: f.buyer?.all,
       selected: filters.ownBuyer ? ['own'] : [],
       options: [
         {
           value: 'own',
-          label: 'собствената институция на лицето',
+          label: 'собствената институция',
           count: f.buyer?.own,
         },
       ],
@@ -404,19 +402,19 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   // filter narrows them to what it keeps.
   const listing = conflictListing(filters.stake, filters.role === 'all');
   const clearHref = authority ? `/conflicts?authority=${authority.slug}` : '/conflicts';
-  const columns = personColumns(leaderboardRankOffset(page, PER_PAGE), filters.period === 'any');
+  const columns = personColumns(leaderboardRankOffset(page, PER_PAGE));
   // An empty list offers the wider scopes that would fill it, every other filter kept. On an empty list
   // the people a box adds are the people it would show.
   const include = groups[0]!.selected;
   const steps = [
     filters.period === 'overlap' && {
       add: ['outside'],
-      label: 'Включи и връзки без договори в периода на длъжността',
+      label: 'Добави лицата с договори извън периода на длъжността',
       count: f.include?.outside ?? 0,
     },
     filters.role === 'direct' && {
       add: ['boards'],
-      label: 'Включи и членство в управителни органи',
+      label: 'Добави членовете на управителни органи',
       count: f.include?.boards ?? 0,
     },
   ].filter((w): w is { add: string[]; label: string; count: number } => !!w);
@@ -425,7 +423,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   if (both > Math.max(...steps.map((w) => w.count)))
     steps.push({
       add: ['outside', 'boards'],
-      label: 'Включи и двете: връзки без договори в периода и членство в управителни органи',
+      label: 'Добави и двете групи',
       count: both,
     });
   const widen = steps
@@ -485,7 +483,14 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
             <Section
               id="list"
               title="Длъжностни лица и дружества изпълнители"
-              hint="„Стойност в периода на длъжността“ включва договорите от годините с налична декларация за институция и длъжност на лицето, в които връзката с дружеството е декларирана или вписана. Това не установява точните дати на мандата. Липсващи години не се запълват. Стойността и броят на договорите „за всички години“ обхващат всички налични договори на показаните дружества, включително извън периода и при предходно участие."
+              hint={
+                <>
+                  Сумите са стойности на договорите на дружествата, не пари, получени от лицата.
+                  Периодът на длъжността са годините с декларация за нея, в които връзката с
+                  дружеството е декларирана или вписана — не точните дати на мандата.{' '}
+                  <Link to="/conflicts/methodology#office-period">Как се смята</Link>
+                </>
+              }
             >
               <div className="split">
                 <FilterRail groups={groups} sort={filters.sort} clearHref={clearHref} />
@@ -495,9 +500,9 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     activeSort={filters.sort}
                     searchLabel="Търсене сред лицата"
                     sorts={[
-                      { value: 'period', label: 'стойност в периода на длъжността' },
+                      { value: 'period', label: 'стойност в периода' },
                       { value: 'total', label: 'стойност за всички години' },
-                      { value: 'contracts', label: 'брой договори за всички години' },
+                      { value: 'contracts', label: 'брой договори' },
                     ]}
                     count={
                       <>
@@ -507,7 +512,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     }
                   />
                   <p className="small muted conflicts-scope">
-                    <strong>Обхват:</strong> {conflictScopeLine(filters)}
+                    Обхват: {conflictScopeLine(filters)}
                   </p>
                   {total === 0 ? (
                     <div className="conflicts-empty">
@@ -530,10 +535,6 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     </div>
                   ) : (
                     <>
-                      <p className="small muted conflicts-amounts-note">
-                        Сумите са стойности на договорите на дружествата, не пари, получени от
-                        лицата.
-                      </p>
                       <DataTable
                         className="conflicts-people-table"
                         columns={columns}

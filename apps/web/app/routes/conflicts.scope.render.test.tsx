@@ -105,37 +105,42 @@ it('puts every control in the filter column, in one form, with the scope boxes o
     d.getAttribute('aria-label'),
   );
   expect(groups).toEqual([
-    'Обхват на списъка',
+    'Разшири списъка',
     'Източник на връзката',
     'Възложител на договорите',
     'Институция на лицето',
   ]);
   // Real inputs inside labels: reachable and operable by keyboard.
-  const scope = rail.querySelector('details[aria-label="Обхват на списъка"]')!;
+  const scope = rail.querySelector('details[aria-label="Разшири списъка"]')!;
   const boxes = [...scope.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
   expect(boxes.map((b) => [b.name, b.value, b.checked])).toEqual([
     ['include', 'outside', false],
     ['include', 'boards', false],
   ]);
-  expect(scope.textContent).toContain(
-    'Периодът обхваща годините с налични декларации за съответната публична длъжност.',
-  );
+  // Short labels, no paragraph inside the group: the period is explained once, under the heading.
+  expect([...scope.querySelectorAll('label')].map((l) => l.textContent!.trim())).toEqual([
+    'с договори извън периода на длъжността1',
+    'с членове на управителни органи1',
+  ]);
+  expect(scope.querySelector('.filter-hint')).toBeNull();
   const source = rail.querySelector('details[aria-label="Източник на връзката"]')!;
   expect([...source.querySelectorAll('label')].map((l) => l.textContent!.trim())).toEqual([
-    'всички източници1',
-    'декларация за собствено участие1',
-    'декларация за дял на свързано лице0',
-    'само вписване в Търговския регистър0',
+    'всички1',
+    'собствено участие1',
+    'дял на свързано лице0',
+    'само Търговски регистър0',
   ]);
   const buyer = rail.querySelector('details[aria-label="Възложител на договорите"]')!;
   expect([...buyer.querySelectorAll('label')].map((l) => l.textContent!.trim())).toEqual([
-    'всички институции1',
-    'собствената институция на лицето0',
+    'всички1',
+    'собствената институция0',
   ]);
   // Only search, count, sorting and the scope line stand over the table.
   expect(container.querySelector('#results .conflicts-scope')!.textContent).toBe(
-    'Обхват: Собственост или управление с договори в периода на длъжността, в който връзката е декларирана или вписана.',
+    'Обхват: собственост или управление, с договори в периода на длъжността.',
   );
+  // One line each: the note on the sums stands once, under the heading, not as a second row here.
+  expect(container.querySelectorAll('#results > p').length).toBe(1);
   expect(names()).toEqual(['Периодна Тестова']);
 });
 
@@ -146,7 +151,7 @@ it('marks a widened scope in the boxes and in the scope line', async () => {
   ].map((b) => b.value);
   expect(checked).toEqual(['outside', 'boards']);
   expect(container.querySelector('.conflicts-scope')!.textContent).toContain(
-    'членство в управителен орган — със или без договори',
+    'членство в управителен орган, с договори в периода на длъжността или извън него.',
   );
   expect(names()).toHaveLength(3);
 });
@@ -158,7 +163,7 @@ it('offers on an empty list the wider scopes that would fill it, keeping every o
   const widen = [...container.querySelectorAll('.conflicts-widen a')];
   // Only the box that finds someone is offered; the seats find nobody with a relative's stake.
   expect(widen.map((a) => a.textContent)).toEqual([
-    'Включи и връзки без договори в периода на длъжността',
+    'Добави лицата с договори извън периода на длъжността',
   ]);
   const href = new URL(widen[0]!.getAttribute('href')!, 'https://sigma.test');
   expect(href.pathname).toBe('/conflicts');
@@ -176,7 +181,7 @@ it('offers both boxes together only when that finds more than either alone', asy
   // The seat is in the period, the relative's stake outside it: either box alone adds one person.
   await render('/conflicts?source=registry');
   expect([...container.querySelectorAll('.conflicts-widen a')].map((a) => a.textContent)).toEqual([
-    'Включи и членство в управителни органи',
+    'Добави членовете на управителни органи',
   ]);
 });
 
@@ -219,9 +224,9 @@ it('says in words beside a company when its period cannot be established', async
   expect(companyCell('Периодна Тестова').textContent).not.toContain('периодът не е установен');
 });
 
-it('labels the other companies of a listed person as having no contract in the period', async () => {
-  // The person qualifies through one company; the other one is still listed and its contracts are in the
-  // all-years figures, so it says it has none inside the period rather than reading as part of it.
+it('says a contract in the period once, on the row, and never labels its absence', async () => {
+  // The person qualifies through one company; the other one is still listed. The row carries the positive
+  // mark; no company carries a label about the period, and none says „без договори“.
   await render('/conflicts', [
     row({
       officialSlug: 'two',
@@ -232,8 +237,14 @@ it('labels the other companies of a listed person as having no contract in the p
       companies: [company('801', 1, 1), company('802', 0, 1)],
     }),
   ]);
-  expect(companyItem('Двуфирмена Тестова', '801').textContent).not.toContain('без договори');
-  expect(companyItem('Двуфирмена Тестова', '802').textContent).toContain(
-    'без договори в периода на длъжността',
-  );
+  expect(companyCell('Двуфирмена Тестова').textContent).not.toContain('без договори');
+  expect(companyItem('Двуфирмена Тестова', '801').querySelector('.chip')).toBeNull();
+  expect(companyItem('Двуфирмена Тестова', '802').querySelector('.chip')).toBeNull();
+  const signals = [...container.querySelectorAll('tbody tr')]
+    .find((r) => r.textContent?.includes('Двуфирмена Тестова'))!
+    .querySelector('td[data-label="Признаци"]')!;
+  expect([...signals.querySelectorAll('.chip')].map((c) => c.textContent)).toEqual([
+    'с договори в периода на длъжността',
+  ]);
+  expect(container.textContent).not.toContain('без договори');
 });

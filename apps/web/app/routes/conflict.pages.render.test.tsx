@@ -487,8 +487,16 @@ describe('/conflicts/methodology — render', () => {
     const t = text();
     expect(t).toContain('изведени детерминистично по правилата в т. 3');
     expect(t).not.toContain('точни съвпадения');
-    for (const column of ['Стойност в периода', 'Обща стойност', 'Общ брой договори', 'Признаци'])
+    for (const column of [
+      'Стойност в периода на длъжността',
+      'Стойност за всички години',
+      'Договори за всички години',
+      'Признаци',
+    ])
       expect(t).toContain(`„${column}“`);
+    // A contract in the period is a mark the person carries; its absence is not a label.
+    expect(t).toContain('„с договори в периода на длъжността“');
+    expect(t).not.toContain('„без договори');
     expect(t).not.toMatch(/Публични средства|€X от €Y|Дял при възложителите|доказано на нула/);
     // the stake of a relative is a legal duty to declare, not a hint of concealment
     expect(t).not.toContain('укриването');

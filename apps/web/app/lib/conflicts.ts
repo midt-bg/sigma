@@ -706,25 +706,22 @@ export function conflictFacets(everyone: ConflictPersonRow[], f: ConflictListFil
   };
 }
 
-/** The marker beside a company about the period of the office, in words — never colour alone: no contract
- *  inside it, or a period that cannot be told. Nothing when the company has a contract inside it, or when
- *  the flags are absent (a payload cached before them). */
+/** The marker beside a company whose period of the office cannot be told, in words — never colour alone.
+ *  Nothing otherwise: a contract in the period is said once, as the person's own mark in „Признаци“, and
+ *  its absence is not a label. Nothing either when the flags are absent (a payload cached before them). */
 export function companyPeriodLabel(c: { inPeriod?: number; periodKnown?: number }): string | null {
-  if (c.inPeriod !== 0) return null;
-  // A person listed through one company still shows the others, whose contracts count only „за всички
-  // години“: the label keeps them from reading as part of the period.
-  return c.periodKnown === 0 ? 'периодът не е установен' : 'без договори в периода на длъжността';
+  return c.inPeriod === 0 && c.periodKnown === 0 ? 'периодът не е установен' : null;
 }
 
-/** One sentence over the table: what the current scope lists. */
+/** One short line over the table: what the current scope lists. It follows „Обхват:“, hence the small letter. */
 export function conflictScopeLine(f: Pick<ConflictListFilters, 'role' | 'period'>): string {
   const roles =
     f.role === 'all'
-      ? 'Собственост, управление или членство в управителен орган'
-      : 'Собственост или управление';
+      ? 'собственост, управление или членство в управителен орган'
+      : 'собственост или управление';
   return f.period === 'overlap'
-    ? `${roles} с договори в периода на длъжността, в който връзката е декларирана или вписана.`
-    : `${roles} — със или без договори в периода на длъжността, включително когато периодът не може да се установи от декларациите.`;
+    ? `${roles}, с договори в периода на длъжността.`
+    : `${roles}, с договори в периода на длъжността или извън него.`;
 }
 
 /** Each named sort is monotonic by its displayed figure; unknown amounts come last. */
