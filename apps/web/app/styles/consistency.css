@@ -888,6 +888,11 @@ td .chip {
 /* An own institution's contract against the office there, readable without colour: the building is filled
    only in an overlap (as the filled dot of the legend); outside the period the line is hollow; where the
    period is not established its contour is broken, as for a disputed declaration. */
+/* A short or undated span still shows enough line, before the signing, for its pattern to read. */
+.time-procurement.own[class*='period-']::before {
+  left: min(0px, calc(100% - 22px));
+  box-sizing: border-box;
+}
 .time-procurement.own.period-overlap svg,
 .time-symbol.own-period.period-overlap svg {
   fill: currentColor;
