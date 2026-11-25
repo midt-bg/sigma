@@ -1,5 +1,10 @@
 import { officeOrganizationSql } from '@sigma/shared';
-import { declaredOfficeYear, officeBounds, withinOffice } from './declaration-source';
+import {
+  declarationWindow,
+  declaredOfficeYear,
+  officeBounds,
+  withinOffice,
+} from './declaration-source';
 import { filingsByYear, historyNames, registryOmission } from './registry-omissions';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
@@ -42,9 +47,12 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   WHERE b.eik_normalized IN (SELECT eik FROM links)
 ), person_contracts AS (
   -- BOTH, at the moment of signing: the declared interest covers the date AND the person was in office.
+  -- The interest side is the profile's own rule (declarationWindow): inside the declared years and not a
+  -- year whose comparable filing leaves the company out. Such a year keeps the link but proves no timing,
+  -- and a link with no declared year of its own proves none at all — its period is unknown, not overlapping.
   SELECT l.identity,c.id,c.eik,c.amount_eur,MAX(NOT l.board) direct,
     MAX(oy.identity IS NOT NULL AND ${withinOffice('ob', 'c.signed_at')}
-      AND strftime('%Y',c.signed_at) BETWEEN l.first_declared_year AND l.last_declared_year) in_window
+      AND ${declarationWindow('l', 'c.signed_at')}) in_window
   FROM links l JOIN company_contracts c ON c.eik=l.eik
   LEFT JOIN office_years oy ON oy.identity=l.identity AND oy.year=strftime('%Y',c.signed_at)
   LEFT JOIN office_bounds ob ON ob.person_id=l.person_id
