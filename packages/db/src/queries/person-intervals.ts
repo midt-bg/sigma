@@ -123,6 +123,54 @@ export function overlapBands(input: {
   return bands;
 }
 
+/**
+ * One office at one institution as its declarations show it: a run of consecutive declared years, from
+ * 1 January of the first. It ends on the day of the exit filing when there is one in the last year, else on
+ * 31 December. `knownStart`/`knownEnd` are the entry and exit filing days, when the run has them.
+ */
+export interface InstitutionOfficeSpan {
+  from: string;
+  to: string;
+  knownStart: string | null;
+  knownEnd: string | null;
+}
+
+/**
+ * Where a contract with one of the person's own institutions falls against the office there.
+ * - `overlap` — the existing „в съвпадение": red (`tied`), and signed inside the office at THIS institution;
+ * - `in-office` — signed inside the office at this institution, but the tie to the company is not
+ *   established for that day, so it is no overlap;
+ * - `outside` — the declarations bound the office on the side the contract falls: after an exit filing,
+ *   and/or before an office whose entry filing is more than a month later than the signing;
+ * - `unknown` — the period is not established for that date: no declared office years at all, or a side
+ *   with no filing to bound it (a run that ends without an exit, or starts without an entry).
+ */
+export type InstitutionPeriod = 'overlap' | 'in-office' | 'outside' | 'unknown';
+
+/** The law gives a month to file after taking office, so the office may have begun that much earlier. */
+const ENTRY_LAG_DAYS = 31;
+
+/**
+ * Pure. The years are what the declarations support; filing days are used only where a late filing cannot
+ * mislead: a contract after an exit FILING is after the exit, and one more than a month before an entry
+ * filing is before the start. Nothing between two runs, or beyond an unbounded end, is called outside.
+ */
+export function institutionPeriod(
+  spans: InstitutionOfficeSpan[],
+  signedAt: string,
+  tied: boolean,
+): InstitutionPeriod {
+  if (!spans.length) return 'unknown';
+  const day = signedAt.slice(0, 10);
+  if (spans.some((s) => s.from <= day && day <= s.to)) return tied ? 'overlap' : 'in-office';
+  const before = spans.filter((s) => s.to < day).at(-1);
+  const after = spans.find((s) => s.from > day);
+  const endBounded = !before || before.knownEnd != null;
+  const startBounded =
+    !after || (after.knownStart != null && toDay(day) < toDay(after.knownStart) - ENTRY_LAG_DAYS);
+  return endBounded && startBounded ? 'outside' : 'unknown';
+}
+
 /** Everything the interval timeline draws for one person, bounded by that person's own rows. */
 // A procurement mark carries its subject only for the tooltip and the label; the contract page has the
 // whole text. Some people have hundreds of marks, and the full subjects made those pages over 1 MB.

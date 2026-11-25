@@ -20,7 +20,10 @@ export {
 } from './queries/person-timeline';
 export {
   getTimelineIntervals,
+  institutionPeriod,
   type DaySpan,
+  type InstitutionOfficeSpan,
+  type InstitutionPeriod,
   type TimelineIntervals,
   type TimelineProcurement,
 } from './queries/person-intervals';
