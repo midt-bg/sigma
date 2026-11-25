@@ -827,7 +827,7 @@ export interface SearchHit {
   /** person kinds: every office in the person's declarations is former (an exit declaration nothing reopens). */
   formerOfficial?: boolean;
   amountEur: number | null;
-  amountLabel: string; // „общо похарчено" / „общо спечелено" / „стойност" / „по договори"
+  amountLabel: string; // „общо похарчено" / „общо спечелено" / „стойност" / „по договори в периода на длъжността"
 }
 
 export interface SearchGroup {

@@ -51,22 +51,35 @@ function rows(dbPath: string, sql: string): Record<string, string | number | nul
 
 // One published self-ownership official + a family link on the SAME winner (ADR-0032: the redundant-family
 // collapse drops the family link since a self stake exists, so АЛФА's money counts once) + a held link (never surfaces).
-// Иван declared his АЛФА stake for the window [2020,2023]. АЛФА's LIFETIME contract haul is €90k
-// (contract_value_eur), but only the €30k contract signed IN that window is a contemporaneous conflict;
-// the €60k one (2025) is after his declared window. The officials search headline must be the €30k
-// contemporaneous sum, not the €90k lifetime total (the ~9× overstatement this fixture pins).
+// Иван declared his АЛФА stake for the window [2020,2023] and filed for an office in 2021 and 2023 — the 2023
+// filing is his exit, of 10 March. The officials search figure is the list's „стойност в периода на
+// длъжността": the €30k contract of 2021 and the €4k one of February 2023. Not the €7k one of 2022 (inside the
+// declared years and the office bounds, but a year with no filing for an office), not the €9k one of October
+// 2023 (after the exit), not the €60k one of 2025 (after the declared window) — and never АЛФА's lifetime
+// total. Борд declared a management the register records only as a seat on a collegial body: indexed, with
+// no figure, as in the list's default view.
 const FIXTURE = `
 INSERT INTO bidders (id, name, eik_normalized, eik_valid, kind) VALUES
-  ('eik:111','АЛФА ООД','111',1,'company'),('eik:222','БЕТА ООД','222',1,'company'),('eik:333','ГАМА ООД','333',1,'company'),('eik:444','ДЕЛТА ООД','444',1,'company');
-INSERT INTO persons (id, name) VALUES ('person:ИВАН','Иван Тестов'),('person:ГЕО','Гео Държан'),('person:ВАСИЛ','Васил Безсделков'),('person:ЯНА','Яна Тестова');
+  ('eik:111','АЛФА ООД','111',1,'company'),('eik:222','БЕТА ООД','222',1,'company'),('eik:333','ГАМА ООД','333',1,'company'),('eik:444','ДЕЛТА ООД','444',1,'company'),('eik:555','ЕПСИЛОН АД','555',1,'company');
+INSERT INTO persons (id, name) VALUES ('person:ИВАН','Иван Тестов'),('person:ГЕО','Гео Държан'),('person:ВАСИЛ','Васил Безсделков'),('person:ЯНА','Яна Тестова'),('person:БОРД','Борд Тестов');
 INSERT INTO declarations (id, person_id, xml_file, control_hash, folder_year, declared_year, template, category, institution, position, source_url) VALUES
-  ('d:i','person:ИВАН','i.xml','H1','2024','2023','assets','','ОБЩИНА РУСЕ','', 'https://register.cacbg.bg/2024/i.xml');
+  ('d:i21','person:ИВАН','i21.xml','H1','2022','2021','assets','','ОБЩИНА ТЕСТ','Кмет', 'https://register.cacbg.bg/2022/i21.xml'),
+  ('d:i23','person:ИВАН','i23.xml','H2','2023','2023','assets','','ОБЩИНА ТЕСТ','Кмет', 'https://register.cacbg.bg/2023/i23.xml'),
+  -- Яна's 2021 filing names an institution and no position: not a filing for an office, so no office year.
+  ('d:y','person:ЯНА','y.xml','H3','2022','2021','assets','','ОБЩИНА ТЕСТ','', 'https://register.cacbg.bg/2022/y.xml'),
+  ('d:b','person:БОРД','b.xml','H4','2022','2021','assets','','ОБЩИНА ТЕСТ','Заместник-кмет', 'https://register.cacbg.bg/2022/b.xml');
+INSERT INTO declaration_metadata (declaration_id, declaration_type, declared_on) VALUES
+  ('d:i21','Annualy','2022-05-10'),('d:i23','Vacate','2023-03-10'),('d:y','Annualy','2022-05-10'),('d:b','Annualy','2022-05-10');
 INSERT INTO authorities (id, name) VALUES ('a:1','ВЕДОМСТВО ТЕСТ');
 INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:1','s1','Т','a:1','open');
 INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
   ('c:in','t:1','eik:111',30000,'BGN','2021-05-01','N1',30000),
   ('c:out','t:1','eik:111',60000,'BGN','2025-05-01','N2',60000),
-  ('c:yana','t:1','eik:444',20000,'BGN','2021-06-01','N3',20000);
+  ('c:gap','t:1','eik:111',7000,'BGN','2022-05-01','N4',7000),
+  ('c:early','t:1','eik:111',4000,'BGN','2023-02-01','N5',4000),
+  ('c:late','t:1','eik:111',9000,'BGN','2023-10-01','N6',9000),
+  ('c:yana','t:1','eik:444',20000,'BGN','2021-06-01','N3',20000),
+  ('c:board','t:1','eik:555',80000,'BGN','2021-06-01','N7',80000);
 INSERT INTO interest_links
   (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
   ('il:s','person:ИВАН|111','person:ИВАН','eik:111','111','АЛФА ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2020','2023',2,90000,'2021','2025','published'),
@@ -78,12 +91,15 @@ INSERT INTO interest_links
   -- PUBLISHED. The collapse keys on a PUBLISHED self stake, so the family link is NOT redundant and MUST index
   -- her — dropping the s.status='published' guard would collapse it behind an invisible self stake (false neg).
   ('il:ys','person:ЯНА|444','person:ЯНА','eik:444','444','ДЕЛТА ООД','exact_name_key','v1','C_hold','owns','private_ownership',0,'none',1,'2020','2023',1,20000,'2021','2021','held'),
-  ('il:yf','person:ЯНА|444|family','person:ЯНА','eik:444','444','ДЕЛТА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',1,'none',1,'2020','2023',1,20000,'2021','2021','published');
+  ('il:yf','person:ЯНА|444|family','person:ЯНА','eik:444','444','ДЕЛТА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',1,'none',1,'2020','2023',1,20000,'2021','2021','published'),
+  ('il:b','person:БОРД|555','person:БОРД','eik:555','555','ЕПСИЛОН АД','exact_name_key','v1','B_distinctive','manages','private_ownership',1,'none',1,'2020','2023',1,80000,'2021','2021','published');
 -- Every link carries an evidence seal (#279, ADR-0033): the officials batch requires a publishing rung,
 -- so a fixture without seals indexes NOBODY and every assertion below passes vacuously. Derived from
 -- interest_links, so a row added later is sealed automatically.
 INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
-  SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links;
+  SELECT link_key, 'document', 'owner',
+    CASE WHEN relation='manages' THEN 'role:manager:00120' ELSE 'role:owner:CR_F_19_L' END,
+    '2026-08-05', 'tr-rules-1', 'live' FROM interest_links;
 `;
 
 describe('ETL refresh-slice officials batch (the live parse-then-execute path)', () => {
@@ -97,7 +113,7 @@ describe('ETL refresh-slice officials batch (the live parse-then-execute path)',
         dbPath,
         `CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);
          INSERT INTO refresh_touched_bidders (bidder_id) VALUES
-           ('eik:111'), ('eik:222'), ('eik:333'), ('eik:444');`,
+           ('eik:111'), ('eik:222'), ('eik:333'), ('eik:444'), ('eik:555');`,
       );
 
       const groups = refreshSliceStatementGroups(readFileSync(refreshSlicePath, 'utf8'));
@@ -124,18 +140,17 @@ describe('ETL refresh-slice officials batch (the live parse-then-execute path)',
         `SELECT ref, title, amount FROM search_index WHERE kind='official' ORDER BY ref`,
       );
       // Иван is indexed once: he has an own AND a relative's stake in АЛФА (eik 111), so the redundant-family
-      // collapse drops the family link and the winner's money counts ONCE (not €60k); Гео (held only) is absent. Amount
-      // is the CONTEMPORANEOUS conflict-window sum (€30k, the 2021 contract inside [2020,2023]) — NOT the €90k
-      // lifetime total, which would credit him with АЛФА's 2025 contract signed after his window.
-      // Иван (self, collapse) + Яна (surviving family — her self stake is HELD, so no collapse). Васил gated by
-      // N9 (no live contract), Гео by status (held). Яна sorts after Иван, so his index-0 assertions below hold.
-      expect(officials).toHaveLength(2);
-      expect(officials.some((o) => o.ref === 'person:ВАСИЛ')).toBe(false);
-      expect(officials.some((o) => o.ref === 'person:ЯНА')).toBe(true); // published family survives an unpublished self
-      expect(officials[0]!.ref).toBe('person:ИВАН');
-      expect(officials[0]!.title).toBe('Иван Тестов');
-      expect(officials[0]!.amount).toBe(30000);
-      expect(officials[0]!.amount).not.toBe(90000); // guards the ~9× lifetime overstatement
+      // collapse drops the family link and the winner's money counts ONCE. Яна's published family link survives
+      // (her self stake is HELD, so no collapse). Васил is gated by N9 (no live contract), Гео by status (held).
+      expect(officials.map((o) => o.ref)).toEqual(['person:БОРД', 'person:ИВАН', 'person:ЯНА']);
+      const amount = (ref: string) => officials.find((o) => o.ref === ref)!.amount;
+      expect(officials.find((o) => o.ref === 'person:ИВАН')!.title).toBe('Иван Тестов');
+      // The contracts signed while he both held the stake and was in office: 2021 and February 2023.
+      expect(amount('person:ИВАН')).toBe(34000);
+      // A seat on a collegial body is findable and carries no figure.
+      expect(amount('person:БОРД')).toBeNull();
+      // No filing for an office in the year of the contract: no period to count it in.
+      expect(amount('person:ЯНА')).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

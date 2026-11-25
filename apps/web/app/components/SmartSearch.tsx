@@ -264,7 +264,8 @@ export function SmartSearch({
                         </span>
                         {meta && <span className="smart-search-option-meta">{meta}</span>}
                       </span>
-                      {hit.amountEur != null && (
+                      {/* No bare sum beside a person: the results page gives it with what it counts. */}
+                      {hit.amountEur != null && hit.kind !== 'official' && (
                         <span className="smart-search-option-amt">{money(hit.amountEur)}</span>
                       )}
                     </li>

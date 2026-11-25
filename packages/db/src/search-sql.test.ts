@@ -6,6 +6,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SEARCH_HITS_SQL, SEARCH_HITS_SQL_NO_CONFLICT } from './queries/search';
+import {
+  declarationYearDisputed,
+  declaredOfficeYear,
+  officeBounds,
+  withinOffice,
+} from './queries/declaration-source';
+import { BOARD_SEAT } from './queries/related-people-list';
 
 // Integration test for the search-side свързани-лица SQL. The queries/search unit tests use a fake D1 and
 // never run the real FTS + joins; this runs the EXACT exported SEARCH_HITS_SQL (which is used for EVERY kind,
@@ -261,7 +268,7 @@ describe('search свързани-лица SQL', () => {
   it('counts a winner ONCE for an official who declared both their own and a relative’s stake in it', () => {
     withDb((dbPath) => {
       // Двоен has a self AND a family link to ЗЕТА (eik 666), €50k each. The self stake names him, so the
-      // redundant-family collapse (ADR-0032) drops the family link — „по договори" is €50k, not the €100k a
+      // redundant-family collapse (ADR-0032) drops the family link — the figure is €50k, not the €100k a
       // naive per-link SUM would report. One official row still (the two links share the person).
       const dvoen = rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'двоен*', 10));
       expect(dvoen).toHaveLength(1);
@@ -299,5 +306,25 @@ describe('search свързани-лица SQL', () => {
     const scope = 'AND il.person_id IN (SELECT person_id FROM refresh_official_reindex_scope)';
     expect(rs).toContain(scope);
     expect(norm(rs.replace(scope, ''))).toBe(norm(pc));
+  });
+
+  // The figure beside a name in search is the list's „стойност в периода на длъжността". The two are computed
+  // in different places — the list at read time, the index in the ETL — so the index carries the list's own
+  // fragments, and a change to any of them that the scripts do not follow fails here.
+  it('officials search-index block counts a contract by the rule of the officials list', () => {
+    const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
+    const signedAt = 'cc.signed_at';
+    for (const file of ['scripts/precompute.sql', 'scripts/refresh-slice.sql']) {
+      const sql = norm(readFileSync(resolve(root, file), 'utf8'));
+      const block = sql.slice(sql.indexOf("SELECT 'official'"));
+      for (const fragment of [
+        withinOffice('ob', signedAt),
+        `NOT ${BOARD_SEAT}`,
+        declaredOfficeYear('dy'),
+        `NOT ${declarationYearDisputed('il', `strftime('%Y',${signedAt})`)}`,
+        `LEFT JOIN (${officeBounds("d.person_id IN (SELECT person_id FROM interest_links WHERE status='published')")} ) ob ON ob.person_id = il.person_id`,
+      ])
+        expect(block, file).toContain(norm(fragment));
+    }
   });
 });

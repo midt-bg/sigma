@@ -17,7 +17,8 @@ import { publicStakeEiks } from './public-stakes';
 // A declared management the register records only as a seat on a collegial body — not as the manager, not as
 // an owner — or does not record at all: like the register's own board seats, it is listed only when the seats
 // are asked for (ADR-0047 §4, 30.09). A declared stake and a registered manager are listed by default.
-const BOARD_SEAT = `(il.relation='manages' AND NOT EXISTS (SELECT 1 FROM interest_link_evidence be
+// The officials block of the search index (precompute.sql, refresh-slice.sql) carries the same text.
+export const BOARD_SEAT = `(il.relation='manages' AND NOT EXISTS (SELECT 1 FROM interest_link_evidence be
     WHERE be.link_key=il.link_key AND (be.matched_fact LIKE 'role:owner:%'
       OR be.matched_fact IN ('role:manager:00070','role:manager:00071'))))`;
 
