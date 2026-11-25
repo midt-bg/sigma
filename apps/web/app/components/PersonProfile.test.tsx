@@ -280,7 +280,7 @@ describe('PersonProfile', () => {
     expect(c.querySelector('.kicker')!.textContent).toBe('Длъжностно лице · декларирани интереси');
     expect(crumbs()).toEqual([
       ['Начало', '/'],
-      ['Свързани лица', '/conflicts'],
+      ['Длъжностни лица', '/conflicts'],
       ['Иван Петров', null],
     ]);
     expect(nav()).toEqual(['#declared-overview', '#timeline', '#declarations', '#contracts']);

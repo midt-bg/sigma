@@ -3,6 +3,7 @@ import {
   describeOffices,
   officePeriodsText,
   officeStatusText,
+  officesLine,
   sharedOfficeYears,
   yearsText,
   type OfficeFiling,
@@ -161,5 +162,25 @@ describe('sharedOfficeYears', () => {
   it('shares nothing when the role lies outside the years with filings', () => {
     expect(sharedOfficeYears(office!, '2020-01-01', null, 2026)).toEqual([]);
     expect(sharedOfficeYears(office!, '2016-01-01', '2017-12-31')).toEqual([]);
+  });
+});
+
+describe('officesLine', () => {
+  it('names the latest office with „бивш" only when the rule allows, its years and how many more', () => {
+    const offices = describeOffices(
+      [
+        f('2015', 'Annualy', null, 'Община Тестово', 'кмет'),
+        f('2019', 'Vacate', '2019-11-01', 'Община Тестово', 'кмет'),
+        f('2012', 'Annualy', null, 'Агенция за тестове', 'директор'),
+      ],
+      2026,
+    );
+    expect(officesLine(offices)).toBe(
+      'бивш кмет · Община Тестово · декларации за 2015, 2019 · още 1 длъжност',
+    );
+    expect(officesLine(describeOffices([f('2023', 'Annualy')], 2026))).toBe(
+      'кмет · Община Тестово · декларации за 2023',
+    );
+    expect(officesLine([])).toBeNull();
   });
 });

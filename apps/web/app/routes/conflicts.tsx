@@ -34,7 +34,7 @@ import {
 } from '../lib/conflicts';
 import { withParams, leaderboardRankOffset, type PageNav } from '../lib/filters';
 
-// Свързани лица — office-holders who declared a material ownership stake, their OWN or a close relative's, in
+// Длъжностни лица (the route stays /conflicts) — office-holders who declared a material ownership stake, their OWN or a close relative's, in
 // a procurement winner. Every row is a PUBLISHED, certainty-1.0 link from the official's own asset declaration
 // exact-matched to a winner. Family stakes surface identically to self stakes (ADR-0032, superseding ADR-0030)
 // — but the relative is never named and the relationship type is never asserted (relation 'related' only).
@@ -42,9 +42,8 @@ export function meta({ matches }: Route.MetaArgs) {
   const tags = seoMeta({
     matches,
     path: '/conflicts',
-    title: 'Свързани лица — СИГМА',
-    description:
-      'Декларирани участия в дружества с обществени поръчки, включително доказани исторически връзки.',
+    title: 'Длъжностни лица — СИГМА',
+    description: `${SUBTITLE} ${SCOPE}`,
   });
   // Names individuals: keep out of search indices until legal sign-off on going public (prod is live).
   tags.push({ name: 'robots', content: 'noindex' });
@@ -121,6 +120,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 const HISTORY =
   'Показваме и доказани исторически връзки, с декларираните години и проверими източници.';
+const SUBTITLE =
+  'Настоящи и бивши длъжностни лица с декларирани или вписани участия в дружества с обществени поръчки.';
+const SCOPE =
+  'Списъкът не е регистър на всички длъжностни лица в България и включва исторически данни.';
 
 /** The headings of the list, each true of every row the stake filter keeps: a declared stake, a declared
  *  management, or a role only the Trade Register records. */
@@ -133,7 +136,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица, вписани в <em>Търговския регистър</em> при изпълнител
           </>
         ),
-        lede: `Длъжностни лица, които Търговският регистър вписва като собственик или управител${boards ? ' — или като член на съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка. СИГМА не е потвърдила декларирана връзка на лицето с това дружество; когато декларацията го посочва, това е отбелязано при него.`,
+        lede: `Длъжностни лица, които Търговският регистър вписва като собственик или управител${boards ? ' — или като член на съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка. СИГМА не е потвърдила декларирана връзка на лицето с това дружество; когато декларацията го посочва, това е отбелязано при него. ${SCOPE}`,
         caption: 'Длъжностни лица с вписана роля в регистъра при дружества изпълнители',
       };
     case 'self':
@@ -143,7 +146,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица с деклариран <em>дял или управление</em> в компании изпълнители
           </>
         ),
-        lede: `Длъжностни лица, декларирали собствен дял в дружество, спечелило обществена поръчка, или че го управляват. ${HISTORY}`,
+        lede: `Длъжностни лица, декларирали собствен дял в дружество, спечелило обществена поръчка, или че го управляват. ${SCOPE} ${HISTORY}`,
         caption:
           'Длъжностни лица с деклариран дял или декларирано управление в дружества изпълнители',
       };
@@ -154,7 +157,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица с <em>дял на свързано лице</em> в компании изпълнители
           </>
         ),
-        lede: `Длъжностни лица, декларирали дял на свързано лице в дружество, спечелило обществена поръчка. ${HISTORY}`,
+        lede: `Длъжностни лица, декларирали дял на свързано лице в дружество, спечелило обществена поръчка. ${SCOPE} ${HISTORY}`,
         caption: 'Длъжностни лица с деклариран дял на свързано лице в дружества изпълнители',
       };
     default:
@@ -164,7 +167,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица и <em>дружества</em> изпълнители
           </>
         ),
-        lede: `Длъжностни лица, декларирали дял — свой или на свързано лице — или управление на дружество, спечелило обществена поръчка, и длъжностни лица, които Търговският регистър вписва в такова дружество. ${HISTORY}`,
+        lede: `${SUBTITLE} ${SCOPE} ${HISTORY}`,
         caption:
           'Длъжностни лица и дружества изпълнители: деклариран дял, декларирано управление или вписана роля в регистъра',
       };
@@ -432,9 +435,9 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Свързани лица' }]} />
+      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Длъжностни лица' }]} />
       <main id="main">
-        <PageHeader kicker="Свързани лица" title={listing.title} lede={listing.lede} />
+        <PageHeader kicker="Длъжностни лица" title={listing.title} lede={listing.lede} />
 
         <Callout titleAs="h2" title="Как се извежда връзката — и какво не твърди">
           <p className="m-0">
@@ -459,7 +462,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         {authority && (
           <p>
             Само изпълнители на <Link to={`/authorities/${authority.slug}`}>{authority.name}</Link>.{' '}
-            <Link to="/conflicts">Всички свързани лица →</Link>
+            <Link to="/conflicts">Всички длъжностни лица →</Link>
           </p>
         )}
 

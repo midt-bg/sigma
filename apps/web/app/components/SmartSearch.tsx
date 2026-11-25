@@ -240,8 +240,8 @@ export function SmartSearch({
                   const meta =
                     hit.kind === 'company' && hit.hasConflict
                       ? baseMeta
-                        ? `${baseMeta} · свързани лица`
-                        : 'свързани лица'
+                        ? `${baseMeta} · длъжностни лица`
+                        : 'длъжностни лица'
                       : baseMeta;
                   return (
                     <li

@@ -256,3 +256,23 @@ export function sharedOfficeYears(
     })
     .filter((y, i, all) => all.indexOf(y) === i);
 }
+
+/**
+ * A person's offices in one line, for a search hit: the latest office — „бивш" only when the rule allows —
+ * its institution and the years with filings, then how many more offices there are.
+ * „бивш кмет · Община Тестово · декларации за 2015–2019 · още 1 длъжност".
+ */
+export function officesLine(offices: PublicOffice[]): string | null {
+  const [o] = offices;
+  if (!o) return null;
+  const periods = officePeriodsText(o);
+  const parts = [
+    officeTitle(o),
+    o.institution,
+    periods ? `декларации за ${periods}` : null,
+    offices.length > 1
+      ? `още ${offices.length - 1} ${offices.length === 2 ? 'длъжност' : 'длъжности'}`
+      : null,
+  ].filter(Boolean);
+  return parts.join(' · ');
+}

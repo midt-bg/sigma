@@ -195,7 +195,12 @@ describe('/conflicts route — render', () => {
   it('meta() marks the page noindex and titles it', () => {
     const tags = meta({ matches: [] } as never);
     expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
-    expect(JSON.stringify(tags)).toContain('Свързани лица');
+    expect(JSON.stringify(tags)).toContain('Длъжностни лица');
+    // The section's name and scope: officials present and former, not a register of all of them.
+    expect(JSON.stringify(tags)).toContain('Длъжностни лица — СИГМА');
+    expect(JSON.stringify(tags)).toContain(
+      'Списъкът не е регистър на всички длъжностни лица в България и включва исторически данни.',
+    );
   });
 
   it('headers() carries the loader Cache-Control through', () => {
@@ -587,6 +592,12 @@ it('titles the list by what every row holds, and narrows the headings with the s
       'Длъжностни лица и дружества изпълнители: деклариран дял, декларирано управление или вписана роля в регистъра',
   });
   expect(text()).not.toContain('декларирали дял — свой или на свързано лице — в дружество');
+  // The subtitle names the section's scope: officials present and former, and not all of them.
+  expect(container.querySelector('.kicker')?.textContent).toBe('Длъжностни лица');
+  expect(text()).toContain(
+    'Настоящи и бивши длъжностни лица с декларирани или вписани участия в дружества с обществени поръчки.',
+  );
+  expect(text()).toContain('Списъкът не е регистър на всички длъжностни лица в България');
   expect(text()).toContain(
     'Сумите са стойности на договорите на дружествата, не пари, получени от лицата.',
   );

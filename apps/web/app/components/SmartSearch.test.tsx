@@ -33,7 +33,7 @@ const results = (groups: SearchResults['groups']): SearchResults => ({
 const TWO_GROUPS = results([
   {
     kind: 'official',
-    label: 'Свързани лица',
+    label: 'Лица',
     total: 1,
     moreHref: null,
     hits: [
@@ -172,14 +172,14 @@ it('announces each suggestion as an option, grouped and labelled by kind', async
   );
   expect(
     [...container.querySelectorAll('[role="group"]')].map((g) => g.getAttribute('aria-label')),
-  ).toEqual(['Свързани лица', 'Компании']);
+  ).toEqual(['Лица', 'Компании']);
   // Three hits plus the trailing „all results" row, every one of them an option.
   expect(options()).toHaveLength(4);
   expect(options()[0]!.textContent).toContain('Иван Петров Тестов');
   // The gutter says what the row IS — a declarant is an office holder in either group.
   expect(options()[0]!.textContent).toContain('длъжностно лице');
   // A company the свързани-лица surface flags carries the marker on its meta line.
-  expect(options()[2]!.textContent).toContain('свързани лица');
+  expect(options()[2]!.textContent).toContain('длъжностни лица');
   expect(options()[3]!.textContent).toContain('Всички резултати');
 });
 

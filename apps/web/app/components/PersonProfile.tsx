@@ -32,7 +32,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
       <Breadcrumbs
         items={[
           { label: 'Начало', to: '/' },
-          ...(filed ? [{ label: 'Свързани лица', to: '/conflicts' }] : []),
+          ...(filed ? [{ label: 'Длъжностни лица', to: '/conflicts' }] : []),
           { label: name },
         ]}
       />

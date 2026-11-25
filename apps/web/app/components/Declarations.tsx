@@ -45,7 +45,7 @@ export function declaredEntryNote(
         : i.status === 'unconfirmed'
           ? 'Регистърът не потвърждава, че е това дружество. '
           : '';
-  return `${reason}${roles}Не се брои като декларирана връзка в „Свързани лица“.`;
+  return `${reason}${roles}Не се брои като декларирана връзка в „Длъжностни лица“.`;
 }
 export function declaredInterestLabel(
   i: NonNullable<PersonDeclaration['interests']>[number],
