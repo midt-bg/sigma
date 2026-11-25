@@ -15,7 +15,7 @@ const baseContractRow = {
   eu_funded: 0 as number | null,
   eu_programme: null,
   duration_days: null,
-  amount_eur: 5000,
+  amount_eur: 5000 as number | null,
   signing_value: 5000 as number | null,
   current_value: null as number | null,
   fx_rate: null as number | null,
@@ -31,6 +31,7 @@ const baseContractRow = {
   subcontractor_name: null as string | null,
   subcontract_value: null as number | null,
   contract_currency: 'EUR',
+  current_value_currency: null as string | null,
   title: 'Tender subject',
   unp: 'UNP-1',
   procedure_type: 'Открита процедура',
@@ -46,6 +47,7 @@ const baseContractRow = {
   end_date: null,
   authority_id: 'auth:123456786',
   authority_name: 'Authority',
+  authority_eik: '123456786' as string | null,
   // c.ordering_unit_name — the unit named ON the document, which may or may not be the authority itself.
   source_authority_name: null as string | null,
   authority_type_group: 'ministry',
@@ -87,6 +89,14 @@ function fakeDb(
 }
 
 describe('getContract', () => {
+  it.each([
+    ['ocds-auth:74657374', null, 'ocds-auth:74657374'],
+    ['auth:123456786', '123456786', '123456786'],
+  ])('provides the recorded authority identifier for %s', async (id, eik, slug) => {
+    const db = fakeDb({ ...baseContractRow, authority_id: id, authority_eik: eik }, []);
+    expect((await getContract(db, 'c:1'))?.authority).toMatchObject({ slug, eik });
+  });
+
   it('uses the tender currency for lot estimated values', async () => {
     const detail = await getContract(
       fakeDb(baseContractRow, [
@@ -266,6 +276,29 @@ describe('getContract', () => {
       expect(detail?.value.currentEur).toBe(flag === 'annex_suspect' ? 1025.96 : 256.49);
       expect(detail?.value.currentValueDoubled).toBe(false);
     }
+  });
+
+  it('keeps an unpriced foreign annex blank even when the signing currency has a rate', async () => {
+    const detail = await getContract(
+      fakeDb(
+        {
+          ...baseContractRow,
+          contract_currency: 'USD',
+          signing_value: 10000,
+          signing_value_eur: null,
+          fx_rate: 0.8,
+          current_value: 15000,
+          current_value_currency: 'CHF',
+          current_value_eur: null,
+          amount_eur: null,
+        },
+        [],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.value.signingEur).toBe(8000);
+    expect(detail?.value.currentEur).toBeNull();
   });
 
   it('#307 blanks the current value for a KNOWN 2× double-count (annex_total_suspect)', async () => {
@@ -683,6 +716,7 @@ describe('getCompany', () => {
 
 // ── getAuthority ────────────────────────────────────────────────────────────────────────────────
 const authorityRow = {
+  bulstat: '123456789' as string | null,
   authority_id: 'auth:123456789',
   name: 'Министерство',
   type_group: 'министерство' as string | null,
@@ -729,6 +763,12 @@ function authorityDb(
 }
 
 describe('getAuthority', () => {
+  it('keeps a scoped buyer slug and returns a missing identifier', async () => {
+    const scoped = 'ocds-auth:74657374';
+    const db = authorityDb({ ...authorityRow, authority_id: scoped, bulstat: null });
+    expect(await getAuthority(db, scoped)).toMatchObject({ slug: scoped, eik: null });
+  });
+
   it('returns null when the authority is not found', async () => {
     expect(await getAuthority(authorityDb(null), 'auth:x')).toBeNull();
   });

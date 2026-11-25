@@ -2,7 +2,7 @@
 // normalize-raw.sql / precompute.sql merely PRINT (authority/company/flow rollups vs the
 // contracts they summarise, EIK validity, date sanity, staging→domain counts) into asserted
 // invariants that FAIL the import with a non-zero exit code on any numeric drift. The only
-// prior hard guard was the FX check in import.mjs (assertFxPopulated*); this generalises it.
+// prior hard guard was the FX check in import.mjs (assertFxValued); this generalises it.
 //
 // Design: every check is a pure function taking an injected `runner(sql) => rows[]`, so the
 // SAME logic runs against D1 (wrangler), local sqlite (sqlite3), and the test fixtures. Each
@@ -169,9 +169,7 @@ export async function checkRollupReconciliation(runner) {
 // perfectly with amount_eur. One cent is the user-visible precision boundary.
 export async function checkCurrentAmountParity(runner) {
   const name = 'current-amount-parity';
-  // current_value_eur is populated by precompute.sql (served D1 / ship-domain), not by normalize on the
-  // work DB. Before precompute every current_value_eur is NULL, so this parity is only meaningful once
-  // the rollups exist — gate on home_totals exactly like rollup-reconciliation.
+  // Check the served basis once the rollups exist, as in rollup-reconciliation.
   if (
     !(await tableExists(runner, 'contracts')) ||
     !(await tableExists(runner, 'home_totals')) ||
@@ -189,7 +187,13 @@ export async function checkCurrentAmountParity(runner) {
       "SELECT COUNT(*) AS n FROM contracts WHERE value_flag = 'ok' AND current_value IS NOT NULL " +
         // A framework agreement's own record has no amount_eur by design (framework-ceilings-unsummed).
         'AND framework IS NOT 2 ' +
-        'AND (amount_eur IS NULL OR current_value_eur IS NULL OR ABS(amount_eur - current_value_eur) > 0.01)',
+        // Paired NULLs are correct only when the current currency has no usable quote.
+        'AND ((amount_eur IS NULL) <> (current_value_eur IS NULL) OR ABS(amount_eur - current_value_eur) > 0.01 ' +
+        'OR (amount_eur IS NULL AND current_value_eur IS NULL AND (' +
+        "COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') IN ('BGN', 'EUR') " +
+        'OR EXISTS (SELECT 1 FROM fx_rates f ' +
+        "WHERE f.base_currency = COALESCE(NULLIF(contracts.current_value_currency, ''), NULLIF(contracts.currency, ''), 'BGN') " +
+        "AND f.rate_date BETWEEN date(contracts.signed_at, '-10 days') AND contracts.signed_at))))",
       'n',
     ),
   );
@@ -581,7 +585,7 @@ export function summarizeIntegrity(results, label = 'integrity') {
 }
 
 // Run all checks, print a one-line summary per check, and FAIL non-zero on any real violation.
-// `exit: true` (default) mirrors assertFxPopulated — print to stderr and process.exit(1). Tests pass
+// `exit: true` (default) prints to stderr and calls process.exit(1). Tests pass
 // `exit: false` to get a thrown Error instead (the assertion still fails the same way).
 export async function assertIntegrity(runner, { label = 'integrity', exit = true } = {}) {
   const results = await runIntegrityChecks(runner);

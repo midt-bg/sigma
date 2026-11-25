@@ -194,6 +194,23 @@ describe('reconciliation gate — injected violations', () => {
     expect(result.detail).toMatch(/1 ok contract.*amount_eur != current_value_eur/);
   });
 
+  it('current-amount-parity accepts paired NULLs only without a usable rate', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(
+      db,
+      "UPDATE contracts SET current_value = 100000, current_value_currency = 'CHF', amount_eur = NULL, current_value_eur = NULL WHERE id = 'c:1'",
+    );
+    expect(await checkCurrentAmountParity(runner(db))).toMatchObject({ ok: true, skipped: false });
+
+    sqlite(
+      db,
+      `INSERT INTO fx_rates (base_currency, rate_date, eur_per_unit, source, fetched_at)
+       SELECT DISTINCT 'CHF', signed_at, 1, 'test', 'test' FROM contracts WHERE current_value IS NOT NULL`,
+    );
+    expect((await checkCurrentAmountParity(runner(db))).ok).toBe(false);
+  });
+
   it('current-amount-parity accepts sub-cent floating-point drift', async () => {
     const db = track(freshDb());
     precompute(db);

@@ -73,6 +73,18 @@ describe('guardSelect', () => {
     if (!r.ok) expect(r.reason).toMatch(/table not allowed: sqlite_master/);
   });
 
+  it('keeps raw OCDS evidence and publication state outside the assistant', () => {
+    for (const sql of [
+      'SELECT * FROM raw_serving_ocds_parties',
+      'SELECT * FROM raw_serving_contract_authorities',
+      'SELECT * FROM ocds_supplier_appearances',
+      'WITH b AS (SELECT * FROM ocds_tender_buyers) SELECT * FROM b',
+      'SELECT p.party_key FROM parties p JOIN raw_ocds_parties r ON p.party_id = r.source_party_id',
+    ]) {
+      expect(guardSelect(sql).ok, sql).toBe(false);
+    }
+  });
+
   it('rejects comma cross-joins (Cartesian product a LIMIT cannot bound)', () => {
     const r = guardSelect('SELECT COUNT(*) FROM contracts a, contracts b, contracts c');
     expect(r.ok).toBe(false);

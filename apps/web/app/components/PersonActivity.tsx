@@ -2,7 +2,7 @@ import { useEffect, useRef, type ChangeEvent } from 'react';
 import { Form, Link, useLocation, useNavigation, useRevalidator, useSubmit } from 'react-router';
 import { revealProfileTarget } from '../lib/profile-navigation';
 import type { PersonActivity as Activity, PersonContractRow } from '@sigma/db';
-import { contractSlug } from '@sigma/db';
+import { authoritySlug, contractSlug } from '@sigma/db';
 import { count, money, date, plural } from '@sigma/shared';
 import { Section, Chip } from './ui';
 import { DataTable, type Column } from './DataTable';
@@ -22,9 +22,7 @@ const columns: Column<PersonContractRow>[] = [
   {
     key: 'authority',
     header: 'Възложител',
-    cell: (r) => (
-      <Link to={`/authorities/${r.authorityId.replace(/^auth:/, '')}`}>{r.authority}</Link>
-    ),
+    cell: (r) => <Link to={`/authorities/${authoritySlug(r.authorityId)}`}>{r.authority}</Link>,
   },
   { key: 'date', header: 'Сключен на', cell: (r) => date(r.signedAt) },
   { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
@@ -136,9 +134,7 @@ export function PersonActivity({
                   key: 'name',
                   header: 'Възложител',
                   isTitle: true,
-                  cell: (r) => (
-                    <Link to={`/authorities/${r.id.replace(/^auth:/, '')}`}>{r.name}</Link>
-                  ),
+                  cell: (r) => <Link to={`/authorities/${authoritySlug(r.id)}`}>{r.name}</Link>,
                 },
                 { key: 'count', header: 'Договори', align: 'num', cell: (r) => count(r.contracts) },
                 {

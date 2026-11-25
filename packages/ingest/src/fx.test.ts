@@ -28,6 +28,12 @@ const FETCHED_AT = '2026-07-10T00:00:00Z';
 function fxDb(): { db: DatabaseSync; d1: D1Database } {
   const db = new DatabaseSync(':memory:');
   db.exec(readFileSync(resolve(root, 'packages/db/migrations/0000_init.sql'), 'utf8'));
+  db.exec(
+    readFileSync(resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql'), 'utf8'),
+  );
+  db.exec(
+    readFileSync(resolve(root, 'packages/db/migrations/0029_contract_value_evidence.sql'), 'utf8'),
+  );
   db.exec(readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'));
   return { db, d1: d1FromSqlite(db) };
 }
@@ -50,8 +56,9 @@ function insertRate(db: DatabaseSync, currency: string, rateDate: string, rate: 
   ).run(currency, rateDate, rate, FX_SOURCE, FETCHED_AT);
 }
 
-function seriesResponse(rates: Record<string, { EUR: number }>): Response {
-  return new Response(JSON.stringify({ rates }), { status: 200 });
+function seriesResponse(rates: Record<string, { EUR: number }>, base = 'USD'): Response {
+  const dates = Object.keys(rates).sort();
+  return Response.json({ amount: 1, base, start_date: dates[0], end_date: dates.at(-1), rates });
 }
 
 describe('pure fx helpers', () => {
@@ -80,32 +87,121 @@ describe('pure fx helpers', () => {
     );
   });
 
-  it('parseFxSeries keeps valid entries and warns on malformed ones', () => {
-    const { rows, warnings } = parseFxSeries(
-      {
-        rates: {
-          '2026-07-07': { EUR: 0.87 },
-          'not-a-date': { EUR: 0.9 },
-          '2026-07-08': { EUR: 'oops' },
-          '2026-07-09': { EUR: -1 },
-          '2026-07-10': null,
-        },
-      },
-      'USD',
-    );
-    expect(rows).toEqual([{ currency: 'USD', rateDate: '2026-07-07', eurPerUnit: 0.87 }]);
-    expect(warnings).toHaveLength(4);
+  const request = {
+    base: 'USD',
+    quote: 'EUR',
+    amount: 1,
+    start: '2026-06-28',
+    end: '2026-07-08',
+  } as const;
+  const series = {
+    amount: 1,
+    base: 'USD',
+    start_date: '2026-07-07',
+    end_date: '2026-07-07',
+    rates: { '2026-07-07': { EUR: 0.87 } },
+  };
+
+  it('parses a complete pair and a structurally valid empty map', () => {
+    expect(parseFxSeries(series, request)).toEqual([
+      { currency: 'USD', rateDate: '2026-07-07', eurPerUnit: 0.87 },
+    ]);
+    expect(parseFxSeries({ rates: {} }, request)).toEqual([]);
   });
 
-  it('parseFxSeries warns on a payload without a rates object', () => {
-    for (const payload of [null, 42, 'x', {}, { rates: null }, { rates: 'x' }]) {
-      const { rows, warnings } = parseFxSeries(payload, 'USD');
-      expect(rows).toEqual([]);
-      expect(warnings).toEqual(['no rate series for USD']);
-    }
-    expect(parseFxSeries({}, 'USD', '2026-06-28..2026-07-08').warnings).toEqual([
-      'no rate series for USD 2026-06-28..2026-07-08',
+  it('accepts the provider’s Friday observation for a weekend-only range', () => {
+    const friday = '2026-06-05';
+    const weekend = { ...request, start: '2026-06-06', end: '2026-06-07' };
+    const payload = {
+      ...series,
+      start_date: friday,
+      end_date: friday,
+      rates: { [friday]: { EUR: 0.85911 } },
+    };
+    expect(parseFxSeries(payload, weekend)).toEqual([
+      { currency: 'USD', rateDate: friday, eurPerUnit: 0.85911 },
     ]);
+    const monday = '2026-06-08';
+    expect(
+      parseFxSeries(
+        {
+          ...payload,
+          end_date: monday,
+          rates: { ...payload.rates, [monday]: { EUR: 0.86655 } },
+        },
+        { ...weekend, end: monday },
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('rejects a malformed success series in full, even if it contains usable observations', () => {
+    const malformed = [
+      null,
+      42,
+      'x',
+      [],
+      {},
+      { message: 'unavailable' },
+      { rates: null },
+      { rates: 'x' },
+      { rates: [] },
+      { rates: {}, base: 'CAD' },
+      { rates: {}, amount: 2 },
+      { rates: {}, start_date: '2026-02-29' },
+      { rates: {}, end_date: '2026-02-29' },
+      { rates: {}, end_date: '2026-07-09' },
+      { rates: {}, start_date: '2026-07-08', end_date: '2026-07-07' },
+      { ...series, base: undefined },
+      { ...series, base: 'CAD' },
+      { ...series, amount: undefined },
+      { ...series, amount: 2 },
+      { ...series, start_date: undefined },
+      { ...series, end_date: undefined },
+      { ...series, start_date: '2026-07-08', end_date: '2026-07-06' },
+      { ...series, start_date: '2026-07-06' },
+      { ...series, end_date: '2026-07-08' },
+      { ...series, start_date: '2026-07-08', end_date: '2026-07-08' },
+      {
+        ...series,
+        start_date: '2026-06-31',
+        rates: { ...series.rates, '2026-06-31': { EUR: 0.8 } },
+      },
+      {
+        ...series,
+        start_date: '2026-06-30',
+        rates: { ...series.rates, '2026-06-30': { EUR: 0.8 }, '2026-06-31': { EUR: 0.8 } },
+      },
+      { ...series, rates: { ...series.rates, '2026-07-09': { EUR: 0.33 } } },
+      {
+        ...series,
+        end_date: '2026-07-09',
+        rates: { ...series.rates, '2026-07-09': { EUR: 0.33 } },
+      },
+      {
+        ...series,
+        start_date: '2026-06-25',
+        rates: { ...series.rates, '2026-06-25': { EUR: 0.33 }, '2026-06-26': { EUR: 0.33 } },
+      },
+      {
+        ...series,
+        start_date: '2026-06-26',
+        rates: { ...series.rates, '2026-06-26': { EUR: 0.33 }, '2026-06-28': { EUR: 0.33 } },
+      },
+      ...[
+        null,
+        [],
+        [0.8],
+        {},
+        { CAD: 0.8 },
+        { EUR: 0.8, CAD: 0.6 },
+        ...['0.8', [0.8], true, null, -1, 0, Infinity, NaN].map((EUR) => ({ EUR })),
+      ].map((quote) => ({ ...series, rates: { '2026-07-07': quote } })),
+    ];
+    for (const payload of malformed) {
+      expect(() => parseFxSeries(payload, request)).toThrow(
+        /malformed FX series for USD 2026-06-28\.\.2026-07-08/,
+      );
+    }
   });
 
   it('assertSameFinalHost rejects a cross-host redirect and accepts same-host/empty', () => {
@@ -132,6 +228,31 @@ describe('findFxCoverageGaps', () => {
     const gaps = await findFxCoverageGaps(d1);
     expect(gaps).toEqual([
       { currency: 'CHF', minDate: '2026-07-08', maxDate: '2026-07-08', missingDates: 1 },
+    ]);
+  });
+
+  it('finds a foreign annex quote at the signing date of a staged or served contract', async () => {
+    const { db, d1 } = fxDb();
+    db.exec(`
+      INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, contract_date, currency)
+      VALUES ('eop:contracts:2026-07-09', '2026-07-09', 'TEST-NEW', 'NEW', '2026-07-08', 'EUR');
+
+      INSERT INTO authorities (id, name) VALUES ('auth:test', 'Община Тест');
+      INSERT INTO bidders (id, name) VALUES ('bidder:test', 'ТЕСТ ГРУП ЕООД');
+      INSERT INTO tenders (id, source_id, title, authority_id, procedure_type, status)
+        VALUES ('t:TEST-OLD', 'TEST-OLD', 'Тестова поръчка', 'auth:test', 'open', 'awarded');
+      INSERT INTO contracts (id, tender_id, bidder_id, contract_number, amount, currency, signed_at)
+        VALUES ('c:e:test', 't:TEST-OLD', 'bidder:test', 'OLD', 10000, 'BGN', '2025-06-10');
+
+      INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, value_after, currency)
+      VALUES
+        ('eop:annexes:2026-07-09', '2026-07-09', 'TEST-NEW', 'NEW', '2026-07-09', 15000, 'USD'),
+        ('eop:annexes:2026-07-09', '2026-07-09', 'TEST-OLD', 'OLD', '2026-07-09', 15000, 'CHF');
+    `);
+    insertRate(db, 'CHF', '2026-07-09', 0.95);
+    expect(await findFxCoverageGaps(d1)).toEqual([
+      { currency: 'CHF', minDate: '2025-06-10', maxDate: '2025-06-10', missingDates: 1 },
+      { currency: 'USD', minDate: '2026-07-08', maxDate: '2026-07-08', missingDates: 1 },
     ]);
   });
 
@@ -288,7 +409,7 @@ describe('loadFxRates', () => {
     stageContract(db, 'CHF', '2026-07-08');
     const fetchFn = vi.fn(async (url: string | URL | Request) => {
       if (String(url).includes('base=CHF')) {
-        return seriesResponse({ '2026-07-07': { EUR: 1.05 } });
+        return seriesResponse({ '2026-07-07': { EUR: 1.05 } }, 'CHF');
       }
       throw new Error('network down');
     }) as unknown as typeof fetch;
@@ -303,6 +424,41 @@ describe('loadFxRates', () => {
       seriesResponse({ '2026-07-07': { EUR: 0.87 } }),
     ) as unknown as typeof fetch;
     const retry = await loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn: retryFetch });
+    expect(retry.fetched.map((f) => f.currency)).toEqual(['USD']);
+    expect(retry.uncovered).toEqual([]);
+  });
+
+  it('rejects malformed USD even when CAD succeeds and preserves stored rates for retry', async () => {
+    const { db, d1 } = fxDb();
+    stageContract(db, 'USD', '2026-07-08');
+    stageContract(db, 'CAD', '2026-07-08');
+    insertRate(db, 'USD', '2026-06-01', 0.8);
+    const fetchFn = vi.fn<typeof fetch>(async (url) =>
+      String(url).includes('base=CAD')
+        ? seriesResponse({ '2026-07-07': { EUR: 0.6 } }, 'CAD')
+        : Response.json({
+            amount: 1,
+            base: 'USD',
+            start_date: '2026-06-01',
+            end_date: '2026-07-09',
+            rates: { '2026-06-01': { EUR: 0.33 }, '2026-07-09': { EUR: 0.33 } },
+          }),
+    );
+    await expect(loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn })).rejects.toThrow(
+      /malformed FX series for USD/,
+    );
+    const quotes = () =>
+      db
+        .prepare(
+          'SELECT base_currency, eur_per_unit FROM fx_rates ORDER BY base_currency, rate_date',
+        )
+        .all();
+    expect(quotes()).toEqual([
+      { base_currency: 'CAD', eur_per_unit: 0.6 },
+      { base_currency: 'USD', eur_per_unit: 0.8 },
+    ]);
+    fetchFn.mockResolvedValueOnce(seriesResponse({ '2026-07-07': { EUR: 0.87 } }));
+    const retry = await loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn });
     expect(retry.fetched.map((f) => f.currency)).toEqual(['USD']);
     expect(retry.uncovered).toEqual([]);
   });

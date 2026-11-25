@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { recordingD1 } from '@sigma/test-support';
 import {
@@ -14,6 +16,25 @@ import {
   splitSqlStatements,
   transientStagingStatements,
 } from './refresh';
+
+it('runs the same OCDS publication and buyer binding SQL in both derives', () => {
+  const load = (name: string) =>
+    readFileSync(resolve(import.meta.dirname, '../../../scripts', `${name}.sql`), 'utf8');
+  const full = load('normalize-raw');
+  const slice = load('refresh-slice');
+  for (const marker of [
+    'ocds-party-publication',
+    'ocds-authority-names',
+    'ocds-buyer-selection',
+    'ocds-buyer-binding',
+    'ocds-buyer-update',
+  ]) {
+    const section = (sql: string) =>
+      sql.split(`-- @${marker} start\n`)[1]?.split(`-- @${marker} end\n`)[0];
+    expect(section(full)).toBeTruthy();
+    expect(section(slice)).toBe(section(full));
+  }
+});
 
 // Capturing D1 over the shared recording double. refresh.ts hands D1 whole bundled SQL files, so
 // marker routing has nothing to route on — recordingD1 is the shape for a wrapper like this: it
@@ -128,19 +149,52 @@ describe('transient staging statements', () => {
     ]);
   });
 
-  it('drops every transient + legacy table in reverse of the declared order', () => {
+  it('drops staging views before their tables and clears all transient tables', () => {
     // [...scratch, ...current, ...legacy].reverse() → legacy first, then current back-to-front, and
     // the derive-step scratch tables last.
     expect(dropTransientStagingStatements()).toEqual([
+      'DROP VIEW IF EXISTS raw_contract_values',
+      'DROP VIEW IF EXISTS raw_contract_annex_evidence',
+      'DROP VIEW IF EXISTS raw_contract_suspect_annexes',
+      'DROP VIEW IF EXISTS raw_contract_value_annex_history',
+      'DROP VIEW IF EXISTS raw_contract_value_staged_annexes',
+      'DROP VIEW IF EXISTS raw_amendment_publications',
+      'DROP VIEW IF EXISTS raw_contract_publications',
+      'DROP VIEW IF EXISTS raw_ocds_scoped_names',
+      'DROP VIEW IF EXISTS raw_ocds_contract_buyer_moves',
+      'DROP VIEW IF EXISTS raw_open_synthetic_buyers',
+      'DROP VIEW IF EXISTS raw_contract_buyer_candidates',
+      'DROP VIEW IF EXISTS raw_ocds_tender_candidates',
+      'DROP VIEW IF EXISTS raw_serving_contract_authorities',
+      'DROP VIEW IF EXISTS raw_serving_ocds_parties',
+      'DROP VIEW IF EXISTS raw_ocds_party_retirements',
+      'DROP VIEW IF EXISTS raw_ocds_party_input',
+      'DROP VIEW IF EXISTS raw_supplier_evidence',
       'DROP TABLE IF EXISTS raw_egov_amendments',
       'DROP TABLE IF EXISTS raw_egov_tenders',
       'DROP TABLE IF EXISTS raw_egov_contracts',
       'DROP TABLE IF EXISTS raw_ocds_lots',
       'DROP TABLE IF EXISTS raw_ocds_parties',
+      'DROP TABLE IF EXISTS raw_new_synthetic_tenders',
+      'DROP TABLE IF EXISTS raw_contract_admissions',
+      'DROP TABLE IF EXISTS raw_contract_buyer_tenders',
+      'DROP TABLE IF EXISTS raw_previous_ocds_contract_buyers',
+      'DROP TABLE IF EXISTS raw_ocds_tender_selections',
+      'DROP TABLE IF EXISTS raw_ocds_authority_moves',
+      'DROP TABLE IF EXISTS raw_ocds_authority_keys',
+      'DROP TABLE IF EXISTS raw_ocds_party_screening',
       'DROP TABLE IF EXISTS raw_amendments',
       'DROP TABLE IF EXISTS raw_tenders',
+      'DROP TABLE IF EXISTS raw_contract_value_scope',
+      'DROP TABLE IF EXISTS raw_contract_value_annexes',
+      'DROP TABLE IF EXISTS raw_contract_value_inputs',
       'DROP TABLE IF EXISTS raw_contracts',
       'DROP TABLE IF EXISTS contract_cube',
+      'DROP TABLE IF EXISTS contractor_identity',
+      'DROP TABLE IF EXISTS refresh_amendment_winners',
+      'DROP TABLE IF EXISTS refresh_amendment_rekeyed',
+      'DROP TABLE IF EXISTS raw_contract_value_existing',
+      'DROP TABLE IF EXISTS raw_contract_value_results',
       'DROP TABLE IF EXISTS amend_contract_base',
       'DROP TABLE IF EXISTS amendment_contract_resolve',
     ]);
@@ -153,7 +207,7 @@ describe('D1 orchestration', () => {
     const schema = 'CREATE TABLE raw_contracts (id TEXT);\nCREATE TABLE authorities (id TEXT);';
     await createTransientStaging(db, schema);
     expect(batches).toHaveLength(2);
-    expect(batches[0]!.every((s) => s.startsWith('DROP TABLE IF EXISTS'))).toBe(true);
+    expect(batches[0]!.every((s) => /^DROP (TABLE|VIEW) IF EXISTS/.test(s))).toBe(true);
     expect(batches[1]).toEqual(['CREATE TABLE raw_contracts (id TEXT)']); // authorities filtered
   });
 

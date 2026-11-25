@@ -87,8 +87,9 @@
 - `amount` / `currency` — display стойността _както е записана_, в оригиналната валута: за
   `value_suspect` това е процедурната оценка, за `annex_suspect` — `signing`/`current` fallback, иначе `current` (или `signing`).
 - `amount_eur` — канонична EUR, **безопасна за сумиране**; `NULL` само в случаите, изброени по-горе.
-- `fx_converted` (`0/1`) — `1`, ако редът е чуждовалутен (≠ BGN/EUR) и `amount_eur` идва от пазарен курс.
-- `fx_rate` — EUR за 1 единица `currency` (`amount × fx_rate = amount_eur`); latest-prior ECB курс ≤10 дни преди подписването.
+- `fx_converted` (`0/1`) — `1`, ако валутата при подписване е различна от BGN/EUR.
+- `fx_rate` — EUR за 1 единица от валутата при подписване, по последния курс на ЕЦБ до 10 дни
+  назад. За текуща стойност в друга валута се ползва курсът на водещия анекс.
 - `signing_value_eur` — `signing_value` в EUR; `NULL` за `value_suspect` (и когато `signing` липсва).
 - `current_value_eur` — `current_value` в EUR; `NULL` за `value_suspect`/`annex_suspect` (и когато `current` липсва).
 

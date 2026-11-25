@@ -21,13 +21,17 @@ export function discardBody(res: Response): void {
 // fetches (assertSameFinalHost) the legacy host would fail closed, so point at the target
 // directly. Same response shape; the /v1 prefix is required on the .dev host.
 export const FRANKFURTER_API = 'https://api.frankfurter.dev/v1';
-// ECB publishes business-day rates only; the derive SQL (scripts/refresh-slice.sql and
-// scripts/normalize-raw.sql) carries the latest prior rate forward over weekends/holidays, bounded
-// to this many days. Keep the three in sync.
+// ECB publishes business-day rates only; the valuation SQL in work-staging-schema.sql carries
+// the latest prior rate forward over weekends and holidays, bounded to this many days.
 export const FX_LOOKBACK_DAYS = 10;
 export const FX_SOURCE = 'ecb:frankfurter';
 
-export const isIsoDate = (s: unknown): boolean => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+export function isIsoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 export const isCurrencyCode = (s: unknown): boolean => /^[A-Z]{3}$/.test(String(s));
 
 export function addDays(iso: string, days: number): string {
@@ -61,40 +65,65 @@ export interface FxRateRow {
   eurPerUnit: number;
 }
 
-export interface FxSeriesParse {
-  rows: FxRateRow[];
-  warnings: string[];
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** Validate one frankfurter time-series payload into fx_rates rows; malformed entries are skipped
- *  with a warning, never thrown — one bad datum must not sink the rest of the series. Rates must
- *  be finite and > 0 (deliberately stricter than the pre-#158 CLI, which accepted any finite
- *  number — a zero/negative "rate" can only be corrupt data). `range` only enriches warnings. */
-export function parseFxSeries(payload: unknown, currency: string, range?: string): FxSeriesParse {
-  const rows: FxRateRow[] = [];
-  const warnings: string[] = [];
-  const label = range ? `${currency} ${range}` : currency;
-  const rates =
-    payload !== null && typeof payload === 'object'
-      ? (payload as { rates?: unknown }).rates
-      : undefined;
-  if (rates === null || rates === undefined || typeof rates !== 'object') {
-    warnings.push(`no rate series for ${label}`);
-    return { rows, warnings };
+interface FxSeriesRequest {
+  base: string;
+  quote: 'EUR';
+  amount: 1;
+  start: string;
+  end: string;
+}
+
+/** Parse the Frankfurter v1 date-to-quote map (https://frankfurter.dev/v1/).
+ *  Validate the entire currency series before any rows are written. An empty map is valid. */
+export function parseFxSeries(payload: unknown, request: FxSeriesRequest): FxRateRow[] {
+  const label = `${request.base} ${request.start}..${request.end}`;
+  if (!isJsonObject(payload) || !isJsonObject(payload.rates)) {
+    throw new Error(`malformed FX series for ${label}: expected a rate map`);
   }
-  for (const [rateDate, quote] of Object.entries(rates)) {
+  const { base, start_date, end_date, amount, rates } = payload;
+  const dates = Object.keys(rates).sort();
+  const first = dates[0];
+  const last = dates.at(-1);
+  if (
+    (base !== undefined && base !== request.base) ||
+    (amount !== undefined && amount !== request.amount) ||
+    (start_date !== undefined && !isIsoDate(start_date)) ||
+    (end_date !== undefined && (!isIsoDate(end_date) || end_date > request.end)) ||
+    (typeof start_date === 'string' && typeof end_date === 'string' && start_date > end_date) ||
+    (first !== undefined &&
+      (base !== request.base ||
+        amount !== request.amount ||
+        start_date !== first ||
+        end_date !== last))
+  ) {
+    throw new Error(`malformed FX series for ${label}: invalid series metadata`);
+  }
+  // V1 returns the actual first and last observation as its bounds. The range query includes
+  // at most one preceding observation when the lower boundary has no business-day quote.
+  return dates.map((rateDate, index) => {
     if (!isIsoDate(rateDate)) {
-      warnings.push(`invalid rate date for ${currency}: ${rateDate}`);
-      continue;
+      throw new Error(`malformed FX series for ${label}: invalid rate date ${rateDate}`);
     }
-    const eurPerUnit = Number((quote as { EUR?: unknown } | null)?.EUR);
-    if (!Number.isFinite(eurPerUnit) || eurPerUnit <= 0) {
-      warnings.push(`invalid rate for ${currency} ${rateDate}`);
-      continue;
+    if (index > 0 && rateDate <= request.start) {
+      throw new Error(`malformed FX series for ${label}: out-of-range observation ${rateDate}`);
     }
-    rows.push({ currency, rateDate, eurPerUnit });
-  }
-  return { rows, warnings };
+    const quote = rates[rateDate];
+    const quoteMap = isJsonObject(quote) ? quote : {};
+    const eurPerUnit = quoteMap[request.quote];
+    if (
+      typeof eurPerUnit !== 'number' ||
+      !Number.isFinite(eurPerUnit) ||
+      eurPerUnit <= 0 ||
+      Object.keys(quoteMap).length !== 1
+    ) {
+      throw new Error(`malformed FX series for ${label}: invalid EUR rate on ${rateDate}`);
+    }
+    return { currency: request.base, rateDate, eurPerUnit };
+  });
 }
 
 export interface FxCoverageGap {
@@ -111,16 +140,70 @@ interface GapRow {
   missing_dates: number;
 }
 
-// Contract dates in raw staging whose currency has no usable rate: no fx_rates row within the
-// FX_LOOKBACK_DAYS carry-forward window the derive SQL uses. Same corpus filter as the CLI's
-// scripts/load-fx.mjs range query (EOP + OCDS sources, genuinely foreign currencies only).
-const COVERAGE_GAP_SQL = `
+// The raw keys are final after annex resolution. A slice also has the affected cumulative
+// history in raw_contract_value_annexes. Full imports use the resolved raw publications.
+const FX_CONTRACT_DATES_SQL = `
+  WITH affected AS MATERIALIZED (
+    SELECT unp, contract_number FROM raw_contract_value_scope
+    UNION
+    SELECT unp, contract_number FROM raw_amendments
+    WHERE unp IS NOT NULL AND contract_number IS NOT NULL
+  ), served AS MATERIALIZED (
+    SELECT k.unp, k.contract_number, c.currency, c.signed_at AS contract_date,
+      c.own_estimate_value, c.own_estimate_currency
+    FROM affected k
+    CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
+    WHERE c.signed_at IS NOT NULL
+  ), staged AS MATERIALIZED (
+    SELECT unp, contract_number, currency, contract_date, estimated_value, procurement_currency
+    FROM raw_contracts
+    WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND contract_date IS NOT NULL
+  ), dates AS MATERIALIZED (
+    SELECT unp, contract_number, contract_date FROM staged
+    UNION
+    SELECT unp, contract_number, contract_date FROM served
+  ), contract_currencies AS (
+    SELECT currency, contract_date FROM staged
+    UNION ALL
+    SELECT currency, contract_date FROM served
+    UNION ALL
+    SELECT COALESCE(NULLIF(procurement_currency, ''), currency), contract_date
+    FROM staged WHERE estimated_value IS NOT NULL
+    UNION ALL
+    SELECT COALESCE(NULLIF(own_estimate_currency, ''), currency), contract_date
+    FROM served WHERE own_estimate_value IS NOT NULL
+  ), procedure_currencies AS (
+    SELECT t.currency, d.contract_date
+    FROM dates d JOIN raw_tenders t ON t.unp = d.unp
+    WHERE t.lot_id IS NULL AND t.estimated_value IS NOT NULL
+    UNION ALL
+    SELECT t.currency, d.contract_date
+    FROM dates d JOIN tenders t ON t.id = 't:' || d.unp
+    WHERE t.estimated_value IS NOT NULL
+  ), annex_currencies AS (
+    SELECT a.currency, d.contract_date
+    FROM dates d JOIN raw_amendments a ON a.unp = d.unp AND a.contract_number = d.contract_number
+    WHERE COALESCE(a.value_after_restated, a.value_after) IS NOT NULL
+    UNION ALL
+    SELECT a.currency, d.contract_date
+    FROM dates d JOIN raw_contract_value_annexes a ON a.unp = d.unp AND a.contract_number = d.contract_number
+    WHERE a.effective_after IS NOT NULL
+  )
+  SELECT currency, contract_date FROM (
+    SELECT * FROM contract_currencies
+    UNION ALL
+    SELECT * FROM procedure_currencies
+    UNION ALL
+    SELECT * FROM annex_currencies
+  ) WHERE currency NOT IN ('', 'BGN', 'EUR')`;
+
+// Coverage uses the same signing-date lookback as valuation. A metadata-only slice can still
+// need a quote for a previously published annex or estimate.
+export const FX_COVERAGE_GAP_SQL = `
   SELECT c.currency, MIN(c.contract_date) AS min_date, MAX(c.contract_date) AS max_date,
          COUNT(DISTINCT c.contract_date) AS missing_dates
-  FROM raw_contracts c
-  WHERE (c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%')
-    AND c.currency NOT IN ('BGN','EUR') AND c.contract_date IS NOT NULL
-    AND NOT EXISTS (
+  FROM (${FX_CONTRACT_DATES_SQL}) c
+  WHERE NOT EXISTS (
       SELECT 1 FROM fx_rates f
       WHERE f.base_currency = c.currency
         AND f.rate_date <= c.contract_date
@@ -129,7 +212,7 @@ const COVERAGE_GAP_SQL = `
   GROUP BY c.currency ORDER BY c.currency`;
 
 export async function findFxCoverageGaps(db: D1Database): Promise<FxCoverageGap[]> {
-  const { results } = await db.prepare(COVERAGE_GAP_SQL).all<GapRow>();
+  const { results } = await db.prepare(FX_COVERAGE_GAP_SQL).all<GapRow>();
   return results.map((r) => ({
     currency: String(r.currency),
     minDate: String(r.min_date),
@@ -252,8 +335,13 @@ export async function loadFxRates(db: D1Database, opts: LoadFxOptions): Promise<
         discardBody(res);
         throw new Error(`HTTP ${res.status}`);
       }
-      const { rows, warnings } = parseFxSeries(await res.json(), gap.currency, `${start}..${end}`);
-      summary.warnings.push(...warnings);
+      const rows = parseFxSeries(await res.json(), {
+        base: gap.currency,
+        quote: 'EUR',
+        amount: 1,
+        start,
+        end,
+      });
       await upsertFxRates(db, rows, opts.fetchedAt);
       load.loaded = rows.length;
       summary.inserted += rows.length;

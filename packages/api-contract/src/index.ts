@@ -193,7 +193,7 @@ export interface SectorSpend {
 export interface AuthorityDetail {
   slug: string;
   name: string;
-  eik: string;
+  eik: string | null;
   typeGroup: string | null;
   typeLabel: string | null;
   settlement: string | null;

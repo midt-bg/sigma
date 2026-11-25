@@ -23,8 +23,6 @@ const personMigrationPaths = [
 // #305 Tier-2: served amendments gained value_restated/value_treatment (promote + refresh-slice write them).
 const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
 const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
-// #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
-const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [
   ['normalize-raw', resolve(root, 'scripts/normalize-raw.sql')],
@@ -58,7 +56,6 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     for (const path of personMigrationPaths) readScript(dbPath, path);
     readScript(dbPath, migration6Path);
     readScript(dbPath, migration7Path);
-    readScript(dbPath, migration8Path);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

@@ -343,6 +343,37 @@ describe('releaseToAmendments', () => {
 });
 
 describe('OCDS enrichment mappers', () => {
+  it('uses the exact raw appearance for buyer and supplier evidence even when the reference is a copy', () => {
+    const supplied = "TEST'\0; \u009f";
+    const party = { id: supplied, identifier: { id: supplied }, name: 'Тестова страна' };
+    const mixed = {
+      ...release,
+      parties: [party],
+      buyer: { id: supplied },
+      awards: [{ id: release.contracts![0]!.awardID, suppliers: [{ id: supplied }] }],
+    };
+    const [buyer] = releaseToContracts(mixed, meta);
+    const [supplier] = releaseToParties(mixed, meta);
+    expect(buyer).toMatchObject({
+      authority_eik: supplied,
+      contractor_eik: supplied,
+      buyer_is_supplier: 1,
+      buyer_appearance: supplier?.appearance,
+    });
+    expect(supplier).toMatchObject({
+      party_id: null,
+      party_id_copies_eik: 1,
+      eik: supplied,
+      is_supplier: 1,
+    });
+    expect(supplier?.appearance).toMatch(/^[0-9a-f]{64}$/);
+    const [other] = releaseToParties(
+      { ...mixed, parties: [{ ...party, identifier: { id: `${supplied}extra` } }] },
+      meta,
+    );
+    expect(other?.appearance).not.toBe(supplier?.appearance);
+  });
+
   it('maps party contacts, award suppliers, and tender lots', () => {
     const enriched: OcdsRelease = {
       ...release,
@@ -605,18 +636,32 @@ describe('branch completion — parties, lots, catch-up window', () => {
     );
     expect(rows[0]).toMatchObject({
       eik: '111',
+      is_supplier: 1,
       roles: 'buyer,supplier',
       region_nuts: 'BG411',
       contact_email: 'a@b.bg',
     });
     expect(rows[1]).toMatchObject({
       eik: null,
+      is_supplier: 0,
       scheme: null,
       roles: null, // empty roles → '' → null
       region_nuts: null,
       contact_email: null,
       contact_name: null,
     });
+  });
+
+  it('recognizes the party backing an award supplier when its roles are missing', () => {
+    const rows = releaseToParties(
+      {
+        parties: [{ id: 'SUPPLIER', identifier: { id: 'TEST\0ID' } }, { id: 'OTHER' }],
+        awards: [{ suppliers: [{ id: 'SUPPLIER' }] }],
+      },
+      meta,
+    );
+    expect(rows.map((row) => row.is_supplier)).toEqual([1, 0]);
+    expect(rows[0]?.eik).toBe('TEST\0ID');
   });
 
   it('releaseToLots coerces lot value/currency and nulls missing pieces', () => {

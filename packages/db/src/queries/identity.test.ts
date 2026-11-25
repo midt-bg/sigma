@@ -156,6 +156,14 @@ describe('slug decode edge cases', () => {
   it('authoritySlug returns an unprefixed id verbatim (no auth: prefix)', () => {
     expect(authoritySlug('000695089')).toBe('000695089');
   });
+
+  it('round trips a procedure-scoped OCDS buyer without a public EIK', () => {
+    const id = 'ocds-auth:6f6364732d74657374';
+    expect(authorityIdFromSlug(authoritySlug(id))).toBe(id);
+    const legacy = `auth:${id}`;
+    expect(authoritySlug(legacy)).not.toBe(authoritySlug(id));
+    expect(authorityIdFromSlug(authoritySlug(legacy))).toBe(legacy);
+  });
   it('companySlug returns an unprefixed id verbatim (neither eik: nor name:)', () => {
     expect(companySlug('rawid-123')).toBe('rawid-123');
   });

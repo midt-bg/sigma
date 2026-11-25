@@ -48,11 +48,69 @@ DELETE FROM sector_totals;
 DELETE FROM facet_counts;
 DELETE FROM home_totals;
 DELETE FROM contract_co_authorities;
+DELETE FROM ocds_contract_buyers;
 DELETE FROM contracts;
+DELETE FROM parties;
 DELETE FROM lots;
+DELETE FROM synthetic_tenders_awaiting_buyer;
+DELETE FROM ocds_tender_buyers;
 DELETE FROM tenders;
 DELETE FROM bidders;
 DELETE FROM authorities;
+
+-- @ocds-party-publication start
+-- Keep supplier-role knowledge monotonic for exact source appearances. Stage the screening
+-- result once so publication and authority projection use the same decision.
+DELETE FROM raw_ocds_party_screening;
+INSERT INTO raw_ocds_party_screening (party_row_id, evidence_status)
+SELECT p.id, s.evidence_status
+FROM raw_ocds_parties p
+JOIN raw_supplier_evidence s ON s.eik_raw IS p.eik
+WHERE p.is_supplier = 1;
+
+INSERT OR IGNORE INTO ocds_supplier_appearances (appearance)
+SELECT p.appearance
+FROM raw_ocds_party_screening s JOIN raw_ocds_parties p ON p.id = s.party_row_id
+WHERE s.evidence_status = 'unverified' AND p.appearance IS NOT NULL;
+
+INSERT OR IGNORE INTO raw_ocds_party_screening (party_row_id, evidence_status)
+SELECT p.id, 'unverified'
+FROM raw_ocds_parties p JOIN ocds_supplier_appearances f ON f.appearance = p.appearance
+WHERE p.is_supplier = 0;
+
+INSERT OR REPLACE INTO parties (
+  party_key, eik, source, ocid, party_id, name, street_address, locality, region_nuts,
+  contact_email, contact_phone
+)
+SELECT party_key, eik, source, ocid, party_id, name, street_address, locality, region_nuts,
+  contact_email, contact_phone
+FROM raw_serving_ocds_parties;
+DELETE FROM parties WHERE party_key IN (SELECT party_key FROM raw_ocds_party_retirements);
+
+-- Only a buyer matched to supplier evidence loses the raw authority identifier. The safe
+-- key is scoped to the OCDS procedure. It cannot collide with a legacy auth: identifier.
+DELETE FROM raw_ocds_authority_moves;
+DELETE FROM raw_ocds_authority_keys;
+INSERT INTO raw_ocds_authority_keys (contract_row_id, authority_id)
+SELECT c.id, CASE WHEN NULLIF(c.unp, '') IS NOT NULL THEN 'ocds-auth:' || lower(hex(c.unp)) END
+FROM raw_contracts c
+LEFT JOIN ocds_supplier_appearances f ON f.appearance = c.buyer_appearance
+WHERE f.appearance IS NOT NULL OR (
+  c.buyer_is_supplier = 1 AND c.buyer_appearance IS NULL AND EXISTS (
+    SELECT 1 FROM raw_ocds_parties p
+    JOIN raw_ocds_party_screening s ON s.party_row_id = p.id
+    WHERE p.source = c.source AND p.ocid IS c.unp AND p.eik IS c.authority_eik
+      AND p.is_supplier = 1 AND s.evidence_status = 'unverified'
+  )
+);
+
+-- @ocds-party-publication end
+
+-- @ocds-authority-names start
+INSERT INTO authorities (id, name, bulstat)
+SELECT authority_id, name, NULL FROM raw_ocds_scoped_names WHERE 1 = 1
+ON CONFLICT(id) DO UPDATE SET name = excluded.name, type_group = NULL;
+-- @ocds-authority-names end
 
 -- 1) Authorities — dedupe on ЕИК across both contracts and tenders staging, keep a
 --    canonical display name and the authority type (Вид на възложителя).
@@ -76,7 +134,7 @@ FROM (
   FROM (
     SELECT authority_eik, authority_name, COUNT(*) AS cnt
     FROM (
-      SELECT authority_eik, authority_name FROM raw_contracts WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+      SELECT authority_eik, authority_name FROM raw_serving_contract_authorities WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
       UNION ALL
       SELECT authority_eik, authority_name FROM raw_tenders   WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
     )
@@ -104,7 +162,7 @@ FROM (
     SELECT authority_eik, authority_type, COUNT(*) AS cnt
     FROM (
       SELECT c.authority_eik, c.authority_type
-      FROM raw_contracts c
+      FROM raw_serving_contract_authorities c
       JOIN authority_canonical_name acn
         ON acn.authority_eik = c.authority_eik AND acn.canonical_name = c.authority_name
       UNION ALL
@@ -131,7 +189,7 @@ FROM (
   -- and split to individual co-authorities (contract_co_authorities); the composite is referenced by
   -- nothing, so it would only be an orphan row. Individual members still enter via their standalone
   -- occurrences and member_defaults.
-  SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+  SELECT authority_eik FROM raw_serving_contract_authorities WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
   UNION
   SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
 ) s
@@ -153,7 +211,7 @@ WITH observations AS (
   WHERE unp IS NOT NULL AND authority_eik LIKE '%;%'
   UNION ALL
   SELECT unp, authority_eik, authority_name, authority_type
-  FROM raw_contracts
+  FROM raw_serving_contract_authorities
   WHERE unp IS NOT NULL AND authority_eik LIKE '%;%'
 ), ranked AS (
   SELECT unp, authority_eik, authority_name, authority_type,
@@ -255,7 +313,7 @@ CREATE TABLE unp_prefix_authorities (
   authority_eik TEXT NOT NULL
 );
 WITH prefix_observations AS (
-  SELECT SUBSTR(unp, 1, 5) AS prefix, authority_eik FROM raw_contracts
+  SELECT SUBSTR(unp, 1, 5) AS prefix, authority_eik FROM raw_serving_contract_authorities
   WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
     AND unp GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
   UNION ALL
@@ -282,7 +340,7 @@ CREATE TABLE joint_tender_leads (
   authority_id TEXT NOT NULL REFERENCES authorities(id)
 );
 WITH standalone_observations AS (
-  SELECT authority_eik, authority_name FROM raw_contracts
+  SELECT authority_eik, authority_name FROM raw_serving_contract_authorities
   WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%' AND authority_name IS NOT NULL
   UNION ALL
   SELECT authority_eik, authority_name FROM raw_tenders
@@ -331,7 +389,7 @@ UPDATE authorities SET type_group = CASE
   WHEN EXISTS (
     SELECT 1
     FROM (
-      SELECT authority_eik, authority_type FROM raw_contracts
+      SELECT authority_eik, authority_type FROM raw_serving_contract_authorities
       UNION ALL
       SELECT authority_eik, authority_type FROM raw_tenders
     ) raw_authority_types
@@ -398,13 +456,29 @@ WHERE t.lot_id IS NULL
 -- 2b) Synthetic tenders — УНП that appear only in contracts (no tenders-export row), so
 --     every contract has a parent. Procedure type is unknown ('неизвестна'); subject/CPV/
 --     estimated are taken from the contract line.
+-- Fold procedure metadata before valuation, which uses its estimate. Record which
+-- synthetic parents are new so an existing buyer owned by another source stays protected.
+DELETE FROM raw_new_synthetic_tenders;
+INSERT INTO raw_new_synthetic_tenders
+SELECT DISTINCT 't:' || c.unp
+FROM raw_contracts c
+WHERE c.unp IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM tenders t WHERE t.id = 't:' || c.unp)
+  AND NOT EXISTS (SELECT 1 FROM raw_tenders h WHERE h.unp = c.unp);
+
 WITH folded AS (
   SELECT
     c.unp,
     MIN(c.procurement_subject) AS raw_title,
     COALESCE(
       (SELECT j.authority_id FROM joint_tender_leads j WHERE j.unp = c.unp),
-      'auth:' || MIN(c.authority_eik)
+      CASE WHEN NOT MAX(c.source LIKE 'eop:%' AND eligible.id IS NOT NULL) THEN
+        MIN(CASE WHEN c.source LIKE 'ocds:%' THEN eligible.id END)
+      END,
+      CASE WHEN MAX(c.source LIKE 'ocds:%') THEN
+        MIN(CASE WHEN c.source LIKE 'eop:%' THEN a.authority_id END)
+      END,
+      MIN(a.authority_id)
     ) AS authority_id,
     MIN(c.cpv_code) AS cpv_code,
     MIN(c.estimated_value) AS estimated_value,
@@ -414,6 +488,8 @@ WITH folded AS (
     MIN(c.award_criteria) AS award_criteria,
     MIN(NULLIF(c.tender_ext_id, '')) AS eop_tender_id  -- synthetic tenders inherit the EOP id from contracts
   FROM raw_contracts c
+  JOIN raw_serving_contract_authorities a ON a.id = c.id
+  LEFT JOIN authorities eligible ON eligible.id = a.authority_id
   WHERE 1 = 1
     AND c.unp IS NOT NULL
     AND NOT EXISTS (SELECT 1 FROM raw_tenders t WHERE t.unp = c.unp)
@@ -525,63 +601,20 @@ CREATE TABLE contractor_identity (
   name_norm  TEXT,
   eik_clean  TEXT,
   eik_valid  INTEGER NOT NULL,
+  eik_status TEXT NOT NULL,
   bidder_key TEXT NOT NULL,
   PRIMARY KEY (eik_raw, name_raw)
 );
 
-INSERT INTO contractor_identity (eik_raw, name_raw, name_norm, eik_clean, eik_valid, bidder_key)
-SELECT
-  eik_raw,
-  name_raw,
-  name_raw,
-  eik_clean,
-  eik_valid,
-  CASE
-    WHEN eik_valid = 1 THEN 'eik:' || eik_clean
-    ELSE 'pending'
-  END
+INSERT INTO contractor_identity (eik_raw, name_raw, name_norm, eik_clean, eik_valid, eik_status, bidder_key)
+WITH suppliers AS MATERIALIZED (SELECT * FROM raw_supplier_evidence)
+SELECT c.contractor_eik, c.contractor_name, c.contractor_name, s.eik, s.eik IS NOT NULL, s.evidence_status,
+  CASE WHEN s.eik IS NOT NULL THEN 'eik:' || s.eik ELSE 'pending' END
 FROM (
-  SELECT
-    eik_raw,
-    name_raw,
-    eik_clean,
-    -- Bulgarian ЕИК/Булстат control-digit (checksum) validation. A merely SYNTACTIC 9/13-digit
-    -- check let the fake/service code „000000001" and wrong-digit typo twins pass, collapsing
-    -- unrelated foreign suppliers (Elsevier + Clarivate/Web of Science + a gas consultancy + a
-    -- 102 EUR construction line) onto one node (#195). Enforce the real checksum so invalid codes
-    -- get eik_valid = 0 and fall back to the name-based key, which splits them apart again.
-    --   9-digit: weight positions 1..8 by 1..8; control = sum % 11. If that is 10, re-weight by
-    --            3..10; a second 10 → 0. The 9th digit must equal the control.
-    --   13-digit: the leading 9 digits must themselves be a valid 9-digit ЕИК, then weight
-    --            positions 9..12 by 2,7,3,5 (fallback 4,9,5,7; second 10 → 0). The 13th digit
-    --            must equal that control.
-    CASE
-      WHEN eik_clean IS NULL OR eik_clean IN ('000000000', '0000000000000') OR eik_clean GLOB '*[^0-9]*' OR LENGTH(eik_clean) NOT IN (9, 13) THEN 0
-      WHEN (
-        CASE
-          WHEN (1 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 2 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11 < 10 THEN (1 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 2 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11
-          WHEN (3 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 10 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11 < 10 THEN (3 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 10 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11
-          ELSE 0
-        END
-      ) <> CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) THEN 0
-      WHEN LENGTH(eik_clean) = 9 THEN 1
-      WHEN (
-        CASE
-          WHEN (2 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11 < 10 THEN (2 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11
-          WHEN (4 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11 < 10 THEN (4 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11
-          ELSE 0
-        END
-      ) = CAST(SUBSTR(eik_clean, 13, 1) AS INTEGER) THEN 1
-      ELSE 0
-    END AS eik_valid
-  FROM (
-    SELECT
-      contractor_eik AS eik_raw,
-      contractor_name AS name_raw,
-      TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
-    FROM (SELECT DISTINCT contractor_eik, contractor_name FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%')
-  )
-);
+  SELECT DISTINCT contractor_eik, contractor_name FROM raw_contracts
+  WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+) c
+JOIN suppliers s ON s.eik_raw IS c.contractor_eik;
 
 UPDATE contractor_identity
 SET name_norm = TRIM(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name_norm, char(160), ' '), char(9), ' '), char(10), ' '), char(13), ' '), '  ', ' '), '  ', ' '), '  ', ' '));
@@ -708,119 +741,111 @@ WHERE ownership_kind IS NULL AND eik_valid = 1
   AND (eik_normalized IN (SELECT eik FROM public_owned_eik)
        OR (length(eik_normalized) = 13 AND substr(eik_normalized, 1, 9) IN (SELECT eik FROM public_owned_eik)));
 
--- 5) Contracts — awarded lines (1:1 with staging rows), linked to tender + winning bidder,
---    with the data-quality verdict (see 0007_data_quality.sql):
---      value_flag = 'value_suspect'  effective value >2bn EUR, >200× the procedure estimate, or
---                                    inside the 95×–105× стотинки band (a dropped decimal point)
---                                    when that estimate is at least 1000 EUR — repaired to the
---                                    procedure estimate for sums/display
---                 | 'value_low'      zero/negative, OR a tiny signed value (< 1000 EUR) that is also
---                                    < 5% of the estimate. KEPT IN the sums (amount_eur populated) but
---                                    LABELLED — large legitimate framework call-offs (a small share of
---                                    a huge ceiling but big in absolute terms) are excluded by the
---                                    < 1000 EUR floor, so they keep counting and stay unflagged
---                 | 'annex_suspect'  amendment pushed current_value ≥100× signing, or negative, or
---                                    a single annex step jumped ≥10× while the aggregate ended ≥5×
---                                    over signing (a mis-keyed annex value) →
---                                    fall back to signing_value, or current_value if signing is
---                                    missing, so the contract still counts
---                 | 'review'         ≥10× the procedure estimate (kept, but flagged)
---                 | 'ok'
---    `amount` is the as-recorded display value (current_value when an annex legitimately raised it,
---    else signing; procedure estimate for value_suspect; signing/current fallback for annex_suspect).
---    `amount_eur` is the SAFE-TO-SUM canonical value:
---    BGN→EUR at the fixed peg (÷1.95583), EUR as-is, foreign at the latest prior ECB rate within
---    10 days of signing (fx_rates); value_suspect uses the procedure estimate in EUR, and foreign
---    rows without a bounded prior rate stay NULL. fx_converted = 1 for foreign rows, and
---    fx_rate carries the applied rate on the row (amount * fx_rate = amount_eur), so the original value,
---    the rate, and the EUR value are all auditable without joining fx_rates.
---    `framework` is 1 for an order placed under a framework agreement and 2 for the record of the
---    agreement itself. That record carries the agreement's CEILING — the most its buyers may order
---    under it, not money spent — so its amount_eur stays NULL and no sum or ranking ever reads it: the
---    orders placed under the agreement are the contracts that carry the money.
+-- 5) Contracts — price the staging rows, then apply the existing feed and identity precedence.
+DELETE FROM raw_contract_value_annexes;
+INSERT INTO raw_contract_value_annexes SELECT * FROM raw_contract_value_staged_annexes;
+
+-- Stage the native amounts and their currencies for the shared valuation rule.
+DELETE FROM raw_contract_value_inputs;
+INSERT INTO raw_contract_value_inputs
+WITH amendment_winner AS (
+  SELECT unp, contract_number, currency, natural_key,
+    ROW_NUMBER() OVER (
+      PARTITION BY unp, contract_number ORDER BY published_at DESC, natural_key DESC
+    ) AS win_rn
+  FROM raw_contract_value_annexes
+  WHERE effective_after IS NOT NULL
+)
+SELECT c.id, c.unp, c.contract_number, c.contract_date, c.signing_value, c.currency, c.current_value, aw.currency,
+  t.estimated_value, t.currency, c.estimated_value, c.procurement_currency,
+  CASE WHEN c.framework_contract = 1 THEN 1 WHEN c.framework_notice = 1 THEN 2 END,
+  0, NULL, aw.natural_key
+FROM raw_contracts c
+LEFT JOIN tenders t ON t.id = 't:' || c.unp
+LEFT JOIN amendment_winner aw
+  ON aw.unp = c.unp AND aw.contract_number = c.contract_number AND aw.win_rn = 1
+WHERE c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%';
+DROP TABLE IF EXISTS raw_contract_value_results;
+CREATE TABLE raw_contract_value_results AS SELECT * FROM raw_contract_values;
+CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results(id);
+
+-- Share the admitted rows with buyer selection. Preserve full rebuild's publication ranking.
+DELETE FROM raw_contract_admissions;
+INSERT INTO raw_contract_admissions (raw_id, contract_id, bidder_id, amount, lot_id)
+SELECT x.id,
+  CASE WHEN x.source LIKE 'eop:%' THEN 'c:e:' ELSE 'c:o:' END ||
+    COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
+    COALESCE(NULLIF(CASE WHEN x.source LIKE 'eop:%' THEN x.lot_norm ELSE x.lot_id END, ''), '_') ||
+    ':' || x.bidder_key || ':' || x.contract_ordinal,
+  x.bidder_key, x.amount,
+  CASE WHEN x.lot_id IS NOT NULL AND TRIM(x.lot_id) <> ''
+    THEN 'lot:' || x.unp || ':' || x.lot_norm END
+FROM (
+  SELECT z.*,
+    ROW_NUMBER() OVER (
+        PARTITION BY z.unp, COALESCE(z.contract_number, ''), z.bidder_key,
+          CASE
+            WHEN z.source LIKE 'eop:%' THEN COALESCE(NULLIF(z.lot_norm, ''), '_')
+            ELSE COALESCE(NULLIF(z.lot_id, ''), '_')
+          END
+        ORDER BY z.signing_value, z.contract_date, z.document_number, z.id
+      ) AS contract_ordinal
+  FROM (
+    SELECT c.id, c.unp, c.source, c.contract_number, c.lot_id, c.signing_value, c.contract_date,
+      c.document_number, ci.bidder_key,
+      v.amount,
+      CASE
+        WHEN c.lot_id LIKE 'LOT-%' AND REPLACE(c.lot_id, 'LOT-', '') <> '' AND REPLACE(c.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(c.lot_id, 'LOT-', '') AS INTEGER)
+        WHEN c.lot_id <> '' AND c.lot_id NOT GLOB '*[^0-9]*' THEN CAST(c.lot_id AS INTEGER)
+        ELSE c.lot_id
+      END AS lot_norm
+    FROM raw_contract_publications c
+    JOIN contractor_identity ci
+      ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
+    JOIN raw_contract_value_results v ON v.id = c.id
+  ) z
+) x
+WHERE x.amount IS NOT NULL
+  AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
+  AND EXISTS (SELECT 1 FROM bidders  b  WHERE b.id  = x.bidder_key);
+
+DELETE FROM raw_contract_buyer_tenders;
+DELETE FROM raw_previous_ocds_contract_buyers;
+
 INSERT OR IGNORE INTO contracts
   (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at,
    contract_number, signing_value, current_value, current_value_currency, annex_count, eu_funded, bids_received,
    contract_kind, awarded_to_group, value_flag, date_flag, amount_eur, fx_converted, fx_rate,
+   signing_value_eur, current_value_eur,
    lot_id, document_number, published_at, contract_subject,
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
-   eauction, framework, accelerated, strategic)
--- amendment_winner: the currency of whichever raw_amendments row supplied contract_number's
--- current_value (derive-amendments.sql's own rollup, mirrored here so the winning currency
--- travels alongside the value it minted — computed ONCE over raw_amendments, not per-row).
-WITH amendment_dedup AS (
-  SELECT *,
-    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
-    -- row — must match derive-amendments.sql / promote-amendments.sql byte-for-byte (review nikimilenkov
-    -- MEDIUM 3). NULL raw → the plain number, so unresolved rows are unaffected.
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
-      COALESCE(
-        NULLIF(document_number, ''),
-        NULLIF(correction_number, ''),
-        NULLIF(seq_no, ''),
-        'content:' || COALESCE(published_at, '') || ':' ||
-          COALESCE(CAST(value_before AS TEXT), '') || ':' ||
-          COALESCE(CAST(value_after AS TEXT), '') || ':' ||
-          COALESCE(CAST(value_delta AS TEXT), '') || ':' ||
-          COALESCE(currency, '') || ':' ||
-          COALESCE(description, '')
-      ) AS natural_key
-  FROM raw_amendments
-), amendment_rn AS (
-  SELECT *,
-    ROW_NUMBER() OVER (PARTITION BY natural_key ORDER BY source DESC, id DESC) AS rn
-  FROM amendment_dedup
-), amendment_winner AS (
-  SELECT unp, contract_number, currency,
-    ROW_NUMBER() OVER (
-      PARTITION BY unp, contract_number
-      ORDER BY published_at DESC, natural_key DESC
-    ) AS win_rn
-  FROM amendment_rn
-  WHERE rn = 1 AND value_after IS NOT NULL
-)
+   eauction, framework, accelerated, strategic, own_estimate_source, own_estimate_value, own_estimate_currency,
+   signing_currency_raw, signing_contractor_eik, signing_contractor_status)
 SELECT
-  CASE
-    WHEN x.source LIKE 'eop:%' THEN 'c:e:' || COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
-      COALESCE(NULLIF(x.lot_norm, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal
-    WHEN x.source LIKE 'ocds:%' THEN 'c:o:' || COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
-      COALESCE(NULLIF(x.lot_id, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal
-    ELSE 'c:' || x.id
-  END,
+  p.contract_id,
   't:' || x.unp,
-  x.bidder_key,
-  NULLIF(TRIM(x.authority_name_raw), ''),
-  x.display_native,
+  p.bidder_id,
+  NULLIF(TRIM(a.authority_name), ''),
+  p.amount,
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
   x.contract_number,
   x.signing_value,
   x.current_value,
-  x.current_value_currency,
+  v.current_value_currency,
   COALESCE(x.annex_count, 0),
   x.eu_funded,
   x.bids_received,
   x.contract_kind,
   x.awarded_to_group,
-  x.value_flag,
-  x.date_flag,
-  CASE
-    WHEN x.framework_notice = 1 AND x.framework_contract IS NOT 1 THEN NULL
-    WHEN x.value_flag = 'value_suspect' THEN x.proc_est_eur
-    WHEN x.trusted_native IS NULL THEN NULL
-    WHEN x.trusted_currency = 'EUR' THEN x.trusted_native
-    WHEN x.trusted_currency = 'BGN' THEN x.trusted_native / 1.95583
-    ELSE x.trusted_native * x.fx_rate
-  END,
-  CASE WHEN COALESCE(x.currency, 'BGN') NOT IN ('BGN', 'EUR') THEN 1 ELSE 0 END,
-  x.fx_rate,
-  CASE WHEN x.lot_id IS NOT NULL AND TRIM(x.lot_id) <> '' THEN 'lot:' || x.unp || ':' || CASE
-    WHEN x.lot_id LIKE 'LOT-%' AND REPLACE(x.lot_id, 'LOT-', '') <> '' AND REPLACE(x.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(x.lot_id, 'LOT-', '') AS INTEGER)
-    WHEN x.lot_id <> '' AND x.lot_id NOT GLOB '*[^0-9]*' THEN CAST(x.lot_id AS INTEGER)
-    ELSE x.lot_id
-  END ELSE NULL END,
+  v.value_flag,
+  CASE WHEN x.contract_date IS NOT NULL AND x.published_at IS NOT NULL
+    AND x.contract_date > date(x.published_at, '+2 day') THEN 'signed_after_publication' ELSE 'ok' END,
+  v.amount_eur, v.fx_converted, v.fx_rate,
+  v.signing_value_eur, v.current_value_eur,
+  p.lot_id,
   x.document_number,
   x.published_at,
   x.contract_subject,
@@ -837,345 +862,109 @@ SELECT
   x.eauction,
   CASE WHEN x.framework_contract = 1 THEN 1 WHEN x.framework_notice = 1 THEN 2 END,
   x.accelerated,
-  x.strategic
-FROM (
-  SELECT y.*,
-    CASE y.value_flag
-      WHEN 'value_suspect' THEN y.proc_est_native
-      WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
-      WHEN 'annex_total_suspect' THEN COALESCE(y.signing_value, y.current_value)
-      ELSE COALESCE(y.current_value, y.signing_value)
-    END AS display_native,
-    -- value_suspect is repaired directly from proc_est_eur in the outer amount_eur CASE; value_low and
-    -- 'review' fall to the populated ELSE branch, so their amount_eur is set, NOT nulled.
-    CASE y.value_flag
-      WHEN 'value_suspect' THEN NULL
-      WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
-      WHEN 'annex_total_suspect' THEN COALESCE(y.signing_value, y.current_value)
-      ELSE COALESCE(y.current_value, y.signing_value)
-    END AS trusted_native,
-    -- Keep the companion currency paired with the exact native value chosen above. In particular,
-    -- annex_suspect normally falls back to signing_value, which remains in contracts.currency even
-    -- when the rejected amendment used a different currency.
-    CASE y.value_flag
-      WHEN 'value_suspect' THEN NULL
-      WHEN 'annex_suspect' THEN CASE
-        WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
-        ELSE COALESCE(NULLIF(y.amendment_currency, ''), NULLIF(y.currency, ''), 'BGN')
-      END
-      WHEN 'annex_total_suspect' THEN CASE
-        WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
-        ELSE COALESCE(NULLIF(y.amendment_currency, ''), NULLIF(y.currency, ''), 'BGN')
-      END
-      ELSE CASE
-        WHEN y.current_value IS NOT NULL THEN COALESCE(NULLIF(y.amendment_currency, ''), NULLIF(y.currency, ''), 'BGN')
-        ELSE COALESCE(NULLIF(y.currency, ''), 'BGN')
-      END
-    END AS trusted_currency,
-    -- current_value can be denominated in a DIFFERENT currency than the contract's own (when the
-    -- winning amendment_winner row recorded one) — precompute.sql's later current_value_eur pass
-    -- uses this column instead of `currency` so that amendment isn't re-converted a second time.
-    CASE WHEN y.current_value IS NOT NULL
-      THEN COALESCE(NULLIF(y.amendment_currency, ''), NULLIF(y.currency, ''), 'BGN')
-      ELSE COALESCE(NULLIF(y.currency, ''), 'BGN')
-    END AS current_value_currency,
-    -- ECB rates are published on business days only; carry the latest prior rate forward for
-    -- weekend/holiday signings, never future-dated, and cap the fallback at 10 calendar days.
-    CASE WHEN COALESCE(y.currency, 'BGN') NOT IN ('BGN', 'EUR')
-      THEN (
-        SELECT f.eur_per_unit
-        FROM fx_rates f
-        WHERE f.base_currency = y.currency
-          AND f.rate_date <= y.contract_date
-          AND f.rate_date >= date(y.contract_date, '-10 days')
-        ORDER BY f.rate_date DESC
-        LIMIT 1
-      )
-      ELSE NULL END AS fx_rate
-  FROM (
-    SELECT z.*,
-      ROW_NUMBER() OVER (
-        PARTITION BY z.unp, COALESCE(z.contract_number, ''), z.bidder_key,
-          CASE
-            WHEN z.source LIKE 'eop:%' THEN COALESCE(NULLIF(z.lot_norm, ''), '_')
-            ELSE COALESCE(NULLIF(z.lot_id, ''), '_')
-          END
-        ORDER BY z.signing_value, z.contract_date, z.document_number, z.id
-      ) AS contract_ordinal
-    FROM (
-      SELECT c.*,
-        CASE
-          WHEN c.lot_id LIKE 'LOT-%' AND REPLACE(c.lot_id, 'LOT-', '') <> '' AND REPLACE(c.lot_id, 'LOT-', '') NOT GLOB '*[^0-9]*' THEN CAST(REPLACE(c.lot_id, 'LOT-', '') AS INTEGER)
-          WHEN c.lot_id <> '' AND c.lot_id NOT GLOB '*[^0-9]*' THEN CAST(c.lot_id AS INTEGER)
-          ELSE c.lot_id
-        END AS lot_norm,
-        CASE
-          -- Over-valuation + absurd are checked FIRST and repaired to the procedure estimate.
-          -- value_low is a labelled-but-counted flag (see the amount_eur CASE).
-          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
-            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
-            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
-            -- nothing between 105x and 200x, so the band is narrow on purpose.
-            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur)))
-            -- The same dropped decimal point, but on a LOT of a multi-lot procedure: there the signature
-            -- is 100x the lot's OWN estimate, and the ratio to the whole procedure lands wherever the
-            -- lot's share puts it (issue #247 reports one at 89.8x). Measuring against the own-row
-            -- estimate alone would be unsafe - for framework and unit-price procedures it is a UNIT
-            -- price and a whole call-off legitimately dwarfs it - so it is paired with the procedure
-            -- level condition that already means "implausibly large for this procedure" (>= 10x, the
-            -- review threshold). A unit-price call-off sits at ~1x the procedure estimate and is spared.
-            OR (c.own_est_eur >= 1000 AND c.proc_est_eur >= 1000 AND c.eff_eur >= 10 * c.proc_est_eur
-              AND c.eff_eur >= 95 * c.own_est_eur AND c.eff_eur <= 105 * c.own_est_eur) THEN 'value_suspect'
-          -- value_low: zero/negative, OR a tiny signed value (< 1000 EUR) that is also < 5% of the
-          -- estimate. Large legitimate framework call-offs (small share of a huge ceiling but big in
-          -- absolute terms) are NOT caught — the < 1000 EUR floor keeps them OUT of value_low.
-          WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
-          WHEN c.estimated_value > 0 AND c.signing_value IS NOT NULL AND (
-            CASE
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.signing_value
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.signing_value / 1.95583
-              ELSE c.signing_value * (
-                SELECT f.eur_per_unit
-                FROM fx_rates f
-                WHERE f.base_currency = c.currency
-                  AND f.rate_date <= c.contract_date
-                  AND f.rate_date >= date(c.contract_date, '-10 days')
-                ORDER BY f.rate_date DESC
-                LIMIT 1
-              )
-            END
-          ) < 1000 AND (
-            CASE
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.signing_value
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.signing_value / 1.95583
-              ELSE c.signing_value * (
-                SELECT f.eur_per_unit
-                FROM fx_rates f
-                WHERE f.base_currency = c.currency
-                  AND f.rate_date <= c.contract_date
-                  AND f.rate_date >= date(c.contract_date, '-10 days')
-                ORDER BY f.rate_date DESC
-                LIMIT 1
-              )
-            END
-          ) / NULLIF((
-            CASE
-              WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.estimated_value
-              WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.estimated_value / 1.95583
-              ELSE c.estimated_value * (
-                SELECT f.eur_per_unit
-                FROM fx_rates f
-                WHERE f.base_currency = COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''))
-                  AND f.rate_date <= c.contract_date
-                  AND f.rate_date >= date(c.contract_date, '-10 days')
-                ORDER BY f.rate_date DESC
-                LIMIT 1
-              )
-            END
-          ), 0) < 0.05 THEN 'value_low'
-          WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
-            -- Mis-keyed annex: a single step jumped ≥10× AND the aggregate ended ≥5× over signing.
-            -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
-            -- back below signing, and flagging those would RAISE the shown value, not repair it.
-            OR (c.current_value / c.signing_value >= 5 AND EXISTS (
-              SELECT 1 FROM raw_amendments am
-              WHERE am.unp = c.unp AND am.contract_number = c.contract_number
-                AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
-            ))))) THEN 'annex_suspect'
-          -- #305 value double-count: a driving annex reports a new TOTAL added to the old instead of
-          -- replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single amendment at +50%,
-          -- so one step cannot legally more than double a contract — the ≥2× single step IS the defect
-          -- signal, wherever it sits in the chain. Scope: value_after in [2×,10×) a base that value_before
-          -- ties to a KNOWN prior total — signing_value OR a preceding annex's value_after (the multi-annex
-          -- case) — same currency, or lev and euro at the peg. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
-          -- mis-key is #299's annex_suspect above; other cross-currency doubles are an FX artefact;
-          -- and the ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a
-          -- doubled annex later superseded by a correct one is NOT flagged.
-          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
-            SELECT 1 FROM raw_amendments am
-            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
-              -- #305 Tier-2: a text-treated annex (restated total or confirmed-genuine increment) is NOT an
-              -- arithmetic suspect — value_treatment IS NOT NULL means the основание text already resolved it.
-              AND am.value_treatment IS NULL
-              -- #305 multi-annex: the doubled step need not be the FIRST annex. value_before may be a
-              -- prior cumulative total (a preceding annex's value_after), not signing. Anchor to signing
-              -- OR a legitimately-grown prior total (a prior annex that was itself not a double), while a
-              -- single ≥2× step (ЗОП чл.116 caps one amendment at +50%) is the defect wherever it sits.
-              AND am.value_before > 0 AND (
-                ABS(am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - c.signing_value * (CASE COALESCE(NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                  < 0.01 * c.signing_value * (CASE COALESCE(NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-                OR EXISTS (
-                  SELECT 1 FROM raw_amendments prev
-                  WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
-                    AND prev.value_after > 0
-                    AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                      < 0.01 * am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-                    -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
-                    -- so a compounding chain where every step doubles is left untouched, not restated.
-                    AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
-                )
-                -- #305 84818-class: an EXACT single-step 2× (value_after ≈ 2× value_before) on an ORPHAN
-                -- base — value_before ties neither signing NOR any prior annex's value_after (e.g. contract
-                -- 84818, whose annex base 76.77M is unrelated to the contract's values). A legal +100% in one
-                -- amendment is impossible (ЗОП чл.116), so flag → signing fallback (EXCLUDE); never REWRITES
-                -- (that stays gated, #307 HIGH-2). The orphan guard leaves a legitimate compounding-doubling
-                -- chain (each step's base ties the prior step) untouched, exactly as the legit-prior arm does.
-                OR (
-                  ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
-                  AND NOT EXISTS (
-                    SELECT 1 FROM raw_amendments prev
-                    WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
-                      AND prev.value_after > 0
-                      AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                        < 0.01 * am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-                  )
-                )
-              )
-              AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
-              -- #305 M2: the double-count model presupposes a self-consistent row (value_after ≈
-              -- value_before + value_delta). If value_delta is present and contradicts that, the model
-              -- provably does not apply — do NOT flag (mirrors the TS classifier's a≈b+d precondition).
-              AND (am.value_delta IS NULL
-                   OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
-              AND ABS(am.value_after - c.current_value) < 0.01
-              -- Same currency, or lev and euro across the changeover: the comparisons above go through the
-              -- fixed peg, so a euro annex on a lev contract is weighed in the same money.
-              AND (COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
-                     = COALESCE(NULLIF(c.currency, ''), 'BGN')
-                   OR (am.currency IN ('BGN', 'EUR') AND COALESCE(NULLIF(c.currency, ''), 'BGN') IN ('BGN', 'EUR')))
-          ) THEN 'annex_total_suspect'
-          -- #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and
-          -- does NOT propagate down a chain. When a PRIOR annex was double-count corrected (value_after was
-          -- doubled, restated down), a LATER annex still arrives from the feed computed on the CONTAMINATED
-          -- (raw, doubled) base. Its own step ratio is legitimate (<2×) so the gate above misses it, and the
-          -- prior annex is text-treated so it is excluded too — yet current_value inherited the doubled
-          -- total. Detect the driving annex whose value_before ties to a prior annex's RAW value_after where
-          -- that prior was restated to a lower total, and flag → signing fallback (an honest exclusion beats
-          -- a served overstatement) until per-chain value_before propagation (a follow-up) recomputes it.
-          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
-            SELECT 1 FROM raw_amendments am
-            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
-              AND am.value_treatment IS NULL
-              AND am.value_before > 0
-              AND ABS(am.value_after - c.current_value) < 0.01
-              AND EXISTS (
-                SELECT 1 FROM raw_amendments prev
-                WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
-                  AND prev.value_after_restated IS NOT NULL
-                  AND prev.value_after_restated < prev.value_after
-                  AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
-              )
-              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
-                = COALESCE(NULLIF(c.currency, ''), 'BGN')
-          ) THEN 'annex_total_suspect'
-          WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
-          ELSE 'ok'
-        END AS value_flag,
-        CASE
-          WHEN c.contract_date IS NOT NULL
-           AND c.published_at IS NOT NULL
-           AND c.contract_date > date(c.published_at, '+2 day') THEN 'signed_after_publication'
-          ELSE 'ok'
-        END AS date_flag,
-        c.bidder_key
-      FROM (
-        SELECT c.*, ci.bidder_key,
-          c.authority_name AS authority_name_raw,
-          CASE WHEN c.current_value IS NOT NULL THEN CASE
-            WHEN COALESCE(NULLIF(aw.currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.current_value
-            WHEN COALESCE(NULLIF(aw.currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.current_value / 1.95583
-            ELSE c.current_value * (
-              SELECT f.eur_per_unit
-              FROM fx_rates f
-              WHERE f.base_currency = COALESCE(NULLIF(aw.currency, ''), NULLIF(c.currency, ''))
-                AND f.rate_date <= c.contract_date
-                AND f.rate_date >= date(c.contract_date, '-10 days')
-              ORDER BY f.rate_date DESC
-              LIMIT 1
-            )
-          END ELSE CASE
-            WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.signing_value
-            WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.signing_value / 1.95583
-            ELSE c.signing_value * (
-              SELECT f.eur_per_unit
-              FROM fx_rates f
-              WHERE f.base_currency = NULLIF(c.currency, '')
-                AND f.rate_date <= c.contract_date
-                AND f.rate_date >= date(c.contract_date, '-10 days')
-              ORDER BY f.rate_date DESC
-              LIMIT 1
-            )
-          END END AS eff_eur,
-          CASE
-            WHEN t.estimated_value IS NULL THEN NULL
-            WHEN COALESCE(NULLIF(t.currency, ''), 'BGN') = 'EUR' THEN t.estimated_value
-            WHEN COALESCE(NULLIF(t.currency, ''), 'BGN') = 'BGN' THEN t.estimated_value / 1.95583
-            ELSE t.estimated_value * (
-              SELECT f.eur_per_unit
-              FROM fx_rates f
-              WHERE f.base_currency = NULLIF(t.currency, '')
-                AND f.rate_date <= c.contract_date
-                AND f.rate_date >= date(c.contract_date, '-10 days')
-              ORDER BY f.rate_date DESC
-              LIMIT 1
-            )
-          END AS proc_est_eur,
-          -- Own-row (per-lot) estimate in EUR. The "too high" flags deliberately measure against the
-          -- PROCEDURE estimate, because for framework and unit-price procedures this per-row number is a
-          -- UNIT price and a whole call-off legitimately dwarfs it. It is computed here ONLY for the
-          -- стотинки band, which pairs it with a procedure-level condition for exactly that reason.
-          CASE
-            WHEN c.estimated_value IS NULL THEN NULL
-            WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.estimated_value
-            WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.estimated_value / 1.95583
-            ELSE c.estimated_value * (
-              SELECT f.eur_per_unit
-              FROM fx_rates f
-              WHERE f.base_currency = COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''))
-                AND f.rate_date <= c.contract_date
-                AND f.rate_date >= date(c.contract_date, '-10 days')
-              ORDER BY f.rate_date DESC
-              LIMIT 1
-            )
-          END AS own_est_eur,
-          t.estimated_value AS proc_est_native,
-          aw.currency AS amendment_currency
-        FROM raw_contracts c
-        JOIN contractor_identity ci
-          ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
-        LEFT JOIN tenders t ON t.id = 't:' || c.unp
-        LEFT JOIN amendment_winner aw
-          ON aw.unp = c.unp AND aw.contract_number = c.contract_number AND aw.win_rn = 1
-      ) c
-      -- EOP always; an OCDS row only when no EOP row shares its contract_number - EOP wins.
-      -- Key is contract_number (the public-procurement contract document number, common to both feeds), NOT unp:
-      -- OCDS stores its ocid in unp, which never matches the EOP UNP format. (idx_raw_cnum)
-      -- EOP daily open-data buckets are CUMULATIVE: the same contract recurs across consecutive days,
-      -- so keep exactly ONE row per logical contract (unp+contract_number+lot+contractor), choosing the
-      -- latest source-day (then highest id). Without this, contracts and every EUR total double-count.
-      -- The NOT EXISTS leads with contract_number so idx_raw_cnum/idx_raw_unp_cnum keep it cheap.
-      WHERE (c.source LIKE 'eop:%' AND NOT EXISTS (
-              SELECT 1 FROM raw_contracts a
-              WHERE a.source LIKE 'eop:%'
-                -- Bare equality (not COALESCE) so idx_raw_cnum drives the seek; contract_number is
-                -- guaranteed non-null by the base keep-filter, so this is identical to COALESCE(...,'')
-                -- but O(n log n) instead of the O(n^2) full scan COALESCE forces on a 380k-row corpus.
-                AND a.contract_number = c.contract_number
-                AND COALESCE(a.unp, '') = COALESCE(c.unp, '')
-                AND COALESCE(a.lot_id, '') = COALESCE(c.lot_id, '')
-                AND COALESCE(a.contractor_eik, '') = COALESCE(c.contractor_eik, '')
-                AND COALESCE(a.contractor_name, '') = COALESCE(c.contractor_name, '')
-                AND (a.source > c.source OR (a.source = c.source AND a.id > c.id))))
-         OR (c.source LIKE 'ocds:%' AND NOT EXISTS (
-              SELECT 1 FROM raw_contracts a
-              WHERE a.source LIKE 'eop:%'
-                AND a.contract_number = c.contract_number))  -- bare = -> idx_raw_cnum (see above)
-    ) z
-  ) y
-) x
-WHERE x.display_native IS NOT NULL
-  AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
-  AND EXISTS (SELECT 1 FROM bidders  b  WHERE b.id  = x.bidder_key);
+  x.strategic,
+  x.source,
+  x.estimated_value,
+  x.procurement_currency,
+  x.currency,
+  ci.eik_clean,
+  ci.eik_status
+FROM raw_contract_admissions p
+JOIN raw_contracts x ON x.id = p.raw_id
+JOIN raw_serving_contract_authorities a ON a.id = x.id
+JOIN raw_contract_value_results v ON v.id = x.id
+JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw;
+
+-- @ocds-buyer-selection start
+INSERT OR IGNORE INTO raw_contract_buyer_tenders (tender_id)
+SELECT tender_id FROM raw_new_synthetic_tenders
+UNION
+SELECT c.tender_id FROM raw_contract_admissions p JOIN contracts c ON c.id = p.contract_id;
+
+-- A same-key readmission can replay an older appearance. Keep the best evidence for
+-- that key while it survives. A deleted contract that is not readmitted loses its evidence.
+WITH candidates AS (
+  SELECT contract_id, appearance, source, a.authority_id, 1 AS incoming
+  FROM raw_contract_buyer_candidates a
+  JOIN raw_open_synthetic_buyers t ON t.tender_id = a.tender_id
+  WHERE a.source LIKE 'ocds:%'
+  UNION ALL
+  SELECT b.contract_id, b.appearance, b.source, b.authority_id, 0 AS incoming
+  FROM raw_previous_ocds_contract_buyers b JOIN contracts c ON c.id = b.contract_id
+  JOIN raw_open_synthetic_buyers t ON t.tender_id = c.tender_id
+), ranked AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY contract_id
+    ORDER BY source DESC, COALESCE(appearance, '') DESC,
+      CASE WHEN appearance IS NOT NULL THEN incoming END, authority_id
+  ) AS rank
+  FROM candidates
+)
+INSERT INTO ocds_contract_buyers (contract_id, appearance, source, authority_id)
+SELECT contract_id, appearance, source, authority_id FROM ranked WHERE rank = 1
+ON CONFLICT(contract_id) DO NOTHING;
+
+-- Rank the remaining admitted signings, including those outside this window. A
+-- published EOP signing takes precedence. A removed winner supplies no candidate.
+DELETE FROM raw_ocds_tender_selections;
+WITH candidates AS (
+  SELECT t.tender_id, b.authority_id, b.source, b.appearance
+  FROM raw_open_synthetic_buyers t
+  CROSS JOIN contracts c ON c.tender_id = t.tender_id
+  CROSS JOIN ocds_contract_buyers b ON b.contract_id = c.id
+  UNION ALL
+  SELECT a.tender_id, a.authority_id, NULL, NULL
+  FROM raw_contract_buyer_candidates a
+  JOIN raw_open_synthetic_buyers t ON t.tender_id = a.tender_id
+  WHERE a.source LIKE 'eop:%'
+), ranked AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY tender_id
+    ORDER BY source IS NULL DESC, source DESC, COALESCE(appearance, '') DESC, authority_id
+  ) AS rank
+  FROM candidates
+)
+INSERT INTO raw_ocds_tender_selections (tender_id, authority_id, old_authority_id, source, appearance)
+SELECT t.tender_id, r.authority_id, t.authority_id, r.source, r.appearance
+FROM raw_open_synthetic_buyers t LEFT JOIN ranked r ON r.tender_id = t.tender_id AND r.rank = 1;
+-- @ocds-buyer-selection end
+
+UPDATE raw_ocds_tender_selections
+SET authority_id = j.authority_id
+FROM joint_tender_leads j
+WHERE raw_ocds_tender_selections.tender_id = 't:' || j.unp
+  AND raw_ocds_tender_selections.source IS NULL
+  AND raw_ocds_tender_selections.authority_id IS NOT NULL;
+
+-- @ocds-buyer-update start
+UPDATE tenders
+SET authority_id = s.authority_id
+FROM raw_ocds_tender_selections s
+WHERE tenders.id = s.tender_id AND tenders.authority_id <> s.authority_id;
+-- @ocds-buyer-update end
+
+-- @ocds-buyer-binding start
+-- An EOP takeover closes the synthetic procedure to OCDS evidence. With no eligible
+-- signing left, keep the parent metadata and let a future admission choose a buyer.
+DELETE FROM ocds_contract_buyers
+WHERE contract_id IN (
+  SELECT c.id FROM raw_ocds_tender_selections s CROSS JOIN contracts c ON c.tender_id = s.tender_id
+  WHERE s.source IS NULL AND s.authority_id IS NOT NULL
+);
+DELETE FROM ocds_tender_buyers
+WHERE tender_id IN (SELECT tender_id FROM raw_ocds_tender_selections WHERE source IS NULL);
+
+INSERT INTO ocds_tender_buyers (tender_id, appearance, source, authority_id)
+SELECT tender_id, appearance, source, authority_id
+FROM raw_ocds_tender_selections WHERE source IS NOT NULL
+ON CONFLICT(tender_id) DO UPDATE SET
+  appearance = excluded.appearance, source = excluded.source, authority_id = excluded.authority_id;
+DELETE FROM synthetic_tenders_awaiting_buyer
+WHERE tender_id IN (SELECT tender_id FROM raw_ocds_tender_selections WHERE authority_id IS NOT NULL);
+
+INSERT OR IGNORE INTO synthetic_tenders_awaiting_buyer (tender_id)
+SELECT tender_id FROM raw_ocds_tender_selections WHERE authority_id IS NULL;
+-- @ocds-buyer-binding end
 
 -- Every joint contract is linked to every real co-authority. Lead is forced to ordinal 0; the
 -- remaining members retain their relative source-list order. This bridge never drives money sums.
@@ -1196,54 +985,6 @@ FROM (
 -- Reconciliation guard: the final summary reports the contracts inserted alongside the surviving
 -- staging candidates, so a future NOT NULL/foreign-key mismatch is visible instead of hidden by
 -- INSERT OR IGNORE.
-
--- Promote transient/work OCDS party staging into the served parties projection.
-WITH keyed AS (
-  SELECT
-    CASE
-      -- ЕИК is the stable national identity, so key by it FIRST. The OCDS (ocid, party_id) pair is
-      -- positional within a release ("ORG-0003" = the 3rd party in THIS package), and the same slot is
-      -- reused for a different company on every republish — keying on it collapses genuinely-distinct
-      -- companies onto one node, and source-DESC dedup then drops all but the latest occupant. Putting
-      -- ЕИК first prevents that collision; the (ocid, party_id) suffix keeps one row per appearance so
-      -- the per-field enrichment below can still pick the richest non-blank value across appearances.
-      WHEN NULLIF(eik, '') IS NOT NULL THEN 'eik:' || eik || ':ocid:' || COALESCE(ocid, '') || ':party:' || COALESCE(party_id, '')
-      WHEN NULLIF(ocid, '') IS NOT NULL AND NULLIF(party_id, '') IS NOT NULL THEN 'ocid:' || ocid || ':party:' || party_id
-      ELSE 'content:' ||
-        COALESCE(ocid, '') || ':' || COALESCE(party_id, '') || ':' || COALESCE(eik, '') || ':' ||
-        COALESCE(name, '') || ':' || COALESCE(street_address, '') || ':' || COALESCE(locality, '') || ':' ||
-        COALESCE(region_nuts, '') || ':' || COALESCE(contact_email, '') || ':' || COALESCE(contact_phone, '')
-    END AS party_key,
-    eik,
-    source,
-    ocid,
-    party_id,
-    name,
-    street_address,
-    locality,
-    region_nuts,
-    contact_email,
-    contact_phone
-  FROM raw_ocds_parties
-), ranked AS (
-  SELECT *,
-    ROW_NUMBER() OVER (
-      PARTITION BY party_key
-      ORDER BY source DESC, COALESCE(ocid, '') DESC, COALESCE(party_id, '') DESC,
-        COALESCE(name, '') DESC, COALESCE(street_address, '') DESC, COALESCE(locality, '') DESC,
-        COALESCE(contact_email, '') DESC, COALESCE(contact_phone, '') DESC
-    ) AS rn
-  FROM keyed
-)
-INSERT OR REPLACE INTO parties (
-  party_key, eik, source, ocid, party_id, name, street_address, locality, region_nuts,
-  contact_email, contact_phone
-)
-SELECT
-  party_key, eik, source, ocid, party_id, name, street_address, locality, region_nuts,
-  contact_email, contact_phone
-FROM ranked
-WHERE rn = 1;
 
 -- 5z) The parties to a framework agreement. An agreement concluded with several suppliers names them all
 --     in one contractor field („А; Б; В"), which 4a reads as a joint bidder. They are the agreement's
@@ -1343,289 +1084,32 @@ CREATE TABLE IF NOT EXISTS pipeline_stats (
   computed_at TEXT NOT NULL
 );
 DELETE FROM pipeline_stats;
-WITH amendment_dedup AS (
-  SELECT *,
-    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
-    -- row — must match derive-amendments.sql / promote-amendments.sql byte-for-byte (review nikimilenkov
-    -- MEDIUM 3). NULL raw → the plain number, so unresolved rows are unaffected.
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
-      COALESCE(
-        NULLIF(document_number, ''),
-        NULLIF(correction_number, ''),
-        NULLIF(seq_no, ''),
-        'content:' || COALESCE(published_at, '') || ':' ||
-          COALESCE(CAST(value_before AS TEXT), '') || ':' ||
-          COALESCE(CAST(value_after AS TEXT), '') || ':' ||
-          COALESCE(CAST(value_delta AS TEXT), '') || ':' ||
-          COALESCE(currency, '') || ':' ||
-          COALESCE(description, '')
-      ) AS natural_key
-  FROM raw_amendments
-), amendment_rn AS (
-  SELECT *, ROW_NUMBER() OVER (PARTITION BY natural_key ORDER BY source DESC, id DESC) AS rn
-  FROM amendment_dedup
-), amendment_winner AS (
-  SELECT unp, contract_number, currency,
-    ROW_NUMBER() OVER (
-      PARTITION BY unp, contract_number
-      ORDER BY published_at DESC, natural_key DESC
-    ) AS win_rn
-  FROM amendment_rn
-  WHERE rn = 1 AND value_after IS NOT NULL
-)
 INSERT INTO pipeline_stats (id, contract_candidates, contracts_inserted, computed_at)
 SELECT 1,
-  (SELECT COUNT(*) FROM (
-    SELECT c.id
-    FROM (
-      SELECT c.*,
-        CASE
-          -- Mirrors the main derive CASE above; value_low is checked AFTER over-valuation + absurd.
-          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
-            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
-            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
-            -- nothing between 105x and 200x, so the band is narrow on purpose.
-            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur)))
-            -- The same dropped decimal point, but on a LOT of a multi-lot procedure: there the signature
-            -- is 100x the lot's OWN estimate, and the ratio to the whole procedure lands wherever the
-            -- lot's share puts it (issue #247 reports one at 89.8x). Measuring against the own-row
-            -- estimate alone would be unsafe - for framework and unit-price procedures it is a UNIT
-            -- price and a whole call-off legitimately dwarfs it - so it is paired with the procedure
-            -- level condition that already means "implausibly large for this procedure" (>= 10x, the
-            -- review threshold). A unit-price call-off sits at ~1x the procedure estimate and is spared.
-            OR (c.own_est_eur >= 1000 AND c.proc_est_eur >= 1000 AND c.eff_eur >= 10 * c.proc_est_eur
-              AND c.eff_eur >= 95 * c.own_est_eur AND c.eff_eur <= 105 * c.own_est_eur) THEN 'value_suspect'
-          WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
-          WHEN c.estimated_value > 0 AND c.signing_value IS NOT NULL AND (
-            CASE
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.signing_value
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.signing_value / 1.95583
-              ELSE c.signing_value * (
-                SELECT f.eur_per_unit
-                FROM fx_rates f
-                WHERE f.base_currency = c.currency
-                  AND f.rate_date <= c.contract_date
-                  AND f.rate_date >= date(c.contract_date, '-10 days')
-                ORDER BY f.rate_date DESC
-                LIMIT 1
-              )
-            END
-          ) < 1000 AND (
-            CASE
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.signing_value
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.signing_value / 1.95583
-              ELSE c.signing_value * (
-                SELECT f.eur_per_unit
-                FROM fx_rates f
-                WHERE f.base_currency = c.currency
-                  AND f.rate_date <= c.contract_date
-                  AND f.rate_date >= date(c.contract_date, '-10 days')
-                ORDER BY f.rate_date DESC
-                LIMIT 1
-              )
-            END
-          ) / NULLIF((
-            CASE
-              WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.estimated_value
-              WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.estimated_value / 1.95583
-              ELSE c.estimated_value * (
-                SELECT f.eur_per_unit
-                FROM fx_rates f
-                WHERE f.base_currency = COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''))
-                  AND f.rate_date <= c.contract_date
-                  AND f.rate_date >= date(c.contract_date, '-10 days')
-                ORDER BY f.rate_date DESC
-                LIMIT 1
-              )
-            END
-          ), 0) < 0.05 THEN 'value_low'
-          WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
-            -- Mis-keyed annex: a single step jumped ≥10× AND the aggregate ended ≥5× over signing.
-            -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
-            -- back below signing, and flagging those would RAISE the shown value, not repair it.
-            OR (c.current_value / c.signing_value >= 5 AND EXISTS (
-              SELECT 1 FROM raw_amendments am
-              WHERE am.unp = c.unp AND am.contract_number = c.contract_number
-                AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
-            ))))) THEN 'annex_suspect'
-          -- #305 value double-count: a driving annex reports a new TOTAL added to the old instead of
-          -- replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single amendment at +50%,
-          -- so one step cannot legally more than double a contract — the ≥2× single step IS the defect
-          -- signal, wherever it sits in the chain. Scope: value_after in [2×,10×) a base that value_before
-          -- ties to a KNOWN prior total — signing_value OR a preceding annex's value_after (the multi-annex
-          -- case) — same currency, or lev and euro at the peg. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
-          -- mis-key is #299's annex_suspect above; other cross-currency doubles are an FX artefact;
-          -- and the ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a
-          -- doubled annex later superseded by a correct one is NOT flagged.
-          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
-            SELECT 1 FROM raw_amendments am
-            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
-              -- #305 Tier-2: a text-treated annex (restated total or confirmed-genuine increment) is NOT an
-              -- arithmetic suspect — value_treatment IS NOT NULL means the основание text already resolved it.
-              AND am.value_treatment IS NULL
-              -- #305 multi-annex: the doubled step need not be the FIRST annex. value_before may be a
-              -- prior cumulative total (a preceding annex's value_after), not signing. Anchor to signing
-              -- OR a legitimately-grown prior total (a prior annex that was itself not a double), while a
-              -- single ≥2× step (ЗОП чл.116 caps one amendment at +50%) is the defect wherever it sits.
-              AND am.value_before > 0 AND (
-                ABS(am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - c.signing_value * (CASE COALESCE(NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                  < 0.01 * c.signing_value * (CASE COALESCE(NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-                OR EXISTS (
-                  SELECT 1 FROM raw_amendments prev
-                  WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
-                    AND prev.value_after > 0
-                    AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                      < 0.01 * am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-                    -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
-                    -- so a compounding chain where every step doubles is left untouched, not restated.
-                    AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
-                )
-                -- #305 84818-class: an EXACT single-step 2× (value_after ≈ 2× value_before) on an ORPHAN
-                -- base — value_before ties neither signing NOR any prior annex's value_after (e.g. contract
-                -- 84818, whose annex base 76.77M is unrelated to the contract's values). A legal +100% in one
-                -- amendment is impossible (ЗОП чл.116), so flag → signing fallback (EXCLUDE); never REWRITES
-                -- (that stays gated, #307 HIGH-2). The orphan guard leaves a legitimate compounding-doubling
-                -- chain (each step's base ties the prior step) untouched, exactly as the legit-prior arm does.
-                OR (
-                  ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
-                  AND NOT EXISTS (
-                    SELECT 1 FROM raw_amendments prev
-                    WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
-                      AND prev.value_after > 0
-                      AND ABS(prev.value_after * (CASE COALESCE(NULLIF(prev.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END) - am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END))
-                        < 0.01 * am.value_before * (CASE COALESCE(NULLIF(am.currency, ''), NULLIF(c.currency, ''), 'BGN') WHEN 'EUR' THEN 1.95583 ELSE 1 END)
-                  )
-                )
-              )
-              AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
-              -- #305 M2: the double-count model presupposes a self-consistent row (value_after ≈
-              -- value_before + value_delta). If value_delta is present and contradicts that, the model
-              -- provably does not apply — do NOT flag (mirrors the TS classifier's a≈b+d precondition).
-              AND (am.value_delta IS NULL
-                   OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
-              AND ABS(am.value_after - c.current_value) < 0.01
-              -- Same currency, or lev and euro across the changeover: the comparisons above go through the
-              -- fixed peg, so a euro annex on a lev contract is weighed in the same money.
-              AND (COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
-                     = COALESCE(NULLIF(c.currency, ''), 'BGN')
-                   OR (am.currency IN ('BGN', 'EUR') AND COALESCE(NULLIF(c.currency, ''), 'BGN') IN ('BGN', 'EUR')))
-          ) THEN 'annex_total_suspect'
-          -- #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and
-          -- does NOT propagate down a chain. When a PRIOR annex was double-count corrected (value_after was
-          -- doubled, restated down), a LATER annex still arrives from the feed computed on the CONTAMINATED
-          -- (raw, doubled) base. Its own step ratio is legitimate (<2×) so the gate above misses it, and the
-          -- prior annex is text-treated so it is excluded too — yet current_value inherited the doubled
-          -- total. Detect the driving annex whose value_before ties to a prior annex's RAW value_after where
-          -- that prior was restated to a lower total, and flag → signing fallback (an honest exclusion beats
-          -- a served overstatement) until per-chain value_before propagation (a follow-up) recomputes it.
-          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
-            SELECT 1 FROM raw_amendments am
-            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
-              AND am.value_treatment IS NULL
-              AND am.value_before > 0
-              AND ABS(am.value_after - c.current_value) < 0.01
-              AND EXISTS (
-                SELECT 1 FROM raw_amendments prev
-                WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
-                  AND prev.value_after_restated IS NOT NULL
-                  AND prev.value_after_restated < prev.value_after
-                  AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
-              )
-              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
-                = COALESCE(NULLIF(c.currency, ''), 'BGN')
-          ) THEN 'annex_total_suspect'
-          WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
-          ELSE 'ok'
-        END AS value_flag,
-        c.bidder_key
-      FROM (
-        SELECT c.*, ci.bidder_key,
-          CASE WHEN c.current_value IS NOT NULL THEN CASE
-            WHEN COALESCE(NULLIF(aw.currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.current_value
-            WHEN COALESCE(NULLIF(aw.currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.current_value / 1.95583
-            ELSE c.current_value * (
-              SELECT f.eur_per_unit
-              FROM fx_rates f
-              WHERE f.base_currency = COALESCE(NULLIF(aw.currency, ''), NULLIF(c.currency, ''))
-                AND f.rate_date <= c.contract_date
-                AND f.rate_date >= date(c.contract_date, '-10 days')
-              ORDER BY f.rate_date DESC
-              LIMIT 1
-            )
-          END ELSE CASE
-            WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.signing_value
-            WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.signing_value / 1.95583
-            ELSE c.signing_value * (
-              SELECT f.eur_per_unit
-              FROM fx_rates f
-              WHERE f.base_currency = NULLIF(c.currency, '')
-                AND f.rate_date <= c.contract_date
-                AND f.rate_date >= date(c.contract_date, '-10 days')
-              ORDER BY f.rate_date DESC
-              LIMIT 1
-            )
-          END END AS eff_eur,
-          CASE
-            WHEN t.estimated_value IS NULL THEN NULL
-            WHEN COALESCE(NULLIF(t.currency, ''), 'BGN') = 'EUR' THEN t.estimated_value
-            WHEN COALESCE(NULLIF(t.currency, ''), 'BGN') = 'BGN' THEN t.estimated_value / 1.95583
-            ELSE t.estimated_value * (
-              SELECT f.eur_per_unit
-              FROM fx_rates f
-              WHERE f.base_currency = NULLIF(t.currency, '')
-                AND f.rate_date <= c.contract_date
-                AND f.rate_date >= date(c.contract_date, '-10 days')
-              ORDER BY f.rate_date DESC
-              LIMIT 1
-            )
-          END AS proc_est_eur,
-          -- Own-row (per-lot) estimate in EUR. The "too high" flags deliberately measure against the
-          -- PROCEDURE estimate, because for framework and unit-price procedures this per-row number is a
-          -- UNIT price and a whole call-off legitimately dwarfs it. It is computed here ONLY for the
-          -- стотинки band, which pairs it with a procedure-level condition for exactly that reason.
-          CASE
-            WHEN c.estimated_value IS NULL THEN NULL
-            WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.estimated_value
-            WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.estimated_value / 1.95583
-            ELSE c.estimated_value * (
-              SELECT f.eur_per_unit
-              FROM fx_rates f
-              WHERE f.base_currency = COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''))
-                AND f.rate_date <= c.contract_date
-                AND f.rate_date >= date(c.contract_date, '-10 days')
-              ORDER BY f.rate_date DESC
-              LIMIT 1
-            )
-          END AS own_est_eur,
-          t.estimated_value AS proc_est_native,
-          aw.currency AS amendment_currency
-        FROM raw_contracts c
-        JOIN contractor_identity ci
-          ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
-        LEFT JOIN tenders t ON t.id = 't:' || c.unp
-        LEFT JOIN amendment_winner aw
-          ON aw.unp = c.unp AND aw.contract_number = c.contract_number AND aw.win_rn = 1
-      ) c
-      -- Eligibility must mirror the INSERT INTO contracts WHERE exactly, so this candidate count is a
-      -- true superset of what lands (inserted <= candidates holds by construction; the gap is only the
-      -- EOP cumulative-bucket dedup). The OCDS branch deliberately has NO `contract_number IS NOT NULL`
-      -- guard — the INSERT's OCDS branch keeps a null-contract_number row (NOT EXISTS over a NULL join
-      -- is TRUE), so requiring it here would undercount and make a real insert look like inserted>candidates.
-      WHERE c.source LIKE 'eop:%'
-         OR (c.source LIKE 'ocds:%' AND NOT EXISTS (
-              SELECT 1 FROM raw_contracts a
-              WHERE a.source LIKE 'eop:%' AND a.contract_number = c.contract_number))
-    ) c
-    WHERE CASE c.value_flag
-        WHEN 'annex_suspect' THEN COALESCE(c.signing_value, c.current_value)
-        WHEN 'annex_total_suspect' THEN COALESCE(c.signing_value, c.current_value)
-        ELSE COALESCE(c.current_value, c.signing_value)
-      END IS NOT NULL
-      AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || c.unp)
-      AND EXISTS (SELECT 1 FROM bidders b WHERE b.id = c.bidder_key)
-  )),
+  (SELECT COUNT(*)
+   FROM raw_contracts c
+   JOIN contractor_identity ci
+     ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
+   JOIN raw_contract_value_results v ON v.id = c.id
+   WHERE v.amount IS NOT NULL
+     AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || c.unp)
+     AND EXISTS (SELECT 1 FROM bidders b WHERE b.id = ci.bidder_key)
+     -- Same eligibility as the INSERT, before discarding cumulative EOP duplicates.
+     AND (c.source LIKE 'eop:%' OR (c.source LIKE 'ocds:%' AND NOT EXISTS (
+       SELECT 1 FROM raw_contracts a WHERE a.source LIKE 'eop:%'
+         AND a.contract_number = c.contract_number
+     )))
+  ),
   (SELECT COUNT(*) FROM contracts),
   datetime('now');
+
+DELETE FROM raw_previous_ocds_contract_buyers;
+DELETE FROM raw_contract_buyer_tenders;
+DELETE FROM raw_contract_admissions;
+DELETE FROM raw_new_synthetic_tenders;
+DROP TABLE raw_contract_value_results;
+DELETE FROM raw_contract_value_inputs;
+DELETE FROM raw_contract_value_annexes;
 
 DROP TABLE contractor_identity;
 DROP TABLE joint_tender_leads;

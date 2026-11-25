@@ -10,6 +10,7 @@ import {
   plural,
 } from '@sigma/shared';
 import {
+  authoritySlug,
   bidderIdFromSlug,
   getCompany,
   getCompanyDeclarants,
@@ -345,9 +346,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   key: 'authority',
                   header: 'Възложител',
                   cell: (r) => (
-                    <Link to={`/authorities/${r.authorityId.replace(/^auth:/, '')}`}>
-                      {r.authority}
-                    </Link>
+                    <Link to={`/authorities/${authoritySlug(r.authorityId)}`}>{r.authority}</Link>
                   ),
                 },
                 { key: 'date', header: 'Сключен на', cell: (r) => date(r.signedAt) },

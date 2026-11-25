@@ -11,7 +11,12 @@ import {
 import { Link, useLocation } from 'react-router';
 import { count, date, money, pct, plural } from '@sigma/shared';
 import type { PersonDeclaration, PersonRole } from '@sigma/api-contract';
-import { contractSlug, type TimelineContracts, type TimelineProcurement } from '@sigma/db';
+import {
+  authoritySlug,
+  contractSlug,
+  type TimelineContracts,
+  type TimelineProcurement,
+} from '@sigma/db';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import {
   timelineYears,
@@ -476,7 +481,7 @@ export function PersonTimeline({
               <>
                 <strong>
                   {authorityId ? (
-                    <Link to={`/authorities/${authorityId.replace(/^auth:/, '')}`}>
+                    <Link to={`/authorities/${authoritySlug(authorityId)}`}>
                       {institution.institution}
                     </Link>
                   ) : (

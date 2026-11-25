@@ -27,7 +27,6 @@ const migration3Path = resolve(root, 'packages/db/migrations/0003_related_person
 // them sqlite3 aborts on the amendment promotion long before it reaches the value_flag CASE under test.
 const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
 const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
-const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 // #279/ADR-0033: refresh-slice.sql's свързани-лица block reads interest_link_evidence, so 0009 too.
 const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 // The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
@@ -68,7 +67,6 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     readScript(dbPath, migration3Path);
     readScript(dbPath, migration6Path);
     readScript(dbPath, migration7Path);
-    readScript(dbPath, migration8Path);
     readScript(dbPath, migration9Path);
     for (const path of personMigrationPaths) readScript(dbPath, path);
     readScript(dbPath, stagingPath);

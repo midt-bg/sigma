@@ -85,10 +85,41 @@ export function refreshSliceStatementGroups(refreshSliceSql: string): RefreshSli
     : [{ name: currentName, statements: splitSqlStatements(refreshSliceSql) }];
 }
 
+const TRANSIENT_STAGING_VIEWS = [
+  'raw_contract_values',
+  'raw_contract_annex_evidence',
+  'raw_contract_suspect_annexes',
+  'raw_contract_value_annex_history',
+  'raw_contract_value_staged_annexes',
+  'raw_amendment_publications',
+  'raw_contract_publications',
+  'raw_ocds_scoped_names',
+  'raw_ocds_contract_buyer_moves',
+  'raw_open_synthetic_buyers',
+  'raw_contract_buyer_candidates',
+  'raw_ocds_tender_candidates', // from the previous staging shape
+  'raw_serving_contract_authorities',
+  'raw_serving_ocds_parties',
+  'raw_ocds_party_retirements',
+  'raw_ocds_party_input',
+  'raw_supplier_evidence',
+] as const;
+
 const TRANSIENT_STAGING_TABLES = [
   'raw_contracts',
+  'raw_contract_value_inputs',
+  'raw_contract_value_annexes',
+  'raw_contract_value_scope',
   'raw_tenders',
   'raw_amendments',
+  'raw_ocds_party_screening',
+  'raw_ocds_authority_keys',
+  'raw_ocds_authority_moves',
+  'raw_ocds_tender_selections',
+  'raw_previous_ocds_contract_buyers',
+  'raw_contract_buyer_tenders',
+  'raw_contract_admissions',
+  'raw_new_synthetic_tenders',
   'raw_ocds_parties',
   'raw_ocds_lots',
 ] as const;
@@ -107,11 +138,18 @@ const LEGACY_TRANSIENT_STAGING_TABLES = [
 const SCRATCH_TABLES = [
   'amendment_contract_resolve',
   'amend_contract_base',
+  'raw_contract_value_results',
+  'raw_contract_value_existing',
+  'refresh_amendment_rekeyed',
+  'refresh_amendment_winners',
+  'contractor_identity',
   'contract_cube',
 ] as const;
 
 function touchesTransientStaging(statement: string): boolean {
-  return TRANSIENT_STAGING_TABLES.some((table) => statement.includes(table));
+  return [...TRANSIENT_STAGING_TABLES, ...TRANSIENT_STAGING_VIEWS].some((name) =>
+    statement.includes(name),
+  );
 }
 
 export function transientStagingStatements(workStagingSchemaSql: string): string[] {
@@ -160,9 +198,12 @@ export function fullClearTables(normalizeRawSql: string): string[] {
 }
 
 export function dropTransientStagingStatements(): string[] {
-  return [...SCRATCH_TABLES, ...TRANSIENT_STAGING_TABLES, ...LEGACY_TRANSIENT_STAGING_TABLES]
-    .reverse()
-    .map((table) => `DROP TABLE IF EXISTS ${table}`);
+  return [
+    ...TRANSIENT_STAGING_VIEWS.map((view) => `DROP VIEW IF EXISTS ${view}`),
+    ...[...SCRATCH_TABLES, ...TRANSIENT_STAGING_TABLES, ...LEGACY_TRANSIENT_STAGING_TABLES]
+      .reverse()
+      .map((table) => `DROP TABLE IF EXISTS ${table}`),
+  ];
 }
 
 export async function createTransientStaging(
@@ -332,8 +373,8 @@ export async function releaseRefreshLease(db: D1Database, holder: string): Promi
 // ── pending windows (replay of aborted runs) ──────────────────────────────────────────────────────
 // The touched sets make the ROLLUPS of an aborted run recoverable; they cannot make the run's
 // half-applied window consistent. The groups are separate atomic batches with cross-group data
-// dependencies — `synthetic-tenders` rewrites a procedure's estimate, `contracts` classifies its
-// contracts against that estimate one batch later — so a death in between leaves rows derived from
+// dependencies — `tenders` writes EOP procedure headers, then `contracts` classifies their
+// contracts against those estimates — so a death in between leaves rows derived from
 // two different states of the window, and no later window re-derives them: after an abort
 // data_freshness.as_of is NULL and the planner falls back to a three-day lookback from today.
 // The cure is to REPLAY: a run records the exact [from, to] it is about to cover before it stages

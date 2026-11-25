@@ -29,6 +29,18 @@ test('the slot takes the served tables only, parents first, with DDL safe on a m
       [
         'contracts',
         'raw_contracts',
+        'raw_ocds_party_screening',
+        'raw_ocds_authority_keys',
+        'raw_ocds_authority_moves',
+        'raw_ocds_tender_selections',
+        'raw_contract_admissions',
+        'raw_new_synthetic_tenders',
+        'raw_contract_buyer_tenders',
+        'raw_previous_ocds_contract_buyers',
+        'ocds_supplier_appearances',
+        'ocds_tender_buyers',
+        'ocds_contract_buyers',
+        'synthetic_tenders_awaiting_buyer',
         'search_index',
         'search_index_data',
         'sqlite_sequence',
@@ -40,7 +52,16 @@ test('the slot takes the served tables only, parents first, with DDL safe on a m
       ],
       staging,
     ),
-    ['contracts', 'search_index', 'persons', 'declarations'],
+    [
+      'contracts',
+      'ocds_supplier_appearances',
+      'ocds_tender_buyers',
+      'ocds_contract_buyers',
+      'synthetic_tenders_awaiting_buyer',
+      'search_index',
+      'persons',
+      'declarations',
+    ],
   );
   const fks = new Map([
     ['declarations', ['persons']],
@@ -365,4 +386,68 @@ test('the finished build clears what the slot holds before it ships, by the slot
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the slot preserves annex and signing evidence, including unknown legacy provenance', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-slot-evidence-'));
+  const snapshot = join(dir, 'snap.sqlite');
+  const source = new DatabaseSync(snapshot);
+  const slot = new DatabaseSync(':memory:');
+  t.after(() => {
+    source.close();
+    slot.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  for (const file of readdirSync('packages/db/migrations')
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
+    const sql = readFileSync(join('packages/db/migrations', file), 'utf8');
+    if (file.startsWith('0029')) {
+      source.exec(`INSERT INTO amendments (id, natural_key, source, link_method)
+        VALUES ('legacy', 'legacy', 'eop:annexes:2026-06-01', 'value_anchor')`);
+    }
+    source.exec(sql);
+    slot.exec(sql);
+  }
+  source.exec(readFileSync('scripts/work-staging-schema.sql', 'utf8'));
+  source.exec(`
+    INSERT INTO authorities (id, name) VALUES ('auth:test', 'Test Authority');
+    INSERT INTO bidders (id, name) VALUES ('bidder:test', 'Test Supplier');
+    INSERT INTO tenders (id, source_id, title, authority_id, procedure_type, status)
+      VALUES ('t:TEST', 'TEST', 'Test Tender', 'auth:test', 'open', 'awarded');
+    INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signing_value, signing_currency_raw,
+      signing_contractor_eik, signing_contractor_status, own_estimate_source)
+      VALUES ('c:e:test', 't:TEST', 'bidder:test', 10000, 'EUR', 10000, 'EUR', '0000000000015', 'valid', 'eop:contracts:2026-06-01'),
+        ('c:e:unverified', 't:TEST', 'bidder:test', 20000, 'EUR', 20000, 'EUR', NULL, 'unverified', 'eop:contracts:2026-06-01');
+    INSERT INTO amendments (id, natural_key, source, link_method, value_anchor_kind, value_anchor_contractor_eik, contractor_id_status)
+      VALUES ('direct', 'direct', 'eop:annexes:2026-06-02', 'value_anchor', 'direct', '0000000000015', 'valid'),
+        ('inherited', 'inherited', 'eop:annexes:2026-06-03', 'value_anchor', 'inherited', NULL, 'absent'),
+        ('unverified', 'unverified', 'eop:annexes:2026-06-03', NULL, NULL, NULL, 'unverified');
+    INSERT INTO raw_amendments (source, fetched_at, contractor_eik)
+      VALUES ('eop:annexes:2026-06-03', '2026-06-03', '0000000000');
+    CREATE TABLE contractor_identity (eik_raw TEXT);
+    INSERT INTO contractor_identity VALUES ('0000000000');`);
+  fillSlot('sigma-test', snapshot, dir, {
+    label: 'evidence',
+    read: (_, sql) => slot.prepare(sql).all(),
+    apply: (_, sql) => slot.exec(sql),
+  });
+  const compare = (sql) => assert.deepEqual(slot.prepare(sql).all(), source.prepare(sql).all());
+  compare(
+    'SELECT id, value_anchor_kind, value_anchor_contractor_eik, contractor_id_status FROM amendments ORDER BY id',
+  );
+  compare(
+    'SELECT id, signing_currency_raw, signing_contractor_eik, signing_contractor_status FROM contracts ORDER BY id',
+  );
+  compare("SELECT sql FROM sqlite_schema WHERE name = 'idx_amendments_value_anchor'");
+  assert.deepEqual(
+    slot
+      .prepare(
+        `SELECT name FROM sqlite_schema WHERE name GLOB 'raw_*'
+        OR name = 'contractor_identity'`,
+      )
+      .all(),
+    [],
+  );
+  assert.deepEqual(slot.prepare('PRAGMA foreign_key_check').all(), []);
 });

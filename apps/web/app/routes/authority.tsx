@@ -52,10 +52,10 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
 export const headers = cached(3600);
 
 export async function loader({ params, context }: Route.LoaderArgs) {
-  const eik = params.eik;
-  if (!eik?.trim()) throw new Response('Not Found', { status: 404 });
+  const slug = params.eik;
+  if (!slug?.trim()) throw new Response('Not Found', { status: 404 });
   const db = getDb(context.cloudflare.env);
-  const authorityId = authorityIdFromSlug(eik);
+  const authorityId = authorityIdFromSlug(slug);
   return withDbRetry(async () => {
     const [authority, coverage, trend, ties, competition, procedure, conflicts] = await Promise.all(
       [
@@ -135,8 +135,12 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                   · <Chip>{a.typeLabel}</Chip>
                 </>
               )}
-              {' · '}
-              <Abbr>ЕИК</Abbr>&nbsp;{a.eik}
+              {a.eik && (
+                <>
+                  {' · '}
+                  <Abbr>ЕИК</Abbr>&nbsp;{a.eik}
+                </>
+              )}
             </>
           }
           title={a.name}
@@ -144,7 +148,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
         >
           {/* Only a trader has a partida in the Търговски регистър; a municipality or a school is registered
               in БУЛСТАТ alone, and the register would open an empty report for it. */}
-          {tradeRegisterLegalForm(a.name) && <RegistryCta eik={a.eik} />}
+          {a.eik && tradeRegisterLegalForm(a.name) && <RegistryCta eik={a.eik} />}
         </PageHeader>
 
         <FactsList
@@ -158,7 +162,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               // The count includes management-only links (ADR-0047 private_ownership) — not a stake.
               term: 'С деклариран дял или управление на длъжностно лице',
               value: (
-                <Link to={`/conflicts?authority=${a.eik}`}>
+                <Link to={`/conflicts?authority=${a.slug}`}>
                   {count(conflicts.companies)}{' '}
                   {plural(conflicts.companies, 'изпълнител', 'изпълнители')}
                 </Link>
@@ -271,7 +275,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                 {a.sectors.map((s) => (
                   <tr key={s.code}>
                     <td>
-                      <Link to={`/contracts?authority=${a.eik}&sector=${s.code}`}>
+                      <Link to={`/contracts?authority=${a.slug}&sector=${s.code}`}>
                         {s.label} (CPV {s.code})
                       </Link>
                     </td>
@@ -311,7 +315,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               Изпълнителите с най-голяма стойност на договорите с институцията, и кои от тях са
               свързани помежду си: съвместно участие в обединение, подизпълнителство, деклариран
               интерес на едно и също длъжностно лице, или общо лице или собственик по Търговския
-              регистър. <Link to={`/network?center=a:${a.eik}`}>Виж паричната мрежа →</Link>
+              регистър. <Link to={`/network?center=a:${a.slug}`}>Виж паричната мрежа →</Link>
             </span>
           }
         >
@@ -384,7 +388,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           </div>
           {a.moreContractors > 0 && (
             <p className="small muted mt-s3">
-              <Link to={`/contracts?authority=${a.eik}`}>
+              <Link to={`/contracts?authority=${a.slug}`}>
                 … още {count(a.moreContractors)}{' '}
                 {plural(a.moreContractors, 'изпълнител', 'изпълнители')} — виж всички договори →
               </Link>
@@ -442,7 +446,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </div>
           </div>
           <p className="small muted mt-8">
-            <Link to={`/contracts?authority=${a.eik}`}>
+            <Link to={`/contracts?authority=${a.slug}`}>
               Виж всички / филтрирай / свали като CSV →
             </Link>
           </p>

@@ -38,22 +38,33 @@ describe('ship-domain', () => {
     const persistTo = resolve(dir, 'served');
     try {
       readScript(workDb, resolve(root, 'packages/db/migrations/0000_init.sql'));
+      readScript(workDb, resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql'));
       readScript(
         workDb,
         resolve(root, 'packages/db/migrations/0025_joint_procurement_and_ordering_unit.sql'),
       );
+      readScript(workDb, resolve(root, 'packages/db/migrations/0029_contract_value_evidence.sql'));
       sqlite(
         workDb,
         `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:1', 'Authority line 1
 Authority line 2', '1', 'public');
          INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:200000002', 'Bidder', '200000002', '200000002', 1, 'company');
          INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status) VALUES ('t:1', '1', 'Tender', 'auth:1', 'BGN', 'open', 'awarded');
-         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, contract_number, signing_value, value_flag, amount_eur) VALUES ('c:e:1', 't:1', 'eik:200000002', 10, 'BGN', 'C1', 10, 'ok', 10 / 1.95583);
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, contract_number, signing_value, value_flag, amount_eur) VALUES ('c:o:1', 't:1', 'eik:200000002', 10, 'BGN', 'C1', 10, 'ok', 10 / 1.95583);
          INSERT INTO amendments (id, natural_key, contract_number, unp, description, source) VALUES ('am:1:C1:A1', 'am:1:C1:A1', 'C1', '1', 'Description line 1
 Description line 2', 'test');
          INSERT INTO nuts_regions (nuts3, nuts3_name, nuts2, nuts2_name, nuts1, nuts1_name)
            VALUES ('BG000', 'Region', 'BG00', 'Region 2', 'BG0', 'Region 1');
          INSERT INTO data_freshness (source, rows, refreshed_at) VALUES ('eop', 1, '2026-06-08');`,
+      );
+      sqlite(
+        workDb,
+        `INSERT INTO ocds_supplier_appearances VALUES ('synthetic-appearance');
+         INSERT INTO ocds_tender_buyers VALUES ('t:1', 'synthetic-appearance', 'ocds:2026-06-08', 'auth:1');
+         INSERT INTO ocds_contract_buyers VALUES ('c:o:1', 'synthetic-appearance', 'ocds:2026-06-08', 'auth:1');
+         INSERT INTO tenders (id, source_id, title, authority_id, procedure_type)
+           VALUES ('t:2', '2', 'Pending synthetic procedure', 'auth:1', 'неизвестна');
+         INSERT INTO synthetic_tenders_awaiting_buyer VALUES ('t:2');`,
       );
 
       execFileSync(
@@ -76,6 +87,30 @@ Description line 2', 'test');
           "SELECT description FROM amendments WHERE id='am:1:C1:A1'",
         )[0]?.description,
       ).toBe('Description line 1\nDescription line 2');
+      expect(
+        d1Json(
+          persistTo,
+          'SELECT * FROM ocds_tender_buyers JOIN ocds_supplier_appearances USING (appearance)',
+        ),
+      ).toEqual([
+        {
+          tender_id: 't:1',
+          appearance: 'synthetic-appearance',
+          source: 'ocds:2026-06-08',
+          authority_id: 'auth:1',
+        },
+      ]);
+      expect(d1Json(persistTo, 'SELECT * FROM ocds_contract_buyers')).toEqual([
+        {
+          contract_id: 'c:o:1',
+          appearance: 'synthetic-appearance',
+          source: 'ocds:2026-06-08',
+          authority_id: 'auth:1',
+        },
+      ]);
+      expect(d1Json(persistTo, 'SELECT tender_id FROM synthetic_tenders_awaiting_buyer')).toEqual([
+        { tender_id: 't:2' },
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

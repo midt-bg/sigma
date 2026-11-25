@@ -70,6 +70,18 @@ const authId = (i: number) => `auth:${String(i).padStart(6, '0')}`;
 const bidderId = (i: number) => `eik:${String(1000000000 + i)}`;
 
 describe('streamAuthoritySitemap', () => {
+  it('keeps scoped and legacy authority URLs distinct', async () => {
+    const db = fakeDb({
+      authorities: ['auth:ocds-auth:74657374', 'ocds-auth:74657374'].map((authority_id) => ({
+        authority_id,
+        last_date: null,
+      })),
+    });
+    const xml = await streamAuthoritySitemap(db, 'https://x.test').text();
+    expect(xml).toContain('/authorities/ocds-auth:74657374</loc>');
+    expect(xml).toContain('/authorities/auth:ocds-auth:74657374</loc>');
+  });
+
   it('percent-encodes XML-invalid C0 controls and escapes the URL', async () => {
     const db = fakeDb({
       authorities: [{ authority_id: 'auth:1234<&>', last_date: '2026-05-31' }],

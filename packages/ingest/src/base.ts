@@ -5,6 +5,7 @@ import { amendmentValueTreatment } from './amendment-total.ts';
 export type BaseCategory = 'contracts' | 'tenders' | 'annexes';
 export type BaseCoercionKind =
   | 'text'
+  | 'supplier_id'
   | 'int'
   | 'real'
   | 'bool'
@@ -15,6 +16,8 @@ export type BaseCoercionKind =
   | 'present_flag';
 export type BaseStagingValue = string | number | null;
 export type BaseStagingRow = Record<string, BaseStagingValue>;
+
+const CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F]/;
 
 export interface BaseFieldMapEntry {
   column: string;
@@ -147,6 +150,12 @@ export function toPresentFlag(v: unknown): number | null {
 }
 
 export function coerce(kind: BaseCoercionKind, v: unknown): BaseStagingValue {
+  // Keep the ordinary EOP outer whitespace normalization. Control characters at any
+  // position are supplied evidence and must reach the shared staging validator.
+  if (kind === 'supplier_id' && v != null) {
+    const id = String(v);
+    return CONTROL_CHARS.test(id) ? id : clean(id);
+  }
   if (kind === 'int') return toInt(v);
   if (kind === 'real') return toReal(v);
   if (kind === 'real_signed') return toSignedReal(v);
@@ -203,7 +212,7 @@ export const BASE_CATEGORIES: Record<BaseCategory, BaseCategoryConfig> = {
       field('currency', 'contractCurrency', 'text'),
       field('contract_subject', 'contractSubject', 'text'),
       field('awarded_to_group', 'awardedToGroup', 'bool'),
-      field('contractor_eik', 'supplierRegisterNumber', 'text'),
+      field('contractor_eik', 'supplierRegisterNumber', 'supplier_id'),
       field('contractor_name', 'supplierName', 'text'),
       field('contractor_country', 'supplierNationality', 'text'),
       field('winner_owner_nationality', null, 'text'),
@@ -321,7 +330,7 @@ export const BASE_CATEGORIES: Record<BaseCategory, BaseCategoryConfig> = {
       field('currency', 'contractCurrency', 'text'),
       field('contract_subject', 'contractSubject', 'text'),
       field('awarded_to_group', 'awardedToGroup', 'bool'),
-      field('contractor_eik', 'supplierRegisterNumber', 'text'),
+      field('contractor_eik', 'supplierRegisterNumber', 'supplier_id'),
       field('contractor_name', 'supplierName', 'text'),
       field('contractor_country', 'supplierNationality', 'text'),
       field('winner_owner_nationality', null, 'text'),
@@ -425,7 +434,7 @@ export const MAX_SQL_TEXT_LEN = 1_000_000;
 // Strip NUL and every C0 (\x00-\x1F) and C1 (\x7F-\x9F) control character. These have no
 // place in a one-line SQL literal and DEL/C1 in particular can corrupt the generated file
 // or confuse downstream tooling. Printable text (incl. all Cyrillic / Unicode) is untouched.
-const SQL_CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F]/g;
+const SQL_CONTROL_CHARS = new RegExp(CONTROL_CHARS, 'g');
 
 /**
  * Assert that `literal` is a well-formed single-quoted SQL string literal: it starts and
@@ -474,6 +483,19 @@ export function escapeSqlText(value: string): string {
   return literal;
 }
 
+/** Stage the supplier ID as SQLite TEXT with the same UTF-8 bytes as a bound value. */
+export function supplierIdSqlLiteral(value: BaseStagingValue | undefined): string {
+  if (value == null) return 'NULL';
+  const id = String(value);
+  if (id.length <= MAX_SQL_TEXT_LEN && !CONTROL_CHARS.test(id)) return escapeSqlText(id);
+
+  // A SQL source file cannot contain a literal NUL. Hex keeps control bytes out of the
+  // SQL syntax and preserves the complete identifier for validation and raw-key joins.
+  let hex = '';
+  for (const byte of new TextEncoder().encode(id)) hex += byte.toString(16).padStart(2, '0');
+  return `CAST(X'${hex}' AS TEXT)`;
+}
+
 export function baseSqlLiteral(
   cat: BaseCategory,
   column: string,
@@ -481,6 +503,7 @@ export function baseSqlLiteral(
 ): string {
   if (value === null || value === undefined) return 'NULL';
   const kind = baseColumnKind(cat, column);
+  if (kind === 'supplier_id') return supplierIdSqlLiteral(value);
   if (
     [
       'int',

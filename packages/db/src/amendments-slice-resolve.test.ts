@@ -28,6 +28,7 @@ const migrations = [
   'packages/db/migrations/0006_amendment_restated.sql',
   'packages/db/migrations/0007_amendment_value_suspect.sql',
   'packages/db/migrations/0008_amendment_provenance.sql',
+  'packages/db/migrations/0029_contract_value_evidence.sql',
   // #279/ADR-0033: refresh-slice.sql reads interest_link_evidence.
   'packages/db/migrations/0009_interest_link_evidence.sql',
   // The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
@@ -196,6 +197,58 @@ describe('refresh-slice #306 value-anchor resolver', () => {
       "SELECT contract_number, annex_count, current_value FROM contracts WHERE tender_id='t:UNP-NS'",
     );
     expect(contract).toEqual([{ contract_number: 'Д-226', annex_count: 1, current_value: 1200 }]);
+  });
+
+  it('inherits an earlier published anchor when a later foreign sibling has no direct match', () => {
+    seedTender(db, 'UNP-TEST', 'TEST-ORG');
+    seedContract(db, {
+      unp: 'UNP-TEST',
+      cnum: 'TEST-FILING',
+      signing: 10_000,
+      authorityEik: 'TEST-ORG',
+      contractorEik: '0000000000015',
+    });
+    readScript(db, refreshSlice);
+    resetStaging(db);
+    seedAnnex(db, {
+      unp: 'UNP-TEST',
+      annexCnum: 'TEST-ALT',
+      valueBefore: 10_000,
+      valueAfter: 11_000,
+      authorityEik: 'TEST-ORG',
+      contractorEik: '0000000000015',
+    });
+    readScript(db, refreshSlice);
+
+    resetStaging(db);
+    sqlite(
+      db,
+      `INSERT INTO raw_amendments (source, fetched_at, unp, document_number, contract_number,
+        published_at, value_before, value_after, currency)
+      VALUES ('eop:annexes:2026-06-10', '2026-06-10', 'UNP-TEST', 'TEST-SIBLING', 'TEST-ALT',
+        '2026-06-10', 12000, 15000, 'USD');`,
+    );
+    readScript(db, refreshSlice);
+    readScript(db, refreshSlice);
+
+    const [linked] = sqliteJson<AmendmentRow>(
+      db,
+      "SELECT contract_number, contract_number_raw, link_method FROM amendments WHERE document_number = 'TEST-SIBLING'",
+    );
+    expect(linked).toEqual({
+      contract_number: 'TEST-FILING',
+      contract_number_raw: 'TEST-ALT',
+      link_method: 'value_anchor',
+    });
+    const [contract] = sqliteJson<ContractRow>(
+      db,
+      'SELECT contract_number, annex_count, current_value FROM contracts',
+    );
+    expect(contract).toEqual({
+      contract_number: 'TEST-FILING',
+      annex_count: 2,
+      current_value: 15000,
+    });
   });
 
   it('leaves a corpus-ambiguous annex unlinked even when it is unique within the window', () => {

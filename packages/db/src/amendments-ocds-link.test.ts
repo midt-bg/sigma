@@ -80,6 +80,7 @@ beforeEach(() => {
   readScript(db, migration6); // #305 Tier-2 value_restated/value_treatment on served amendments
   readScript(db, migration7); // #305 residual value_suspect on served amendments
   readScript(db, migration8); // #306 provenance columns on served amendments
+  readScript(db, resolve(root, 'packages/db/migrations/0029_contract_value_evidence.sql'));
   readScript(db, workStagingSchema); // raw_* staging
 
   // Two EOP procedures: T1 (contract 90029) already has an EOP annex; T2 (contract 55500) has NONE.

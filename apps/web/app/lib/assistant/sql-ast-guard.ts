@@ -24,7 +24,11 @@
 
 import { Parser, type AST } from 'node-sql-parser/build/sqlite';
 import { enforceLimit, MAX_ROWS, type GuardResult } from './sql-guard';
-import { TABLES } from './describe-schema';
+import {
+  PUBLIC_PROCUREMENT_FIELDS,
+  TABLES,
+  type ProjectedProcurementTable,
+} from './describe-schema';
 
 const parser = new Parser();
 
@@ -37,6 +41,7 @@ const deny = (reason: string): GuardResult => ({ ok: false, reason });
 // only read a few discriminant fields.
 type LimitNode = { seperator?: string; value?: unknown[] } | null | undefined;
 type FromEntry = {
+  db?: string | null; // database qualifier, e.g. main
   table?: string | null; // a plain table reference
   join?: unknown; // join kind for entries after the first ('INNER JOIN', …)
   on?: unknown; // join condition; null for an (explicit) cross-join
@@ -87,10 +92,14 @@ function outerLimit(ast: LooseSelect): LimitNode {
 // CTE named `sqlite_master` declared inside an unrelated sub-query would exempt the REAL outer
 // `FROM sqlite_master` from the check — a schema-enumeration bypass (review #80). Returns the first
 // disallowed table, or null. The parsed AST is a finite tree, so the walk terminates.
-function denyDisallowedTable(node: unknown, cteScope: ReadonlySet<string>): string | null {
+function denyDisallowedTable(
+  node: unknown,
+  cteScope: ReadonlySet<string>,
+  projections: Set<ProjectedProcurementTable>,
+): string | null {
   if (Array.isArray(node)) {
     for (const item of node) {
-      const r = denyDisallowedTable(item, cteScope);
+      const r = denyDisallowedTable(item, cteScope, projections);
       if (r) return r;
     }
     return null;
@@ -111,12 +120,17 @@ function denyDisallowedTable(node: unknown, cteScope: ReadonlySet<string>): stri
     for (const f of obj.from as FromEntry[]) {
       if (f && typeof f.table === 'string' && f.table.length > 0) {
         const table = f.table.toLowerCase();
+        if (table === 'contracts' || table === 'amendments') {
+          // The public names are bound to explicit projections, so they must resolve unqualified.
+          if (f.db) return `use the unqualified public table name: ${f.table}`;
+          if (!scope.has(table)) projections.add(table);
+        }
         if (!scope.has(table) && !ALLOWED_TABLES.has(table)) return `table not allowed: ${f.table}`;
       }
     }
   }
   for (const key of Object.keys(obj)) {
-    const r = denyDisallowedTable(obj[key], scope);
+    const r = denyDisallowedTable(obj[key], scope, projections);
     if (r) return r;
   }
   return null;
@@ -328,7 +342,8 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
 
   // Positive table allowlist with lexical CTE scoping (see denyDisallowedTable): a real disallowed
   // table cannot be smuggled past the check by an out-of-scope CTE of the same name (review #80).
-  const badTable = denyDisallowedTable(ast, new Set<string>());
+  const projections = new Set<ProjectedProcurementTable>();
+  const badTable = denyDisallowedTable(ast, new Set<string>(), projections);
   if (badTable) return deny(badTable);
 
   // Bound the OUTER result with an AST-authoritative LIMIT. The SQLite `LIMIT offset, count` COMMA form
@@ -363,5 +378,19 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
   const limited = hasOuterLimit
     ? enforceLimit(sql, maxRows)
     : `${sql.replace(/;?\s*$/u, '')} LIMIT ${maxRows}`;
-  return { ok: true, sql: limited };
+  if (projections.size === 0) return { ok: true, sql: limited };
+
+  // Bind the documented names at the outer WITH so projections work inside joins and subqueries.
+  // A model-defined CTE of the same name keeps its normal SQL scope. Only the fixed projection
+  // names and columns below can address the backing tables.
+  const ctes = [...projections]
+    .map(
+      (table) =>
+        `${table} AS (SELECT ${PUBLIC_PROCUREMENT_FIELDS[table].join(', ')} FROM main.${table})`,
+    )
+    .join(', ');
+  if (!ast.with?.length) return { ok: true, sql: `WITH ${ctes} ${limited}` };
+  const withClause = /^\s*WITH\b/i.exec(limited);
+  if (!withClause) return deny('could not apply public table projections');
+  return { ok: true, sql: `WITH ${ctes},${limited.slice(withClause[0].length)}` };
 }

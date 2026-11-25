@@ -12,7 +12,7 @@ import { refreshSliceStatementGroups } from './refresh';
 // leaving contracts and tenders advanced by four days while `data_freshness` and `home_totals` still
 // advertised the previous slice. A reader was told a date that was confidently wrong rather than unknown.
 //
-// The fix is ordering, not atomicity: nulling `as_of` in the FIRST group means an interrupted refresh
+// The fix is ordering, not atomicity: nulling `as_of` before the first write to served rows means an interrupted refresh
 // reads as „unknown slice", and `@refresh-batch globals` writes the true values back at the end. These
 // tests hold that ordering, because the property is invisible on a successful run — it only shows up on
 // the failure nobody is watching.
@@ -25,12 +25,14 @@ const indexOfGroupWhere = (pred: (sql: string) => boolean) =>
   groups.findIndex((g) => g.statements.some((s) => pred(s)));
 
 describe('freshness markers survive an interrupted slice refresh', () => {
-  it('nulls both markers in the very first group', () => {
-    // First, not merely early: any group that runs before the invalidation can fail and strand a stale
-    // marker, which is exactly the state this guards against.
-    const first = groups[0]!;
-    const sql = first.statements.join('\n');
-    expect(first.name).toBe('setup');
+  it('resolves annexes without changing served rows, then nulls both markers', () => {
+    const [resolution, first] = groups;
+    expect(resolution!.name).toBe('resolve-annexes');
+    expect(resolution!.statements.join('\n')).not.toMatch(
+      /(?:UPDATE|DELETE FROM|INSERT INTO|REPLACE INTO)\s+(?:amendments|contracts|tenders|data_freshness|home_totals)\b/i,
+    );
+    const sql = first!.statements.join('\n');
+    expect(first!.name).toBe('setup');
     expect(sql).toMatch(/UPDATE\s+data_freshness\s+SET\s+as_of\s*=\s*NULL/i);
     expect(sql).toMatch(/UPDATE\s+home_totals\s+SET\s+as_of\s*=\s*NULL/i);
   });
@@ -42,7 +44,7 @@ describe('freshness markers survive an interrupted slice refresh', () => {
       /UPDATE\s+data_freshness\s+SET\s+as_of\s*=\s*NULL/i.test(s),
     );
     const writes = indexOfGroupWhere((s) => /INSERT\s+INTO\s+data_freshness/i.test(s));
-    expect(invalidates).toBe(0);
+    expect(invalidates).toBe(1);
     expect(writes).toBeGreaterThan(invalidates);
   });
 
@@ -57,7 +59,7 @@ describe('freshness markers survive an interrupted slice refresh', () => {
 
   it('leaves refreshed_at alone, which is NOT NULL in the schema', () => {
     // Nulling refreshed_at instead would throw on the UPDATE and turn a resilience fix into an outage.
-    const first = groups[0]!.statements.join('\n');
+    const first = groups[1]!.statements.join('\n');
     expect(first).not.toMatch(/SET[^;]*refreshed_at\s*=\s*NULL/i);
   });
 });
