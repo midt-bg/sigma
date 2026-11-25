@@ -183,18 +183,23 @@ it('announces each suggestion as an option, grouped and labelled by kind', async
   expect(options()[3]!.textContent).toContain('Всички резултати');
 });
 
-// The list has no room for what a figure counts. Beside a company it is the company's own total; beside a
-// person it would read as money of theirs, so the person's row carries none — the results page gives it with
-// its label.
-it('shows a sum beside a company and none beside a person', async () => {
+// Beside a company the figure is the company's own total. Beside a person a bare figure would read as money
+// of theirs, so the person's row says what it counts — the contracts in the period of the office.
+it('shows a bare sum beside a company and a labelled one beside a person', async () => {
   const groups = TWO_GROUPS.groups.map((g) => ({
     ...g,
     hits: g.hits.map((h) => ({ ...h, amountEur: 1_500_000 })),
   }));
   await mount(results(groups));
   await type('тест');
-  expect(options()[0]!.querySelector('.smart-search-option-amt')).toBeNull();
-  expect(options()[1]!.querySelector('.smart-search-option-amt')!.textContent).toContain('1,5');
+  const person = options()[0]!.querySelector('.smart-search-option-amt')!;
+  expect(person.textContent).toContain('1,5');
+  expect(person.querySelector('.smart-search-option-amt-note')!.textContent).toBe(
+    'в периода на длъжността',
+  );
+  const company = options()[1]!.querySelector('.smart-search-option-amt')!;
+  expect(company.textContent).toContain('1,5');
+  expect(company.querySelector('.smart-search-option-amt-note')).toBeNull();
 });
 
 // aria-activedescendant is the only thing a screen reader follows here: focus never leaves the input.
