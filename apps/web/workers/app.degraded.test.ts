@@ -311,12 +311,25 @@ describe('a page whose footer read D1 refuses', () => {
     expect(sql).toEqual([expect.stringContaining(FOOTER_SQL)]);
   });
 
-  it('still redirects a non-canonical path before it reads anything', async () => {
+  it('the worker redirects a non-canonical page path before anything is read', async () => {
     const { db, sql } = database('overloaded');
     const page = await get('/accessibility/', db);
 
     expect(page.status).toBe(301);
     expect(page.headers.get('Location')).toBe('/accessibility');
     expect(sql).toEqual([]);
+  });
+
+  it('the root loader still redirects a non-canonical data request before its footer read', async () => {
+    // The worker leaves `.data` paths to the router, so this one reaches the root loader: its redirect is
+    // thrown before the footer read, which an overloaded D1 therefore never sees and cannot degrade.
+    const { db, sql } = database('overloaded');
+    const page = await get('/Accessibility.data', db);
+
+    expect(page.status).toBeLessThan(400);
+    expect(page.body).toContain('/accessibility');
+    expect(page.headers.get('X-Sigma-Degraded')).toBeNull();
+    expect(sql).toEqual([]);
+    expect(store.size).toBe(0);
   });
 });

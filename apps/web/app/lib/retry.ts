@@ -48,8 +48,12 @@ export async function withDbRetry<T>(fn: () => Promise<T>, attempts = 3): Promis
 
 /**
  * D1 refused the read because it is overloaded: the raw error, or the 503 `Response` the retry
- * layers above turn it into. Nothing else — a missing table, a bad query or an exhausted retry of
- * another fault is not back-pressure and must still fail the request.
+ * layers above turn it into. A missing table, a bad query or an exhausted retry of another fault is
+ * not back-pressure and must still fail the request.
+ *
+ * It takes ANY 503 `Response` for the refusal, so it is only right around a call whose sole source
+ * of a 503 is `withDbRetry` — a single D1 read, as in the root loader. Do not wrap a loader that
+ * can throw a 503 of its own in it.
  */
 export function isD1Refusal(error: unknown): boolean {
   return error instanceof Response ? error.status === 503 : isD1Overloaded(error);
