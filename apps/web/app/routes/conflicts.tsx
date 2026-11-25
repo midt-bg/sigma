@@ -177,7 +177,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
 
 // The columns of the /conflicts person leaderboard (#287, plan §3.2). Rank is the corner badge on phone
 // (isRank); the person name+institution becomes the card heading (isTitle).
-function personColumns(startRank: number): Column<ConflictPersonRow>[] {
+function personColumns(startRank: number, widened: boolean): Column<ConflictPersonRow>[] {
   return [
     { key: 'rank', header: '№', isRank: true, cell: (_r, i) => startRank + i + 1 },
     {
@@ -290,14 +290,20 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       header: 'Признаци',
       // The column states the facts the reader has no other column for, and says „—“ when there are
       // none. Carrying the own-institution chip alone left it blank on 98% of the rows, which reads as
-      // a broken column rather than as „nothing to note here“. A contract in the period is not one of these
-      // facts: the default list requires it, and a company without one carries its own marker.
+      // a broken column rather than as „nothing to note here“. A contract in the period is such a fact only
+      // in the widened scope, where rows with and without one stand side by side; the default list requires
+      // it, so there the chip would mark every row.
       cell: (r) => {
         const disputed = r.companies?.some((c) => c.missingYears?.length);
         const chips = [
           r.ownInstitution && (
             <Chip key="own" tone="strong">
               от собствената институция
+            </Chip>
+          ),
+          widened && r.hasContemporaneous && (
+            <Chip key="window" tone="window">
+              с договори в периода на длъжността
             </Chip>
           ),
           r.stakeKind === 'registry' && !r.companies?.some((c) => c.declared) && (
@@ -398,7 +404,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   // filter narrows them to what it keeps.
   const listing = conflictListing(filters.stake, filters.role === 'all');
   const clearHref = authority ? `/conflicts?authority=${authority.slug}` : '/conflicts';
-  const columns = personColumns(leaderboardRankOffset(page, PER_PAGE));
+  const columns = personColumns(leaderboardRankOffset(page, PER_PAGE), filters.period === 'any');
   // An empty list offers the wider scopes that would fill it, every other filter kept. On an empty list
   // the people a box adds are the people it would show.
   const include = groups[0]!.selected;

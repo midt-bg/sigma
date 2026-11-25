@@ -462,9 +462,26 @@ describe('/conflicts route — render', () => {
         .querySelector('td[data-label="Признаци"]')!;
     expect(cell('Тихомир Тестов').textContent).toBe('—');
     expect(cell('Тихомир Тестов').querySelectorAll('.chip').length).toBe(0);
-    // A contract in the period is what the default list requires, so a chip saying so marked every row and
-    // told nothing; the companies without one say so themselves.
-    expect(cell('Периодин Тестов').textContent).toBe('—');
+    // In the widened scope the rows with a contract in the period stand beside the rows without one, so the
+    // chip tells them apart.
+    expect(cell('Периодин Тестов').textContent).toContain('с договори в периода на длъжността');
+  });
+
+  it('the default list, which requires a contract in the period, does not repeat it on every row', async () => {
+    const inPeriod = link({
+      officialSlug: 'period',
+      official: 'Периодин Тестов',
+      linkKey: 'p-2',
+      eik: '602',
+      ownInstitution: false,
+      contemporaneousContractCount: 2,
+      contemporaneousValueEur: 5_000,
+    });
+    await renderConflicts([inPeriod], null, '/conflicts');
+    const cell = bodyRows()
+      .find((r) => r.textContent?.includes('Периодин Тестов'))!
+      .querySelector('td[data-label="Признаци"]')!;
+    expect(cell.textContent).toBe('—');
   });
 
   it('признаци stay visible and a flag sourced from a SECOND link still renders', async () => {
