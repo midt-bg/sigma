@@ -162,6 +162,27 @@ describe('getCompanyPeople', () => {
       official: true, // she filed declarations here
     });
     expect(by('БОРИС ИВАНОВ').official).toBeUndefined();
+  });
+
+  it("carries an official's own filings — type and date included — for the office under the name", async () => {
+    const db = served();
+    open!.exec(`
+      INSERT INTO declarations (id,person_id,xml_file,folder_year,declared_year,template,category,institution,position,source_url)
+        VALUES ('decl:2020:v.xml','person:identity:anna','v.xml','2020','2020','vacate',NULL,'Община Тестово','кмет','https://example.test/v');
+      INSERT INTO declaration_metadata (declaration_id,declaration_type,declared_on) VALUES ('decl:2020:v.xml','Vacate','2020-11-02');
+    `);
+    const { roles } = await getCompanyPeople(db, 'eik:111111111');
+    const by = (name: string) => roles.find((r) => r.holder.name === name)!.holder;
+    expect(by('АННА ПЕТРОВА').offices).toEqual([
+      {
+        institution: 'Община Тестово',
+        position: 'кмет',
+        year: '2020',
+        type: 'Vacate',
+        declaredOn: '2020-11-02',
+      },
+    ]);
+    expect(by('БОРИС ИВАНОВ').offices).toBeUndefined();
     expect(by('ХОЛДИНГ АД')).toMatchObject({
       kind: 'entity',
       href: '/companies/444444444',

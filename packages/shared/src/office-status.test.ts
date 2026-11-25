@@ -3,6 +3,8 @@ import {
   describeOffices,
   officePeriodsText,
   officeStatusText,
+  sharedOfficeYears,
+  yearsText,
   type OfficeFiling,
 } from './office-status';
 
@@ -137,5 +139,27 @@ describe('describeOffices', () => {
     );
     expect(undated!.status).toEqual({ kind: 'undated' });
     expect(officeStatusText(undated!)).toBeNull();
+  });
+});
+
+describe('sharedOfficeYears', () => {
+  const [office] = describeOffices(
+    [
+      f('2014', 'Annualy'),
+      f('2015', 'Annualy'),
+      f('2018', 'Annualy'),
+      f('2019', 'Vacate', '2019-04-01'),
+    ],
+    2026,
+  );
+  it('gives the office years in which the role was in force, and no filled gap', () => {
+    expect(sharedOfficeYears(office!, '2015-06-01', '2018-02-01')).toEqual(['2015', '2018']);
+    expect(yearsText(sharedOfficeYears(office!, '2010-01-01', null, 2026))).toBe(
+      '2014–2015, 2018–2019',
+    );
+  });
+  it('shares nothing when the role lies outside the years with filings', () => {
+    expect(sharedOfficeYears(office!, '2020-01-01', null, 2026)).toEqual([]);
+    expect(sharedOfficeYears(office!, '2016-01-01', '2017-12-31')).toEqual([]);
   });
 });

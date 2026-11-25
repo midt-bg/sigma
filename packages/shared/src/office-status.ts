@@ -224,3 +224,35 @@ export function officeTitle(o: PublicOffice): string | null {
     ? `бивш ${words.charAt(0).toLowerCase()}${words.slice(1)}`
     : words;
 }
+
+/** „2019–2021, 2023" — a set of years as spans of consecutive years. */
+export function yearsText(years: string[]): string {
+  return spansOf(years)
+    .map(([a, b]) => (a === b ? a : `${a}–${b}`))
+    .join(', ');
+}
+
+/**
+ * The years with a filing for the office in which a role dated `from`–`to` was also in force (`to` null: the
+ * role is still registered). A co-occurrence by YEAR — the office is known by year, so this never proves both
+ * were held on the same day, and an office with no dated filing shares no year.
+ */
+export function sharedOfficeYears(
+  o: PublicOffice,
+  from: string,
+  to: string | null,
+  currentYear: number = new Date().getUTCFullYear(),
+): string[] {
+  const start = Number(from.slice(0, 4));
+  const end = to ? Number(to.slice(0, 4)) : currentYear;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+  return o.periods
+    .flatMap((p) => p.spans)
+    .flatMap(([a, b]) => {
+      const years: string[] = [];
+      for (let y = Math.max(Number(a), start); y <= Math.min(Number(b), end); y++)
+        years.push(String(y));
+      return years;
+    })
+    .filter((y, i, all) => all.indexOf(y) === i);
+}

@@ -562,6 +562,14 @@ export interface RoleHolder {
   country: string | null;
   /** A person who has filed a declaration of interests published here. */
   official?: boolean;
+  /** That person's filings, for the public office and its years (`describeOffices`). */
+  offices?: {
+    institution: string | null;
+    position: string | null;
+    year: string | null;
+    type?: string | null;
+    declaredOn?: string | null;
+  }[];
 }
 
 /** One registered role at a company: who holds it, since when, until when, and the entry it rests on. */

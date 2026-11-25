@@ -1,11 +1,12 @@
 import { Link } from 'react-router';
 import type { CompanyRole, PersonRole } from '@sigma/api-contract';
-import { count, date, pct } from '@sigma/shared';
+import { count, date, describeOffices, pct, sharedOfficeYears, yearsText } from '@sigma/shared';
 import { DataTable, type Column } from './DataTable';
 import { ROLE_LABEL } from '../lib/registry-roles';
 import { roleRowId } from '../lib/profile-navigation';
 import { Chip, NewTabLink, OwnershipChip, registryUrl } from './ui';
 import { personName } from '../lib/person-name';
+import { PublicOffices } from './PublicOffices';
 
 // The Trade Register's roles as tables (ADR-0039): a company's management and ownership, and a person's roles
 // at companies. Facts as registered, each with the day of the entry that added it and, once it ended, the day
@@ -56,7 +57,7 @@ const entry: Column<{ entryNumber: string }> = {
   cell: (r) => r.entryNumber,
 };
 
-function Holder({ holder }: { holder: CompanyRole['holder'] }) {
+function Holder({ holder, role }: { holder: CompanyRole['holder']; role?: CompanyRole }) {
   const label = holder.kind === 'person' ? personName(holder.name) : holder.name;
   const name = holder.href ? <Link to={holder.href}>{label}</Link> : label;
   // A company that is not a winner here has no page: its ЕИК and, abroad, its country say who it is.
@@ -76,6 +77,34 @@ function Holder({ holder }: { holder: CompanyRole['holder'] }) {
           <Chip>длъжностно лице</Chip>
         </>
       )}
+      {holder.offices && <HolderOffices filings={holder.offices} role={role} />}
+    </>
+  );
+}
+
+/** Under an official's name: the public office and ITS years and status, apart from the company role and its
+ *  own dates in the next columns. The two are said to share years only where both are on record for a year —
+ *  never that they were held on the same day. */
+function HolderOffices({
+  filings,
+  role,
+}: {
+  filings: NonNullable<CompanyRole['holder']['offices']>;
+  role?: CompanyRole;
+}) {
+  const shared = role
+    ? describeOffices(filings).flatMap((o) =>
+        sharedOfficeYears(o, role.addedOn, role.removedOn ?? role.uncertainAfter ?? null),
+      )
+    : [];
+  return (
+    <>
+      <PublicOffices filings={filings} label={null} />
+      {shared.length > 0 && (
+        <div className="small muted">
+          Ролята е вписана и в години с декларация за длъжността: {yearsText(shared)}.
+        </div>
+      )}
     </>
   );
 }
@@ -84,7 +113,7 @@ const holderColumn: Column<CompanyRole> = {
   key: 'holder',
   header: 'Лице',
   isTitle: true,
-  cell: (r) => <Holder holder={r.holder} />,
+  cell: (r) => <Holder holder={r.holder} role={r} />,
 };
 
 // A public enterprise is named as such: a seat there is a held position, not a company of the person
