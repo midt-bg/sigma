@@ -257,6 +257,43 @@ describe('PersonProfile', () => {
     expect(table.querySelector('a[href="/companies/333333333"]')).not.toBeNull();
   });
 
+  it('names each declared office under the name, with its years and only the status the filings support', () => {
+    const declaration = (
+      year: string,
+      type: string,
+      declaredOn: string | null,
+      institution: string,
+    ) => ({
+      id: `d-${year}-${type}-${institution}`,
+      year,
+      template: 'x',
+      type,
+      declaredOn,
+      submittedOn: null,
+      institution,
+      position: 'член',
+      url: 'https://example.test/d',
+      companyEiks: [],
+    });
+    const c = render(
+      profile({
+        person: null,
+        declarations: [
+          declaration('2018', 'Annualy', null, 'Агенция за тестове'),
+          declaration('2019', 'Vacate', '2019-06-01', 'Агенция за тестове'),
+          declaration('2023', 'Annualy', null, 'Съвет за тестове'),
+        ],
+      }),
+    );
+    const header = c.querySelector('header, .page-header') ?? c;
+    const offices = header.querySelector('.person-institutions')!.textContent;
+    expect(offices).toContain('Съвет за тестове · член · 2023Последна декларация за 2023 г.');
+    expect(offices).toContain(
+      'Агенция за тестове · член · 2018–2019Бивш: декларация при освобождаване за 2019 г.',
+    );
+    expect(offices).not.toMatch(/настоящ/i);
+  });
+
   it('presents an office-holder with no register match by the declarations alone, and says so', () => {
     const c = render(
       profile({
