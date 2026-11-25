@@ -338,6 +338,8 @@ td.rank {
     content: attr(data-label);
     flex: 0 0 auto;
     max-width: 52%;
+    /* A number cell keeps its value on one line; its label must still wrap inside its share. */
+    white-space: normal;
     text-align: left;
     font: 500 0.75rem/1.5 var(--font-mono);
     letter-spacing: 0.1em;
