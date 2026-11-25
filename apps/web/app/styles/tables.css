@@ -50,10 +50,10 @@ thead th {
     width: 4%;
   }
   .conflicts-people-table th:nth-child(2) {
-    width: 28%;
+    width: 27%;
   }
   .conflicts-people-table th:nth-child(3) {
-    width: 21%;
+    width: 20%;
   }
   .conflicts-people-table th:nth-child(4) {
     width: 10%;
@@ -65,7 +65,7 @@ thead th {
     width: 8%;
   }
   .conflicts-people-table th:nth-child(7) {
-    width: 20%;
+    width: 22%;
   }
 }
 thead th:first-child {
