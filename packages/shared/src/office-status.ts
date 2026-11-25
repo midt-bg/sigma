@@ -231,6 +231,8 @@ export function sameBodySpelling(a: string, b: string): boolean {
   const oblast = (k: string, other: string): boolean =>
     k === 'ОБЛАСТНА АДМИНИСТРАЦИЯ' && other.startsWith('ОБЛАСТ ');
   if (oblast(a, b) || oblast(b, a)) return true;
+  // An oblast's administration is not the municipality of its town, however alike the two names are.
+  if (a.startsWith('ОБЛАСТ ') !== b.startsWith('ОБЛАСТ ')) return false;
   const [p, q] = [written(bare(a)), written(bare(b))];
   if (p === q) return true;
   const [x, y] = [wordsOf(p), wordsOf(q)];

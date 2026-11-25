@@ -272,6 +272,13 @@ describe('one office under two spellings', () => {
         f('2019', 'Annualy', null, 'Община Тестово', 'общински съветник'),
       ]),
     ).toBe(2);
+    // An oblast's administration and the municipality of its town.
+    expect(
+      count([
+        f('2019', 'Annualy', null, 'Областна администрация Тестово', 'експерт'),
+        f('2019', 'Annualy', null, 'Община Тестово', 'експерт'),
+      ]),
+    ).toBe(2);
     // The same spelling pair years apart is not read as one office.
     expect(
       count([
