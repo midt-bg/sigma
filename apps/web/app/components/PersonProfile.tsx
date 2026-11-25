@@ -10,7 +10,7 @@ import { DataTable } from './DataTable';
 import { PersonRolesTables, RegistrySource } from './RegistryRoles';
 import { Declarations } from './Declarations';
 import { PublicOffices } from './PublicOffices';
-import { PersonTimeline } from './PersonTimeline';
+import { PersonTimeline, ownContractPeriod } from './PersonTimeline';
 import { timelineCompanies } from '../lib/person-timeline';
 import { PersonActivity } from './PersonActivity';
 import { declaredStakeNoun } from '../lib/conflicts';
@@ -205,7 +205,13 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
             <Link to="/conflicts/methodology">Методология →</Link>
           </p>
         )}
-        {hasCompanies && <PersonActivity activity={p.activity} hasDeclarations={filed} />}
+        {hasCompanies && (
+          <PersonActivity
+            activity={p.activity}
+            hasDeclarations={filed}
+            ownPeriod={ownContractPeriod(p)}
+          />
+        )}
       </main>
     </>
   );

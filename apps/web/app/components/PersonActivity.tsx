@@ -1,13 +1,22 @@
 import { useEffect, useRef, type ChangeEvent } from 'react';
 import { Form, Link, useLocation, useNavigation, useRevalidator, useSubmit } from 'react-router';
 import { revealProfileTarget } from '../lib/profile-navigation';
-import type { PersonActivity as Activity, PersonContractRow } from '@sigma/db';
+import type { InstitutionPeriod, PersonActivity as Activity, PersonContractRow } from '@sigma/db';
 import { authoritySlug, contractSlug } from '@sigma/db';
 import { count, money, date, plural } from '@sigma/shared';
 import { Section, Chip } from './ui';
 import { DataTable, type Column } from './DataTable';
+import { PERIOD_LABEL } from './PersonTimeline';
 
-const columns: Column<PersonContractRow>[] = [
+/** Where a contract with one of the person's own institutions falls against the office there; null for any
+ *  other buyer. */
+export type OwnContractPeriod = (c: {
+  authorityId: string;
+  signedAt: string | null;
+  tied: boolean;
+}) => InstitutionPeriod | null;
+
+const columns = (ownPeriod?: OwnContractPeriod): Column<PersonContractRow>[] => [
   {
     key: 'subject',
     header: 'Договор',
@@ -29,28 +38,40 @@ const columns: Column<PersonContractRow>[] = [
   {
     key: 'period',
     header: 'Основание за връзката',
-    cell: (r) => (
-      <>
-        {r.duringOfficeYear && <Chip tone="window">година с данни за длъжността</Chip>}
-        {r.duringRole && <Chip>лична роля в ТР</Chip>}
-        {(r.declarationBasis & 1) !== 0 && <Chip>деклариран собствен дял</Chip>}
-        {(r.declarationBasis & 4) !== 0 && <Chip>декларирано управление</Chip>}
-        {(r.declarationBasis & 2) !== 0 && <Chip>дял на свързано лице</Chip>}
-        {!r.signedAt ? (
-          'Без дата'
-        ) : !r.duringRole && !r.duringDeclaration && !r.duringOfficeYear ? (
-          <span className="muted">Без установено припокриване</span>
-        ) : null}
-      </>
-    ),
+    cell: (r) => {
+      // The same four cases the timeline marks draw, in the same words. A payload cached before `tied`
+      // existed falls back to its parts.
+      const own = ownPeriod?.({
+        authorityId: r.authorityId,
+        signedAt: r.signedAt,
+        tied: r.tied ?? ((r.duringRole || r.duringDeclaration) && r.duringOfficeYear),
+      });
+      return (
+        <>
+          {own && <Chip tone="strong">{PERIOD_LABEL[own]}</Chip>}
+          {r.duringOfficeYear && <Chip tone="window">година с данни за длъжността</Chip>}
+          {r.duringRole && <Chip>лична роля в ТР</Chip>}
+          {(r.declarationBasis & 1) !== 0 && <Chip>деклариран собствен дял</Chip>}
+          {(r.declarationBasis & 4) !== 0 && <Chip>декларирано управление</Chip>}
+          {(r.declarationBasis & 2) !== 0 && <Chip>дял на свързано лице</Chip>}
+          {!r.signedAt ? (
+            'Без дата'
+          ) : !r.duringRole && !r.duringDeclaration && !r.duringOfficeYear ? (
+            <span className="muted">Без установено припокриване</span>
+          ) : null}
+        </>
+      );
+    },
   },
 ];
 export function PersonActivity({
   activity: a,
   hasDeclarations,
+  ownPeriod,
 }: {
   activity: Activity;
   hasDeclarations: boolean;
+  ownPeriod?: OwnContractPeriod;
 }) {
   const location = useLocation();
   const selectedProfile = new URLSearchParams(location.search).get('view') === 'profile';
@@ -271,7 +292,7 @@ export function PersonActivity({
         </div>
         {a.contracts.length ? (
           <DataTable
-            columns={columns}
+            columns={columns(ownPeriod)}
             rows={a.contracts}
             getKey={(r) => r.id}
             caption="Договори на свързаните дружества"

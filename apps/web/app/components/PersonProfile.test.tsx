@@ -294,6 +294,65 @@ describe('PersonProfile', () => {
     expect(offices).not.toMatch(/настоящ/i);
   });
 
+  it('labels a contract from the person’s own institution in the contracts table as the timeline does', () => {
+    const contract = (id: string, authorityId: string, signedAt: string, tied: boolean) => ({
+      id,
+      subject: `Договор ${id}`,
+      company: 'ТЕСТ ГРУП ЕООД',
+      eik: '111111111',
+      authority: authorityId === 'auth:own' ? 'Община Тест' : 'Агенция Тест',
+      authorityId,
+      signedAt,
+      valueEur: 1000,
+      duringRole: tied,
+      duringDeclaration: false,
+      duringOfficeYear: signedAt.startsWith('2021'),
+      declarationBasis: 0,
+      tied,
+    });
+    const c = render(
+      profile({
+        declarations: [
+          {
+            id: 'd-2021',
+            year: '2021',
+            template: 'x',
+            type: 'Annualy',
+            declaredOn: null,
+            submittedOn: null,
+            institution: 'Община Тест',
+            position: 'съветник',
+            url: 'https://example.test/d',
+            companyEiks: [],
+          },
+        ],
+        timeline: {
+          contracts: [],
+          observations: [],
+          reads: [],
+          buyers: [],
+          institutionProfiles: [{ institution: 'Община Тест', authorityId: 'auth:own' }],
+        },
+        activity: {
+          ...activity,
+          total: 3,
+          contracts: [
+            contract('a', 'auth:own', '2021-05-01', true),
+            contract('b', 'auth:own', '2021-06-01', false),
+            contract('c', 'auth:other', '2021-07-01', true),
+          ],
+        },
+      }),
+    );
+    const basis = (id: string) =>
+      [...c.querySelectorAll('tbody tr')]
+        .find((r) => r.textContent?.includes(`Договор ${id}`))!
+        .querySelector('td[data-label="Основание за връзката"]')!.textContent;
+    expect(basis('a')).toContain('Същата институция · в съвпадение');
+    expect(basis('b')).toContain('Същата институция · в периода на длъжността');
+    expect(basis('c')).not.toContain('Същата институция');
+  });
+
   it('presents an office-holder with no register match by the declarations alone, and says so', () => {
     const c = render(
       profile({

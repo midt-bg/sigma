@@ -885,7 +885,7 @@ type OwnPeriod = OwnOffice & { period: InstitutionPeriod };
 
 const PERIODS: InstitutionPeriod[] = ['overlap', 'in-office', 'outside', 'unknown'];
 /** Read without colour: each case says itself in words, beside its own line pattern. */
-const PERIOD_LABEL: Record<InstitutionPeriod, string> = {
+export const PERIOD_LABEL: Record<InstitutionPeriod, string> = {
   overlap: 'Същата институция · в съвпадение',
   'in-office': 'Същата институция · в периода на длъжността',
   outside: 'Същата институция · извън периода',
@@ -907,6 +907,19 @@ const PERIOD_NOTE: Record<InstitutionPeriod, string> = {
   unknown:
     'Декларациите не установяват дали лицето е заемало длъжността към датата на договора. Това не е нито застъпване, нито липса на такова.',
 };
+
+/** Where a contract with one of the person's own institutions falls against the office there — the rule the
+ *  timeline marks follow, for the contracts table under it. Null for any other buyer. A contract without a
+ *  date cannot be placed: its period is unknown. */
+export function ownContractPeriod(p: LoadedPersonProfile) {
+  const profiles = p.timeline.institutionProfiles ?? [];
+  const offices = ownInstitutionOffices(p.declarations, profiles);
+  return (c: { authorityId: string; signedAt: string | null; tied: boolean }) => {
+    const office = offices.get(c.authorityId);
+    if (!office) return null;
+    return c.signedAt ? institutionPeriod(office.spans, c.signedAt, c.tied) : 'unknown';
+  };
+}
 
 /** Each own institution's authority id → its declared offices, the same runs the office bars draw. */
 function ownInstitutionOffices(
