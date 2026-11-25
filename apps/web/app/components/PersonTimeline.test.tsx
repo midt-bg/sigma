@@ -966,12 +966,13 @@ it('draws the overlap band, the office and each procurement from announcement to
     // Its buyer is the person's own institution: the building mark on the axis, and a line here.
     expect(marks[0]!.classList.contains('own')).toBe(true);
     expect(marks[0]!.querySelector('svg')).not.toBeNull();
+    expect(marks[0]!.classList.contains('period-overlap')).toBe(true);
     expect(marks[0]!.getAttribute('aria-label')).toContain(
-      'възложител от институциите в декларациите',
+      'Същата институция · в съвпадение: Община Тест · договор от 2022\u00a0г. · периоди на длъжността по декларациите: 2021–2022\u00a0г. (встъпителна 20.04.2021)',
     );
     expect(marks[1]!.classList.contains('own')).toBe(false);
     expect(tip.querySelector('.time-tip-own')!.textContent).toContain(
-      'Възложител от институциите в декларациите',
+      'Същата институция · в съвпадение',
     );
     expect(tip.textContent).toContain('Обявена 01.03.2022 → подписан 01.05.2022 · 61 дни');
     expect(tip.textContent).toContain('Една оферта');
@@ -1049,6 +1050,230 @@ it('draws the overlap band, the office and each procurement from announcement to
     );
     expect(band).not.toContain('Лицето е на длъжност');
     expect(el.querySelector('.time-tip')).toBeNull();
+  } finally {
+    vi.useRealTimers();
+    act(() => root.unmount());
+    el.remove();
+  }
+});
+
+it("keeps every contract with the person's own institution and says, in words, how it falls against the office", () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const eik = '123456789';
+  const declaration = (id: string, year: string, type: string, declaredOn: string | null) => ({
+    id,
+    year,
+    template: 'assets',
+    type,
+    declaredOn,
+    submittedOn: null,
+    institution: 'Община Тест',
+    position: 'Съветник',
+    url: `https://register.cacbg.bg/${id}.xml`,
+    companyEiks: [eik],
+  });
+  const procurement = (id: string, signedAt: string, tied: boolean, valueEur = 100) => ({
+    id,
+    eik,
+    subject: `Договор ${id}`,
+    authority: 'Община Тест',
+    authorityId: 'auth:1',
+    announcedAt: null,
+    signedAt,
+    valueEur,
+    bids: null,
+    tied,
+  });
+  const p = {
+    person: null,
+    name: 'Иван Петров Тестов',
+    links: [],
+    // 2017–2019 with an entry and an exit filing; 2022 alone, with neither.
+    declarations: [
+      declaration('d17', '2017', 'Entry', '2017-04-20'),
+      declaration('d18', '2018', 'Annualy', '2019-05-10'),
+      declaration('d19', '2019', 'Vacate', '2019-09-10'),
+      declaration('d22', '2022', 'Annualy', '2023-05-10'),
+    ],
+    timeline: {
+      reads: [],
+      buyers: [
+        {
+          eik,
+          year: '2018',
+          id: 'auth:1',
+          name: 'Община Тест',
+          contracts: 2,
+          eligible: 2,
+          valueEur: 300,
+        },
+        {
+          eik,
+          year: '2016',
+          id: 'auth:1',
+          name: 'Община Тест',
+          contracts: 1,
+          eligible: 0,
+          valueEur: 50,
+        },
+        {
+          eik,
+          year: '2020',
+          id: 'auth:1',
+          name: 'Община Тест',
+          contracts: 1,
+          eligible: 0,
+          valueEur: 70,
+        },
+      ],
+      institutionProfiles: [{ institution: 'Община Тест', authorityId: 'auth:1' }],
+      observations: [],
+      contracts: [
+        {
+          eik,
+          company: 'ТЕСТ ГРУП ЕООД',
+          year: '2016',
+          contracts: 1,
+          role: 0,
+          declared: 1,
+          tied: 0,
+          eligible: 0,
+          valueEur: 50,
+        },
+        {
+          eik,
+          company: 'ТЕСТ ГРУП ЕООД',
+          year: '2018',
+          contracts: 2,
+          role: 0,
+          declared: 2,
+          tied: 1,
+          eligible: 2,
+          valueEur: 300,
+        },
+        {
+          eik,
+          company: 'ТЕСТ ГРУП ЕООД',
+          year: '2020',
+          contracts: 1,
+          role: 0,
+          declared: 1,
+          tied: 0,
+          eligible: 0,
+          valueEur: 70,
+        },
+      ],
+    },
+    timelineIntervals: {
+      bands: { [eik]: [['2018-01-01', '2018-12-31']] },
+      declared: [],
+      procurements: [
+        procurement('c16', '2016-05-01', false, 50), // before an entry filed a year later: outside
+        procurement('c18a', '2018-05-01', true, 200), // in office, tied: the overlap
+        procurement('c18b', '2018-06-01', false), // in office, but no tie that day
+        procurement('c20', '2020-03-01', false, 70), // after the exit, before a run with no entry
+      ],
+    },
+    activity: emptyActivity,
+    totals: { companies: 1, contracts: 4, valueEur: 420, declaredCount: 0, declaredEur: null },
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as unknown as LoadedPersonProfile;
+  const companies: TimelineCompany[] = [
+    {
+      eik,
+      name: 'ТЕСТ ГРУП ЕООД',
+      href: `/companies/${eik}`,
+      roles: [],
+      links: [],
+      observations: [],
+      contracts: p.timeline.contracts,
+      declarations: [],
+      asOf: null,
+      publicEnterprise: false,
+      heldSeat: false,
+    },
+  ];
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={companies} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub />));
+    // Nothing is dropped: all four contracts stay on the axis, each with the building mark.
+    const marks = [...el.querySelectorAll<HTMLAnchorElement>('.time-procurement')];
+    expect(marks).toHaveLength(4);
+    expect(marks.every((m) => m.classList.contains('own') && m.querySelector('svg'))).toBe(true);
+    const byId = (id: string) => marks.find((m) => m.getAttribute('href')!.endsWith(id))!;
+    const periods = '2017–2019\u00a0г. (встъпителна 20.04.2017, финална 10.09.2019); 2022\u00a0г.';
+    // Each case as a class for its line pattern, and in words for assistive tech: institution, the
+    // contract's year and the declared periods.
+    expect(byId('c18a').classList.contains('period-overlap')).toBe(true);
+    expect(byId('c18a').getAttribute('aria-label')).toContain(
+      `Същата институция · в съвпадение: Община Тест · договор от 2018\u00a0г. · периоди на длъжността по декларациите: ${periods}`,
+    );
+    expect(byId('c18b').classList.contains('period-in-office')).toBe(true);
+    expect(byId('c18b').getAttribute('aria-label')).toContain(
+      'Същата институция · в периода на длъжността: Община Тест · договор от 2018',
+    );
+    expect(byId('c16').classList.contains('period-outside')).toBe(true);
+    expect(byId('c16').getAttribute('aria-label')).toContain(
+      `Същата институция · извън периода: Община Тест · договор от 2016\u00a0г. · периоди на длъжността по декларациите: ${periods}`,
+    );
+    expect(byId('c20').classList.contains('period-unknown')).toBe(true);
+    expect(byId('c20').getAttribute('aria-label')).toContain(
+      'Същата институция · периодът не е установен: Община Тест · договор от 2020',
+    );
+    // Unknown is never told as an overlap or as its absence.
+    expect(byId('c20').getAttribute('aria-label')).not.toContain('съвпадението');
+    // The tooltip repeats it for the eye, with what the case means.
+    act(() => {
+      byId('c20').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
+    const tip = el.querySelector('.time-tip')!.textContent;
+    expect(tip).toContain('Същата институция · периодът не е установен');
+    expect(tip).toContain('Това не е нито застъпване, нито липса на такова.');
+    expect(tip).toContain('Община Тест · договор от 2020');
+    act(() => {
+      byId('c20').dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      vi.advanceTimersByTime(300);
+    });
+    // The legend names every case present, each with its own shape and its words.
+    const legend = [...el.querySelectorAll('.person-time-legend .own-period')].map((i) => [
+      i.className.replace('time-symbol own-period ', ''),
+      i.parentElement!.textContent!.trim(),
+    ]);
+    expect(legend).toEqual([
+      ['period-overlap', 'Същата институция · в съвпадение'],
+      ['period-in-office', 'Същата институция · в периода на длъжността'],
+      ['period-outside', 'Същата институция · извън периода'],
+      ['period-unknown', 'Същата институция · периодът не е установен'],
+    ]);
+    // The year bins keep the building mark for every year, outside the period too, and say the case.
+    const triggers = [...el.querySelectorAll('.time-institution-trigger')].map((t) =>
+      t.getAttribute('aria-label'),
+    );
+    expect(triggers).toEqual([
+      '2016: възложител от институциите в декларациите · ТЕСТ ГРУП ЕООД · 1 извън периода',
+      '2018: възложител от институциите в декларациите · ТЕСТ ГРУП ЕООД · 1 в съвпадение · 1 в периода на длъжността',
+      '2020: възложител от институциите в декларациите · ТЕСТ ГРУП ЕООД · 1 периодът не е установен',
+    ]);
+    const popover = el.querySelectorAll('.time-buyers-list')[1]!.textContent;
+    expect(popover).toContain('Същата институция · 1 в съвпадение · 1 в периода на длъжността');
+    expect(popover).toContain(
+      `Община Тест · договор от 2018\u00a0г. · периоди на длъжността по декларациите: ${periods}`,
+    );
+    // Amounts stay: the bins still count every contract of the year.
+    expect([...el.querySelectorAll('.time-contract')].map((c) => c.textContent)).toEqual([
+      '1',
+      '1',
+      '1',
+      '1',
+    ]);
   } finally {
     vi.useRealTimers();
     act(() => root.unmount());

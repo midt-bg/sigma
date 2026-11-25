@@ -14,6 +14,8 @@ import type { PersonDeclaration, PersonRole } from '@sigma/api-contract';
 import {
   authoritySlug,
   contractSlug,
+  institutionPeriod,
+  type InstitutionPeriod,
   type TimelineContracts,
   type TimelineProcurement,
 } from '@sigma/db';
@@ -284,6 +286,12 @@ export function PersonTimeline({
     });
   const institutionProfiles = p.timeline.institutionProfiles ?? [];
   const ownIds = new Set(institutionProfiles.map((i) => i.authorityId).filter(Boolean));
+  const ownOffices = ownInstitutionOffices(p.declarations, institutionProfiles);
+  // Where a contract with one of the person's own institutions falls against the office there.
+  const ownPeriod = (pr: TimelineProcurement): OwnPeriod => {
+    const office = ownOffices.get(pr.authorityId) ?? { institutions: [], spans: [] };
+    return { ...office, period: institutionPeriod(office.spans, pr.signedAt, pr.tied) };
+  };
   const procurementMark = (pr: TimelineProcurement, under: [string, string][] | undefined) => {
     const kind: ProcurementKind = pr.tied
       ? 'tied'
@@ -292,11 +300,11 @@ export function PersonTimeline({
         : 'context';
     // The buyer is one of the institutions in the person's own declarations: the same test, and the same
     // building mark, as the year bins and the legend use.
-    const own = ownIds.has(pr.authorityId);
+    const own = ownIds.has(pr.authorityId) ? ownPeriod(pr) : null;
     const label = [
       pr.subject || 'Договор',
       pr.authority,
-      own ? 'възложител от институциите в декларациите' : null,
+      own ? `${PERIOD_LABEL[own.period]}: ${periodSentence(own, pr.signedAt)}` : null,
       pr.announcedAt ? `обявена ${date(pr.announcedAt)}` : 'без дата на обявяване',
       `подписан ${date(pr.signedAt)}`,
       pr.valueEur != null ? money(pr.valueEur) : null,
@@ -312,7 +320,7 @@ export function PersonTimeline({
       <Link
         key={pr.id}
         to={`/contracts/${contractSlug(pr.id)}`}
-        className={`time-procurement ${kind} ${own ? 'own' : ''} ${pr.announcedAt ? '' : 'time-undated-start'}`}
+        className={`time-procurement ${kind} ${own ? `own period-${own.period}` : ''} ${pr.announcedAt ? '' : 'time-undated-start'}`}
         style={between(pr.announcedAt ?? pr.signedAt, pr.signedAt)}
         aria-label={label}
         {...tipProps(() => procurementTip(pr, kind, own))}
@@ -321,6 +329,11 @@ export function PersonTimeline({
       </Link>
     );
   };
+  const ownPeriodsShown = PERIODS.filter((period) =>
+    (intervals?.procurements ?? []).some(
+      (pr) => ownIds.has(pr.authorityId) && ownPeriod(pr).period === period,
+    ),
+  );
   const bandMismatch = intervals
     ? intervals.procurements.filter(
         (pr) => pr.tied !== insideSpans(intervals.bands[pr.eik], pr.signedAt),
@@ -390,9 +403,18 @@ export function PersonTimeline({
         )}
         {(p.timeline.buyers ?? []).some((b) => ownIds.has(b.id)) && (
           <span>
-            <InstitutionSymbol /> възложител от институциите в декларациите
+            <InstitutionSymbol /> възложител от институциите в декларациите{' '}
+            <Explanation text="Договорът е с институция, за която лицето е подавало декларации. Индикацията остава и за договорите извън периода на длъжността; текстът казва кое от трите е: в съвпадение, извън периода или периодът не е установен. Периодът е по годините с декларации, а не точни дати на мандата." />
           </span>
         )}
+        {ownPeriodsShown.map((period) => (
+          <span key={period}>
+            <i className={`time-symbol own-period period-${period}`}>
+              <InstitutionSymbol />
+            </i>{' '}
+            {PERIOD_LABEL[period]}
+          </span>
+        ))}
       </div>
       {p.timeline.observations.some((o) => o.disputed) && (
         <p className="small muted">
@@ -703,6 +725,27 @@ export function PersonTimeline({
                           const ownBuyers = (p.timeline.buyers ?? []).filter(
                             (b) => b.eik === c.eik && b.year === r.year && ownIds.has(b.id),
                           );
+                          // Per own institution: how its contracts that year fall against the office.
+                          const buyerPeriods = (id: string) =>
+                            intervals
+                              ? periodCounts(
+                                  intervals.procurements
+                                    .filter(
+                                      (pr) =>
+                                        pr.eik === c.eik &&
+                                        pr.authorityId === id &&
+                                        pr.signedAt.startsWith(`${r.year}-`),
+                                    )
+                                    .map((pr) => ownPeriod(pr).period),
+                                )
+                              : null;
+                          const yearPeriods = periodCounts(
+                            ownBuyers.flatMap((b) =>
+                              Object.entries(buyerPeriods(b.id) ?? {}).flatMap(([k, n]) =>
+                                Array<InstitutionPeriod>(n).fill(k as InstitutionPeriod),
+                              ),
+                            ),
+                          );
                           return (
                             <span
                               key={r.year}
@@ -731,7 +774,7 @@ export function PersonTimeline({
                               )}
                               {ownBuyers.length > 0 && (
                                 <Explanation
-                                  label={`${r.year}: възложител от институциите в декларациите · ${c.name}`}
+                                  label={`${r.year}: възложител от институциите в декларациите · ${c.name}${periodSummary(yearPeriods) ? ` · ${periodSummary(yearPeriods)}` : ''}`}
                                   trigger={<InstitutionSymbol />}
                                   triggerClassName="time-institution-trigger"
                                   text={
@@ -753,12 +796,30 @@ export function PersonTimeline({
                                             · {count(b.contracts)}{' '}
                                             {plural(b.contracts, 'договор', 'договора')} ·{' '}
                                             {money(b.valueEur)}
+                                            {periodSummary(buyerPeriods(b.id)) && (
+                                              <span className="time-buyer-period">
+                                                Същата институция ·{' '}
+                                                {periodSummary(buyerPeriods(b.id))}
+                                              </span>
+                                            )}
+                                            {intervals && (
+                                              <small className="time-buyer-period">
+                                                {officeYearsSentence(
+                                                  ownOffices.get(b.id) ?? {
+                                                    institutions: [],
+                                                    spans: [],
+                                                  },
+                                                  r.year!,
+                                                )}
+                                              </small>
+                                            )}
                                           </li>
                                         ))}
                                       </ul>
                                       <small>
-                                        Съвпадението е по институция. Периодът на длъжността се
-                                        установява отделно.
+                                        {intervals
+                                          ? 'Периодът е по годините с декларации за длъжността, а не точни дати на мандата. Неустановеният период не е нито застъпване, нито липса на такова.'
+                                          : 'Съвпадението е по институция. Периодът на длъжността се установява отделно.'}
                                       </small>
                                     </>
                                   }
@@ -814,6 +875,93 @@ export function PersonTimeline({
 }
 
 type ProcurementKind = 'tied' | 'announced' | 'context';
+
+/** The office at one of the person's own institutions, as its declarations show it. */
+interface OwnOffice {
+  institutions: string[];
+  spans: OfficeSpan[];
+}
+type OwnPeriod = OwnOffice & { period: InstitutionPeriod };
+
+const PERIODS: InstitutionPeriod[] = ['overlap', 'in-office', 'outside', 'unknown'];
+/** Read without colour: each case says itself in words, beside its own line pattern. */
+const PERIOD_LABEL: Record<InstitutionPeriod, string> = {
+  overlap: 'Същата институция · в съвпадение',
+  'in-office': 'Същата институция · в периода на длъжността',
+  outside: 'Същата институция · извън периода',
+  unknown: 'Същата институция · периодът не е установен',
+};
+const PERIOD_SHORT: Record<InstitutionPeriod, string> = {
+  overlap: 'в съвпадение',
+  'in-office': 'в периода на длъжността',
+  outside: 'извън периода',
+  unknown: 'периодът не е установен',
+};
+const PERIOD_NOTE: Record<InstitutionPeriod, string> = {
+  overlap:
+    'Подписан в година с декларация за длъжността в тази институция, докато лицето е свързано с дружеството.',
+  'in-office':
+    'Подписан в година с декларация за длъжността в тази институция, но връзката с дружеството към датата не е установена — затова не е съвпадение.',
+  outside:
+    'Декларациите ограничават длъжността в тази институция от страната на договора: след финалната декларация или повече от месец преди встъпителната.',
+  unknown:
+    'Декларациите не установяват дали лицето е заемало длъжността към датата на договора. Това не е нито застъпване, нито липса на такова.',
+};
+
+/** Each own institution's authority id → its declared offices, the same runs the office bars draw. */
+function ownInstitutionOffices(
+  declarations: PersonDeclaration[],
+  profiles: { institution: string; authorityId: string | null }[],
+): Map<string, OwnOffice> {
+  const docs = new Map<string, PersonDeclaration[]>();
+  const names = new Map<string, string[]>();
+  for (const profile of profiles) {
+    if (!profile.authorityId) continue;
+    const key = institutionKey(profile.institution);
+    const own = declarations.filter((d) => institutionKey(d.institution) === key);
+    docs.set(profile.authorityId, [...(docs.get(profile.authorityId) ?? []), ...own]);
+    names.set(profile.authorityId, [
+      ...(names.get(profile.authorityId) ?? []),
+      profile.institution,
+    ]);
+  }
+  return new Map(
+    [...docs].map(([id, list]) => [
+      id,
+      { institutions: [...new Set(names.get(id))], spans: officeSpans(list) },
+    ]),
+  );
+}
+
+function periodCounts(periods: InstitutionPeriod[]): Partial<Record<InstitutionPeriod, number>> {
+  const out: Partial<Record<InstitutionPeriod, number>> = {};
+  for (const period of periods) out[period] = (out[period] ?? 0) + 1;
+  return out;
+}
+
+const periodSummary = (counts: Partial<Record<InstitutionPeriod, number>> | null) =>
+  PERIODS.filter((period) => counts?.[period])
+    .map((period) => `${count(counts![period]!)} ${PERIOD_SHORT[period]}`)
+    .join(' · ');
+
+/** The declared offices as years, with the filing days that bound them. */
+function officeYearsSentence(office: OwnOffice, year: string) {
+  const runs = office.spans.map((s) => {
+    const bounds = [
+      s.knownStart ? `встъпителна ${date(s.knownStart)}` : null,
+      s.knownEnd ? `финална ${date(s.knownEnd)}` : null,
+    ].filter(Boolean);
+    return `${yearsLabel(s.from, s.to)}${bounds.length ? ` (${bounds.join(', ')})` : ''}`;
+  });
+  return `${office.institutions.join('; ') || 'Институцията'} · договор от ${year}\u00a0г. · ${
+    runs.length
+      ? `периоди на длъжността по декларациите: ${runs.join('; ')}`
+      : 'няма декларации с година и длъжност за тази институция'
+  }`;
+}
+
+const periodSentence = (own: OwnOffice, signedAt: string) =>
+  officeYearsSentence(own, signedAt.slice(0, 4));
 interface TimelineView {
   atStart: boolean;
   atEnd: boolean;
@@ -958,7 +1106,7 @@ function declaredTip(label: string, company: string, from: string, to: string) {
   );
 }
 
-function procurementTip(pr: TimelineProcurement, kind: ProcurementKind, own: boolean) {
+function procurementTip(pr: TimelineProcurement, kind: ProcurementKind, own: OwnPeriod | null) {
   const days = pr.announcedAt
     ? Math.round((Date.parse(pr.signedAt) - Date.parse(pr.announcedAt)) / 864e5)
     : null;
@@ -968,9 +1116,18 @@ function procurementTip(pr: TimelineProcurement, kind: ProcurementKind, own: boo
       <span className="time-tip-value">{money(pr.valueEur)}</span>
       <span>{pr.authority}</span>
       {own && (
-        <span className="time-tip-own">
-          <InstitutionSymbol /> Възложител от институциите в декларациите
-        </span>
+        <>
+          <span className="time-tip-own">
+            <InstitutionSymbol /> {PERIOD_LABEL[own.period]}
+          </span>
+          <span>{periodSentence(own, pr.signedAt)}</span>
+          <small className="muted">{PERIOD_NOTE[own.period]}</small>
+          {pr.tied && own.period !== 'overlap' && (
+            <small className="muted">
+              Съвпадението е по друга длъжност от декларациите, не по тази институция.
+            </small>
+          )}
+        </>
       )}
       <span>
         {pr.announcedAt
