@@ -45,7 +45,7 @@ const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   FROM bidders b JOIN contracts c ON c.bidder_id=b.id JOIN tenders t ON t.id=c.tender_id
   JOIN authorities a ON a.id=t.authority_id
   WHERE b.eik_normalized IN (SELECT eik FROM links)
-), person_contracts AS (
+), person_contracts AS MATERIALIZED (
   -- BOTH, at the moment of signing: the declared interest covers the date AND the person was in office.
   -- The interest side is the profile's own rule (declarationWindow): inside the declared years and not a
   -- year whose comparable filing leaves the company out. Such a year keeps the link but proves no timing,
@@ -82,10 +82,16 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       // Each row's companies and offices, gathered once per identity: as subqueries per row they read the
       // whole `links` list again for every person in the list.
       `${CTE}, identity_companies AS MATERIALIZED (
-      SELECT identity,json_group_array(json_object('eik',eik,'company',company,'self',self,'family',family,'manages',manages,'board',board)) companies
+      SELECT identity,json_group_array(json_object('eik',eik,'company',company,'self',self,'family',family,'manages',manages,'board',board,
+        'inPeriod',in_period,'periodKnown',period_known)) companies
       FROM (
+        -- Per company, the two facts the row states beside it: a contract inside the period of the office and
+        -- the tie (in_period), and whether that period can be told at all (period_known) — a link with no
+        -- declared year of its own, or a person with no office year, has none.
         SELECT l.identity,l.eik,COALESCE(b.name,l.eik) company,MAX(l.relation IN ('owns','owns+manages')) self,
-          MAX(l.interest_class='family_ownership') family,MAX(l.relation='manages') manages,MIN(l.board) board
+          MAX(l.interest_class='family_ownership') family,MAX(l.relation='manages') manages,MIN(l.board) board,
+          COALESCE((SELECT MAX(pc.in_window) FROM person_contracts pc WHERE pc.identity=l.identity AND pc.eik=l.eik),0) in_period,
+          MAX(COALESCE(l.first_declared_year,'')<>'' AND EXISTS (SELECT 1 FROM office_years oy WHERE oy.identity=l.identity)) period_known
         FROM links l JOIN bidders b ON b.eik_normalized=l.eik GROUP BY l.identity,l.eik ORDER BY l.identity,b.name
       ) GROUP BY identity
     ), identity_offices AS MATERIALIZED (
@@ -144,6 +150,8 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       family: number;
       manages: number;
       board: number;
+      inPeriod: number;
+      periodKnown: number;
     }[],
     soleCompany: r.company_count === 1 ? { company: r.company, eik: r.eik } : null,
     contractCount: r.contract_count,
@@ -241,7 +249,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     SELECT c.id, b.eik_normalized eik, c.amount_eur, c.signed_at
     FROM bidders b JOIN contracts c ON c.bidder_id=b.id
     WHERE b.eik_normalized IN (SELECT eik FROM roles)
-  ), person_contracts AS (
+  ), person_contracts AS MATERIALIZED (
     -- „Стойност в периода" needs BOTH at the moment of signing: the role registered at THIS company AND
     -- a public office. Either condition alone answers a different question and answers it wrongly —
     -- somebody who led a state company until the spring and joined a private trader's board
@@ -276,8 +284,16 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   )
   SELECT pe.person_id, pe.identity, pe.name, t.*,
     (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1,
-      'registryRole',co.registry_role,'declared',co.declared,'years',json(co.years),'names',json(co.names))) FROM (
+      'registryRole',co.registry_role,'declared',co.declared,'years',json(co.years),'names',json(co.names),
+      'inPeriod',co.in_period,'periodKnown',co.period_known)) FROM (
       SELECT ro.eik, COALESCE(b.name, ro.eik) company,
+        -- A contract inside both the role and the office (in_period), and whether that can be told at all
+        -- (period_known): a role the register gives no start date for, or a person with no office year, has none.
+        COALESCE((SELECT MAX(pc.in_window) FROM person_contracts pc WHERE pc.person_id=pe.person_id AND pc.eik=ro.eik),0) in_period,
+        (EXISTS (SELECT 1 FROM registry_roles rk WHERE rk.subject_id=pe.identity AND rk.subject_kind='person'
+            AND rk.eik=ro.eik AND COALESCE(rk.added_on,'')<>''
+            AND rk.role IN ('sole_owner','partner','trader','manager','board_of_directors','management_board','governing_body'))
+          AND EXISTS (SELECT 1 FROM office_bounds ob2 WHERE ob2.person_id=pe.person_id)) period_known,
         CASE WHEN ro.owner THEN 'owner' WHEN ro.direct THEN 'manager' ELSE 'board' END registry_role,
         -- What the person's declarations say about the company, where they name it: a declared tie Sigma does
         -- not count (a stake, a management, a relative's stake), or an entry naming it.
@@ -355,6 +371,8 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
           declared: 'stake' | 'manages' | 'family' | 'named' | null;
           years: (string | null)[];
           names: [string | null, string | null];
+          inPeriod: number;
+          periodKnown: number;
         }[]
       ).map(({ years, names: [current, history], ...c }) => ({
         ...c,

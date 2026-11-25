@@ -190,6 +190,12 @@ export interface ConflictPersonRow {
     held?: string[];
     prior?: string[];
     disposed?: string[];
+    /** 1 when the company has a contract inside the period of the office and of the tie; absent on a payload
+     *  cached before the flag existed. */
+    inPeriod?: number;
+    /** 0 when that period cannot be told: the declared link has no year of its own, the register gives the
+     *  role no start date, or the person has no office year. */
+    periodKnown?: number;
   }[];
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
@@ -698,6 +704,14 @@ export function conflictFacets(everyone: ConflictPersonRow[], f: ConflictListFil
       f.institutions,
     ),
   };
+}
+
+/** The marker beside a company about the period of the office, in words — never colour alone. Nothing when
+ *  the company has a contract inside it, or when the flags are absent (a payload cached before them). */
+export function companyPeriodLabel(c: { inPeriod?: number; periodKnown?: number }): string | null {
+  if (c.inPeriod !== 0) return null;
+  if (c.periodKnown === 0) return 'периодът не е установен';
+  return null;
 }
 
 /** One sentence over the table: what the current scope lists. */

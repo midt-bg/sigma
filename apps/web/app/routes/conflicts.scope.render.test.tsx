@@ -65,22 +65,22 @@ afterEach(() => {
   container.remove();
 });
 
-async function render(url: string) {
+async function render(url: string, people: ConflictPersonRow[] = everyone) {
   const Stub = createRoutesStub([
     {
       path: '/conflicts',
       Component: Conflicts,
       loader: ({ request }) => {
         const filters = conflictListFilters(new URL(request.url).searchParams);
-        const rows = listConflictPeople(everyone, filters);
+        const rows = listConflictPeople(people, filters);
         return {
           authority: null,
           page: 1,
           pageCount: 1,
           total: rows.length,
-          available: everyone.length,
+          available: people.length,
           pageRows: rows,
-          facets: conflictFacets(everyone, filters),
+          facets: conflictFacets(people, filters),
         };
       },
     },
@@ -178,4 +178,43 @@ it('offers both boxes together only when that finds more than either alone', asy
   expect([...container.querySelectorAll('.conflicts-widen a')].map((a) => a.textContent)).toEqual([
     'Включи и членство в управителни органи',
   ]);
+});
+
+const company = (eik: string, inPeriod: number, periodKnown: number) => ({
+  company: `ТЕСТ ${eik} ЕООД`,
+  eik,
+  self: 1,
+  family: 0,
+  inPeriod,
+  periodKnown,
+});
+const companyCell = (name: string) =>
+  [...container.querySelectorAll('tbody tr')]
+    .find((r) => r.textContent?.includes(name))!
+    .querySelector('td[data-label="Дружества"]')!;
+const companyItem = (name: string, eik: string) =>
+  [...companyCell(name).querySelectorAll('li')].find((li) =>
+    li.textContent?.includes(`ТЕСТ ${eik} ЕООД`),
+  )!;
+
+it('says in words beside a company when its period cannot be established', async () => {
+  await render('/conflicts?include=outside', [
+    row({
+      officialSlug: 'unknown',
+      official: 'Неустановена Тестова',
+      companies: [company('701', 0, 0)],
+    }),
+    row({
+      officialSlug: 'known',
+      official: 'Периодна Тестова',
+      hasContemporaneous: true,
+      contemporaneousValueEur: 500,
+      companies: [company('702', 1, 1)],
+    }),
+  ]);
+  expect(companyItem('Неустановена Тестова', '701').textContent).toContain(
+    'периодът не е установен',
+  );
+  expect(companyItem('Неустановена Тестова', '701').querySelector('.chip')).not.toBeNull();
+  expect(companyCell('Периодна Тестова').textContent).not.toContain('периодът не е установен');
 });

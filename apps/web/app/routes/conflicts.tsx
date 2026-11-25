@@ -23,6 +23,7 @@ import { seoMeta } from '../lib/meta';
 import {
   conflictFacets,
   conflictListFilters,
+  companyPeriodLabel,
   conflictScopeLine,
   groupDeclaredInstitutions,
   legacyConflictSearch,
@@ -254,6 +255,11 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
                       &nbsp;г.
                     </div>
                   ) : null}
+                </div>
+              )}
+              {companyPeriodLabel(c) && (
+                <div>
+                  <Chip>{companyPeriodLabel(c)}</Chip>
                 </div>
               )}
             </li>
