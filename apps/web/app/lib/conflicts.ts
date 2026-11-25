@@ -1,5 +1,5 @@
 import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
-import { identityInstitution } from '@sigma/shared';
+import { identityInstitution, type OfficeFiling } from '@sigma/shared';
 import { getMulti } from './filters';
 
 // Pure presentation logic for the свързани-лица (conflict-of-interest) surface. Everything the conflict
@@ -212,6 +212,9 @@ export interface ConflictPersonRow {
   /** ≥1 contract is signed in an observed year with institution and position data for the person. */
   hasContemporaneous: boolean;
   declaredInstitutions?: DeclaredInstitution[];
+  /** The filings behind the offices, with their types — `describeOffices` turns them into position, period
+   *  and status. */
+  officeFilings?: OfficeFiling[];
   /** The row's figures without the seats on collegial bodies — registered, or declared and confirmed only as
    *  such a seat; null when the person has nothing else. Absent on a row with no such seat. */
   direct?: {
@@ -364,6 +367,11 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
               ? l.declaredOffices
               : [{ institution: l.institution ?? '', position: l.position, year: null }],
           ),
+        ),
+        officeFilings: groupLinks.flatMap((l) =>
+          l.declaredOffices?.length
+            ? l.declaredOffices
+            : [{ institution: l.institution ?? '', position: l.position, year: null }],
         ),
       },
     });
@@ -598,6 +606,7 @@ export function mergePersonParts<T extends ConflictPersonRow>(rows: T[]): T[] {
         ...offices(lead.declaredInstitutions),
         ...offices(rest.declaredInstitutions),
       ]),
+      officeFilings: [...(lead.officeFilings ?? []), ...(rest.officeFilings ?? [])],
       // A part without seats on a collegial body is whole in either view.
       ...(lead.direct === undefined && rest.direct === undefined
         ? {}

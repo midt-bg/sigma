@@ -15,6 +15,7 @@ import { DataTable, type Column } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
 import { FilterRail, type FilterGroup } from '../components/FilterRail';
 import { ListControls } from '../components/ListControls';
+import { PublicOffices } from '../components/PublicOffices';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { personName } from '../lib/person-name';
@@ -94,6 +95,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .map(({ declaredOffices, ...row }) => ({
       ...row,
       declaredInstitutions: groupDeclaredInstitutions(declaredOffices),
+      officeFilings: declaredOffices,
     }));
   // By default: ownership or management, with a contract inside the overlap of the office and the tie. The
   // seats on collegial bodies (`?include=boards`) and the ties without such a contract (`?include=outside`)
@@ -182,20 +184,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
         <>
           <Link to={officialHref(r.officialSlug)}>{personName(r.official)}</Link>
           {(r.declaredInstitutions?.length ?? 0) > 0 ? (
-            <div className="person-institutions">
-              <span className="small muted">Институции в декларациите</span>
-              <ul>
-                {r.declaredInstitutions!.map((i) => (
-                  <li key={i.institution}>
-                    {i.institution}
-                    {i.positions.length > 0 && (
-                      <span className="muted"> · {i.positions.join('; ')}</span>
-                    )}
-                    {i.years.length > 0 && <span className="muted"> · {i.years.join(', ')}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <PublicOffices filings={r.officeFilings} />
           ) : (
             officialRole(r) && (
               <>

@@ -1,4 +1,4 @@
-import { officeOrganizationSql } from '@sigma/shared';
+import { officeOrganizationSql, type OfficeFiling } from '@sigma/shared';
 import {
   declarationWindow,
   declaredOfficeYear,
@@ -89,10 +89,11 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
         FROM links l JOIN bidders b ON b.eik_normalized=l.eik GROUP BY l.identity,l.eik ORDER BY l.identity,b.name
       ) GROUP BY identity
     ), identity_offices AS MATERIALIZED (
-      SELECT identity,json_group_array(json_object('institution',institution,'position',position,'year',year)) offices
+      SELECT identity,json_group_array(json_object('institution',institution,'position',position,'year',year,'type',type,'declaredOn',declared_on)) offices
       FROM (
-        SELECT ip.identity,d.institution,d.position,d.declared_year year
+        SELECT ip.identity,d.institution,d.position,d.declared_year year,m.declaration_type type,m.declared_on
         FROM (SELECT DISTINCT identity,person_id FROM links) ip CROSS JOIN declarations d ON d.person_id=ip.person_id
+        LEFT JOIN declaration_metadata m ON m.declaration_id=d.id
         ORDER BY ip.identity,d.person_id,d.rowid
       ) GROUP BY identity
     )
@@ -167,11 +168,7 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
             : null,
         }
       : {}),
-    declaredOffices: JSON.parse(r.offices) as {
-      institution: string | null;
-      position: string | null;
-      year: string | null;
-    }[],
+    declaredOffices: JSON.parse(r.offices) as OfficeFiling[],
   }));
 }
 
@@ -311,8 +308,9 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
         'eiks',json((SELECT json_group_array(dc.eik) FROM declaration_companies dc WHERE dc.declaration_id=d.id)),
         'named',json((SELECT json_group_array(di.entity_raw) FROM declared_interests di WHERE di.declaration_id=d.id))))
       FROM declarations d WHERE d.person_id=pe.person_id AND d.declared_year IS NOT NULL) filings,
-    (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year))
-      FROM declarations d WHERE d.person_id=pe.person_id) offices
+    (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year,
+        'type',m.declaration_type,'declaredOn',m.declared_on))
+      FROM declarations d LEFT JOIN declaration_metadata m ON m.declaration_id=d.id WHERE d.person_id=pe.person_id) offices
   FROM people pe JOIN totals t ON t.person_id=pe.person_id
   ORDER BY t.has_window DESC, t.total_eur DESC, pe.identity`,
     )
@@ -394,11 +392,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
             hasContemporaneous: !!r.d_has_window,
           }
         : null,
-      declaredOffices: JSON.parse(r.offices) as {
-        institution: string | null;
-        position: string | null;
-        year: string | null;
-      }[],
+      declaredOffices: JSON.parse(r.offices) as OfficeFiling[],
     };
   });
 }

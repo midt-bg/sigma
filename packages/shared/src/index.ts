@@ -5,3 +5,4 @@ export * from './person-identity';
 export * from './institution';
 export * from './office-organizations';
 export * from './public-stakes';
+export * from './office-status';

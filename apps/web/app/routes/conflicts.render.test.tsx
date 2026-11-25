@@ -160,7 +160,16 @@ describe('/conflicts route — render', () => {
       link({
         officialSlug: 'a',
         registryPersonId: 'identity',
-        declaredOffices: [{ institution: 'Община Русе', position: 'Съветник', year: '2019' }],
+        declaredOffices: [
+          { institution: 'Община Тестово', position: 'Съветник', year: '2018', type: 'Annualy' },
+          {
+            institution: 'Община Тестово',
+            position: 'Съветник',
+            year: '2019',
+            type: 'Vacate',
+            declaredOn: '2019-11-05',
+          },
+        ],
       }),
       link({
         officialSlug: 'b',
@@ -171,8 +180,13 @@ describe('/conflicts route — render', () => {
       }),
     ]);
     expect(bodyRows()).toHaveLength(1);
-    expect(bodyRows()[0].textContent).toContain('Институции в декларациите');
-    expect(bodyRows()[0].textContent).toContain('Община Русе');
+    expect(bodyRows()[0].textContent).toContain('Длъжности според декларациите');
+    // The office left with an exit declaration is former; the other one only has its last year on record.
+    expect(bodyRows()[0].textContent).toContain('2018–2019');
+    expect(bodyRows()[0].textContent).toContain('Бивш: декларация при освобождаване за 2019 г.');
+    expect(bodyRows()[0].textContent).toContain('Последна декларация за 2025 г.');
+    expect(bodyRows()[0].textContent).not.toMatch(/настоящ/i);
+    expect(bodyRows()[0].textContent).toContain('Община Тестово');
     expect(bodyRows()[0].textContent).toContain('2019');
     expect(bodyRows()[0].textContent).toContain('Народно събрание');
     expect(bodyRows()[0].textContent).toContain('2025');

@@ -877,7 +877,14 @@ export interface ConflictLink {
   registryPersonId?: string | null;
   /** Union of this person's declared windows in this company; each contract once. */
   personCompanyValueEur?: number | null;
-  declaredOffices?: { institution: string; position: string | null; year: string | null }[];
+  declaredOffices?: {
+    institution: string;
+    position: string | null;
+    year: string | null;
+    /** The declaration's type and date — what tells an exit from an entry (see `describeOffices`). */
+    type?: string | null;
+    declaredOn?: string | null;
+  }[];
   contractCount: number;
   contractValueEur: number | null;
   // Contemporaneous split: the subset of the winner's contracts SIGNED while the declared stake was held

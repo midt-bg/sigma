@@ -9,6 +9,7 @@ import { TieGraph } from './TieGraph';
 import { DataTable } from './DataTable';
 import { PersonRolesTables, RegistrySource } from './RegistryRoles';
 import { Declarations } from './Declarations';
+import { PublicOffices } from './PublicOffices';
 import { PersonTimeline } from './PersonTimeline';
 import { timelineCompanies } from '../lib/person-timeline';
 import { PersonActivity } from './PersonActivity';
@@ -56,6 +57,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           {p.aliases.length > 0 && (
             <p className="muted small">Среща се и като {p.aliases.map(personName).join(', ')}</p>
           )}
+          {filed && <PublicOffices filings={p.declarations} />}
         </PageHeader>
         <nav className="profile-nav" aria-label="В профила">
           {official && <a href="#declared-overview">Декларирани интереси</a>}

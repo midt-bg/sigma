@@ -222,8 +222,10 @@ export const LINK_SELECT = `SELECT
     -- here would silently re-filter rather than surface a contradiction.
     ev.evidence_kind, ev.registry_role, ev.entry_number, ev.entry_date, ev.lookup_date,
     hist.later_declaration_year, hist.registry_role_ended_on, pl.registry_indent AS registry_person_id,
-    (SELECT json_group_array(json_object('institution', office.institution, 'position', office.position, 'year', office.declared_year))
-     FROM (SELECT DISTINCT institution, position, declared_year FROM declarations d
+    (SELECT json_group_array(json_object('institution', office.institution, 'position', office.position, 'year', office.declared_year,
+        'type', office.declaration_type, 'declaredOn', office.declared_on))
+     FROM (SELECT DISTINCT d.institution, d.position, d.declared_year, m.declaration_type, m.declared_on FROM declarations d
+           LEFT JOIN declaration_metadata m ON m.declaration_id=d.id
            WHERE d.person_id=il.person_id AND COALESCE(d.institution,'')<>'') office) AS declared_offices,
     -- The leaderboard combines proven aliases of one human. Count each contract
     -- once across their separate declaration windows; never fill gaps or add overlaps.
