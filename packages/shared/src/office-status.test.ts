@@ -233,6 +233,18 @@ describe('one office under two spellings', () => {
     expect(offices).toHaveLength(1);
     expect(officeLine(offices[0]!)).toBe('Бивш общински съветник · Столична община · 2023–2024');
     expect(offices[0]!.spellings).toEqual(['Столична община', 'СОС']);
+    // The council in full, with a typing error in one filing, is still the same office.
+    expect(
+      describeOffices(
+        [
+          f('2020', 'Annualy', null, 'Столичен общински съвет', 'Общински съветник'),
+          f('2021', 'Annualy', null, 'Столичен общински съвет', 'Общински съветник'),
+          f('2022', 'Annualy', null, 'Столичен общинскии съвет', 'Общински съветник'),
+          f('2023', 'Vacate', '2023-11-10', 'Столична община', 'Общински съветник'),
+        ],
+        2026,
+      ).map(officeLine),
+    ).toEqual(['Бивш общински съветник · Столичен общински съвет · 2020–2023']);
   });
 
   it('joins an abbreviation, a typing error and a bare council to the body they stand for', () => {

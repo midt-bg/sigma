@@ -165,12 +165,10 @@ const LEGAL_FORM = /(?:ЕАД|АД|ЕООД|ООД)$/u;
 const written = (key: string): string =>
   ASSEMBLY_LOOSE.test(key)
     ? 'НАРОДНО СЪБРАНИЕ'
-    : key === 'СОС' || CAPITAL.test(key)
-      ? 'СТОЛИЧНА ОБЩИНА'
-      : key
-          .replace(/(\d)(?=[А-Я])/gu, '$1 ')
-          .replace(/(?<![0-9A-ZА-Я])Р\s?[-–]?\s?Н(?![0-9A-ZА-Я])/gu, 'РАЙОН')
-          .replace(/(?<![0-9A-ZА-Я])(?:СВ|СВЕТИ|СВЕТА)(?![0-9A-ZА-Я])/gu, 'СВ');
+    : key
+        .replace(/(\d)(?=[А-Я])/gu, '$1 ')
+        .replace(/(?<![0-9A-ZА-Я])Р\s?[-–]?\s?Н(?![0-9A-ZА-Я])/gu, 'РАЙОН')
+        .replace(/(?<![0-9A-ZА-Я])(?:СВ|СВЕТИ|СВЕТА)(?![0-9A-ZА-Я])/gu, 'СВ');
 
 /** The words that name the body; initials typed apart („В. Ф.") read as one word. */
 function wordsOf(key: string): string[] {
@@ -217,6 +215,11 @@ function abbreviates(short: string[], long: string[]): boolean {
   });
 }
 
+/** The capital's municipality or its council: by initials, in full, or in full with a typing error. */
+const capitalBody = (key: string): boolean =>
+  key === 'СОС' ||
+  ['СТОЛИЧНА ОБЩИНА', 'СТОЛИЧЕН ОБЩИНСКИ СЪВЕТ'].some((name) => editDistance(key, name, 2) <= 2);
+
 /**
  * Could two institution keys be one body written two ways? Deliberately loose — it is only ever asked of two
  * offices of ONE person that also share a position and touching years. Numbers must agree: a unit, a school or
@@ -231,6 +234,7 @@ export function sameBodySpelling(a: string, b: string): boolean {
   const oblast = (k: string, other: string): boolean =>
     k === 'ОБЛАСТНА АДМИНИСТРАЦИЯ' && other.startsWith('ОБЛАСТ ');
   if (oblast(a, b) || oblast(b, a)) return true;
+  if (capitalBody(a) && capitalBody(b)) return true;
   // An oblast's administration is not the municipality of its town, however alike the two names are.
   if (a.startsWith('ОБЛАСТ ') !== b.startsWith('ОБЛАСТ ')) return false;
   const [p, q] = [written(bare(a)), written(bare(b))];
