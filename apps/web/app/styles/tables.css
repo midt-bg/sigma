@@ -62,16 +62,15 @@ thead th {
     width: 10%;
   }
   .conflicts-people-table th:nth-child(6) {
-    width: 10%;
+    width: 9%;
   }
   .conflicts-people-table th:nth-child(7) {
-    width: 19%;
+    width: 20%;
   }
   /* The marks column is kept narrow so the figures have room; the chips here are set a little tighter so the
      longest one still stands on two lines. */
   .conflicts-people-table .chip {
-    font-size: 0.6875rem;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.02em;
   }
 }
 thead th:first-child {
