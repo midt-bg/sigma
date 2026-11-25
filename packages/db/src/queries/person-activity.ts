@@ -146,6 +146,50 @@ export function personActivityScope(
   return { cte, params };
 }
 
+export interface PersonPeriodTotals {
+  /** Signed while the person was both tied to the company and in office (`during_overlap`). */
+  officeCount: number;
+  officeEur: number | null;
+  /** Signed in the years of a declared interest in the company, in office or not. */
+  declaredCount: number;
+  declaredEur: number | null;
+}
+
+/**
+ * The two figures a profile opens with, over every contract of the person's companies whatever the page's
+ * filters are: the contracts signed while the person was both tied to the company and in office — what the
+ * officials list and the search call „в периода на длъжността" — and the ones signed in the years of a
+ * declared interest. One query over the same scope and flags as the contracts table below.
+ */
+export async function getPersonPeriodTotals(
+  db: D1Database,
+  indent: string | null,
+  personIds: string[],
+  heldSeats: string[] = [],
+): Promise<PersonPeriodTotals> {
+  const scope = personActivityScope(indent, [...new Set(personIds)], heldSeats);
+  const t = await db
+    .prepare(
+      `${scope.cte} SELECT COALESCE(SUM(during_overlap),0) office_n,
+        SUM(CASE WHEN during_overlap THEN amount_eur END) office_eur,
+        COALESCE(SUM(during_declaration),0) declared_n,
+        SUM(CASE WHEN during_declaration THEN amount_eur END) declared_eur FROM activity`,
+    )
+    .bind(...scope.params)
+    .first<{
+      office_n: number;
+      office_eur: number | null;
+      declared_n: number;
+      declared_eur: number | null;
+    }>();
+  return {
+    officeCount: t?.office_n ?? 0,
+    officeEur: t?.office_eur ?? null,
+    declaredCount: t?.declared_n ?? 0,
+    declaredEur: t?.declared_eur ?? null,
+  };
+}
+
 /** One contract once, with independent role/declaration flags. Totals never depend on pagination. */
 export async function getPersonActivity(
   db: D1Database,

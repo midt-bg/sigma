@@ -23,6 +23,7 @@ const q = vi.hoisted(() => ({
   getPersonSourceArchive: vi.fn(),
   getPersonDeclarations: vi.fn(),
   getPersonActivity: vi.fn(),
+  getPersonPeriodTotals: vi.fn(),
   getLinkContracts: vi.fn(),
   getAuthorityName: vi.fn(),
   personSlug: vi.fn((id: string) => `slug-of-${id}`),

@@ -123,7 +123,15 @@ function profile(over: Partial<LoadedPersonProfile> = {}): LoadedPersonProfile {
     timeline: { contracts: [], observations: [], reads: [], buyers: [], institutionProfiles: [] },
     declarations: [],
     activity,
-    totals: { companies: 1, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 1,
+      contracts: 0,
+      valueEur: null,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     timelineIntervals: emptyIntervals,
     tieLayout: layoutTies(person.network),
     aliases: [],
@@ -384,6 +392,8 @@ describe('PersonProfile', () => {
           companies: 1,
           contracts: 3,
           valueEur: 90_000,
+          officeCount: 1,
+          officeEur: 12_000,
           declaredCount: 2,
           declaredEur: 30_000,
         },
@@ -402,9 +412,13 @@ describe('PersonProfile', () => {
     ]);
     expect(facts).toEqual([
       ['Свързани дружества', '1'],
-      ['Договори в декларирания период', '2'],
-      ['Стойност на тези договори', money(30_000)],
+      // The figure the list and the search give for the person leads; the wider one says what it is.
+      ['Договори в периода на длъжността', `1 · ${money(12_000)}`],
+      ['Договори в декларирания период', `2 · ${money(30_000)}`],
     ]);
+    expect(section('declared-overview')!.textContent).toContain(
+      '„В декларирания период“ са всички договори в годините на декларираното участие, и когато лицето не е било на длъжност.',
+    );
     expect(section('declarations')!.textContent).toContain(
       'Няма налични документи в заредения набор.',
     );

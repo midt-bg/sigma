@@ -8,6 +8,7 @@ import {
   getTimelineIntervals,
   getPersonDeclarations,
   getPersonActivity,
+  getPersonPeriodTotals,
   getPersonScope,
   getRegistryPerson,
   getPublicStakes,
@@ -69,15 +70,9 @@ export async function loadPersonProfile(
     getPersonTimeline(db, indent ?? null, officialIds, heldSeats),
     getTimelineIntervals(db, indent ?? null, officialIds, heldSeats),
   ]);
-  const declaredActivity = officialIds.length
-    ? await getPersonActivity(
-        db,
-        indent ?? null,
-        officialIds,
-        new URLSearchParams(),
-        'declaration',
-        heldSeats,
-      )
+  // The figures the profile opens with are over all contracts, whatever the page's filters select.
+  const periodTotals = officialIds.length
+    ? await getPersonPeriodTotals(db, indent ?? null, officialIds, heldSeats)
     : null;
   const name =
     person?.name ??
@@ -119,8 +114,10 @@ export async function loadPersonProfile(
       companies: activity.companyCount,
       contracts: activity.total,
       valueEur: activity.valueEur,
-      declaredCount: declaredActivity?.total ?? 0,
-      declaredEur: declaredActivity?.valueEur ?? null,
+      officeCount: periodTotals?.officeCount ?? 0,
+      officeEur: periodTotals?.officeEur ?? null,
+      declaredCount: periodTotals?.declaredCount ?? 0,
+      declaredEur: periodTotals?.declaredEur ?? null,
     },
     tieLayout: person ? layoutTies(person.network) : null,
   };
