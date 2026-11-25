@@ -524,6 +524,52 @@ it('lists a declared seat on a board only with the seats, and a declared stake o
   }
 });
 
+it('counts a contract in the period only where the office and a declared, undisputed stake year overlap', async () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+      CREATE TABLE interest_links(link_key,person_id,eik,status,interest_class,relation,own_institution,first_declared_year,last_declared_year);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind,matched_fact);
+      CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+      CREATE TABLE person_registry_links(person_id,registry_indent);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year,category);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+      CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
+      CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
+      CREATE TABLE tenders(id PRIMARY KEY,authority_id);CREATE TABLE authorities(id PRIMARY KEY);
+      INSERT INTO authorities VALUES('a');INSERT INTO tenders VALUES('t','a');
+      INSERT INTO bidders VALUES('b1','111111111','Първа ООД'),('b2','222222222','Втора ООД'),('b3','333333333','Трета ООД');
+      INSERT INTO persons VALUES('pd','Спорна Година Тестова'),('pu','Неизвестен Период Тестов'),('po','Без Длъжност Тестов');
+      -- pd declared the stake 2019-2021, but the 2020 filing leaves the company out: 2020 proves no timing.
+      INSERT INTO interest_links VALUES
+        ('ld','pd','111111111','published','private_ownership','owns','no','2019','2021'),
+        -- pu: a stake reported only as held before the filing — no declared year of its own.
+        ('lu','pu','222222222','published','private_ownership','owns','no',NULL,NULL),
+        -- po: a declared stake, but no filing names an office and a position.
+        ('lo','po','333333333','published','private_ownership','owns','no','2020','2020');
+      INSERT INTO interest_link_evidence VALUES('ld','document',NULL),('lu','document',NULL),('lo','document',NULL);
+      INSERT INTO interest_link_observations VALUES('ld','d20','stake','not_listed','2020');
+      INSERT INTO declarations VALUES('d19','pd','Община Тест','Съветник','2019',''),('d20','pd','Община Тест','Съветник','2020',''),
+        ('d21','pd','Община Тест','Съветник','2021',''),('u20','pu','Община Тест','Съветник','2020',''),
+        ('o20','po','','','2020','');
+      INSERT INTO contracts VALUES('c19','b1','t','2019-03-01',1),('c20','b1','t','2020-03-01',10),('c21','b1','t','2021-03-01',100),
+        ('u','b2','t','2020-03-01',5),('o','b3','t','2020-03-01',7);`);
+    const rows = await getRelatedPersonRows(d1FromSqlite(db));
+    const of = (name: string) => rows.find((r) => r.official === name)!;
+    // The disputed year is left out of the period; the other two years count.
+    expect(of('Спорна Година Тестова')).toMatchObject({
+      contractValueEur: 111,
+      contemporaneousValueEur: 101,
+      hasContemporaneous: true,
+    });
+    // Unknown period on either side: listed, with its totals, but with no overlap established.
+    for (const name of ['Неизвестен Период Тестов', 'Без Длъжност Тестов'])
+      expect(of(name)).toMatchObject({ contemporaneousValueEur: null, hasContemporaneous: false });
+  } finally {
+    db.close();
+  }
+});
+
 it('leaves out the organization a person files declarations for as a member of its bodies — for that person only', async () => {
   const [ORG] = OFFICE_ORGANIZATIONS;
   const db = new DatabaseSync(':memory:');

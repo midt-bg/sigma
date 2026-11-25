@@ -10,6 +10,7 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'basis', // evidence basis in the unified person contract list
   'bidder',
   'bids', // single-bid filter — changes the result set + totals
+  'buyer', // /conflicts — contracts from the person's own institution only
   'center',
   'company', // person profile company filter
   'count',
@@ -17,17 +18,19 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'eu',
   'funding',
   'g',
+  'include', // /conflicts — widen the scope: ties without contracts in the period, seats on boards
   'institution', // /conflicts — the official's institution
   'kind',
   'p',
   'page', // keyed unconditionally — harmless over-key when there's no cursor
   'procedure',
   'q',
-  'role', // /conflicts — ownership and management, or also the seats on collegial bodies
+  'role', // /conflicts — old address: now include=boards (redirected)
   'sector',
-  'signal', // /conflicts — own institution / in the declared window
+  'signal', // /conflicts — old address: now buyer=own (redirected)
   'sort',
-  'stake', // /conflicts — own stake vs a relative's
+  'source', // /conflicts — where the tie comes from: own declaration, a relative's, the register
+  'stake', // /conflicts — old address: now source (redirected)
   'top', // top-20 vs top-50 on /flows, /competition
   'type',
   'value',
@@ -60,7 +63,20 @@ const ROUTE_QUERY_PARAMS: Record<string, readonly string[]> = {
   '/map': ['funding', 'sector', 'year'],
   '/trends': ['funding', 'g', 'sector'],
   '/network': ['center'],
-  '/conflicts': ['authority', 'institution', 'page', 'q', 'role', 'signal', 'sort', 'stake'],
+  // `role`, `signal` and `stake` are old addresses the page redirects to their new form.
+  '/conflicts': [
+    'authority',
+    'buyer',
+    'include',
+    'institution',
+    'page',
+    'q',
+    'role',
+    'signal',
+    'sort',
+    'source',
+    'stake',
+  ],
   '/sitemap-contracts.xml': ['p'],
 };
 

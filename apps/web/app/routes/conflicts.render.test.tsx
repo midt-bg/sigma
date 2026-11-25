@@ -13,10 +13,9 @@ import type { ConflictLink } from '@sigma/api-contract';
 import {
   type ConflictPersonRow,
   groupByPerson,
+  conflictFacets,
   conflictListFilters,
-  filterConflictRows,
-  sortConflictRows,
-  institutionOptions,
+  listConflictPeople,
 } from '../lib/conflicts';
 import Conflicts, { meta, headers } from './conflicts';
 
@@ -117,7 +116,7 @@ async function renderConflicts(
         const sp = new URL(request.url).searchParams;
         const filters = conflictListFilters(sp);
         const all = [...groupByPerson(links), ...registryRows];
-        const rows = sortConflictRows(filterConflictRows(all, filters), filters.sort);
+        const rows = listConflictPeople(all, filters);
         const page = Number(sp.get('page') || 1);
         return {
           authority,
@@ -126,14 +125,7 @@ async function renderConflicts(
           total: rows.length,
           available: all.length,
           pageRows: rows.slice((page - 1) * 100, page * 100),
-          facets: {
-            self: all.filter((r) => r.stakeKind !== 'family').length,
-            family: all.filter((r) => r.stakeKind !== 'self').length,
-            own: all.filter((r) => r.ownInstitution).length,
-            window: all.filter((r) => r.hasContemporaneous).length,
-            institutions: institutionOptions(all, filters.institutions),
-            role: { direct: all.length - 1, all: all.length },
-          },
+          facets: conflictFacets(all, filters),
         };
       },
     },
@@ -200,10 +192,10 @@ describe('/conflicts route — render', () => {
   });
 
   it('filters the persons by whose stake it is, and says so when nothing is left', async () => {
-    await renderConflicts([link(), familyLink], null, '/conflicts?stake=family');
+    await renderConflicts([link(), familyLink], null, '/conflicts?source=family');
     const names = bodyRows().map((r) => r.querySelector('a')?.textContent);
     expect(names).toEqual(['Кмет Тестов']);
-    await renderConflicts([link()], null, '/conflicts?stake=family');
+    await renderConflicts([link()], null, '/conflicts?source=family');
     expect(text()).toContain('Няма лица за избраните филтри');
     expect(container.querySelector('table')).toBeNull();
   });
@@ -211,11 +203,23 @@ describe('/conflicts route — render', () => {
   it('offers the filters and all three sorts, and sorts by total value when asked', async () => {
     await renderConflicts([familyLink, link()], null, '/conflicts?sort=total');
     expect(container.querySelector('.filter-rail')).not.toBeNull();
-    for (const label of ['Основание', 'Признаци', 'Институция на лицето'])
+    for (const label of [
+      'Обхват на списъка',
+      'Източник на връзката',
+      'Възложител на договорите',
+      'Институция на лицето',
+    ])
       expect(text()).toContain(label);
+    // One control per question: the old basis, role and signal groups are gone.
+    for (const label of ['Основание', 'Роля в дружеството'])
+      expect(container.querySelector(`details[aria-label="${label}"]`)).toBeNull();
     const names = bodyRows().map((r) => r.querySelector('a')?.textContent);
     expect(names).toEqual(['Иван Петров', 'Кмет Тестов']); // €88M before €250k
-    for (const label of ['стойност в периода', 'обща стойност', 'общ брой договори'])
+    for (const label of [
+      'стойност в периода на длъжността',
+      'стойност за всички години',
+      'брой договори за всички години',
+    ])
       expect(text()).toContain(label);
     const sorts = [...container.querySelectorAll('.list-controls p.small a')];
     expect(
@@ -226,9 +230,9 @@ describe('/conflicts route — render', () => {
     expect(sorts.filter((a) => a.getAttribute('aria-current') === 'true')).toEqual([sorts[1]]);
   });
 
-  // The seats on collegial bodies are a second step of the same choice, not a hidden box: the default says
-  // what it holds and how many, and a seat is named as a seat wherever it is shown.
-  it('offers the role scope in two steps and names a seat as a seat', async () => {
+  // The seats on collegial bodies widen the scope on their own, beside the ties without a contract in the
+  // period; each box counts the people it adds, and a seat is named as a seat wherever it is shown.
+  it('offers the two scope boxes, each counting what it adds, and names a seat as a seat', async () => {
     const seat: ConflictPersonRow = {
       official: 'Член Тестов',
       officialSlug: 'seat',
@@ -247,14 +251,20 @@ describe('/conflicts route — render', () => {
       hasContemporaneous: false,
       direct: null,
     };
-    await renderConflicts([link()], null, '/conflicts?role=all&stake=registry', [seat]);
-    const group = container.querySelector('details[aria-label="Роля в дружеството"]')!;
+    await renderConflicts(
+      [link()],
+      null,
+      '/conflicts?include=boards&include=outside&source=registry',
+      [seat],
+    );
+    const group = container.querySelector('details[aria-label="Обхват на списъка"]')!;
     const labels = [...group.querySelectorAll('label')].map((l) => l.textContent!.trim());
     expect(labels).toEqual([
-      'собственост или управление1',
-      'всички роли, включително членство в съвет2',
+      'Включи и връзки без договори в периода на длъжността1',
+      'Включи и членство в управителни органи1',
     ]);
-    expect(group.querySelector<HTMLInputElement>('input[value="all"]')!.checked).toBe(true);
+    expect(group.querySelector<HTMLInputElement>('input[value="boards"]')!.checked).toBe(true);
+    expect(group.querySelector<HTMLInputElement>('input[value="outside"]')!.checked).toBe(true);
     expect(text()).toContain('членство в съвет по Търговския регистър');
     expect(text()).toContain('или като член на съвет на директорите');
   });
@@ -345,7 +355,11 @@ describe('/conflicts route — render', () => {
       contemporaneousValueEur: 5_000_000,
     });
     // Feed weak FIRST so a naive stable sort would leave it on top if ranking were broken.
-    await renderConflicts([weak, strongWeakHalf, strongStrongHalf]);
+    await renderConflicts(
+      [weak, strongWeakHalf, strongStrongHalf],
+      null,
+      '/conflicts?include=outside',
+    );
     const rows = bodyRows();
     expect(rows.length).toBe(2);
     expect(rows[0].textContent).toContain('Силен Тестов');
@@ -355,8 +369,8 @@ describe('/conflicts route — render', () => {
   it('shows period and total values in separate columns without a help button', async () => {
     await renderConflicts([link()]); // 30 млн. window, 88 млн. total
     const row = bodyRows()[0];
-    const period = row.querySelector('td[data-label="Стойност в периода"]')!;
-    const total = row.querySelector('td[data-label="Обща стойност"]')!;
+    const period = row.querySelector('td[data-label="Стойност в периода на длъжността"]')!;
+    const total = row.querySelector('td[data-label="Стойност за всички години"]')!;
     expect(period.textContent).toContain('30');
     expect(period.textContent).toContain('млн.');
     expect(period.textContent).not.toContain('договор');
@@ -422,7 +436,7 @@ describe('/conflicts route — render', () => {
       contemporaneousContractCount: 2,
       contemporaneousValueEur: 5_000,
     });
-    await renderConflicts([plain, inPeriod]);
+    await renderConflicts([plain, inPeriod], null, '/conflicts?include=outside');
     const cell = (name: string) =>
       bodyRows()
         .find((r) => r.textContent?.includes(name))!
@@ -470,12 +484,18 @@ describe('/conflicts route — render', () => {
   });
 
   it('a zero-contract / null-value person renders 0 договори and no NaN', async () => {
-    await renderConflicts([zeroContractLink]);
+    await renderConflicts([zeroContractLink], null, '/conflicts?include=outside');
     const row = bodyRows()[0];
-    expect(row.querySelector('td[data-label="Общ брой договори"]')!.textContent).toContain('0');
+    expect(
+      row.querySelector('td[data-label="Брой договори за всички години"]')!.textContent,
+    ).toContain('0');
     expect(text()).not.toContain('NaN');
-    expect(row.querySelector('td[data-label="Стойност в периода"]')!.textContent).toContain('—');
-    expect(row.querySelector('td[data-label="Обща стойност"]')!.textContent).toContain('—');
+    expect(
+      row.querySelector('td[data-label="Стойност в периода на длъжността"]')!.textContent,
+    ).toContain('—');
+    expect(row.querySelector('td[data-label="Стойност за всички години"]')!.textContent).toContain(
+      '—',
+    );
   });
 
   it('a family-linked person is named on the row, but the relative never is', async () => {
@@ -557,7 +577,7 @@ it('titles the list by what every row holds, and narrows the headings with the s
     'Сумите са стойности на договорите на дружествата, не пари, получени от лицата.',
   );
 
-  await renderConflicts([link()], null, '/conflicts?stake=self');
+  await renderConflicts([link()], null, '/conflicts?source=self');
   expect(headings().h1).toBe(
     'Длъжностни лица с деклариран дял или управление в компании изпълнители',
   );
@@ -565,7 +585,7 @@ it('titles the list by what every row holds, and narrows the headings with the s
     'Длъжностни лица с деклариран дял или декларирано управление в дружества изпълнители',
   );
 
-  await renderConflicts([link({ relation: 'related' })], null, '/conflicts?stake=family');
+  await renderConflicts([link({ relation: 'related' })], null, '/conflicts?source=family');
   expect(headings().h1).toBe('Длъжностни лица с дял на свързано лице в компании изпълнители');
   expect(headings().caption).toBe(
     'Длъжностни лица с деклариран дял на свързано лице в дружества изпълнители',
@@ -602,7 +622,9 @@ it('says what the declarations say about a registered company, and never that it
     hasContemporaneous: false,
     direct: null,
   };
-  await renderConflicts([], null, '/conflicts?stake=registry&role=all', [row]);
+  await renderConflicts([], null, '/conflicts?source=registry&include=boards&include=outside', [
+    row,
+  ]);
   expect(text()).toContain('В декларацията: управление.');
   expect(text()).not.toContain('само по Търговския регистър');
   expect(text()).not.toMatch(/недеклар|не е декларира/);
@@ -625,9 +647,8 @@ it('says of the registry-only group only what the group proves', async () => {
     stakeKind: 'registry',
     ownInstitution: false,
     hasContemporaneous: false,
-    direct: null,
   };
-  await renderConflicts([link()], null, '/conflicts?stake=registry', [owner]);
+  await renderConflicts([link()], null, '/conflicts?source=registry&include=outside', [owner]);
   const heading = container.querySelector('h1')?.textContent ?? '';
   expect(heading).toContain('Търговския регистър');
   expect(heading).not.toContain('декларирали');
@@ -640,7 +661,7 @@ it('says of the registry-only group only what the group proves', async () => {
     'Длъжностни лица с вписана роля в регистъра при дружества изпълнители',
   );
 
-  await renderConflicts([link()], null, '/conflicts?stake=registry&role=all', [owner]);
+  await renderConflicts([link()], null, '/conflicts?source=registry&include=boards', [owner]);
   expect(text()).toContain(
     'собственик или управител — или като член на съвет на директорите, управителен съвет или друг орган на управление — на дружество',
   );

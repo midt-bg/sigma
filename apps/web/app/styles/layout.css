@@ -137,6 +137,10 @@ p.small.muted {
   margin-left: auto;
   padding-left: var(--s-2);
 }
+.split aside .filter-hint {
+  margin: var(--s-2) 0 0;
+  line-height: 1.4;
+}
 .split aside .filter-subgroup-row {
   position: relative;
 }

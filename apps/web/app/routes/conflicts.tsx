@@ -1,4 +1,4 @@
-import { Link, useSearchParams, data } from 'react-router';
+import { Link, useSearchParams, data, redirect } from 'react-router';
 import { count, moneyBare, plural } from '@sigma/shared';
 import {
   authorityIdFromSlug,
@@ -20,15 +20,14 @@ import { withDbRetry } from '../lib/retry';
 import { personName } from '../lib/person-name';
 import { seoMeta } from '../lib/meta';
 import {
-  applyRoleScope,
+  conflictFacets,
   conflictListFilters,
-  filterConflictRows,
+  conflictScopeLine,
   groupDeclaredInstitutions,
-  institutionOptions,
-  mergePersonParts,
+  legacyConflictSearch,
+  listConflictPeople,
   officialHref,
   officialRole,
-  sortConflictRows,
   type ConflictPersonRow,
   type ConflictStakeFilter,
 } from '../lib/conflicts';
@@ -66,6 +65,9 @@ const PER_PAGE = 100;
 // WHOLE list of links under one institution's name — the filter either applies or the page refuses.
 
 export async function loader({ request, context }: Route.LoaderArgs) {
+  // An old filter link keeps working: it is sent to the same selection under the new parameters.
+  const legacy = legacyConflictSearch(new URL(request.url).searchParams);
+  if (legacy) throw redirect(`/conflicts${legacy.size ? `?${legacy}` : ''}`, 301);
   const db = getDb(context.cloudflare.env);
   const slug = new URL(request.url).searchParams.get('authority');
   let authority: { slug: string; name: string } | null = null;
@@ -93,36 +95,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       ...row,
       declaredInstitutions: groupDeclaredInstitutions(declaredOffices),
     }));
-  // Ownership and sole management by default; the seats on collegial bodies only when asked (`?role=all`).
-  const scoped = applyRoleScope(everyone, filters.role);
-  // One row per person. The stake filter chooses between a person's declared part and registry part first, so
-  // „роля по Търговския регистър“ lists the companies the register alone records; the other filters ask about
-  // the person, so they read the joined row.
-  const people = mergePersonParts(scoped);
-  const persons = sortConflictRows(
-    filterConflictRows(
-      mergePersonParts(
-        filterConflictRows(scoped, { ...filters, signals: [], institutions: [], q: null }),
-      ),
-      { ...filters, stake: null },
-    ),
-    filters.sort,
-  );
+  // By default: ownership or management, with a contract inside the overlap of the office and the tie. The
+  // seats on collegial bodies (`?include=boards`) and the ties without such a contract (`?include=outside`)
+  // widen it, each on its own.
+  const persons = listConflictPeople(everyone, filters);
   const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
   const asked = Number(sp.get('page') || 1);
   const page = Math.min(pageCount, Number.isSafeInteger(asked) && asked > 0 ? asked : 1);
-  const facets = {
-    self: scoped.filter((r) => r.stakeKind === 'self' || r.stakeKind === 'mixed').length,
-    family: scoped.filter((r) => r.stakeKind === 'family' || r.stakeKind === 'mixed').length,
-    registry: scoped.filter((r) => r.stakeKind === 'registry').length,
-    own: people.filter((r) => r.ownInstitution).length,
-    window: people.filter((r) => r.hasContemporaneous).length,
-    institutions: institutionOptions(people, filters.institutions),
-    role: {
-      direct: mergePersonParts(applyRoleScope(everyone, 'direct')).length,
-      all: mergePersonParts(everyone).length,
-    },
-  };
+  const facets = conflictFacets(everyone, filters);
   return data(
     {
       authority,
@@ -291,19 +271,19 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
     },
     {
       key: 'periodValue',
-      header: 'Стойност в периода',
+      header: 'Стойност в периода на длъжността',
       align: 'money',
       cell: (r) => moneyBare(r.contemporaneousValueEur),
     },
     {
       key: 'totalValue',
-      header: 'Обща стойност',
+      header: 'Стойност за всички години',
       align: 'money',
       cell: (r) => moneyBare(r.contractValueEur),
     },
     {
       key: 'contracts',
-      header: 'Общ брой договори',
+      header: 'Брой договори за всички години',
       align: 'money',
       cell: (r) => count(r.contractCount),
     },
@@ -345,63 +325,69 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   const { authority, facets, page, pageCount, total, pageRows, available } = loaderData;
   const [sp] = useSearchParams();
   const filters = conflictListFilters(sp);
+  // A payload cached before these facets existed lacks them: the groups then show without counts.
+  const f = facets as Partial<typeof facets>;
   const groups: FilterGroup[] = [
     {
-      key: 'stake',
-      label: 'Основание',
+      // Both off by default; each widens the list on its own, so all four combinations are a choice.
+      key: 'include',
+      label: 'Обхват на списъка',
+      type: 'checkbox',
+      selected: [
+        ...(filters.period === 'any' ? ['outside'] : []),
+        ...(filters.role === 'all' ? ['boards'] : []),
+      ],
+      options: [
+        {
+          value: 'outside',
+          label: 'Включи и връзки без договори в периода на длъжността',
+          count: f.include?.outside,
+        },
+        {
+          value: 'boards',
+          label: 'Включи и членство в управителни органи',
+          count: f.include?.boards,
+        },
+      ],
+      hint: 'Периодът обхваща годините с налични декларации за съответната публична длъжност.',
+    },
+    {
+      key: 'source',
+      label: 'Източник на връзката',
       type: 'radio',
-      allLabel: 'всички',
+      allLabel: 'всички източници',
+      allCount: f.source?.all,
       selected: filters.stake ? [filters.stake] : [],
       options: [
         {
           value: 'self',
-          label: 'собствен дял или управление',
-          count: facets.self,
+          label: 'декларация за собствено участие',
+          count: f.source?.self,
         },
         {
           value: 'family',
-          label: 'дял на свързано лице',
-          count: facets.family,
+          label: 'декларация за дял на свързано лице',
+          count: f.source?.family,
         },
         {
           value: 'registry',
-          label: 'роля по Търговския регистър',
-          count: facets.registry,
+          label: 'само вписване в Търговския регистър',
+          count: f.source?.registry,
         },
       ],
     },
     {
-      // Two steps, the second containing the first: the list never hides what the reader asked to add.
-      key: 'role',
-      label: 'Роля в дружеството',
+      key: 'buyer',
+      label: 'Възложител на договорите',
       type: 'radio',
-      allLabel: 'собственост или управление',
-      // Absent from a payload rendered before the scope existed: the group then shows without counts.
-      allCount: facets.role?.direct,
-      selected: filters.role === 'all' ? ['all'] : [],
-      options: [
-        {
-          value: 'all',
-          label: 'всички роли, включително членство в съвет',
-          count: facets.role?.all,
-        },
-      ],
-    },
-    {
-      key: 'signal',
-      label: 'Признаци',
-      type: 'checkbox',
-      selected: filters.signals,
+      allLabel: 'всички институции',
+      allCount: f.buyer?.all,
+      selected: filters.ownBuyer ? ['own'] : [],
       options: [
         {
           value: 'own',
-          label: 'от собствената институция',
-          count: facets.own,
-        },
-        {
-          value: 'window',
-          label: 'години с данни за длъжността',
-          count: facets.window,
+          label: 'собствената институция на лицето',
+          count: f.buyer?.own,
         },
       ],
     },
@@ -410,7 +396,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       label: 'Институция на лицето',
       type: 'checkbox',
       selected: filters.institutions,
-      options: facets.institutions,
+      options: f.institutions ?? [],
     },
   ];
   // Every heading over the list must be true of every row it shows. Unfiltered, the list holds declared
@@ -419,6 +405,35 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   const listing = conflictListing(filters.stake, filters.role === 'all');
   const clearHref = authority ? `/conflicts?authority=${authority.slug}` : '/conflicts';
   const columns = personColumns(leaderboardRankOffset(page, PER_PAGE));
+  // An empty list offers the wider scopes that would fill it, every other filter kept. On an empty list
+  // the people a box adds are the people it would show.
+  const include = groups[0]!.selected;
+  const steps = [
+    filters.period === 'overlap' && {
+      add: ['outside'],
+      label: 'Включи и връзки без договори в периода на длъжността',
+      count: f.include?.outside ?? 0,
+    },
+    filters.role === 'direct' && {
+      add: ['boards'],
+      label: 'Включи и членство в управителни органи',
+      count: f.include?.boards ?? 0,
+    },
+  ].filter((w): w is { add: string[]; label: string; count: number } => !!w);
+  // Both boxes at once only when that finds more than either alone.
+  const both = steps.length === 2 ? (f.include?.both ?? 0) : 0;
+  if (both > Math.max(...steps.map((w) => w.count)))
+    steps.push({
+      add: ['outside', 'boards'],
+      label: 'Включи и двете: връзки без договори в периода и членство в управителни органи',
+      count: both,
+    });
+  const widen = steps
+    .filter((w) => w.count > 0)
+    .map((w) => ({
+      ...w,
+      href: withParams(sp, { include: [...new Set([...include, ...w.add])], page: null }),
+    }));
   const nav: PageNav = {
     page,
     pageCount,
@@ -470,7 +485,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
             <Section
               id="list"
               title="Длъжностни лица и дружества изпълнители"
-              hint="„Стойност в периода“ включва договорите в годините с налична декларация за институция и длъжност на лицето. Това не установява точните дати на мандата. Липсващи години не се запълват. Общата стойност и общият брой договори обхващат всички налични договори на показаните дружества, включително при предходно участие."
+              hint="„Стойност в периода на длъжността“ включва договорите от годините с налична декларация за институция и длъжност на лицето, в които връзката с дружеството е декларирана или вписана. Това не установява точните дати на мандата. Липсващи години не се запълват. Стойността и броят на договорите „за всички години“ обхващат всички налични договори на показаните дружества, включително извън периода и при предходно участие."
             >
               <div className="split">
                 <FilterRail groups={groups} sort={filters.sort} clearHref={clearHref} />
@@ -480,9 +495,9 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     activeSort={filters.sort}
                     searchLabel="Търсене сред лицата"
                     sorts={[
-                      { value: 'period', label: 'стойност в периода' },
-                      { value: 'total', label: 'обща стойност' },
-                      { value: 'contracts', label: 'общ брой договори' },
+                      { value: 'period', label: 'стойност в периода на длъжността' },
+                      { value: 'total', label: 'стойност за всички години' },
+                      { value: 'contracts', label: 'брой договори за всички години' },
                     ]}
                     count={
                       <>
@@ -491,10 +506,28 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                       </>
                     }
                   />
+                  <p className="small muted conflicts-scope">
+                    <strong>Обхват:</strong> {conflictScopeLine(filters)}
+                  </p>
                   {total === 0 ? (
-                    <p className="muted">
-                      Няма лица за избраните филтри. <Link to={clearHref}>Изчисти филтрите</Link>
-                    </p>
+                    <div className="conflicts-empty">
+                      <p className="muted">Няма лица за избраните филтри.</p>
+                      {widen.length > 0 && (
+                        <ul className="conflicts-widen">
+                          {widen.map((w) => (
+                            <li key={w.href}>
+                              <Link to={w.href}>{w.label}</Link>{' '}
+                              <span className="muted small">
+                                {count(w.count)} {plural(w.count, 'лице', 'лица')}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="small">
+                        <Link to={clearHref}>Изчисти филтрите</Link>
+                      </p>
+                    </div>
                   ) : (
                     <>
                       <p className="small muted conflicts-amounts-note">

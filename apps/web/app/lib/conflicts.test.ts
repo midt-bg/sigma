@@ -496,10 +496,16 @@ describe('/conflicts list filters', () => {
     ]);
     const rows = groupByPerson([link({ declaredOffices: offices })]);
     expect(
-      filterConflictRows(rows, conflictListFilters(new URLSearchParams('institution=Община Русе'))),
+      filterConflictRows(
+        rows,
+        conflictListFilters(new URLSearchParams('institution=Община Русе&include=outside')),
+      ),
     ).toHaveLength(1);
     expect(
-      filterConflictRows(rows, conflictListFilters(new URLSearchParams('q=Народен представител'))),
+      filterConflictRows(
+        rows,
+        conflictListFilters(new URLSearchParams('q=Народен представител&include=outside')),
+      ),
     ).toHaveLength(1);
     expect(
       institutionOptions(rows, [])
@@ -527,22 +533,34 @@ describe('/conflicts list filters', () => {
   it('reads the state from the URL and drops what it does not know', () => {
     expect(
       conflictListFilters(
-        sp('stake=family&signal=own&signal=bogus&institution=Община Русе&sort=total&q= Иван '),
+        sp('source=family&buyer=own&include=bogus&institution=Община Русе&sort=total&q= Иван '),
       ),
     ).toEqual({
       stake: 'family',
       role: 'direct',
-      signals: ['own'],
+      period: 'overlap',
+      ownBuyer: true,
       institutions: ['РУСЕ'],
       sort: 'total',
       q: 'Иван',
     });
-    expect(conflictListFilters(sp('role=all')).role).toBe('all');
-    expect(conflictListFilters(sp('role=bogus')).role).toBe('direct');
-    expect(conflictListFilters(sp('stake=x&sort=y'))).toEqual({
+    expect(conflictListFilters(sp('include=boards'))).toMatchObject({
+      role: 'all',
+      period: 'overlap',
+    });
+    expect(conflictListFilters(sp('include=outside'))).toMatchObject({
+      role: 'direct',
+      period: 'any',
+    });
+    expect(conflictListFilters(sp('include=outside&include=boards'))).toMatchObject({
+      role: 'all',
+      period: 'any',
+    });
+    expect(conflictListFilters(sp('source=x&buyer=y&sort=y'))).toEqual({
       stake: null,
       role: 'direct',
-      signals: [],
+      period: 'overlap',
+      ownBuyer: false,
       institutions: [],
       sort: 'period',
       q: null,
@@ -560,14 +578,16 @@ describe('/conflicts list filters', () => {
       row({ officialSlug: 'r', stakeKind: 'registry' }),
     ];
     const slugs = (qs: string) =>
-      filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
-    expect(slugs('stake=self')).toEqual(['s', 'm']);
-    expect(slugs('stake=family')).toEqual(['f', 'm']);
-    expect(slugs('stake=registry')).toEqual(['r']);
+      filterConflictRows(rows, conflictListFilters(sp(`include=outside&${qs}`))).map(
+        (r) => r.officialSlug,
+      );
+    expect(slugs('source=self')).toEqual(['s', 'm']);
+    expect(slugs('source=family')).toEqual(['f', 'm']);
+    expect(slugs('source=registry')).toEqual(['r']);
     expect(slugs('')).toEqual(['s', 'f', 'm', 'r']);
   });
 
-  it('requires every chosen signal', () => {
+  it('keeps by default only a contract in the period, and the own institution as buyer when asked', () => {
     const rows = [
       row({ officialSlug: 'o', ownInstitution: true }),
       row({ officialSlug: 'w', hasContemporaneous: true }),
@@ -575,8 +595,10 @@ describe('/conflicts list filters', () => {
     ];
     const slugs = (qs: string) =>
       filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
-    expect(slugs('signal=own')).toEqual(['o', 'b']);
-    expect(slugs('signal=own&signal=window')).toEqual(['b']);
+    expect(slugs('')).toEqual(['w', 'b']);
+    expect(slugs('buyer=own')).toEqual(['b']);
+    expect(slugs('buyer=own&include=outside')).toEqual(['o', 'b']);
+    expect(slugs('include=outside')).toEqual(['o', 'w', 'b']);
   });
 
   it('filters by the official’s institution whatever its spelling, and searches name, position and institution', () => {
@@ -590,7 +612,9 @@ describe('/conflicts list filters', () => {
       }),
     ];
     const slugs = (qs: string) =>
-      filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
+      filterConflictRows(rows, conflictListFilters(sp(`include=outside&${qs}`))).map(
+        (r) => r.officialSlug,
+      );
     expect(slugs('institution=Община Русе')).toEqual(['r']);
     expect(slugs('q=петя')).toEqual(['v']);
     expect(slugs('q=съветник')).toEqual(['v']);
@@ -684,7 +708,7 @@ it('sorts period values and keeps unknown amounts last', () => {
 });
 
 it('reads the registry-role stake filter and keeps registry rows out of the own/family counts', () => {
-  expect(conflictListFilters(new URLSearchParams('stake=registry')).stake).toBe('registry');
+  expect(conflictListFilters(new URLSearchParams('source=registry')).stake).toBe('registry');
   const registry = {
     ...groupByPerson([link()])[0]!,
     stakeKind: 'registry' as const,
@@ -693,7 +717,7 @@ it('reads the registry-role stake filter and keeps registry rows out of the own/
   const own = groupByPerson([link()])[0]!;
   const f = (stake: 'self' | 'family' | 'registry' | null) =>
     filterConflictRows([own, registry], {
-      ...conflictListFilters(new URLSearchParams()),
+      ...conflictListFilters(new URLSearchParams('include=outside')),
       stake,
     }).map((r) => r.officialSlug);
   expect(f('registry')).toEqual(['reg']);

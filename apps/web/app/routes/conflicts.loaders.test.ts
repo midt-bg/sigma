@@ -143,7 +143,13 @@ describe('leaderboard loader — narrowed to one institution (?authority=)', () 
 describe('leaderboard loader (/conflicts)', () => {
   it('caches for an hour when there are links (self or family, ADR-0032)', async () => {
     q.getRelatedPersonRows.mockResolvedValue([
-      { official: 'Иван Петров', officialSlug: 'p1', personIdentity: 'p1', declaredOffices: [] },
+      {
+        official: 'Иван Петров',
+        officialSlug: 'p1',
+        personIdentity: 'p1',
+        hasContemporaneous: true,
+        declaredOffices: [],
+      },
     ]);
     const res = (await leaderboardLoader({ request: req(), context } as never)) as {
       data: { pageRows: unknown[] };
@@ -168,6 +174,7 @@ describe('leaderboard loader (/conflicts)', () => {
         officialSlug: `s${i}`,
         personIdentity: `p${i}`,
         contemporaneousValueEur: 1205 - i,
+        hasContemporaneous: true,
         declaredOffices: [],
       })),
     );
@@ -214,7 +221,14 @@ describe('leaderboard loader — the role scope', () => {
   });
   beforeEach(() => {
     q.getRelatedPersonRows.mockResolvedValue([
-      { official: 'Декларирал', officialSlug: 'd', personIdentity: 'd', declaredOffices: [] },
+      {
+        official: 'Декларирал',
+        officialSlug: 'd',
+        personIdentity: 'd',
+        stakeKind: 'self',
+        hasContemporaneous: true,
+        declaredOffices: [],
+      },
     ]);
     q.getRegistryRolePersonRows.mockResolvedValue([
       registryRow('seat-only', [{ eik: '1', registryRole: 'board' }], null),
@@ -230,7 +244,8 @@ describe('leaderboard loader — the role scope', () => {
   });
 
   it('leaves a seat-only person out and keeps only the owned company of one with both', async () => {
-    const res = await leaderboardLoader({ request: req(), context } as never);
+    // The owned company has no contract in the period: the person is in the list only with that widened.
+    const res = await leaderboardLoader({ request: req('?include=outside'), context } as never);
     expect(res.data.pageRows.map((r) => r.officialSlug).sort()).toEqual(['both', 'd']);
     const both = res.data.pageRows.find((r) => r.officialSlug === 'both')!;
     expect(both).toMatchObject({
@@ -240,18 +255,49 @@ describe('leaderboard loader — the role scope', () => {
       hasContemporaneous: false,
     });
     expect(both.companies!.map((c) => c.eik)).toEqual(['2']);
-    expect(res.data.facets.role).toEqual({ direct: 2, all: 3 });
-    expect(res.data.facets.registry).toBe(1);
+    expect(res.data.facets.include).toMatchObject({ boards: 1 });
+    expect(res.data.facets.source.registry).toBe(1);
+    // In the default scope the owner without a contract in the period is not listed at all.
+    const narrow = await leaderboardLoader({ request: req(), context } as never);
+    expect(narrow.data.pageRows.map((r) => r.officialSlug)).toEqual(['d']);
+    expect(narrow.data.facets.include).toEqual({ outside: 1, boards: 2, both: 3 });
   });
 
   it('adds the seats when asked, with the whole figures', async () => {
-    const res = await leaderboardLoader({ request: req('?role=all'), context } as never);
+    const res = await leaderboardLoader({ request: req('?include=boards'), context } as never);
     expect(res.data.pageRows.map((r) => r.officialSlug).sort()).toEqual(['both', 'd', 'seat-only']);
     expect(res.data.pageRows.find((r) => r.officialSlug === 'both')).toMatchObject({
       companyCount: 2,
       contractValueEur: 900,
     });
-    expect(res.data.facets.registry).toBe(2);
+    expect(res.data.facets.source.registry).toBe(2);
+  });
+});
+
+// An old filter link keeps working: it is sent to the same selection under the new parameters.
+describe('leaderboard loader — old filter addresses', () => {
+  const redirectOf = async (qs: string) => {
+    try {
+      await leaderboardLoader({ request: req(qs), context } as never);
+    } catch (thrown) {
+      expect(thrown).toBeInstanceOf(Response);
+      const res = thrown as Response;
+      expect(res.status).toBe(301);
+      return res.headers.get('Location');
+    }
+    throw new Error('expected a redirect');
+  };
+
+  it('redirects each old parameter to its new form, keeping the rest, before reading anything', async () => {
+    expect(await redirectOf('?stake=registry&role=all&q=тест')).toBe(
+      '/conflicts?q=%D1%82%D0%B5%D1%81%D1%82&source=registry&include=boards',
+    );
+    expect(await redirectOf('?signal=own&authority=000000000')).toBe(
+      '/conflicts?authority=000000000&buyer=own',
+    );
+    expect(await redirectOf('?signal=window')).toBe('/conflicts');
+    expect(q.getRelatedPersonRows).not.toHaveBeenCalled();
+    expect(q.getAuthorityName).not.toHaveBeenCalled();
   });
 });
 
@@ -327,21 +373,24 @@ describe('leaderboard loader — one row per person', () => {
       declaredInstitutions: [{ institution: 'Община Тест', positions: ['Кмет'], years: ['2020'] }],
     });
     expect(res.pageRows[0]!.companies!.map((c) => c.eik)).toEqual(['7', '8']);
-    expect(res.facets).toMatchObject({ self: 1, registry: 1, role: { direct: 1, all: 1 } });
-    const all = await load('?role=all');
+    expect(res.facets).toMatchObject({
+      source: { self: 1, registry: 0 },
+      include: { boards: 0 },
+    });
+    const all = await load('?include=boards');
     expect(all.pageRows[0]!.companies!.map((c) => c.eik)).toEqual(['7', '8', '9']);
     expect(all.pageRows[0]).toMatchObject({ companyCount: 3, contractValueEur: 1000 });
   });
 
-  it('lets the stake filter choose the part: the register’s companies alone, or the declared one', async () => {
-    const registry = await load('?stake=registry');
+  it('lets the source filter choose the part: the register’s companies alone, or the declared one', async () => {
+    // The register's own part has no contract in the period: it is listed only with that widened.
+    expect((await load('?source=registry')).total).toBe(0);
+    const registry = await load('?source=registry&include=outside');
     expect(registry.pageRows[0]!.companies!.map((c) => c.eik)).toEqual(['8']);
     expect(registry.pageRows[0]).toMatchObject({ stakeKind: 'registry', contractValueEur: 40 });
-    const self = await load('?stake=self');
+    const self = await load('?source=self');
     expect(self.pageRows[0]!.companies!.map((c) => c.eik)).toEqual(['7']);
     expect(self.pageRows[0]).toMatchObject({ stakeKind: 'self', contractValueEur: 100 });
-    // A signal is about the person: the joined row holds it.
-    expect((await load('?signal=window')).total).toBe(1);
   });
 });
 
