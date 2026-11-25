@@ -7,7 +7,9 @@ import { afterEach, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
 import {
   getTimelineIntervals,
+  institutionPeriod,
   overlapBands,
+  type InstitutionOfficeSpan,
   TIMELINE_SUBJECT_CHARS,
   type DaySpan,
 } from './person-intervals';
@@ -197,4 +199,79 @@ it('clips a long subject: the mark needs a label, the contract page has the whol
   expect(long.subject!.length).toBeLessThanOrEqual(TIMELINE_SUBJECT_CHARS);
   expect(long.subject!.endsWith('…')).toBe(true);
   expect(procurements.find((p) => p.id === 'c0')!.subject).toBe('Договор 0');
+});
+
+// The office at „Община Тест" in the fixture, as the profile's office bars cut it from the same filings
+// (officeSpans in apps/web): 2017–2019 opened by an entry filing, 2021–2022 with neither end filed, and
+// 2024 closed by an exit filing. 2020 and 2023 have no filing.
+const fixtureOffice: InstitutionOfficeSpan[] = [
+  { from: '2017-01-01', to: '2019-12-31', knownStart: '2017-04-20', knownEnd: null },
+  { from: '2021-01-01', to: '2022-12-31', knownStart: null, knownEnd: null },
+  { from: '2024-01-01', to: '2024-08-12', knownStart: null, knownEnd: '2024-08-12' },
+];
+
+it("tells an own institution's contracts apart: overlap, outside the period, period not established", async () => {
+  const { procurements } = await getTimelineIntervals(fixture(), 'person', ['official', 'alias']);
+  const expected = (day: string, tied: boolean) =>
+    day < '2017-01-01' // before an office whose entry was filed more than a month later
+      ? 'outside'
+      : day <= '2019-12-31' ||
+          ('2021-01-01' <= day && day <= '2022-12-31') ||
+          ('2024-01-01' <= day && day <= '2024-08-12')
+        ? tied
+          ? 'overlap'
+          : 'in-office'
+        : day < '2024-01-01' // 2020 and 2023: after a run with no exit filing
+          ? 'unknown'
+          : 'outside'; // after the exit filing, nothing later
+  const got = procurements.map((p) => ({
+    id: p.id,
+    period: institutionPeriod(fixtureOffice, p.signedAt, p.tied),
+    expected: expected(p.signedAt, p.tied),
+  }));
+  expect(got.filter((g) => g.period !== g.expected)).toEqual([]);
+  // Every case occurs, so the check is not vacuous; and an overlap is always a red contract.
+  for (const period of ['overlap', 'in-office', 'outside', 'unknown'])
+    expect(got.filter((g) => g.period === period).length).toBeGreaterThan(10);
+  for (const p of procurements)
+    if (institutionPeriod(fixtureOffice, p.signedAt, p.tied) === 'overlap')
+      expect(p.tied).toBe(true);
+});
+
+it('calls a date outside the office only where a filing bounds that side', () => {
+  const run = (over: Partial<InstitutionOfficeSpan> = {}): InstitutionOfficeSpan => ({
+    from: '2019-01-01',
+    to: '2020-12-31',
+    knownStart: null,
+    knownEnd: null,
+    ...over,
+  });
+  // No declared office years at all: nothing is established either way.
+  expect(institutionPeriod([], '2020-05-01', true)).toBe('unknown');
+  // Inside the declared years: an overlap only when red.
+  expect(institutionPeriod([run()], '2020-05-01', true)).toBe('overlap');
+  expect(institutionPeriod([run()], '2020-05-01', false)).toBe('in-office');
+  // Before a start nobody filed, after an end nobody filed: unknown, even when red elsewhere.
+  expect(institutionPeriod([run()], '2018-05-01', false)).toBe('unknown');
+  expect(institutionPeriod([run()], '2021-05-01', true)).toBe('unknown');
+  // An exit filing ends the office by that day; the contract the day after is outside.
+  const closed = run({ to: '2020-06-30', knownEnd: '2020-06-30' });
+  expect(institutionPeriod([closed], '2020-06-30', false)).toBe('in-office');
+  expect(institutionPeriod([closed], '2020-07-01', false)).toBe('outside');
+  // An entry filing: a month of lag is allowed, so a January filing leaves December open.
+  const opened = run({ knownStart: '2019-01-15' });
+  expect(institutionPeriod([opened], '2018-12-20', false)).toBe('unknown');
+  expect(institutionPeriod([opened], '2018-12-10', false)).toBe('outside');
+  expect(institutionPeriod([run({ knownStart: '2019-06-01' })], '2018-12-31', false)).toBe(
+    'outside',
+  );
+  // Between two runs, both sides must be bounded.
+  const later = run({ from: '2023-01-01', to: '2023-12-31', knownStart: '2023-03-01' });
+  expect(institutionPeriod([closed, later], '2022-01-01', false)).toBe('outside');
+  expect(institutionPeriod([run(), later], '2022-01-01', false)).toBe('unknown');
+  expect(institutionPeriod([closed, { ...later, knownStart: null }], '2022-01-01', false)).toBe(
+    'unknown',
+  );
+  // A timestamp is read as its day.
+  expect(institutionPeriod([closed], '2020-06-30T23:00:00Z', false)).toBe('in-office');
 });

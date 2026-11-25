@@ -885,6 +885,64 @@ td .chip {
   margin-top: 4px;
   font-weight: 600;
 }
+/* An own institution's contract against the office there, readable without colour: the building is filled
+   only in an overlap (as the filled dot of the legend); outside the period the line is hollow; where the
+   period is not established its contour is broken, as for a disputed declaration. */
+/* A short or undated span still shows enough line, before the signing, for its pattern to read. */
+.time-procurement.own[class*='period-']::before {
+  left: min(0px, calc(100% - 22px));
+  box-sizing: border-box;
+}
+.time-procurement.own.period-overlap svg,
+.time-symbol.own-period.period-overlap svg {
+  fill: currentColor;
+  fill-opacity: 0.35;
+}
+.time-procurement.own.period-outside::before,
+.time-symbol.own-period.period-outside::before {
+  background: var(--paper, #faf8f2);
+  border: 1px solid #8a847b;
+}
+.time-procurement.own.period-unknown::before,
+.time-symbol.own-period.period-unknown::before {
+  background: var(--paper, #faf8f2);
+  border: 1px dashed #8a847b;
+}
+.time-procurement.own.tied.period-outside::before,
+.time-procurement.own.tied.period-unknown::before {
+  border-color: #b71916;
+}
+.time-symbol.own-period {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  background: none;
+  color: var(--ink, #171511);
+}
+.time-symbol.own-period::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 12px;
+  top: 6px;
+  height: 4px;
+  box-sizing: border-box;
+  background: #8a847b;
+}
+.time-symbol.own-period.period-overlap {
+  color: #b71916;
+}
+.time-symbol.own-period.period-overlap::before {
+  background: #b71916;
+}
+.time-symbol.own-period svg {
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+.time-buyer-period {
+  display: block;
+}
 
 /* ── Forced colours, print and the accessibility widget's colour themes ──────────────────────────
    Forced colours (Windows High Contrast) repaint text and borders with the system palette and drop
