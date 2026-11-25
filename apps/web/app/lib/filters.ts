@@ -199,10 +199,13 @@ export const PARAM_ORDER = [
   'eu',
   'bids', // /contracts single-bid filter
   'value',
-  'stake', // /conflicts
-  'role', // /conflicts
-  'signal', // /conflicts
+  'source', // /conflicts
+  'buyer', // /conflicts
+  'include', // /conflicts
   'institution', // /conflicts
+  'stake', // /conflicts (old address)
+  'role', // /conflicts (old address)
+  'signal', // /conflicts (old address)
   'authority',
   'bidder',
   'center', // /network focus entity

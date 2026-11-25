@@ -401,17 +401,23 @@ export function officialRole(o: {
 // The whole surfaced set is loaded (≤1000 links), so the list filters, sorts and pages in memory: the same
 // rows on the server render and in the browser, and no extra query per filter.
 
+/** Where the person's tie to the company comes from (`?source=`): their own declared stake or management,
+ *  a relative's declared stake, or the Trade Register alone. */
 export type ConflictStakeFilter = 'self' | 'family' | 'registry';
-export type ConflictSignal = 'own' | 'window';
 export type ConflictSort = 'period' | 'total' | 'contracts';
 /** Which registry roles the list covers: ownership and sole management, or also the seats on collegial
- *  bodies. The default is the first; `?role=all` adds the second. */
+ *  bodies. The default is the first; `?include=boards` adds the second. */
 export type ConflictRoleScope = 'direct' | 'all';
+/** Whether a person needs a contract inside the period of the office AND of the tie to be listed: by default
+ *  yes; `?include=outside` also lists the ties without one, and the people whose period is not known. */
+export type ConflictPeriodScope = 'overlap' | 'any';
 
 export interface ConflictListFilters {
   stake: ConflictStakeFilter | null;
   role: ConflictRoleScope;
-  signals: ConflictSignal[];
+  period: ConflictPeriodScope;
+  /** Only people with a contract from their own institution (`?buyer=own`). */
+  ownBuyer: boolean;
   /** Institution keys (see `institutionKey`). */
   institutions: string[];
   sort: ConflictSort;
@@ -420,18 +426,37 @@ export interface ConflictListFilters {
 
 /** The /conflicts filter state from the URL. A value it does not know is dropped, not an error. */
 export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
-  const stake = sp.get('stake');
+  const source = sp.get('source');
   const sort = sp.get('sort');
+  const include = getMulti(sp, 'include');
   return {
-    stake: stake === 'self' || stake === 'family' || stake === 'registry' ? stake : null,
-    role: sp.get('role') === 'all' ? 'all' : 'direct',
-    signals: getMulti(sp, 'signal').filter(
-      (s): s is ConflictSignal => s === 'own' || s === 'window',
-    ),
+    stake: source === 'self' || source === 'family' || source === 'registry' ? source : null,
+    role: include.includes('boards') ? 'all' : 'direct',
+    period: include.includes('outside') ? 'any' : 'overlap',
+    ownBuyer: sp.get('buyer') === 'own',
     institutions: getMulti(sp, 'institution').map(institutionKey).filter(Boolean),
     sort: sort === 'total' || sort === 'contracts' ? sort : 'period',
     q: sp.get('q')?.trim() || null,
   };
+}
+
+/** The address an old /conflicts filter link means today, or null when it uses no old parameter.
+ *  `stake` became `source`, `role=all` became `include=boards`, and `signal=own` became `buyer=own`.
+ *  `signal=window` is dropped: a contract in the period is now what the list requires by default. Every
+ *  other parameter is kept as it was. */
+export function legacyConflictSearch(sp: URLSearchParams): URLSearchParams | null {
+  if (!['stake', 'role', 'signal'].some((key) => sp.has(key))) return null;
+  const next = new URLSearchParams(sp);
+  const stake = sp.get('stake');
+  if (!next.has('source') && (stake === 'self' || stake === 'family' || stake === 'registry'))
+    next.set('source', stake);
+  const include = new Set(getMulti(sp, 'include'));
+  if (sp.get('role') === 'all') include.add('boards');
+  next.delete('include');
+  for (const v of include) next.append('include', v);
+  if (!next.has('buyer') && getMulti(sp, 'signal').includes('own')) next.set('buyer', 'own');
+  for (const key of ['stake', 'role', 'signal']) next.delete(key);
+  return next;
 }
 
 /** One spelling-insensitive key per institution, so „Община Тестовци" and „ОБЩИНА ТЕСТОВЦИ" filter together.
@@ -591,8 +616,9 @@ export function mergePersonParts<T extends ConflictPersonRow>(rows: T[]): T[] {
  *  'self' and the 'family' filter — but NOT 'registry': 'mixed' is only ever produced by two DECLARED
  *  stakes, while a registry row holds by construction only companies with no published declared interest.
  *  Letting 'mixed' through made the list longer than the facet count promised (19 shown against 16 counted)
- *  and put declared stakes under „роля по Търговския регистър". Every chosen signal must hold; the search
- *  matches the name, position or institution. */
+ *  and put declared stakes under „само вписване в Търговския регистър". The period scope keeps, by default,
+ *  only the rows with a contract inside the overlap of the office and the tie; the search matches the name,
+ *  position or institution. */
 export function filterConflictRows(
   rows: ConflictPersonRow[],
   f: ConflictListFilters,
@@ -604,8 +630,8 @@ export function filterConflictRows(
       (f.stake == null ||
         r.stakeKind === f.stake ||
         (r.stakeKind === 'mixed' && f.stake !== 'registry')) &&
-      (!f.signals.includes('own') || r.ownInstitution) &&
-      (!f.signals.includes('window') || r.hasContemporaneous) &&
+      (!f.ownBuyer || r.ownInstitution) &&
+      (f.period === 'any' || r.hasContemporaneous) &&
       (institutions.size === 0 ||
         rowInstitutions(r).some((i) => institutions.has(institutionKey(i.institution)))) &&
       (q == null ||
@@ -615,6 +641,65 @@ export function filterConflictRows(
             .join(' ')}`,
         ).includes(q)),
   );
+}
+
+/**
+ * The people the list shows for the filters, sorted. The role scope and the source filter choose between a
+ * person's declared part and registry part first, so „само вписване в Търговския регистър" lists the
+ * companies the register alone records; the period scope and the other filters ask about the person, so
+ * they read the joined row.
+ */
+export function listConflictPeople(
+  everyone: ConflictPersonRow[],
+  f: ConflictListFilters,
+): ConflictPersonRow[] {
+  const parts = filterConflictRows(applyRoleScope(everyone, f.role), {
+    ...f,
+    period: 'any',
+    ownBuyer: false,
+    institutions: [],
+    q: null,
+  });
+  return sortConflictRows(
+    filterConflictRows(mergePersonParts(parts), { ...f, stake: null }),
+    f.sort,
+  );
+}
+
+/** The counts beside each control: how many people the list would hold with that choice and every other
+ *  filter as it is. A scope checkbox counts the people it ADDS — those it is named for. */
+export function conflictFacets(everyone: ConflictPersonRow[], f: ConflictListFilters) {
+  const n = (over: Partial<ConflictListFilters>) =>
+    listConflictPeople(everyone, { ...f, ...over }).length;
+  return {
+    source: {
+      all: n({ stake: null }),
+      self: n({ stake: 'self' }),
+      family: n({ stake: 'family' }),
+      registry: n({ stake: 'registry' }),
+    },
+    buyer: { all: n({ ownBuyer: false }), own: n({ ownBuyer: true }) },
+    include: {
+      outside: n({ period: 'any' }) - n({ period: 'overlap' }),
+      boards: n({ role: 'all' }) - n({ role: 'direct' }),
+      both: n({ period: 'any', role: 'all' }),
+    },
+    institutions: institutionOptions(
+      listConflictPeople(everyone, { ...f, institutions: [] }),
+      f.institutions,
+    ),
+  };
+}
+
+/** One sentence over the table: what the current scope lists. */
+export function conflictScopeLine(f: Pick<ConflictListFilters, 'role' | 'period'>): string {
+  const roles =
+    f.role === 'all'
+      ? 'Собственост, управление или членство в управителен орган'
+      : 'Собственост или управление';
+  return f.period === 'overlap'
+    ? `${roles} с договори в периода на длъжността, в който връзката е декларирана или вписана.`
+    : `${roles} — със или без договори в периода на длъжността, включително когато периодът не може да се установи от декларациите.`;
 }
 
 /** Each named sort is monotonic by its displayed figure; unknown amounts come last. */
