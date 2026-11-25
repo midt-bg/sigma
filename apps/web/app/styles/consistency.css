@@ -230,6 +230,11 @@ td .chip {
 .person-institutions li + li {
   margin-top: var(--s-1);
 }
+/* The position — with „Бивш" in front of it when the office has ended — is what the line says; the
+   institution and the years qualify it. */
+.person-institutions .office-title {
+  font-weight: 600;
+}
 
 .person-time-legend {
   display: flex;

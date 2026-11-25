@@ -271,7 +271,7 @@ describe('search', () => {
     expect(official?.hits[0]).toMatchObject({
       kind: 'official',
       title: 'Иван Минев',
-      subtitle: 'бивш кмет · Община Тестово · декларации за 2018–2019',
+      subtitle: 'Бивш кмет · Община Тестово · 2018–2019',
       amountLabel: 'по договори',
       href: `/persons/${personSlug('person:ИВАН МИНЕВ')}`,
     });

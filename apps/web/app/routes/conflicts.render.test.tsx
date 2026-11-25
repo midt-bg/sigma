@@ -183,8 +183,10 @@ describe('/conflicts route — render', () => {
     expect(bodyRows()[0].textContent).toContain('Длъжности според декларациите');
     // The office left with an exit declaration is former; the other one only has its last year on record.
     expect(bodyRows()[0].textContent).toContain('2018–2019');
-    expect(bodyRows()[0].textContent).toContain('Бивш: декларация при освобождаване за 2019 г.');
-    expect(bodyRows()[0].textContent).toContain('Последна декларация за 2025 г.');
+    expect(bodyRows()[0].textContent).toContain('Бивш съветник · Община Тестово · 2018–2019');
+    expect(bodyRows()[0].textContent).toContain(
+      'Народен представител · Народно събрание · декларация за 2025',
+    );
     expect(bodyRows()[0].textContent).not.toMatch(/настоящ/i);
     expect(bodyRows()[0].textContent).toContain('Община Тестово');
     expect(bodyRows()[0].textContent).toContain('2019');

@@ -62,8 +62,8 @@ it('groups a shared registry identity, preserving offices, roles, years and the 
   for (const value of [
     'Община А',
     'Община Б',
-    'Главен архитект',
-    'Главен експерт',
+    // Two positions in one institution share a line; the second follows in lower case.
+    'Главен архитект, главен експерт',
     '2023',
     '2024',
     '2025',

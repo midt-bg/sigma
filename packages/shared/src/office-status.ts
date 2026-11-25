@@ -21,6 +21,14 @@ import { identityInstitution } from './institution';
  * different bodies. Positions inside one institution are listed, not given statuses of their own: a position's
  * spelling varies between filings, and a per-position „бивш" would call somebody former in a post they still
  * file for under another spelling.
+ *
+ * One office under two spellings. „Месторабота" is free text, so one body arrives as an abbreviation in one
+ * filing and in full in the next, with a typo, or as a bare „Общински съвет". Left apart, the same office is
+ * shown twice and the two lines contradict each other: the exit declaration closes one spelling while the
+ * other still reads as open. Here — for the WORDS only, never for identity — two spellings join when the names
+ * are compatible (`sameBodySpelling`) AND the filings name the same position AND their years touch. All three:
+ * a likeness of names alone joins a court with its namesake in the next town, a position alone joins two
+ * boards somebody sits on at once.
  */
 
 /** One filing's office facts. `type` is the register's declaration type (`Entry`, `Annualy`, `Change`,
@@ -50,7 +58,10 @@ export type OfficeStatus =
   | { kind: 'undated' };
 
 export interface PublicOffice {
+  /** The institution as most of the filings spell it. */
   institution: string;
+  /** Every spelling the filings use for it, `institution` first. */
+  spellings: string[];
   positions: string[];
   periods: OfficePeriod[];
   status: OfficeStatus;
@@ -127,6 +138,171 @@ function periodsOf(filings: Dated[]): OfficePeriod[] {
   return periods.map((p) => ({ spans: spansOf(p.years), ended: p.ended }));
 }
 
+/** The capital's municipality and its council, the one municipality whose name is not „Община <място>". */
+const CAPITAL = /^(?:СТОЛИЧНА ОБЩИНА|СТОЛИЧЕН ОБЩИНСКИ СЪВЕТ)$/u;
+/** The National Assembly under a number or an everyday name. */
+const ASSEMBLY =
+  /^(?:(?:\d+|[XХIVLМ]+)\s*-?\s*(?:[А-Я]{1,4}\s+)?)?(?:НАРОДНО СЪБРАНИЕ|ПАРЛАМЕНТ)$/u;
+
+/** The key an office is grouped by: the identity key, plus the folds above that it has no reason to know. */
+function officeKey(name: unknown): string {
+  const key = identityInstitution(name);
+  if (CAPITAL.test(key)) return 'СТОЛИЧНА ОБЩИНА';
+  if (ASSEMBLY.test(key)) return 'НАРОДНО СЪБРАНИЕ';
+  return key;
+}
+
+/** Words that qualify a body's name without naming it: a place marker, a preposition, a legal form. */
+const FILLER = new Set('ГРАД ГР НА ЗА ПО НАД ПРИ КЪМ И ЕАД АД ЕООД ООД'.split(' '));
+/** A municipal council by its generic name, with or without a place after it. */
+const COUNCIL = /^(?:ОБЩИНСКИ СЪВЕТ|ОЩИНСКИ СЪВЕТ|ОБС|ОС)(?:\s+|$)/u;
+/** The National Assembly as filings write it: abbreviated, numbered before or after, „на РБ". */
+const ASSEMBLY_LOOSE =
+  /^(?:(?:\d+|[XХIVLМ]+)\s*-?\s*(?:ТО|ТИ|МО|ВО|РО)?\s*)?(?:НС|НАРОДНО СЪБРАНИЕ|ПАРЛАМЕНТ)(?:\s*\d+|\s+(?:НА\s+)?Р\s?Б(?:ЪЛГАРИЯ)?)?$/u;
+const LEGAL_FORM = /(?:ЕАД|АД|ЕООД|ООД)$/u;
+
+/** A key with the shorthand of the filings written out, for comparing two spellings. */
+const written = (key: string): string =>
+  ASSEMBLY_LOOSE.test(key)
+    ? 'НАРОДНО СЪБРАНИЕ'
+    : key === 'СОС' || CAPITAL.test(key)
+      ? 'СТОЛИЧНА ОБЩИНА'
+      : key
+          .replace(/(\d)(?=[А-Я])/gu, '$1 ')
+          .replace(/(?<![0-9A-ZА-Я])Р\s?[-–]?\s?Н(?![0-9A-ZА-Я])/gu, 'РАЙОН')
+          .replace(/(?<![0-9A-ZА-Я])(?:СВ|СВЕТИ|СВЕТА)(?![0-9A-ZА-Я])/gu, 'СВ');
+
+/** The words that name the body; initials typed apart („В. Ф.") read as one word. */
+function wordsOf(key: string): string[] {
+  const words: string[] = [];
+  let initials = false;
+  for (const w of key.split(/[^0-9A-ZА-Я]+/u)) {
+    if (!w || FILLER.has(w)) continue;
+    const initial = /^[A-ZА-Я]$/u.test(w);
+    if (initial && initials) words[words.length - 1] += w;
+    else words.push(w);
+    initials = initial;
+  }
+  return words;
+}
+
+function editDistance(a: string, b: string, limit: number): number {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++)
+      row[j] = Math.min(
+        prev[j]! + 1,
+        row[j - 1]! + 1,
+        prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    prev = row;
+  }
+  return prev[b.length]!;
+}
+
+/** `short` with one of its words read as the initials of a run of words in `long`: „НС" and „Народно събрание". */
+function abbreviates(short: string[], long: string[]): boolean {
+  return short.some((word, at) => {
+    if (word.length > 8 || /\d/.test(word)) return false;
+    const rest = [...short.slice(0, at), ...short.slice(at + 1)];
+    for (let from = 0; from + word.length <= long.length; from++) {
+      const run = long.slice(from, from + word.length);
+      if (run.map((w) => w[0]).join('') !== word) continue;
+      const others = [...long.slice(0, from), ...long.slice(from + word.length)];
+      if (others.length === rest.length && others.every((w, i) => w === rest[i])) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * Could two institution keys be one body written two ways? Deliberately loose — it is only ever asked of two
+ * offices of ONE person that also share a position and touching years. Numbers must agree: a unit, a school or
+ * an assembly is told apart by its number.
+ */
+export function sameBodySpelling(a: string, b: string): boolean {
+  if (a === b) return true;
+  const bare = (k: string): string => k.replace(COUNCIL, '').trim();
+  // A bare „Общински съвет" names no place of its own; with one, the council is its municipality.
+  if ((COUNCIL.test(a) && !bare(a)) || (COUNCIL.test(b) && !bare(b))) return true;
+  // The same for a bare „Областна администрация" beside an oblast.
+  const oblast = (k: string, other: string): boolean =>
+    k === 'ОБЛАСТНА АДМИНИСТРАЦИЯ' && other.startsWith('ОБЛАСТ ');
+  if (oblast(a, b) || oblast(b, a)) return true;
+  const [p, q] = [written(bare(a)), written(bare(b))];
+  if (p === q) return true;
+  const [x, y] = [wordsOf(p), wordsOf(q)];
+  if (!x.length || !y.length) return false;
+  const digits = (ws: string[]): string => ws.filter((w) => /^\d+$/.test(w)).join(' ');
+  if (digits(x) !== digits(y)) return false;
+  // A missing space („… УСЛУГИЕООД") or a legal form given once and left out the next time.
+  const squash = (k: string): string => k.replace(/[^0-9A-ZА-Я]/gu, '').replace(LEGAL_FORM, '');
+  if (x.join('') === y.join('') || squash(p) === squash(q)) return true;
+  const [few, many] = x.length <= y.length ? [x, y] : [y, x];
+  // One name inside the other: the same body with a place or a unit after it. Not when a filing lists several
+  // bodies at once („… / …", „…; …") — each of them is inside the list, and they are not each other.
+  const lists = (k: string): boolean => /[;/]/.test(k);
+  if (!lists(a) && !lists(b) && few.every((w) => many.includes(w))) return true;
+  if (abbreviates(x, y) || abbreviates(y, x)) return true;
+  // A typing error in one long word.
+  if (x.length === y.length) {
+    const differing = x.flatMap((w, i) => (w === y[i] ? [] : [[w, y[i]!] as const]));
+    if (differing.length === 1) {
+      const [v, w] = differing[0]!;
+      const shorter = Math.min(v.length, w.length);
+      // Two letters in a long word, one in a shorter one; a word under five letters is too short to tell.
+      return shorter >= 5 && editDistance(v, w, 2) <= (shorter >= 7 ? 2 : 1);
+    }
+  }
+  return false;
+}
+
+interface Group {
+  /** Each spelling of the institution and how many filings carry it. */
+  names: Map<string, number>;
+  /** The identity keys of those spellings. */
+  keys: Set<string>;
+  positions: Map<string, string>;
+  dated: Dated[];
+  seen: Set<string>;
+}
+
+/** The spellings, the one most filings use first; the longer one on a tie, so an abbreviation yields to the name. */
+const namesOf = (g: Group): string[] =>
+  [...g.names]
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length || a[0].localeCompare(b[0], 'bg'))
+    .map(([name]) => name);
+
+const sharePosition = (a: Group, b: Group): boolean =>
+  [...a.positions.keys()].some((p) =>
+    [...b.positions.keys()].some(
+      (q) => p === q || (Math.min(p.length, q.length) >= 6 && (p.includes(q) || q.includes(p))),
+    ),
+  );
+const yearsTouch = (a: Group, b: Group): boolean =>
+  a.dated.some((f) => b.dated.some((g) => Math.abs(Number(f.year) - Number(g.year)) <= 1));
+const oneOffice = (a: Group, b: Group): boolean =>
+  sharePosition(a, b) &&
+  yearsTouch(a, b) &&
+  // EVERY spelling of one with every spelling of the other: a filing that lists two bodies („X, Y") is like
+  // each of them, and must not become the bridge that joins X to Y.
+  [...a.keys].every((k) => [...b.keys].every((l) => sameBodySpelling(k, l)));
+
+function join(into: Group, from: Group): void {
+  for (const [name, n] of from.names) into.names.set(name, (into.names.get(name) ?? 0) + n);
+  for (const key of from.keys) into.keys.add(key);
+  for (const [key, position] of from.positions)
+    if (!into.positions.has(key)) into.positions.set(key, position);
+  for (const d of from.dated) {
+    const id = `${d.year}|${d.kind}|${d.day ?? ''}`;
+    if (into.seen.has(id)) continue;
+    into.seen.add(id);
+    into.dated.push(d);
+  }
+}
+
 /**
  * The offices in a person's filings, most recent first. Duplicate filings (the same person read through two
  * aliases or two list parts) count once. Years after `currentYear` are typing errors in the source and are
@@ -136,21 +312,21 @@ export function describeOffices(
   filings: OfficeFiling[],
   currentYear: number = new Date().getUTCFullYear(),
 ): PublicOffice[] {
-  const groups = new Map<
-    string,
-    { institution: string; positions: Map<string, string>; dated: Dated[]; seen: Set<string> }
-  >();
+  const byKey = new Map<string, Group>();
   for (const f of filings) {
     const institution = f.institution?.trim();
-    const key = identityInstitution(institution);
+    const key = officeKey(institution);
     if (!institution || !key) continue;
-    const g = groups.get(key) ?? {
-      institution,
+    const g = byKey.get(key) ?? {
+      names: new Map<string, number>(),
+      keys: new Set<string>(),
       positions: new Map<string, string>(),
       dated: [],
       seen: new Set<string>(),
     };
-    groups.set(key, g);
+    byKey.set(key, g);
+    g.names.set(institution, (g.names.get(institution) ?? 0) + 1);
+    g.keys.add(identityInstitution(institution));
     const position = f.position?.trim();
     if (position) {
       const pk = identityInstitution(position) || position;
@@ -164,11 +340,25 @@ export function describeOffices(
     g.seen.add(id);
     g.dated.push(d);
   }
-  return [...groups.values()]
+  // One office under two spellings joins into one, until nothing more joins.
+  const groups = [...byKey.values()];
+  for (let merged = true; merged;) {
+    merged = false;
+    for (let i = 0; i < groups.length && !merged; i++)
+      for (let j = i + 1; j < groups.length && !merged; j++)
+        if (oneOffice(groups[i]!, groups[j]!)) {
+          join(groups[i]!, groups[j]!);
+          groups.splice(j, 1);
+          merged = true;
+        }
+  }
+  return groups
     .map((g): PublicOffice => {
+      const spellings = namesOf(g);
+      const institution = spellings[0]!;
       const positions = [...g.positions.values()].sort((a, b) => a.localeCompare(b, 'bg'));
       if (!g.dated.length)
-        return { institution: g.institution, positions, periods: [], status: { kind: 'undated' } };
+        return { institution, spellings, positions, periods: [], status: { kind: 'undated' } };
       const exits = g.dated.filter((f) => f.kind === 'exit');
       const latestExit = exits.length
         ? exits.reduce((a, b) =>
@@ -181,7 +371,8 @@ export function describeOffices(
       const last = periods.at(-1);
       if (last) last.ended = former;
       return {
-        institution: g.institution,
+        institution,
+        spellings,
         positions,
         periods,
         status: former ? { kind: 'former', year: latestExit.year } : { kind: 'unknown', lastYear },
@@ -204,25 +395,56 @@ export function officePeriodsText(o: PublicOffice): string {
     .join('; ');
 }
 
-/** The status in words: never „настоящ", and „бивш" only with an exit declaration nothing reopens. */
-export function officeStatusText(o: PublicOffice): string | null {
-  switch (o.status.kind) {
-    case 'former':
-      return `Бивш: декларация при освобождаване за ${o.status.year} г.`;
-    case 'unknown':
-      return `Последна декларация за ${o.status.lastYear} г.`;
-    default:
-      return null;
-  }
+/** A position as a reader meets it: a filing typed in capitals is set in sentence case, the rest stays as filed. */
+function positionWords(position: string): string {
+  const letters = position.replace(/[^\p{L}]/gu, '');
+  return letters.length > 5 && letters === letters.toUpperCase()
+    ? position.charAt(0) + position.slice(1).toLowerCase()
+    : position;
 }
 
-/** „бивш кмет" when the office is former, the position as filed otherwise. One position, or null. */
+/** „Бивш", agreeing with the position where its first word shows a gender: „бивша главна счетоводителка". */
+function formerWord(position: string): string {
+  const first = position.trim().split(/\s+/u)[0]?.toLowerCase() ?? '';
+  return /[^аъ]а$/u.test(first) || /ка$/u.test(first)
+    ? 'Бивша'
+    : /но$/u.test(first)
+      ? 'Бивше'
+      : 'Бивш';
+}
+
+/**
+ * The position, with „Бивш" in front of it when — and only when — the office is former: „Бивш кмет",
+ * „Кмет, общински съветник". An office with no position on record is „Бивша длъжност" or nothing.
+ */
 export function officeTitle(o: PublicOffice): string | null {
-  if (!o.positions.length) return null;
-  const words = o.positions.join('; ');
-  return o.status.kind === 'former'
-    ? `бивш ${words.charAt(0).toLowerCase()}${words.slice(1)}`
-    : words;
+  // An abbreviation keeps its capitals („ИД директор"); an ordinary word inside the line is in lower case.
+  const lowered = (p: string): string =>
+    /^\p{Lu}\p{Ll}/u.test(p) ? p.charAt(0).toLowerCase() + p.slice(1) : p;
+  const [first, ...rest] = o.positions.map(positionWords);
+  if (!first) return o.status.kind === 'former' ? 'Бивша длъжност' : null;
+  const head =
+    o.status.kind === 'former'
+      ? `${formerWord(first)} ${lowered(first)}`
+      : first.charAt(0).toUpperCase() + first.slice(1);
+  return [head, ...rest.map(lowered)].join(', ');
+}
+
+/**
+ * The years as the status allows them to be read. A former office has an end on record, so its years stand as
+ * a period: „2023–2024". For any other office they are only the years somebody filed for — „декларации за
+ * 2019–2023" — which says neither that the office goes on nor that it ended.
+ */
+export function officeYearsText(o: PublicOffice): string | null {
+  const periods = officePeriodsText(o);
+  if (!periods) return null;
+  if (o.status.kind === 'former') return periods;
+  return `${/^\d{4}$/.test(periods) ? 'декларация' : 'декларации'} за ${periods}`;
+}
+
+/** One office in one line: „Бивш кмет · Община Тестово · 2015–2019". */
+export function officeLine(o: PublicOffice): string {
+  return [officeTitle(o), o.institution, officeYearsText(o)].filter(Boolean).join(' · ');
 }
 
 /** „2019–2021, 2023" — a set of years as spans of consecutive years. */
@@ -258,21 +480,19 @@ export function sharedOfficeYears(
 }
 
 /**
- * A person's offices in one line, for a search hit: the latest office — „бивш" only when the rule allows —
- * its institution and the years with filings, then how many more offices there are.
- * „бивш кмет · Община Тестово · декларации за 2015–2019 · още 1 длъжност".
+ * A person's offices in one line, for a search hit: the latest office — „Бивш" only when the rule allows —
+ * its institution and its years, then how many more offices there are.
+ * „Бивш кмет · Община Тестово · 2015–2019 · още 1 длъжност".
  */
 export function officesLine(offices: PublicOffice[]): string | null {
   const [o] = offices;
   if (!o) return null;
-  const periods = officePeriodsText(o);
-  const parts = [
-    officeTitle(o),
-    o.institution,
-    periods ? `декларации за ${periods}` : null,
+  return [
+    officeLine(o),
     offices.length > 1
       ? `още ${offices.length - 1} ${offices.length === 2 ? 'длъжност' : 'длъжности'}`
       : null,
-  ].filter(Boolean);
-  return parts.join(' · ');
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }

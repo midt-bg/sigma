@@ -1,14 +1,11 @@
-import {
-  describeOffices,
-  officePeriodsText,
-  officeStatusText,
-  type OfficeFiling,
-} from '@sigma/shared';
+import { describeOffices, officeTitle, officeYearsText, type OfficeFiling } from '@sigma/shared';
 
 /**
- * A person's public offices under their name: institution, positions, the years the declarations support
- * and the status the rule in `describeOffices` allows — „Бивш" only with a declaration on leaving that nothing
- * reopens, otherwise the last year on record. The status is words, not a colour.
+ * A person's public offices under their name, one plain line each: the position — with „Бивш" in front of it
+ * when the rule in `describeOffices` allows — then the institution and the years. A former office reads
+ * „Бивш кмет · Община Тестово · 2015–2019"; an office with no end on record reads „Кмет · Община Тестово ·
+ * декларации за 2019–2023", which claims neither that it goes on nor that it ended. The status is a word in the
+ * line, never a colour and never a second line the reader has to reconcile with the first.
  */
 export function PublicOffices({
   filings,
@@ -24,16 +21,16 @@ export function PublicOffices({
       {label && <span className="small muted">{label}</span>}
       <ul>
         {offices.map((o, i) => {
-          const status = officeStatusText(o);
-          const periods = officePeriodsText(o);
+          const title = officeTitle(o);
+          const years = officeYearsText(o);
           return (
             <li key={`${i}-${o.institution}`}>
-              {o.institution}
-              {o.positions.length > 0 && <span className="muted"> · {o.positions.join('; ')}</span>}
-              {periods && <span className="muted"> · {periods}</span>}
-              {status && (
-                <div className={o.status.kind === 'former' ? 'small' : 'small muted'}>{status}</div>
-              )}
+              {title && <span className="office-title">{title}</span>}
+              <span className={title ? 'muted' : undefined}>
+                {title && ' · '}
+                {o.institution}
+              </span>
+              {years && <span className="muted"> · {years}</span>}
             </li>
           );
         })}

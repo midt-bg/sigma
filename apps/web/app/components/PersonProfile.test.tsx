@@ -287,10 +287,9 @@ describe('PersonProfile', () => {
     );
     const header = c.querySelector('header, .page-header') ?? c;
     const offices = header.querySelector('.person-institutions')!.textContent;
-    expect(offices).toContain('Съвет за тестове · член · 2023Последна декларация за 2023 г.');
-    expect(offices).toContain(
-      'Агенция за тестове · член · 2018–2019Бивш: декларация при освобождаване за 2019 г.',
-    );
+    // One plain line per office: the status is a word in front of the position, not a second line.
+    expect(offices).toContain('Член · Съвет за тестове · декларация за 2023');
+    expect(offices).toContain('Бивш член · Агенция за тестове · 2018–2019');
     expect(offices).not.toMatch(/настоящ/i);
   });
 

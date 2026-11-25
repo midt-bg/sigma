@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeOffices,
+  officeLine,
   officePeriodsText,
-  officeStatusText,
+  officeTitle,
+  officeYearsText,
   officesLine,
+  sameBodySpelling,
   sharedOfficeYears,
   yearsText,
   type OfficeFiling,
@@ -31,7 +34,7 @@ describe('describeOffices', () => {
       2026,
     );
     expect(office!.status).toEqual({ kind: 'former', year: '2021' });
-    expect(officeStatusText(office!)).toBe('Бивш: декларация при освобождаване за 2021 г.');
+    expect(officeLine(office!)).toBe('Бивш кмет · Община Тестово · 2019–2021');
     expect(officePeriodsText(office!)).toBe('2019–2021');
   });
 
@@ -41,8 +44,8 @@ describe('describeOffices', () => {
       2026,
     );
     expect(office!.status).toEqual({ kind: 'unknown', lastYear: '2022' });
-    expect(officeStatusText(office!)).toBe('Последна декларация за 2022 г.');
-    expect(officeStatusText(office!)).not.toMatch(/настоящ/i);
+    expect(officeLine(office!)).toBe('Кмет · Община Тестово · декларации за 2021–2022');
+    expect(officeLine(office!)).not.toMatch(/настоящ|бивш/i);
   });
 
   it('keeps a repeated period separate and judges only the latest one', () => {
@@ -106,7 +109,8 @@ describe('describeOffices', () => {
     );
     expect(offices.map((o) => [o.institution, o.status])).toEqual([
       ['Министерство на тестовете', { kind: 'unknown', lastYear: '2017' }],
-      ['Община Тестово', { kind: 'former', year: '2016' }],
+      // One filing each way: on a tie the longer spelling is shown.
+      ['Общински съвет Тестово', { kind: 'former', year: '2016' }],
     ]);
   });
 
@@ -139,7 +143,8 @@ describe('describeOffices', () => {
       2026,
     );
     expect(undated!.status).toEqual({ kind: 'undated' });
-    expect(officeStatusText(undated!)).toBeNull();
+    expect(officeYearsText(undated!)).toBeNull();
+    expect(officeLine(undated!)).toBe('Директор · Агенция за тестове');
   });
 });
 
@@ -175,12 +180,117 @@ describe('officesLine', () => {
       ],
       2026,
     );
-    expect(officesLine(offices)).toBe(
-      'бивш кмет · Община Тестово · декларации за 2015, 2019 · още 1 длъжност',
-    );
+    expect(officesLine(offices)).toBe('Бивш кмет · Община Тестово · 2015, 2019 · още 1 длъжност');
     expect(officesLine(describeOffices([f('2023', 'Annualy')], 2026))).toBe(
-      'кмет · Община Тестово · декларации за 2023',
+      'Кмет · Община Тестово · декларация за 2023',
     );
     expect(officesLine([])).toBeNull();
+  });
+});
+
+describe('the words of one office', () => {
+  const former = (position: string | null): string | null =>
+    officeTitle(
+      describeOffices(
+        [{ institution: 'Агенция за тестове', position, year: '2020', type: 'Vacate' }],
+        2026,
+      )[0]!,
+    );
+
+  it('puts „Бивш" in front of the position, agreeing with it, and sets capitals in sentence case', () => {
+    expect(former('Общински съветник')).toBe('Бивш общински съветник');
+    expect(former('ОБЩИНСКИ СЪВЕТНИК')).toBe('Бивш общински съветник');
+    expect(former('ИД директор')).toBe('Бивш ИД директор');
+    expect(former('Главна счетоводителка')).toBe('Бивша главна счетоводителка');
+    expect(former('Упълномощено лице')).toBe('Бивше упълномощено лице');
+    expect(former(null)).toBe('Бивша длъжност');
+  });
+
+  it('lists several positions once, the status in front of the first', () => {
+    const [office] = describeOffices(
+      [
+        f('2015', 'Annualy', null, 'Община Тестово', 'Заместник-кмет'),
+        f('2016', 'Vacate', '2016-11-01', 'Община Тестово', 'Кмет'),
+      ],
+      2026,
+    );
+    expect(officeLine(office!)).toBe('Бивш заместник-кмет, кмет · Община Тестово · 2015–2016');
+  });
+});
+
+describe('one office under two spellings', () => {
+  it('reads a council filed under its abbreviation and under its municipality as ONE former office', () => {
+    // The annual filing spells the body by its initials, the entry and the exit name the municipality: apart,
+    // the exit would close one spelling and leave the other reading as an open office.
+    const offices = describeOffices(
+      [
+        f('2023', 'Entry', '2023-11-13', 'Столична община', 'Общински съветник'),
+        f('2023', 'Annualy', '2024-02-01', 'СОС', 'Общински съветник'),
+        f('2024', 'Vacate', '2024-02-09', 'Столична община', 'Общински съветник'),
+      ],
+      2026,
+    );
+    expect(offices).toHaveLength(1);
+    expect(officeLine(offices[0]!)).toBe('Бивш общински съветник · Столична община · 2023–2024');
+    expect(offices[0]!.spellings).toEqual(['Столична община', 'СОС']);
+  });
+
+  it('joins an abbreviation, a typing error and a bare council to the body they stand for', () => {
+    const one = (a: string, b: string): number =>
+      describeOffices(
+        [f('2019', 'Annualy', null, a, 'член'), f('2020', 'Annualy', null, b, 'член')],
+        2026,
+      ).length;
+    expect(one('Агенция за тестове и проверки', 'АТП')).toBe(1);
+    expect(one('Министерство на тестовете', 'Министрество на тестовете')).toBe(1);
+    expect(one('Община Тестово', 'Общински съвет')).toBe(1);
+    expect(one('Тестова компания ЕАД', 'Тестова компания ЕАД гр. Тестово')).toBe(1);
+    expect(one('В.Ф. 12345', 'Военно формирование 12345')).toBe(1);
+    expect(one('44-то НС', 'Народно събрание')).toBe(1);
+  });
+
+  it('keeps two bodies apart: other names, other numbers, another position or years that do not touch', () => {
+    const count = (filings: OfficeFiling[]): number => describeOffices(filings, 2026).length;
+    // Two boards somebody sits on at once share a position and years, not a name.
+    expect(
+      count([
+        f('2019', 'Annualy', null, 'Тестова компания ЕАД', 'член на съвета на директорите'),
+        f('2019', 'Annualy', null, 'Пробен холдинг ЕАД', 'член на съвета на директорите'),
+      ]),
+    ).toBe(2);
+    // A unit is told apart by its number.
+    expect(
+      count([
+        f('2019', 'Annualy', null, 'В.Ф. 12345', 'командир'),
+        f('2020', 'Annualy', null, 'В.Ф. 12346', 'командир'),
+      ]),
+    ).toBe(2);
+    // Like names, another position: a court and the council of the same town.
+    expect(
+      count([
+        f('2019', 'Annualy', null, 'ОС Тестово', 'съдия'),
+        f('2019', 'Annualy', null, 'Община Тестово', 'общински съветник'),
+      ]),
+    ).toBe(2);
+    // The same spelling pair years apart is not read as one office.
+    expect(
+      count([
+        f('2012', 'Annualy', null, 'Агенция за тестове и проверки', 'директор'),
+        f('2020', 'Annualy', null, 'АТП', 'директор'),
+      ]),
+    ).toBe(2);
+  });
+
+  it('a filing that lists two bodies does not join them to each other', () => {
+    const offices = describeOffices(
+      [
+        f('2019', 'Annualy', null, 'Съвет за тестове', 'член'),
+        f('2019', 'Annualy', null, 'Съвет за тестове, Агенция за проверки', 'член'),
+        f('2019', 'Annualy', null, 'Агенция за проверки', 'член'),
+      ],
+      2026,
+    );
+    expect(offices.length).toBe(2);
+    expect(sameBodySpelling('ОБЛАСТ ТЕСТОВО', 'ТЕСТОВО / ПРОБНО')).toBe(false);
   });
 });

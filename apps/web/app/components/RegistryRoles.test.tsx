@@ -120,13 +120,12 @@ describe('CompanyRolesTables', () => {
     const [standing, ended] = [...c.querySelectorAll('table')];
     const anna = cells(ended!, 'Лице')[0]!;
     // The office's own years and the word „бивш" from its exit declaration; the role keeps its dates.
-    expect(anna).toContain('Община Тестово · кмет · 2017–2018, 2020');
-    expect(anna).toContain('Бивш: декларация при освобождаване за 2020 г.');
+    expect(anna).toContain('Бивш кмет · Община Тестово · 2017–2018, 2020');
     // Shared years only where both are on record — never a claim of the same day.
     expect(anna).toContain('Ролята е вписана и в години с декларация за длъжността: 2018, 2020.');
     expect(cells(ended!, 'До')).toEqual(['10.01.2022']);
     const vera = cells(standing!, 'Лице')[0]!;
-    expect(vera).toContain('Последна декларация за 2012 г.');
+    expect(vera).toContain('Директор · Агенция за тестове · декларация за 2012');
     expect(vera).not.toContain('Ролята е вписана');
     expect(vera).not.toMatch(/настоящ/i);
   });
