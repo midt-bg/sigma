@@ -588,10 +588,15 @@ describe('/conflicts route — render', () => {
   });
 });
 
-// The register behind the declarations is the Сметна палата's (чл. 75 ЗСП); КПКОНПИ was closed in 2023.
-it('names the register that actually publishes the declarations', async () => {
+// The register the declarations were read from is the one the Сметна палата kept; the 2026 law (ДВ, бр. 51)
+// gives it to the Комисия за противодействие на корупцията and repeals the article the page used to cite.
+// The page names both bodies and no repealed article; КПКОНПИ was closed in 2023.
+it('names the register that publishes the declarations, by the law in force', async () => {
   await renderConflicts([link()]);
-  expect(text()).toContain('Публичния регистър на Сметната палата');
+  expect(text()).toContain(
+    'публичния регистър на декларациите на лицата, заемащи публични длъжности — воден от Сметната палата, а по закона от 2026\u00a0г. от Комисията за противодействие на корупцията.',
+  );
+  expect(text()).not.toContain('чл. 75 ЗСП');
   expect(text()).not.toContain('КПКОНПИ');
 });
 

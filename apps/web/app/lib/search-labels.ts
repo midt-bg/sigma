@@ -21,7 +21,7 @@ const REGISTRY_SEGMENT = /^[0-9a-f]{64}$/;
  * the EVIDENCE we publish (a свързани-лица link or none), not by what office anyone holds. Labelling the
  * whole second group „лице" therefore denied the office of people whose own subtitle read „главен
  * секретар · Агенция по заетостта". Everyone in the index because they FILED a declaration is an office
- * holder by construction (чл. 75 ЗСП), in either group; only the people we know solely from the Trade
+ * holder by construction — the declaration is filed for a public office — in either group; only the people we know solely from the Trade
  * Register are plain лица. */
 export function kindLabel(hit: SearchHit): string {
   if (hit.kind !== 'person' && hit.kind !== 'official') return KIND_LABEL[hit.kind];
