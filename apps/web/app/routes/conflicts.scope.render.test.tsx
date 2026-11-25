@@ -218,3 +218,22 @@ it('says in words beside a company when its period cannot be established', async
   expect(companyItem('Неустановена Тестова', '701').querySelector('.chip')).not.toBeNull();
   expect(companyCell('Периодна Тестова').textContent).not.toContain('периодът не е установен');
 });
+
+it('labels the other companies of a listed person as having no contract in the period', async () => {
+  // The person qualifies through one company; the other one is still listed and its contracts are in the
+  // all-years figures, so it says it has none inside the period rather than reading as part of it.
+  await render('/conflicts', [
+    row({
+      officialSlug: 'two',
+      official: 'Двуфирмена Тестова',
+      hasContemporaneous: true,
+      contemporaneousValueEur: 500,
+      companyCount: 2,
+      companies: [company('801', 1, 1), company('802', 0, 1)],
+    }),
+  ]);
+  expect(companyItem('Двуфирмена Тестова', '801').textContent).not.toContain('без договори');
+  expect(companyItem('Двуфирмена Тестова', '802').textContent).toContain(
+    'без договори в периода на длъжността',
+  );
+});

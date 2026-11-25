@@ -706,12 +706,14 @@ export function conflictFacets(everyone: ConflictPersonRow[], f: ConflictListFil
   };
 }
 
-/** The marker beside a company about the period of the office, in words — never colour alone. Nothing when
- *  the company has a contract inside it, or when the flags are absent (a payload cached before them). */
+/** The marker beside a company about the period of the office, in words — never colour alone: no contract
+ *  inside it, or a period that cannot be told. Nothing when the company has a contract inside it, or when
+ *  the flags are absent (a payload cached before them). */
 export function companyPeriodLabel(c: { inPeriod?: number; periodKnown?: number }): string | null {
   if (c.inPeriod !== 0) return null;
-  if (c.periodKnown === 0) return 'периодът не е установен';
-  return null;
+  // A person listed through one company still shows the others, whose contracts count only „за всички
+  // години“: the label keeps them from reading as part of the period.
+  return c.periodKnown === 0 ? 'периодът не е установен' : 'без договори в периода на длъжността';
 }
 
 /** One sentence over the table: what the current scope lists. */
