@@ -138,6 +138,29 @@ function fence(step: WorkflowStep, lostLease: (name: string) => Promise<string |
     });
 }
 
+// The derive batches that come straight after a heavy one. D1 allows only so much work inside any ten
+// seconds (scripts/integrity-checks.mjs), and from `flow-pairs` on the batches read the whole corpus one
+// after another (the search indexes, the cube, the cohort window sort): back to back, the next batch
+// lands in a window its predecessor has already spent, D1 refuses it as overloaded, and the step waits
+// out its 10-second retry backoff — while the site's own reads are refused alongside it. A pause of half
+// the window before each of them means that any ten seconds hold at most five of batch work, as long as
+// a batch runs under five seconds (these take a few each); seven pauses add 35 s to a run, about what
+// the retries they replace cost. It is a Workflow sleep, outside the batch's step: it costs no CPU, the
+// instance hibernates through it, and a retry of the batch is not paced twice (its own backoff already
+// drains the window). `globals` follows the light contract search index and goes unpaced. Worker only:
+// the CLI (`import.mjs --derive=slice`) starts a wrangler process per batch, whose start-up and file
+// import already put seconds between batches, and is an operator's catch-up.
+const PACE_MS = 5_000;
+const PACED_BATCHES = new Set([
+  'flow-pairs',
+  'entity-search-index',
+  'official-search-index',
+  'contract-search-index',
+  'contract-rollup',
+  'cohort-stats',
+  'cleanup',
+]);
+
 // The verdict is stored so it can be read from outside the Workflow log (refresh_verdict), but storing
 // it is not the run's work: a write that fails through the step's retries is logged at error level —
 // loud, where an alert sees it — and the run goes on as it would have. Not fenced: the row describes
@@ -381,6 +404,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         throw new Error('refresh must resolve annexes before loading FX');
       }
       const runGroup = async (group: (typeof groups)[number]) => {
+        if (PACED_BATCHES.has(group.name)) await step.sleep(`pace:${group.name}`, PACE_MS);
         await fenced(`derive-slice:${group.name}`, async () => {
           const startedAt = Date.now();
           await runRefreshSliceStatementGroup(this.env.DB, group);

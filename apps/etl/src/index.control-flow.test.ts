@@ -467,6 +467,64 @@ describe('RefreshWorkflow.run — one step per bucket day', () => {
   });
 });
 
+describe('RefreshWorkflow.run — pacing the heavy derive batches', () => {
+  it("sleeps half of D1's ten-second window before each paced batch, outside its step", async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
+    const tail = [
+      'authority-totals',
+      'flow-pairs',
+      'entity-search-index',
+      'official-search-index',
+      'contract-search-index',
+      'globals',
+      'contract-rollup',
+      'cohort-stats',
+      'cleanup',
+    ];
+    ingest.refreshSliceStatementGroups.mockReturnValueOnce([
+      { name: 'resolve-annexes', statements: ['a'] },
+      ...tail.map((name) => ({ name, statements: ['b'] })),
+    ]);
+    const timeline: string[] = [];
+    const step = {
+      do: async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+        timeline.push(name);
+        return fn();
+      },
+      sleep: vi.fn(async (name: string, _ms: number) => {
+        timeline.push(`[sleep] ${name}`);
+      }),
+    };
+
+    await makeWorkflow().run({ payload: {} } as never, step as never);
+
+    const derive = timeline.filter((n) => n.startsWith('derive-slice:') || n.startsWith('[sleep]'));
+    expect(derive).toEqual([
+      'derive-slice:resolve-annexes',
+      'derive-slice:authority-totals',
+      '[sleep] pace:flow-pairs',
+      'derive-slice:flow-pairs',
+      '[sleep] pace:entity-search-index',
+      'derive-slice:entity-search-index',
+      '[sleep] pace:official-search-index',
+      'derive-slice:official-search-index',
+      '[sleep] pace:contract-search-index',
+      'derive-slice:contract-search-index',
+      'derive-slice:globals',
+      '[sleep] pace:contract-rollup',
+      'derive-slice:contract-rollup',
+      '[sleep] pace:cohort-stats',
+      'derive-slice:cohort-stats',
+      '[sleep] pace:cleanup',
+      'derive-slice:cleanup',
+      'derive-slice:count',
+    ]);
+    expect(step.sleep.mock.calls.every(([, ms]) => ms === 5_000)).toBe(true);
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(tail.length + 1);
+  });
+});
+
 describe('RefreshWorkflow.run — refresh lease', () => {
   it('takes the lease first and releases it last, after the staging drop', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);

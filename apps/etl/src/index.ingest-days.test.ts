@@ -196,6 +196,9 @@ function runner(opts: { twice?: string } = {}) {
   let staged: Record<string, unknown[]> | null = null;
   const step = (db: DatabaseSync) =>
     ({
+      async sleep(name: string, _duration: unknown) {
+        names.push(`[sleep] ${name}`);
+      },
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | Body<T>,
@@ -307,5 +310,25 @@ describe('RefreshWorkflow — the storage ingest, one step per bucket day', () =
     expect(replayed.staged).toEqual(clean.staged);
     expect(replayed.result).toEqual(clean.result);
     expect(servedRows(replayed.db)).toEqual(servedRows(clean.db));
+  });
+
+  it('paces the heavy derive batches with sleeps between the steps, not inside them', async () => {
+    const { names } = await refresh(null);
+
+    const paced = names.filter((n) => n.startsWith('[sleep] '));
+    expect(paced).toEqual([
+      '[sleep] pace:flow-pairs',
+      '[sleep] pace:entity-search-index',
+      '[sleep] pace:official-search-index',
+      '[sleep] pace:contract-search-index',
+      '[sleep] pace:contract-rollup',
+      '[sleep] pace:cohort-stats',
+      '[sleep] pace:cleanup',
+    ]);
+    // Each sleep sits right before its batch: every paced name is a real batch of refresh-slice.sql.
+    for (const sleep of paced) {
+      const batch = sleep.replace('[sleep] pace:', 'derive-slice:');
+      expect(names[names.indexOf(sleep) + 1]).toBe(batch);
+    }
   });
 });
