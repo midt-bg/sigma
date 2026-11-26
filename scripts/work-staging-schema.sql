@@ -809,3 +809,45 @@ SELECT id, value_flag, current_value,
   signing_ccy NOT IN ('BGN', 'EUR') AS fx_converted,
   signing_rate AS fx_rate
 FROM classified;
+
+-- The leading annex of each (unp, contract_number) in raw_contract_value_annexes, and the number of annexes:
+-- the latest publication that carries an after-value. derive-amendments.sql picks the full build's current
+-- value the same way.
+CREATE VIEW IF NOT EXISTS raw_contract_value_winners AS
+SELECT natural_key, unp, contract_number, currency, effective_after, annex_count
+FROM (
+  SELECT natural_key, unp, contract_number, currency, effective_after,
+    COUNT(*) OVER (PARTITION BY unp, contract_number) AS annex_count,
+    ROW_NUMBER() OVER (
+      PARTITION BY unp, contract_number
+      ORDER BY effective_after IS NULL, published_at DESC, natural_key DESC
+    ) AS win_rn
+  FROM raw_contract_value_annexes
+)
+WHERE win_rn = 1;
+
+-- A served contract as the value rule reads it: the stored signing value and own estimate, the leading
+-- annex of raw_contract_value_annexes, the procedure estimate, and the stored signing rate as the fallback
+-- when no rate is loaded. `@refresh-batch amendments` (scripts/refresh-slice.sql) re-values from it.
+-- A legacy row (own_estimate_source NULL) published as value_low keeps that verdict (keep_symbolic): its own
+-- estimate was never stored, so the symbolic test cannot be repeated. Callers filter it by id or by
+-- (tender_id, contract_number); the view is a plain join, so the filter reaches the contracts index.
+CREATE VIEW IF NOT EXISTS raw_served_contract_value_base AS
+SELECT b.*, b.own_estimate_source = 'legacy:value_low' AS keep_symbolic
+FROM (
+  SELECT c.id, c.tender_id, substr(c.tender_id, 3) AS unp, c.contract_number, c.signed_at, c.currency,
+    c.signing_value, c.fx_rate AS prior_signing_rate, c.framework, w.effective_after AS current_value,
+    COALESCE(NULLIF(CASE WHEN w.effective_after IS NOT NULL THEN w.currency END, ''), NULLIF(c.currency, ''), 'BGN')
+      AS current_value_currency,
+    t.estimated_value AS proc_est_native, t.currency AS proc_est_currency,
+    c.own_estimate_value, c.own_estimate_currency,
+    COALESCE(c.own_estimate_source, CASE
+      WHEN c.value_flag = 'value_low' AND COALESCE(c.current_value, c.signing_value) > 0
+      THEN 'legacy:value_low'
+    END) AS own_estimate_source,
+    COALESCE(w.annex_count, 0) AS annex_count, w.natural_key
+  FROM contracts c
+  JOIN tenders t ON t.id = c.tender_id
+  LEFT JOIN raw_contract_value_winners w
+    ON w.unp = substr(c.tender_id, 3) AND w.contract_number = c.contract_number
+) b;

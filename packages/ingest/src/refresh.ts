@@ -86,6 +86,8 @@ export function refreshSliceStatementGroups(refreshSliceSql: string): RefreshSli
 }
 
 const TRANSIENT_STAGING_VIEWS = [
+  'raw_served_contract_value_base',
+  'raw_contract_value_winners',
   'raw_contract_values',
   'raw_contract_annex_evidence',
   'raw_contract_suspect_annexes',

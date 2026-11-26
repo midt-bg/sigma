@@ -303,18 +303,7 @@ WHERE a.source NOT LIKE 'ocds:%' OR NOT EXISTS (
   WHERE e.unp = k.unp AND e.contract_number = k.contract_number AND e.source LIKE 'eop:%'
 );
 
-CREATE TABLE refresh_amendment_winners AS
-WITH winners AS (
-  SELECT natural_key, unp, contract_number, currency, effective_after,
-    COUNT(*) OVER (PARTITION BY unp, contract_number) AS annex_count,
-    ROW_NUMBER() OVER (
-      PARTITION BY unp, contract_number
-      ORDER BY effective_after IS NULL, published_at DESC, natural_key DESC
-    ) AS win_rn
-  FROM raw_contract_value_annexes
-)
-SELECT natural_key, unp, contract_number, currency, effective_after, annex_count
-FROM winners WHERE win_rn = 1;
+CREATE TABLE refresh_amendment_winners AS SELECT * FROM raw_contract_value_winners;
 CREATE INDEX idx_refresh_amendment_winners
   ON refresh_amendment_winners(unp, contract_number);
 
@@ -1916,29 +1905,21 @@ WHERE NOT EXISTS (SELECT 1 FROM contracts c WHERE c.tender_id = 't:' || o.unp)
 DROP TABLE IF EXISTS amend_contract_base;
 
 CREATE TABLE amend_contract_base AS
-SELECT c.id, k.unp, k.contract_number, c.signed_at, c.currency, c.signing_value,
-  c.fx_rate AS prior_signing_rate, c.framework, w.effective_after AS current_value,
-  COALESCE(NULLIF(CASE WHEN w.effective_after IS NOT NULL THEN w.currency END, ''), NULLIF(c.currency, ''), 'BGN')
-    AS current_value_currency,
-  t.estimated_value AS proc_est_native, t.currency AS proc_est_currency,
-  c.own_estimate_value, c.own_estimate_currency,
-  COALESCE(c.own_estimate_source, CASE
-    WHEN c.value_flag = 'value_low' AND COALESCE(c.current_value, c.signing_value) > 0
-    THEN 'legacy:value_low'
-  END) AS own_estimate_source,
-  COALESCE(w.annex_count, 0) AS annex_count, w.natural_key
+SELECT b.id, k.unp, k.contract_number, b.signed_at, b.currency, b.signing_value, b.prior_signing_rate,
+  b.framework, b.current_value, b.current_value_currency, b.proc_est_native, b.proc_est_currency,
+  b.own_estimate_value, b.own_estimate_currency, b.own_estimate_source, b.keep_symbolic, b.annex_count,
+  b.natural_key
 FROM raw_contract_value_scope k
-CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
-JOIN tenders t ON t.id = c.tender_id
-LEFT JOIN refresh_amendment_winners w ON w.unp = k.unp AND w.contract_number = k.contract_number
-WHERE c.id GLOB 'c:[eo]:*' OR EXISTS (
+CROSS JOIN raw_served_contract_value_base b
+  ON b.tender_id = 't:' || k.unp AND b.contract_number = k.contract_number
+WHERE b.id GLOB 'c:[eo]:*' OR EXISTS (
   SELECT 1 FROM raw_amendments a WHERE a.unp = k.unp AND a.contract_number = k.contract_number
 );
 
 INSERT INTO raw_contract_value_inputs
 SELECT id, unp, contract_number, signed_at, signing_value, currency, current_value, current_value_currency,
   proc_est_native, proc_est_currency, own_estimate_value, own_estimate_currency, framework,
-  own_estimate_source = 'legacy:value_low', prior_signing_rate, natural_key
+  keep_symbolic, prior_signing_rate, natural_key
 FROM amend_contract_base WHERE annex_count > 0;
 
 -- Re-evaluate known evidence on affected histories only. Legacy rows keep their published marker

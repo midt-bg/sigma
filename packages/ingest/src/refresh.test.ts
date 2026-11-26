@@ -153,6 +153,8 @@ describe('transient staging statements', () => {
     // [...scratch, ...current, ...legacy].reverse() → legacy first, then current back-to-front, and
     // the derive-step scratch tables last.
     expect(dropTransientStagingStatements()).toEqual([
+      'DROP VIEW IF EXISTS raw_served_contract_value_base',
+      'DROP VIEW IF EXISTS raw_contract_value_winners',
       'DROP VIEW IF EXISTS raw_contract_values',
       'DROP VIEW IF EXISTS raw_contract_annex_evidence',
       'DROP VIEW IF EXISTS raw_contract_suspect_annexes',
