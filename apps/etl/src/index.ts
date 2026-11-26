@@ -859,18 +859,19 @@ export class DeclarationsWorkflow extends WorkflowEntrypoint<Env> {
 }
 
 /** An operator-started rebuild of the idle blue/green slot (ADR-0048): the payload names the idle slot, and
- *  the container refuses the live one. The flip stays a redeploy. */
-export class RebuildWorkflow extends WorkflowEntrypoint<
-  Env,
-  { targetName?: string; targetId?: string; resume?: boolean }
-> {
-  override async run(
-    event: WorkflowEvent<{ targetName?: string; targetId?: string; resume?: boolean }>,
-    step: WorkflowStep,
-  ) {
+ *  the container refuses the live one. The flip stays a redeploy. `verify: true` builds nothing and only
+ *  verifies what an earlier rebuild shipped into the slot — after a verification D1 would not let finish. */
+type RebuildPayload = {
+  targetName?: string;
+  targetId?: string;
+  resume?: boolean;
+  verify?: boolean;
+};
+export class RebuildWorkflow extends WorkflowEntrypoint<Env, RebuildPayload> {
+  override async run(event: WorkflowEvent<RebuildPayload>, step: WorkflowStep) {
     const containers = this.env.DECLARATIONS;
     if (!containers) throw new NonRetryableError('The declarations container is not bound');
-    const { targetName, targetId, resume } = event.payload ?? {};
+    const { targetName, targetId, resume, verify } = event.payload ?? {};
     if (!targetName || !targetId)
       throw new NonRetryableError('Name the idle slot: { "targetName": …, "targetId": … }');
     const start = await step.do('start-rebuild', async () => {
@@ -878,6 +879,7 @@ export class RebuildWorkflow extends WorkflowEntrypoint<
         name: targetName,
         id: targetId,
         ...(resume === true ? { resume: true } : {}),
+        ...(verify === true ? { verify: true } : {}),
       });
       return { runId, state };
     });

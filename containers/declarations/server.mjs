@@ -100,7 +100,7 @@ if (import.meta.main) {
     process.env.SIGMA_RUN_ID,
     Number(process.env.SIGMA_ATTEMPT),
     undefined,
-    rebuild ? 'import' : 'fetch',
+    rebuild ? (process.env.SIGMA_REBUILD_VERIFY === '1' ? 'verify' : 'import') : 'fetch',
   );
   createServer((req, res) => {
     if (req.url !== '/status') {

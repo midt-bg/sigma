@@ -135,6 +135,21 @@ it('passes the operator resume flag to the rebuild', async () => {
     id: 'x',
     resume: true,
   });
+  // A verification on its own: the flag travels, and only a literal true counts.
+  for (const [verify, expected] of [
+    [true, { name: 'sigma-green', id: 'x', verify: true }],
+    ['yes', { name: 'sigma-green', id: 'x' }],
+  ] as const) {
+    startRun.mockClear();
+    await new RebuildWorkflow({} as never, env).run(
+      {
+        instanceId: 'wf-verify',
+        payload: { targetName: 'sigma-green', targetId: 'x', verify },
+      } as never,
+      step as never,
+    );
+    expect(startRun).toHaveBeenCalledWith('wf-verify', expected);
+  }
 });
 
 it('starts a rebuild of the named idle slot and waits for it', async () => {
