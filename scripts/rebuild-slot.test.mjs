@@ -1110,3 +1110,136 @@ test('the stages leave their receipts in the slot as a run writes them', async (
   assert.match(labels[labels.length - 2], /^ship-\w+-\d{3}$/);
   assert.equal(labels.at(-1), 'registry-batch');
 });
+
+// A file into the slot that fails once a test's condition holds — before it lands, or after it landed while
+// the client saw an error (wrangler can report a failure for a file D1 applied, scripts/d1-retry.mjs).
+function stopAt(s, when, { landed = false } = {}) {
+  const real = s.apply;
+  let armed = true;
+  s.apply = (label, sql) => {
+    if (armed && when(label, sql)) {
+      armed = false;
+      if (landed) real(label, sql);
+      throw new Error(`container stopped at ${label}${landed ? ', after it landed' : ''}`);
+    }
+    real(label, sql);
+  };
+}
+const corpus = (s) => ({
+  authorities: s.slot.prepare('SELECT COUNT(*) n FROM authorities').get().n,
+  bidders: s.slot.prepare('SELECT COUNT(*) n FROM bidders').get().n,
+});
+
+for (const [label, flags, runId] of [
+  ['retry', {}, 'run-a'],
+  ['resume', { resume: true }, 'run-b'],
+])
+  test(`a stop inside the import's rows is imported again on a ${label}, without a duplicate`, async (t) => {
+    const s = builtSlot(t);
+    // The import's first row file lands; its second (the sealed one) does not.
+    let rows = 0;
+    stopAt(s, (file) => /^ship-(?!schema|clear-)/.test(file) && rows++ === 1);
+    await assert.rejects(runRebuild({}, slotRun(s, { runId: 'run-a' }).ops), /stopped at ship-/);
+    assert.deepEqual(Object.keys(s.receipts()), ['prepare']);
+    assert.equal(corpus(s).authorities + corpus(s).bidders, 1, 'half the import landed');
+    const next = slotRun(s, { runId });
+    await runRebuild(flags, next.ops);
+    assert.deepEqual(next.ran, ['rehydrate', 'unverify', 'import', 'registry', 'local', 'ship']);
+    assert.deepEqual(corpus(s), { authorities: 1, bidders: 1 });
+    assert.equal(s.stamp().length, 1);
+  });
+
+test('a stop while the ship clears the slot builds again from the start', async (t) => {
+  const s = builtSlot(t);
+  stopAt(s, (file) => file.startsWith('ship-clear-'));
+  await assert.rejects(runRebuild({}, slotRun(s, { runId: 'run-a' }).ops), /stopped at ship-clear/);
+  assert.ok(s.sent.includes('ship-start'), 'the clear came after the ship began');
+  assert.deepEqual(s.receipts(), {}, 'no receipt survives a ship that began');
+  const next = slotRun(s, { runId: 'run-a' });
+  await runRebuild({}, next.ops);
+  assert.deepEqual(next.ran, ['prepare', 'import', 'registry', 'local', 'ship']);
+  assert.deepEqual(corpus(s), { authorities: 1, bidders: 1 });
+  assert.equal(s.stamp().length, 1);
+});
+
+test('a last file that landed while the client saw an error counts as landed', async (t) => {
+  // The ship's: the retry only verifies, and the counts are exact.
+  const shipped = builtSlot(t);
+  stopAt(shipped, (_, sql) => sql.includes("INSERT OR REPLACE INTO rebuild_state VALUES('ship'"), {
+    landed: true,
+  });
+  await assert.rejects(runRebuild({}, slotRun(shipped, { runId: 'run-a' }).ops), /after it landed/);
+  assert.deepEqual(shipped.receipts(), { ship: 'run-a' });
+  const verified = slotRun(shipped, { runId: 'run-a' });
+  await runRebuild({}, verified.ops);
+  assert.deepEqual(verified.ran, ['verify']);
+  assert.deepEqual(corpus(shipped), { authorities: 1, bidders: 1 });
+  assert.equal(shipped.stamp().length, 1);
+
+  // The import's: the retry goes on from the registry, and the slot holds the corpus once.
+  const imported = builtSlot(t);
+  stopAt(
+    imported,
+    (_, sql) => sql.includes("INSERT OR REPLACE INTO rebuild_state VALUES('import'"),
+    {
+      landed: true,
+    },
+  );
+  await assert.rejects(
+    runRebuild({}, slotRun(imported, { runId: 'run-a' }).ops),
+    /after it landed/,
+  );
+  const next = slotRun(imported, { runId: 'run-a' });
+  await runRebuild({}, next.ops);
+  assert.deepEqual(next.ran, ['rehydrate', 'unverify', 'registry', 'local', 'ship']);
+  assert.deepEqual(corpus(imported), { authorities: 1, bidders: 1 });
+
+  // The ship's start: nothing of the ship is trusted, the build starts over.
+  const started = builtSlot(t);
+  stopAt(started, (file) => file === 'ship-start', { landed: true });
+  await assert.rejects(runRebuild({}, slotRun(started, { runId: 'run-a' }).ops), /after it landed/);
+  assert.deepEqual(started.receipts(), {});
+  const again = slotRun(started, { runId: 'run-a' });
+  await runRebuild({}, again.ops);
+  assert.deepEqual(again.ran, ['prepare', 'import', 'registry', 'local', 'ship']);
+});
+
+test('a verdict is the same on every new attempt, and no attempt stamps the slot', async (t) => {
+  const s = builtSlot(t);
+  s.overload(VERIFY_ATTEMPTS);
+  await assert.rejects(runRebuild({}, slotRun(s, { runId: 'run-a' }).ops), /overloaded/);
+  s.slot.exec("INSERT INTO bidders (id, name) VALUES ('bidder:other', 'ДРУГ ТЕСТ ЕООД')");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const next = slotRun(s, { runId: 'run-a' });
+    await assert.rejects(
+      runRebuild({}, next.ops),
+      /counts differ from the snapshot: bidders 2 ≠ 1/,
+    );
+    assert.deepEqual(next.ran, ['verify'], 'nothing is built again');
+  }
+  assert.deepEqual(s.stamp(), []);
+});
+
+test('a ship receipt that does not describe the slot is refused, not passed', async (t) => {
+  // A ship's last file from a stopped attempt that lands late, after a fresh run prepared the slot again:
+  // its receipt counts a full build the slot no longer holds.
+  const s = builtSlot(t);
+  await runRebuild({}, slotRun(s, { runId: 'run-a' }).ops);
+  const stray = s.slot
+    .prepare("SELECT done_at, detail FROM rebuild_state WHERE stage='ship'")
+    .get();
+  await assert.rejects(
+    runRebuild({}, slotRun(s, { runId: 'run-c', stopAfter: 'import' }).ops),
+    /stopped after import/,
+  );
+  s.slot
+    .prepare('INSERT OR REPLACE INTO rebuild_state VALUES (?,?,?,?)')
+    .run('ship', 'run-c', stray.done_at, stray.detail);
+  s.slot.exec('DELETE FROM bidders');
+  // A table only the ship's own schema file makes is missing too, which refuses it before the counts can.
+  await assert.rejects(
+    runRebuild({}, slotRun(s, { runId: 'run-c' }).ops),
+    /no such table: state_owned_eik|counts differ from the snapshot/,
+  );
+  assert.deepEqual(s.stamp(), []);
+});
