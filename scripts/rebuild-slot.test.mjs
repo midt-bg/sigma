@@ -1597,9 +1597,11 @@ test('a build stopped after any stage serves the same rows as one that never sto
     }
 });
 
-for (const [mode, resume] of [
-  ['clean', false],
-  ['resumed', true],
+for (const [mode, resume, knownOwner] of [
+  ['clean', false, false],
+  ['resumed', true, false],
+  ['clean with a known owner', false, true],
+  ['resumed with a known owner', true, true],
 ]) {
   test(`declaration and public-ownership requests reach the native catch-up on a ${mode} build`, async (t) => {
     const declared = '000000020';
@@ -1714,6 +1716,41 @@ for (const [mode, resume] of [
           {
             deed: async (eik) => {
               calls.push(eik);
+              if (knownOwner && eik === owner) {
+                const body = {
+                  uic: owner,
+                  name: 'СЪДРУЖНИК ТЕСТ ООД',
+                  status: 'N',
+                  guid: 'test-guid',
+                  legalForm: 'EOOD',
+                  subDeeds: [
+                    {
+                      subUic: '0000',
+                      subUicType: 'MainCircumstances',
+                      status: 'A',
+                      fields: [
+                        {
+                          fieldIdent: '00230',
+                          element: 'SoleCapitalOwner',
+                          operation: 'Add',
+                          entryNumber: '20200101100000',
+                          actionDate: '2020-01-01T10:00:00',
+                          entryDate: '2020-01-01T10:00:00',
+                          value: {
+                            RecordID: '1',
+                            Subject: {
+                              Name: 'Община Тестова',
+                              Indent: '000000023',
+                              IndentType: 'UIC',
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                };
+                return { status: 'ok', deed: { deed: body, deedActualState: body } };
+              }
               return { status: 'absent' };
             },
           },
@@ -1740,14 +1777,39 @@ for (const [mode, resume] of [
     await runRebuild({ resume }, run.ops);
     assert.deepEqual(calls, [declared, owner]);
     assert.equal(run.ran.includes('registry'), !resume);
-    assert.deepEqual(requests(s.slot), expectedRequests);
+    assert.deepEqual(
+      requests(s.slot),
+      knownOwner ? expectedRequests.filter(([eik]) => eik !== owner) : expectedRequests,
+    );
     assert.deepEqual(
       s.slot
         .prepare("SELECT eik FROM registry_deeds WHERE outcome='absent' ORDER BY eik")
         .all()
         .map((r) => r.eik),
-      calls,
+      knownOwner ? [declared] : calls,
     );
+    if (knownOwner) {
+      assert.deepEqual(
+        s.slot
+          .prepare(
+            'SELECT eik, ownership_kind FROM public_owned_eik WHERE eik IN (?, ?) ORDER BY eik',
+          )
+          .all(TEST_EIK, owner)
+          .map((r) => [r.eik, r.ownership_kind]),
+        [TEST_EIK, owner].sort().map((eik) => [eik, 'municipal']),
+      );
+      assert.equal(
+        s.slot.prepare('SELECT ownership_kind FROM bidders WHERE id=?').get('bidder:test')
+          .ownership_kind,
+        'municipal',
+      );
+      assert.equal(
+        s.slot
+          .prepare('SELECT ownership_kind FROM company_totals WHERE bidder_id=?')
+          .get('bidder:test').ownership_kind,
+        'municipal',
+      );
+    }
     assert.equal(s.slot.prepare('SELECT name FROM persons').get().name, filing.person);
     assert.equal(s.stamp().length, 1);
   });

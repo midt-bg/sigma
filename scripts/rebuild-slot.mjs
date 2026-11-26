@@ -1150,6 +1150,19 @@ export function slotOps({
       // requested together. It writes the snapshot, which stage 7 ships whole, so the new partidas travel
       // with it.
       await child('declarations', ['scripts/tr/rebuild-registry.mjs', '--db', snapshot]);
+      // Newly read owner deeds can change ownership without requiring further lookups.
+      // Decisions and the shipped company labels must use the same completed register.
+      await shell(
+        'declarations',
+        snapshot,
+        [
+          ...PUBLIC_OWNERSHIP_SQL.map((sql) => `${sql};`),
+          ownershipStatements(readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')),
+          `UPDATE company_totals SET ownership_kind = b.ownership_kind
+             FROM bidders b WHERE company_totals.bidder_id = b.id
+             AND company_totals.ownership_kind IS NOT b.ownership_kind;`,
+        ].join('\n'),
+      );
       await declarations('--from', 'decide');
 
       // 6. The people in the search index.
