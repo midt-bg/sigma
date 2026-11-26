@@ -18,6 +18,7 @@ import {
   registryBatchSql,
   registryTables,
   rehydrate,
+  runRebuild,
   shippedTables,
   slotFlusher,
   slotReader,
@@ -667,4 +668,65 @@ test('the slot preserves annex and signing evidence, including unknown legacy pr
     [],
   );
   assert.deepEqual(slot.prepare('PRAGMA foreign_key_check').all(), []);
+});
+
+// The order of a run, with every stage replaced by a record of the call. `state` and `rehydrate` only read
+// the slot; every other stage writes it.
+const READS_ONLY = new Set(['state', 'rehydrate']);
+function stages(receipts = []) {
+  const calls = [];
+  const op = (name, result) => async (arg) => {
+    calls.push(name === 'state' ? `state(${arg})` : name);
+    return result;
+  };
+  const ops = {
+    state: op('state', new Map(receipts.map((r) => [r, null]))),
+    rehydrate: op('rehydrate'),
+    prepare: op('prepare'),
+    unverify: op('unverify'),
+    import: op('import'),
+    registry: op('registry'),
+    local: op('local'),
+    ship: op('ship', { version: 7 }),
+    verify: op('verify', { version: 7 }),
+  };
+  const writes = () => calls.filter((c) => !READS_ONLY.has(c.replace(/\(.*/, '')));
+  return { ops, calls, writes };
+}
+
+test('a verification on its own builds nothing and empties nothing', async () => {
+  for (const resume of [false, true]) {
+    const run = stages(['prepare', 'import', 'registry']);
+    assert.deepEqual(await runRebuild({ verify: true, resume }, run.ops), { version: 7 });
+    assert.deepEqual(run.calls, ['verify'], 'not even the receipts are read');
+  }
+  // The container's flags are what reach it.
+  const source = readFileSync('scripts/rebuild-slot.mjs', 'utf8');
+  assert.match(source, /verify: process\.env\.SIGMA_REBUILD_VERIFY === '1'/);
+  assert.match(source, /resume: process\.env\.SIGMA_REBUILD_RESUME === '1'/);
+});
+
+test('a fresh build empties the slot first and runs every stage', async () => {
+  const run = stages();
+  assert.deepEqual(await runRebuild({}, run.ops), { version: 7 });
+  assert.deepEqual(run.calls, [
+    'state(false)',
+    'prepare',
+    'unverify',
+    'import',
+    'registry',
+    'local',
+    'ship',
+  ]);
+});
+
+test('a resumed build takes the stamp and the ship away before its first write, and skips what is done', async () => {
+  const run = stages(['prepare', 'import', 'registry']);
+  await runRebuild({ resume: true }, run.ops);
+  assert.deepEqual(run.calls, ['state(true)', 'rehydrate', 'unverify', 'local', 'ship']);
+  assert.equal(run.writes()[0], 'unverify', 'nothing is written before the stamp is gone');
+
+  const afterImport = stages(['prepare', 'import']);
+  await runRebuild({ resume: true }, afterImport.ops);
+  assert.deepEqual(afterImport.writes(), ['unverify', 'registry', 'local', 'ship']);
 });
