@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { codeDataVersion, preflight, RELEASE_ENVIRONMENTS } from './deploy-preflight.mjs';
+import {
+  awaitIdleRefresh,
+  codeDataVersion,
+  IDLE_POLL_MS,
+  IDLE_WAIT_MS,
+  preflight,
+  RELEASE_ENVIRONMENTS,
+} from './deploy-preflight.mjs';
 
 const ID = '11111111-2222-4333-8444-555555555555';
 const ready = {
@@ -211,4 +218,92 @@ test('the deploy hands the secrets only to the steps that call Cloudflare', asyn
     else if (calls.test(body)) assert.equal(secret, 'cloudflare', name);
   }
   assert.equal(yaml.match(/secrets\.CLOUDFLARE_API_TOKEN/g).length, 2, 'two anchors, no copies');
+});
+
+// The refresh derives a window in batches; a deploy between two of them would derive the rest by other code.
+// The guard reads the refresh's lease on the target slot before anything is written.
+const T0 = Date.parse('2026-11-26T12:30:40.000Z');
+const LIVE = {
+  holder: 'wf-refresh-1',
+  acquired_at: '2026-11-26T12:30:05.000Z',
+  expires_at: '2026-11-26T13:00:30.000Z',
+};
+/** The guard over a fake clock: `leases` answers one read each (the last repeats), `sleep` moves time. */
+function guard(environment, leases, { wait = false } = {}) {
+  let clock = T0;
+  let reads = 0;
+  const slept = [];
+  const failures = awaitIdleRefresh({
+    environment,
+    readLease: () => leases[Math.min(reads++, leases.length - 1)],
+    wait,
+    now: () => new Date(clock),
+    sleep: (ms) => {
+      slept.push(ms);
+      clock += ms;
+    },
+    log: () => {},
+  });
+  return { failures, reads, slept };
+}
+
+test('no refresh on the slot: every environment deploys at once', () => {
+  for (const environment of Object.keys(RELEASE_ENVIRONMENTS))
+    for (const lease of [null, { ...LIVE, expires_at: '2026-11-26T12:00:00.000Z' }])
+      assert.deepEqual(guard(environment, [lease]), { failures: [], reads: 1, slept: [] });
+});
+
+test('production and Dev2 refuse to deploy over a live refresh, without waiting', () => {
+  for (const environment of ['production', 'dev2']) {
+    const { failures, reads, slept } = guard(environment, [LIVE]);
+    assert.equal(reads, 1);
+    assert.deepEqual(slept, []);
+    assert.equal(failures.length, 1);
+    assert.match(
+      failures[0],
+      /a refresh has been writing to the served database since 2026-11-26T12:30:05.000Z \(instance wf-refresh-1, lease renewed until 2026-11-26T13:00:30.000Z\)/,
+    );
+    assert.match(failures[0], /re-run the deploy once it has finished.*wait_for_idle/);
+  }
+});
+
+test('told to wait, production waits for the refresh like staging', () => {
+  assert.deepEqual(guard('production', [LIVE, LIVE, null], { wait: true }), {
+    failures: [],
+    reads: 3,
+    slept: [IDLE_POLL_MS, IDLE_POLL_MS],
+  });
+});
+
+test('staging waits for a live refresh to finish, then deploys', () => {
+  assert.deepEqual(guard('staging', [LIVE, null]), {
+    failures: [],
+    reads: 2,
+    slept: [IDLE_POLL_MS],
+  });
+});
+
+test('staging gives up after the bound, naming the run', () => {
+  const { failures, reads, slept } = guard('staging', [LIVE]);
+  assert.equal(
+    slept.reduce((a, b) => a + b, 0),
+    IDLE_WAIT_MS,
+  );
+  assert.equal(reads, IDLE_WAIT_MS / IDLE_POLL_MS + 1);
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /since 2026-11-26T12:30:05.000Z \(instance wf-refresh-1/);
+  assert.match(failures[0], /still running after 10 minutes/);
+});
+
+test('the deploy runs the guard in the preflight, and can be told to wait', async () => {
+  const { readFileSync } = await import('node:fs');
+  const yaml = readFileSync('.github/workflows/deploy.yml', 'utf8');
+  assert.match(
+    yaml,
+    /wait_for_idle:\n(?:\s+#[^\n]*\n)*\s+description: [^\n]+\n\s+type: boolean\n\s+default: false/,
+  );
+  assert.match(
+    yaml,
+    /node scripts\/deploy-preflight\.mjs "\$\{\{ needs\.detect\.outputs\.env \}\}" --component "\$SIGMA_COMPONENT" \$\{\{ inputs\.wait_for_idle && '--wait' \|\| '' \}\}/,
+  );
 });
