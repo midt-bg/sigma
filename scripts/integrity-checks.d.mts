@@ -32,6 +32,10 @@ export function checkRollupReconciliation(runner: IntegrityRunner): Promise<Inte
 export function checkCurrentAmountParity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkAnnexTotalSuspectBasis(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkFrameworkCeilingsUnsummed(runner: IntegrityRunner): Promise<IntegrityResult>;
+/** Build-time only: writes and empties transient staging and evaluates every contract (BUILD_CHECKS). */
+export function checkContractValueRule(runner: IntegrityRunner): Promise<IntegrityResult>;
+/** The checks only a local build runs (assertIntegrity `build: true`), never a served gate. */
+export const BUILD_CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
 export function checkNoNegativeValues(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkEikValidity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkDateSanity(runner: IntegrityRunner): Promise<IntegrityResult>;
@@ -66,6 +70,8 @@ export interface AssertIntegrityOptions {
   label?: string;
   /** true (default) → print and process.exit(1) on failure; false → throw instead (for tests) */
   exit?: boolean;
+  /** true on a local work database: also run BUILD_CHECKS after the shared roster */
+  build?: boolean;
 }
 export function assertIntegrity(
   runner: IntegrityRunner,

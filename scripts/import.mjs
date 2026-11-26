@@ -465,8 +465,12 @@ async function runWorkBackfill() {
   assertFxValued((sql) => sqliteJson(workDb, sql));
   // Rollup checks self-skip here: the work DB's rollups are built later by precompute on the served
   // D1 (ship-domain.mjs), which runs its own assertIntegrity. This validates the work DB's
-  // contract-level invariants and the staging→domain reconciliation before shipping.
-  await assertIntegrity((sql) => sqliteJson(workDb, sql), { label: 'work backfill (sqlite)' });
+  // contract-level invariants and the staging→domain reconciliation before shipping, and (build: true)
+  // proves every contract against the value rule.
+  await assertIntegrity((sql) => sqliteJson(workDb, sql), {
+    label: 'work backfill (sqlite)',
+    build: true,
+  });
 
   // The slot rebuild ships the whole snapshot itself, after the registry and the declarations.
   if (cli['no-ship']) {
