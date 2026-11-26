@@ -478,6 +478,41 @@ test('unsettled refresh windows warn only once they outlive a refresh cycle', ()
   assert.deepEqual(judge(report({ runs: { refresh: undefined } })).warnings, []);
 });
 
+test('a last refresh that did not verify warns, with when the numbers were last verified', () => {
+  const verdict = (fields) =>
+    report({
+      runs: {
+        refresh: {
+          publishedAt: GEN,
+          unsettledWindows: 0,
+          oldestUnsettledAgeSeconds: null,
+          ...fields,
+        },
+      },
+    });
+  const judge = (body) => judgeHealth(body, { expectedVersion: 5, builtAt: null, strict: true });
+  const at = '2000-05-31T06:35:00.000Z';
+  assert.deepEqual(
+    judge(verdict({ verdict: 'violation', verdictAt: at, verifiedAt: '2000-05-31T00:34:00.000Z' })),
+    {
+      failures: [],
+      warnings: [
+        `the last refresh's integrity verdict is violation (${at}); the numbers were last verified 2000-05-31T00:34:00.000Z`,
+      ],
+    },
+  );
+  assert.deepEqual(
+    judge(verdict({ verdict: 'unverified', verdictAt: at, verifiedAt: null })).warnings,
+    [
+      `the last refresh's integrity verdict is unverified (${at}); the numbers were last verified never on this slot`,
+    ],
+  );
+  assert.deepEqual(judge(verdict({ verdict: 'ok', verdictAt: at, verifiedAt: at })).warnings, []);
+  // A slot no refresh has reached the gate on, or a report from before the field existed.
+  assert.deepEqual(judge(verdict({ verdict: null })).warnings, []);
+  assert.deepEqual(judge(verdict({})).warnings, []);
+});
+
 test('generations compare as times, and an unreadable one does not compare', () => {
   assert.equal(compareGenerations('2000-05-30 04:05:06', GEN), -1);
   assert.equal(compareGenerations(GEN, '2000-05-31T04:05:06Z'), 0);

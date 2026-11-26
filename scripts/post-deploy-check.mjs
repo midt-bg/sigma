@@ -164,6 +164,10 @@ export function judgeHealth(body, { expectedVersion, builtAt, strict }) {
     warnings.push(
       `${refresh.unsettledWindows} refresh window(s) are not settled, the oldest for ${Math.round(refresh.oldestUnsettledAgeSeconds / 3600)} h: a run did not pass its integrity gate or stopped`,
     );
+  if (refresh?.verdict && refresh.verdict !== 'ok')
+    warnings.push(
+      `the last refresh's integrity verdict is ${refresh.verdict} (${refresh.verdictAt}); the numbers were last verified ${refresh.verifiedAt ?? 'never on this slot'}`,
+    );
   return { failures, warnings };
 }
 
@@ -330,7 +334,8 @@ export async function run(options, deps) {
   );
   log(`health: generation ${data.generation ?? 'none'}, data as of ${data.asOf ?? '?'}`);
   log(
-    `health: unsettled refresh windows ${runs?.refresh?.unsettledWindows ?? '?'}; ` +
+    `health: refresh verdict ${runs?.refresh?.verdict ?? 'none'}, last verified ${runs?.refresh?.verifiedAt ?? 'never'}; ` +
+      `unsettled refresh windows ${runs?.refresh?.unsettledWindows ?? '?'}; ` +
       `registry followed through ${runs?.registry?.changesThrough ?? '?'}; ` +
       `related persons published ${runs?.declarations?.relatedPersonsPublishedAt ?? '?'}`,
   );

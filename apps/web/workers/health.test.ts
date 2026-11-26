@@ -34,6 +34,7 @@ const PENDING_WINDOW_DDL = runDdl(
   'packages/ingest/src/refresh.ts',
   /const PENDING_WINDOW_DDL = `([^`]+)`/,
 );
+const VERDICT_DDL = runDdl('packages/ingest/src/refresh.ts', /const VERDICT_DDL = `([^`]+)`/);
 const RP_GENERATION_DDL = runDdl(
   'scripts/ship-related-persons.mjs',
   /'(CREATE TABLE IF NOT EXISTS rp_generation [^']+)'/,
@@ -59,10 +60,23 @@ function withPendingWindows(db: DatabaseSync): void {
   `);
 }
 
+// Three runs: one that verified, a later one whose gate found a violation, and a last one that had
+// nothing to verify.
+function withVerdicts(db: DatabaseSync): void {
+  db.exec(VERDICT_DDL);
+  db.exec(`
+    INSERT INTO refresh_verdict VALUES ('2000-05-31T00:30:00.000Z', '2000-05-28', '2000-05-30', 'ok', '[]', '2000-05-31T00:34:00.000Z');
+    INSERT INTO refresh_verdict VALUES ('2000-05-31T06:30:00.000Z', '2000-05-29', '2000-05-31', 'violation', '["synthetic-check"]', '2000-05-31T06:35:00.000Z');
+    INSERT INTO refresh_verdict VALUES ('2000-05-31T12:30:00.000Z', '2000-05-29', '2000-05-31', 'skipped', '[]', '2000-05-31T12:31:00.000Z');
+  `);
+}
+
 function withRelatedPersons(db: DatabaseSync): void {
   db.exec(RP_GENERATION_DDL);
   db.exec(`INSERT INTO rp_generation VALUES ('synthetic-rp-run', '2000-05-27T08:00:00Z')`);
 }
+
+const NO_VERDICT = { verdict: null, verdictAt: null, verifiedAt: null };
 
 const env = (DB: D1Database) => ({ DB }) as unknown as Env;
 
@@ -86,6 +100,7 @@ describe('health', () => {
     const db = servedSchema();
     published(db);
     withPendingWindows(db);
+    withVerdicts(db);
     withRelatedPersons(db);
     const DB = d1FromSqlite(db);
     const prepare = vi.spyOn(DB, 'prepare');
@@ -108,12 +123,16 @@ describe('health', () => {
           unsettledWindows: 2,
           // The oldest window was recorded 33 hours before NOW.
           oldestUnsettledAgeSeconds: 33 * 3600,
+          // The run with nothing to verify is not the verdict; the last proof is the first run's.
+          verdict: 'violation',
+          verdictAt: '2000-05-31T06:35:00.000Z',
+          verifiedAt: '2000-05-31T00:34:00.000Z',
         },
         registry: { changesThrough: '2000-05-29' },
         declarations: { relatedPersonsPublishedAt: '2000-05-27T08:00:00Z' },
       },
     });
-    // The single-row tables with the list of run tables, then both run tables: two statements.
+    // The single-row tables with the list of run tables, then every run table: two statements.
     expect(prepare).toHaveBeenCalledTimes(2);
   });
 
@@ -148,6 +167,7 @@ describe('health', () => {
         publishedAt: '2000-05-31 04:05:06',
         unsettledWindows: 0,
         oldestUnsettledAgeSeconds: null,
+        ...NO_VERDICT,
       },
       registry: { changesThrough: null },
       declarations: { relatedPersonsPublishedAt: null },
@@ -164,6 +184,7 @@ describe('health', () => {
         publishedAt: '2000-05-31 04:05:06',
         unsettledWindows: 0,
         oldestUnsettledAgeSeconds: null,
+        ...NO_VERDICT,
       },
       registry: { changesThrough: '2000-05-29' },
       declarations: { relatedPersonsPublishedAt: null },
@@ -177,10 +198,38 @@ describe('health', () => {
         publishedAt: '2000-05-31 04:05:06',
         unsettledWindows: 0,
         oldestUnsettledAgeSeconds: null,
+        ...NO_VERDICT,
       },
       registry: { changesThrough: '2000-05-29' },
       declarations: { relatedPersonsPublishedAt: '2000-05-27T08:00:00Z' },
     });
+  });
+
+  it('reads the verdict alone on a slot that holds no other run table', async () => {
+    const db = servedSchema();
+    published(db);
+    withVerdicts(db);
+    db.exec(`DELETE FROM refresh_verdict WHERE verdict = 'violation'`);
+    const DB = d1FromSqlite(db);
+    const prepare = vi.spyOn(DB, 'prepare');
+
+    expect((await health(env(DB), NOW)).runs.refresh).toEqual({
+      publishedAt: '2000-05-31 04:05:06',
+      unsettledWindows: 0,
+      oldestUnsettledAgeSeconds: null,
+      verdict: 'ok',
+      verdictAt: '2000-05-31T00:34:00.000Z',
+      verifiedAt: '2000-05-31T00:34:00.000Z',
+    });
+    expect(prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports no verdict while only runs with nothing to verify are on record', async () => {
+    const db = servedSchema();
+    published(db);
+    withVerdicts(db);
+    db.exec(`DELETE FROM refresh_verdict WHERE verdict <> 'skipped'`);
+    expect((await health(env(d1FromSqlite(db)), NOW)).runs.refresh).toMatchObject(NO_VERDICT);
   });
 
   it('gives no age for a window whose start it cannot read, and never a negative one', async () => {
@@ -217,7 +266,9 @@ describe('health', () => {
       db: 'overloaded',
       code: { commit: 'abcdef012345' },
       data: { version: null, generation: null },
-      runs: { refresh: { unsettledWindows: null, oldestUnsettledAgeSeconds: null } },
+      runs: {
+        refresh: { unsettledWindows: null, oldestUnsettledAgeSeconds: null, ...NO_VERDICT },
+      },
     });
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('"event":"health_degraded"'));
   });
@@ -327,6 +378,7 @@ describe('healthResponse', () => {
     const db = servedSchema();
     published(db);
     withPendingWindows(db);
+    withVerdicts(db);
     withRelatedPersons(db);
     const body = await (
       await healthResponse(
@@ -339,6 +391,7 @@ describe('healthResponse', () => {
     expect(body).not.toContain(HOLDER);
     expect(body).not.toContain('synthetic-run');
     expect(body).not.toContain('synthetic-rp-run');
+    expect(body).not.toContain('synthetic-check');
     const keys = (value: unknown, prefix = ''): string[] =>
       value && typeof value === 'object'
         ? Object.entries(value).flatMap(([key, inner]) => [
@@ -365,6 +418,9 @@ describe('healthResponse', () => {
         'runs.refresh.oldestUnsettledAgeSeconds',
         'runs.refresh.publishedAt',
         'runs.refresh.unsettledWindows',
+        'runs.refresh.verdict',
+        'runs.refresh.verdictAt',
+        'runs.refresh.verifiedAt',
         'runs.registry',
         'runs.registry.changesThrough',
         'status',
