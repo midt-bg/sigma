@@ -125,12 +125,28 @@ interface HitRow {
   rank: number; // FTS bm25 score (lower = better); the group's top row gives its best rank for the gate
 }
 
-// One group's ranked hits. Company rows additionally carry a свързани-лица flag: a LEFT JOIN against the
-// published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published, self OR family
-// stake, backed by a Trade Register evidence SEAL, AND the winner must have LIVE contracts (the same
-// read-time N9 gate LINK_SELECT applies), so search flags exactly the companies the /conflicts surface shows
-// and never one whose page would 404. A family-only winner badges — the /conflicts page already publishes
-// that link by name, so the badge discloses nothing the surface doesn't. Binds: kind, match, limit.
+// One row of the ranked read: a hit, the kind it belongs to, its place in that kind and the kind's count.
+interface RankedRow extends HitRow {
+  kind: SearchKind;
+  n: number; // every match of this kind, the group's total
+  rn: number; // 1-based place within the kind, by rank
+}
+
+// bm25 alone ties a company with consortium strings and name-keyed fragments that carry the same words,
+// so the canonical company could drop out of the six shown. Company hits are drawn from a wider pool of
+// the best-ranked rows and re-ordered: the name equal to the query (legal form and quotes aside) first,
+// then rows with a valid ЕИК, then bm25.
+const COMPANY_POOL = 50;
+
+// How many ranked rows each kind brings back: the group's own limit, the wider pool for companies.
+const poolSize = (g: (typeof GROUPS)[number]): number =>
+  g.kind === 'company' ? COMPANY_POOL : g.limit;
+
+// The свързани-лица badge on a company row: a published self OR family stake on the winner's ЕИК (= the
+// company row's `ident`), backed by a Trade Register evidence SEAL, AND the winner must have LIVE contracts
+// (the same read-time N9 gate LINK_SELECT applies), so search flags exactly the companies the /conflicts
+// surface shows and never one whose page would 404. A family-only winner badges — the /conflicts page
+// already publishes that link by name, so the badge discloses nothing the surface doesn't.
 //
 // The seal EXISTS clause is the same one SURFACED_OWNERSHIP applies (related-persons.ts), and it belongs
 // here for a sharper reason than symmetry: search is the WIDER surface. A published row whose seal is
@@ -138,39 +154,45 @@ interface HitRow {
 // about a named official to every searcher, while the page behind the badge correctly showed nothing.
 // Four copies of this predicate now exist (here, SURFACED_OWNERSHIP, precompute.sql, refresh-slice.sql);
 // related-persons-sql.test.ts pins them to each other.
-// Exported so search-sql.test runs the EXACT SQL (not a copy).
-// Built with or without the conflict join. The join reads BOTH свързани-лица migrations — interest_links
-// (0003) and interest_link_evidence (0006) — and on an env where either is unapplied it would make the
-// ENTIRE search 500 with „no such table". search() detects both tables once per request and picks the
-// no-conflict variant when either is absent, so search degrades to has_conflict=0 rather than breaking
-// (ADR-0031 robustness ask).
-const hitsSql = (withConflict: boolean): string => `SELECT search_index.ref, search_index.title,
-        search_index.ident, search_index.subtitle, search_index.amount, rank,
-        ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid,
-        ${withConflict ? '(cf.eik IS NOT NULL)' : '0'} AS has_conflict
- FROM search_index
- LEFT JOIN company_totals ct
-   ON search_index.kind = 'company' AND ct.bidder_id = search_index.ref
- ${
-   withConflict
-     ? `LEFT JOIN (
-   SELECT DISTINCT il.eik FROM interest_links il
-   WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
-     AND EXISTS (SELECT 1 FROM interest_link_evidence e
-                 WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
-     AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
-                 WHERE bb.eik_normalized = il.eik)
- ) cf ON search_index.kind = 'company' AND cf.eik = search_index.ident`
-     : ''
- }
- WHERE search_index.kind = ? AND search_index MATCH ?
- ORDER BY rank LIMIT ?`;
+//
+// Asked per company row actually returned (at most COMPANY_POOL), through the (eik, status) index, rather
+// than by materialising every badged ЕИК for each request.
+const CONFLICT_BADGE = `EXISTS (
+         SELECT 1 FROM interest_links il
+         WHERE il.eik = si.ident AND il.status = 'published'
+           AND il.interest_class IN ('private_ownership', 'family_ownership')
+           AND EXISTS (SELECT 1 FROM interest_link_evidence e
+                       WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
+           AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
+                       WHERE bb.eik_normalized = il.eik))`;
 
-// bm25 alone ties a company with consortium strings and name-keyed fragments that carry the same words,
-// so the canonical company could drop out of the six shown. Company hits are drawn from a wider pool of
-// the best-ranked rows and re-ordered: the name equal to the query (legal form and quotes aside) first,
-// then rows with a valid ЕИК, then bm25.
-const COMPANY_POOL = 50;
+// Every group in ONE read of the full-text index. The window ranks each kind's matches once and counts
+// them in the same pass; only each kind's best `poolSize` rows are joined back for their display columns.
+// It replaces a COUNT … GROUP BY kind plus one `kind = ? … ORDER BY rank LIMIT ?` statement per kind, each
+// of which re-ranked every match — and a rare kind (the officials) walked the whole ranked list of a short
+// prefix to find its six. Ties in bm25 are common (contracts with the same subject); `rowid` breaks them
+// the way those per-kind statements did, so the same rows come back. Binds: match.
+//
+// Built with or without the badge. The badge reads BOTH свързани-лица migrations — interest_links (0003)
+// and interest_link_evidence (0006) — and on an env where either is unapplied it would make the ENTIRE
+// search 500 with „no such table". search() detects both tables once per request and picks the no-badge
+// variant when either is absent, so search degrades to has_conflict=0 rather than breaking (ADR-0031
+// robustness ask). Exported so search-sql.test runs the EXACT SQL (not a copy).
+const rankedSql = (withConflict: boolean): string => `WITH ranked AS (
+  SELECT rowid AS rid, kind, rank,
+         ROW_NUMBER() OVER (PARTITION BY kind ORDER BY rank, rowid) AS rn,
+         COUNT(*) OVER (PARTITION BY kind) AS n
+  FROM search_index WHERE search_index MATCH ?
+)
+SELECT ranked.kind, ranked.n, ranked.rn, ranked.rank,
+       si.ref, si.title, si.ident, si.subtitle, si.amount,
+       ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid,
+       ${withConflict ? `CASE WHEN ranked.kind = 'company' THEN ${CONFLICT_BADGE} ELSE 0 END` : '0'} AS has_conflict
+FROM ranked
+JOIN search_index si ON si.rowid = ranked.rid
+LEFT JOIN company_totals ct ON ranked.kind = 'company' AND ct.bidder_id = si.ref
+WHERE ranked.rn <= CASE ranked.kind ${GROUPS.map((g) => `WHEN '${g.kind}' THEN ${poolSize(g)}`).join(' ')} ELSE 0 END
+ORDER BY ranked.kind, ranked.rn`;
 
 function rankCompanies(rows: HitRow[], query: string): HitRow[] {
   const stem = companyNameStem(query);
@@ -179,8 +201,8 @@ function rankCompanies(rows: HitRow[], query: string): HitRow[] {
   return [...rows].sort((a, b) => key(a) - key(b)); // stable: bm25 order within a tier
 }
 
-export const SEARCH_HITS_SQL = hitsSql(true);
-export const SEARCH_HITS_SQL_NO_CONFLICT = hitsSql(false);
+export const SEARCH_RANKED_SQL = rankedSql(true);
+export const SEARCH_RANKED_SQL_NO_CONFLICT = rankedSql(false);
 
 export async function search(db: D1Database, rawQuery: string): Promise<SearchResults> {
   const query = (rawQuery ?? '').trim();
@@ -190,19 +212,10 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
   // the stray punctuation in the H1.
   if (!match) return { query: '', groups: [], empty: true };
 
-  // Per-kind counts in one query.
-  const countRows = await db
-    .prepare(
-      `SELECT kind, COUNT(*) AS n FROM search_index WHERE search_index MATCH ? GROUP BY kind`,
-    )
-    .bind(match)
-    .all<{ kind: SearchKind; n: number }>();
-  const counts = new Map(countRows.results.map((r) => [r.kind, r.n]));
-
-  // Pick the hits SQL once: on an env where the свързани-лица migrations are not applied, the conflict join
-  // would 500 the whole search — fall back to the no-conflict variant (has_conflict=0) instead.
+  // Pick the ranked SQL once: on an env where the свързани-лица migrations are not applied, the badge
+  // would 500 the whole search — fall back to the no-badge variant (has_conflict=0) instead.
   //
-  // BOTH tables are required, not just interest_links: the join now also reads interest_link_evidence
+  // BOTH tables are required, not just interest_links: the badge also reads interest_link_evidence
   // (0006), so an env with 0003 but not 0006 would break every search on every kind. Requiring both also
   // gives the right answer on such an env — with no seal table nothing is provably sealed, so nothing
   // should badge.
@@ -214,72 +227,73 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
         )
         .first<{ n: number }>()
     )?.n === 2;
-  const hitsSql = hasConflictTable ? SEARCH_HITS_SQL : SEARCH_HITS_SQL_NO_CONFLICT;
 
-  const built = await Promise.all(
-    GROUPS.map(async (g) => {
-      const total = counts.get(g.kind) ?? 0;
-      if (total === 0) {
-        return {
-          group: {
-            kind: g.kind,
-            label: g.label,
-            total: 0,
-            hits: [] as SearchHit[],
-            moreHref: null,
-          },
-          bestRank: Infinity,
-          refs: [] as string[],
-        };
-      }
-      const isCompanyGroup = g.kind === 'company';
-      const { results: pool } = await db
-        .prepare(hitsSql)
-        .bind(g.kind, match, isCompanyGroup ? COMPANY_POOL : g.limit)
-        .all<HitRow>();
-      const results = isCompanyGroup ? rankCompanies(pool, query).slice(0, g.limit) : pool;
-      const hits: SearchHit[] = results.map((r) => {
-        const href = hrefForEntity(g.kind, r.ref);
-        const isCompany = g.kind === 'company';
-        const companyKind = r.entity_kind ?? 'company';
-        const isConsortium = isCompany && companyKind === 'consortium';
-        const membership = isConsortium ? parseConsortiumMembers(r.title) : null;
-        const memberCount = membership?.kind === 'list' ? membership.members.length : null;
-        const hasEik = isCompany ? r.eik_valid === 1 && Boolean(r.ident) : undefined;
-        return {
-          kind: g.kind,
-          slug: href.split('/').pop()!,
-          href,
-          title: isCompany ? entityName(cleanName(r.title), companyKind) : r.title,
-          ident: g.kind === 'official' || g.kind === 'person' ? null : r.ident || null,
-          ...(isCompany
-            ? {
-                isConsortium,
-                hasEik,
-                ownershipKind: r.ownership_kind,
-                memberCount,
-                hasConflict: r.has_conflict === 1,
-              }
-            : {}),
-          subtitle: r.subtitle || null,
-          amountEur: r.amount,
-          amountLabel: g.amountLabel,
-        };
-      });
+  const { results: ranked } = await db
+    .prepare(hasConflictTable ? SEARCH_RANKED_SQL : SEARCH_RANKED_SQL_NO_CONFLICT)
+    .bind(match)
+    .all<RankedRow>();
+  const byKind = new Map<SearchKind, RankedRow[]>();
+  for (const r of ranked) byKind.set(r.kind, [...(byKind.get(r.kind) ?? []), r]);
+
+  const built = GROUPS.map((g) => {
+    const pool = (byKind.get(g.kind) ?? []).sort((a, b) => a.rn - b.rn).slice(0, poolSize(g));
+    const total = pool[0]?.n ?? 0;
+    if (total === 0) {
       return {
-        refs: results.map((r) => r.ref),
         group: {
           kind: g.kind,
           label: g.label,
-          total,
-          hits,
-          moreHref: total > hits.length && g.path ? searchMoreHref(g.kind, query) : null,
+          total: 0,
+          hits: [] as SearchHit[],
+          moreHref: null,
         },
-        // Best (lowest bm25) rank in the group = its top row, for the relevance gate below.
-        bestRank: pool.length ? pool[0]!.rank : Infinity,
+        bestRank: Infinity,
+        refs: [] as string[],
       };
-    }),
-  );
+    }
+    const isCompanyGroup = g.kind === 'company';
+    const results = isCompanyGroup ? rankCompanies(pool, query).slice(0, g.limit) : pool;
+    const hits: SearchHit[] = results.map((r) => {
+      const href = hrefForEntity(g.kind, r.ref);
+      const isCompany = g.kind === 'company';
+      const companyKind = r.entity_kind ?? 'company';
+      const isConsortium = isCompany && companyKind === 'consortium';
+      const membership = isConsortium ? parseConsortiumMembers(r.title) : null;
+      const memberCount = membership?.kind === 'list' ? membership.members.length : null;
+      const hasEik = isCompany ? r.eik_valid === 1 && Boolean(r.ident) : undefined;
+      return {
+        kind: g.kind,
+        slug: href.split('/').pop()!,
+        href,
+        title: isCompany ? entityName(cleanName(r.title), companyKind) : r.title,
+        ident: g.kind === 'official' || g.kind === 'person' ? null : r.ident || null,
+        ...(isCompany
+          ? {
+              isConsortium,
+              hasEik,
+              ownershipKind: r.ownership_kind,
+              memberCount,
+              hasConflict: r.has_conflict === 1,
+            }
+          : {}),
+        subtitle: r.subtitle || null,
+        amountEur: r.amount,
+        amountLabel: g.amountLabel,
+      };
+    });
+    return {
+      refs: results.map((r) => r.ref),
+      group: {
+        kind: g.kind,
+        label: g.label,
+        total,
+        hits,
+        moreHref: total > hits.length && g.path ? searchMoreHref(g.kind, query) : null,
+      },
+      // Best (lowest bm25) rank in the group = its top row, for the relevance gate below.
+      bestRank: pool[0]!.rank,
+    };
+  });
 
   const people = await peopleGroup(
     db,

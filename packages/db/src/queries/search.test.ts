@@ -9,6 +9,17 @@ import {
 } from './search';
 import { personSlug } from './identity';
 
+// The ranked read answers every kind at once: each row carries its kind, its place in the kind (rn) and the
+// kind's count (n). Builds those rows from per-kind lists in rank order and the per-kind counts.
+function rankedRows(
+  byKind: Record<string, object[]>,
+  counts: Record<string, number> = {},
+): object[] {
+  return Object.entries(byKind).flatMap(([kind, list]) =>
+    list.map((r, i) => ({ ...r, kind, rn: i + 1, n: counts[kind] ?? list.length })),
+  );
+}
+
 // `officialBestRank` drives the relevance gate: FTS bm25 rank is negative, lower = better. Company's best is
 // -5 below, so an official best of -6 LEADS (stronger) and -1 SINKS (weaker/incidental) — the two gate arms.
 function searchDb(
@@ -135,19 +146,11 @@ function searchDb(
         ...f,
       })),
     },
-    // Per-kind counts, before the hits route below: both read search_index, and only GROUP BY kind
-    // tells them apart.
+    // The one ranked read: every kind's best rows with the kind's count.
     {
-      when: ['FROM search_index', 'GROUP BY kind'],
-      all: [
-        { kind: 'official', n: 2 },
-        ...(personBestRank == null ? [] : [{ kind: 'person', n: 9 }]),
-        { kind: 'company', n: 7 },
-        { kind: 'contract', n: 6 },
-      ],
+      when: 'FROM search_index',
+      all: rankedRows(byKind, { official: 2, person: 9, company: 7, contract: 6 }),
     },
-    // The hits query, one execution per kind — which kind is in the first bound argument.
-    { when: 'FROM search_index', all: (call) => byKind[String(call.binds[0])] ?? [] },
   ]).db;
 }
 
@@ -250,8 +253,7 @@ describe('search', () => {
     ];
     const db = fakeD1([
       { when: 'sqlite_master', first: { n: 2 } },
-      { when: ['FROM search_index', 'GROUP BY kind'], all: [{ kind: 'company', n: rows.length }] },
-      { when: 'FROM search_index', all: rows },
+      { when: 'FROM search_index', all: rankedRows({ company: rows }) },
     ]).db;
     const company = (await search(db, 'тест груп')).groups.find((g) => g.kind === 'company')!;
     expect(company.hits.map((h) => h.title)).toEqual([
@@ -380,28 +382,20 @@ const COMPANY_HIT = {
   rank: -5,
 };
 
-function probeDb(tableCount: number | null, starvedKind: string | null = null): FakeD1 {
+function probeDb(tableCount: number | null): FakeD1 {
   return fakeD1([
     { when: 'sqlite_master', first: tableCount === null ? null : { n: tableCount } },
     {
-      when: ['FROM search_index', 'GROUP BY kind'],
-      all: [
-        { kind: 'official', n: 2 },
-        { kind: 'company', n: 7 },
-      ],
-    },
-    {
       when: 'FROM search_index',
-      all: (call) => {
-        const kind = String(call.binds[0]);
-        if (kind === starvedKind) return [];
-        return kind === 'official' ? [OFFICIAL_HIT] : [COMPANY_HIT];
-      },
+      all: rankedRows(
+        { official: [OFFICIAL_HIT], company: [COMPANY_HIT] },
+        { official: 2, company: 7 },
+      ),
     },
   ]);
 }
 
-describe('search — свързани-лица migration probe and count/hits divergence', () => {
+describe('search — свързани-лица migration probe and the single ranked read', () => {
   it('runs the conflict-aware hits SQL only when BOTH tables are present', async () => {
     const both = probeDb(2);
     await search(both.db, 'тест');
@@ -420,21 +414,19 @@ describe('search — свързани-лица migration probe and count/hits di
     expect(hitsSql(none).some((s) => s.includes('interest_links'))).toBe(false);
   });
 
-  it('keeps a group whose count is non-zero but whose hits come back empty', async () => {
-    // The count and the hits are two separate FTS reads; they can disagree (index churn between them).
-    // The group must survive with its real total and an intact „виж всички" link rather than vanish.
-    const results = await search(probeDb(2, 'company').db, 'тест');
+  it("takes each group's total from the same read as its hits", async () => {
+    // The count and the hits come from one statement, so they cannot disagree: a group with a total has its
+    // top row, and „виж всички" counts what the read counted.
+    const results = await search(probeDb(2).db, 'тест');
     const company = results.groups.find((g) => g.kind === 'company');
-    expect(company).toMatchObject({ total: 7, hits: [] });
+    expect(company).toMatchObject({ total: 7, hits: [{ title: 'ТЕСТ ООД' }] });
     expect(company!.moreHref).not.toBeNull();
-    expect(results.empty).toBe(false); // a real total, so the „нищо не е намерено" state stays off
   });
 
-  it('does not let a hitless group out-rank a real match in the placement gate', async () => {
-    // A group with no rows has no bm25 rank at all. Reading one out of an empty result set (rather than
-    // standing it off at Infinity) would hand it the strongest possible score and sink „Свързани лица"
-    // below a group that matched nothing — the exact placement the minister's ask reverses.
-    const groups = (await search(probeDb(2, 'company').db, 'тест')).groups;
-    expect(groups[0]!.kind).toBe('official');
+  it('reads the full-text index once per search, for every group', async () => {
+    const fake = probeDb(2);
+    await search(fake.db, 'тест');
+    // Besides it: the migration probe, and the office lines of the declarants among the people.
+    expect(fake.sql.filter((s) => s.includes('search_index'))).toHaveLength(1);
   });
 });

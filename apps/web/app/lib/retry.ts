@@ -52,8 +52,8 @@ export async function withDbRetry<T>(fn: () => Promise<T>, attempts = 3): Promis
  * not back-pressure and must still fail the request.
  *
  * It takes ANY 503 `Response` for the refusal, so it is only right around a call whose sole source
- * of a 503 is `withDbRetry` — a single D1 read, as in the root loader. Do not wrap a loader that
- * can throw a 503 of its own in it.
+ * of a 503 is D1's back-pressure — one read as in the root loader, or several as in the search
+ * suggestions. Do not wrap a loader that can throw a 503 of its own in it.
  */
 export function isD1Refusal(error: unknown): boolean {
   return error instanceof Response ? error.status === 503 : isD1Overloaded(error);
