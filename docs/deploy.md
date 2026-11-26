@@ -735,17 +735,23 @@ worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); ко
 1. **R2 bucket:** `wrangler r2 bucket create <SIGMA_DECLARATIONS_BUCKET>` (staging:
    `sigma-declarations-stage`; production: `sigma-declarations`). Bucket-ът е празен; първият ход
    изтегля целия корпус (няколко часа, в няколко опита на контейнера, всеки до 60 минути изтегляне).
-   Веднага след създаването — двете правила за живот на обектите, защото посредникът нарочно не
+   Веднага след създаването — трите правила за живот на обектите, защото посредникът нарочно не
    разрешава триене на нищо освен печата на корпуса
    ([ADR-0049](adr/0049-a-run-that-survives-a-stopped-container.md)):
 
    ```sh
    wrangler r2 bucket lifecycle add <bucket> --name checkpoints --prefix declarations/corpus-v2/checkpoints/ --expire-days 7 -y
    wrangler r2 bucket lifecycle add <bucket> --name fetch-events --prefix declarations/corpus-v2/fetch-events/ --expire-days 30 -y
+      wrangler r2 bucket lifecycle add <bucket> --name parse-cache --prefix declarations/corpus-v2/parse-cache/ --expire-days 30 -y
    ```
 
    Записите на подновяемия ход (около 60–70 MB на ход) и събитията от обхождането не се четат след
-   края на хода; без тези правила биха останали в bucket-а завинаги. Деплоят проверява двете правила
+   края на хода; без тези правила биха останали в bucket-а завинаги. Кешът на разчитането
+   (`parse-cache/`, [docs/etl.md](etl.md)) надживява ходовете нарочно: ходът, който използва запис, го
+   записва наново, затова запис, по-стар от 30 дни, не е използван от нито един ход през това време —
+   запис на по-стар код на разчитането или на папка, чиито файлове са се сменили. Записът, който ход ще
+   използва, е писан при предишния ход (поне седмичен), така че правилото не може да го изтрие; изтрит запис
+   струва само ново разчитане на папката. Деплоят проверява трите правила
    при всяко пускане и добавя липсващото (стъпка „Expire the declarations run's leftovers in R2");
    ако ключът за деплоя няма права за R2, дава предупреждение, не спира изданието, и правилата се
    добавят на ръка с командите по-горе. След правилата, вместо да се чака първото теглене, корпусът може
@@ -1090,7 +1096,11 @@ in-place отдалеченият път не е приложим за пъле�
    проверяват; след `ship`, спрян по средата, строят отначало. `precompute`, `declarations` и `search` не
    оставят нищо в слота и се изпълняват отново, а
    разчетеното от корпуса на декларациите се взема от R2, ако продължението е от същия код
-   ([runbooks/production-cutover.md](runbooks/production-cutover.md)). „Същият код“ значи същия
+   ([runbooks/production-cutover.md](runbooks/production-cutover.md)). Независимо от това всяка папка, чиито
+   файлове и код на разчитането не са се сменили, идва от кеша на разчитането (`parse-cache/`): в лога
+   „N declarations from the parse cache“ вместо „N declarations parsed“, а
+   `{"event":"declarations_parse_cache",…}` дава броя на двете. Пълно разчитане — `CACBG_PARSE_CACHE=refresh`
+   на ETL worker-а за този ход ([docs/etl.md](etl.md)). „Същият код“ значи същия
    `SIGMA_SOURCE_COMMIT` на ETL worker-а; изграждането му вярва и не сверява дървото. Ръчно внедрен ETL
    worker трябва да го остави празен (тогава продължението чете корпуса отначало) или да е внедрен точно от
    този комит, иначе продължението взема разчетеното от друг код. Не го пускайте около 03:00 UTC, когато
