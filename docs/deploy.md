@@ -742,7 +742,7 @@ worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); ко
    ```sh
    wrangler r2 bucket lifecycle add <bucket> --name checkpoints --prefix declarations/corpus-v2/checkpoints/ --expire-days 7 -y
    wrangler r2 bucket lifecycle add <bucket> --name fetch-events --prefix declarations/corpus-v2/fetch-events/ --expire-days 30 -y
-      wrangler r2 bucket lifecycle add <bucket> --name parse-cache --prefix declarations/corpus-v2/parse-cache/ --expire-days 30 -y
+   wrangler r2 bucket lifecycle add <bucket> --name parse-cache --prefix declarations/corpus-v2/parse-cache/ --expire-days 30 -y
    ```
 
    Записите на подновяемия ход (около 60–70 MB на ход) и събитията от обхождането не се четат след
@@ -1100,7 +1100,7 @@ in-place отдалеченият път не е приложим за пъле�
    файлове и код на разчитането не са се сменили, идва от кеша на разчитането (`parse-cache/`): в лога
    „N declarations from the parse cache“ вместо „N declarations parsed“, а
    `{"event":"declarations_parse_cache",…}` дава броя на двете. Пълно разчитане — `CACBG_PARSE_CACHE=refresh`
-   на ETL worker-а за този ход ([docs/etl.md](etl.md)). „Същият код“ значи същия
+   за този ход ([смяна и проверка на режима](etl.md#смяна-на-режима-на-кеша-в-cloudflare)). „Същият код“ значи същия
    `SIGMA_SOURCE_COMMIT` на ETL worker-а; изграждането му вярва и не сверява дървото. Ръчно внедрен ETL
    worker трябва да го остави празен (тогава продължението чете корпуса отначало) или да е внедрен точно от
    този комит, иначе продължението взема разчетеното от друг код. Не го пускайте около 03:00 UTC, когато
