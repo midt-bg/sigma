@@ -406,6 +406,74 @@ describe('RefreshWorkflow.run — control flow', () => {
   });
 });
 
+// A deploy that lands between two steps may resume the run on the new code: its step results come from the
+// cache, its next step runs the new Worker. The run stops before that step writes, so no window is derived
+// by two versions; the window stays recorded and the next run replays it on one.
+describe('RefreshWorkflow.run — code that changes mid-run', () => {
+  /** A step double that swaps the Worker's code once the named step has run. */
+  const deployAfter = (after: string, env: { SIGMA_SOURCE_COMMIT?: string }, names: string[]) => ({
+    do: async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+      names.push(name);
+      const result = await fn();
+      if (name === after) env.SIGMA_SOURCE_COMMIT = 'new0000';
+      return result;
+    },
+  });
+
+  it('stops before the next write, leaving the window to the replay', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    const env = { DB, REFRESH: {} as Workflow, SIGMA_SOURCE_COMMIT: 'old0000' };
+    const names: string[] = [];
+
+    await expect(
+      new RefreshWorkflow({} as never, env).run(
+        { payload: {}, instanceId: 'wf-70' } as never,
+        deployAfter('load-fx', env, names) as never,
+      ),
+    ).rejects.toThrow(/refresh code changed before derive-slice:g1: "old0000" → "new0000"/);
+
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledOnce(); // resolve-annexes only
+    expect(ingest.recordPendingWindow).toHaveBeenCalledOnce();
+    expect(ingest.settlePendingWindows).not.toHaveBeenCalled();
+    expect(names.at(-1)).toBe('release-refresh-lease');
+  });
+
+  it('ends the run at the check instead of calling the numbers unverified', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    const env = { DB, REFRESH: {} as Workflow, SIGMA_SOURCE_COMMIT: 'old0000' };
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(
+      new RefreshWorkflow({} as never, env).run(
+        { payload: {}, instanceId: 'wf-71' } as never,
+        deployAfter('derive-slice:count', env, []) as never,
+      ),
+    ).rejects.toThrow(/refresh code changed before integrity-gate/);
+
+    expect(integrity.runServedIntegrityGate).not.toHaveBeenCalled();
+    expect(error.mock.calls.some((c) => String(c[0]).includes('etl_integrity_unverified'))).toBe(
+      false,
+    );
+  });
+
+  it('a redeploy of the same commit is not a change', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    const env = { DB, REFRESH: {} as Workflow, SIGMA_SOURCE_COMMIT: 'new0000' };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await new RefreshWorkflow({} as never, env).run(
+      { payload: {}, instanceId: 'wf-72' } as never,
+      deployAfter('load-fx', env, []) as never,
+    );
+
+    expect(result.integrity).toBe('ok');
+  });
+});
+
 describe('RefreshWorkflow.run — refresh lease', () => {
   it('takes the lease first and releases it last, after the staging drop', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);

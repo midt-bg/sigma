@@ -178,9 +178,13 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
     // recorded. A held lease is a benign skip (the cron will come back), logged loudly; it expires so
     // a hung instance cannot fence the cron out, and it is released in the finally below.
     const leaseHolder = event.instanceId;
-    const lease = await step.do('acquire-refresh-lease', async () =>
-      acquireRefreshLease(this.env.DB, leaseHolder, new Date(fetchedAt)),
-    );
+    // The commit the run started on is cached with the lease. A deploy between two steps may resume the run
+    // on the new Worker, which would derive the rest of the window by other rules: the fence below stops the
+    // run before its next write instead, and the window it recorded is replayed by the next run on one code.
+    const lease = await step.do('acquire-refresh-lease', async () => ({
+      ...(await acquireRefreshLease(this.env.DB, leaseHolder, new Date(fetchedAt))),
+      code: this.env.SIGMA_SOURCE_COMMIT ?? '',
+    }));
     if (!lease.acquired) {
       console.warn(
         JSON.stringify({
@@ -210,6 +214,9 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       };
     }
     const fenced = fence(step, async (name) => {
+      const code = this.env.SIGMA_SOURCE_COMMIT ?? '';
+      if (code !== lease.code)
+        return `refresh code changed before ${name}: ${JSON.stringify(lease.code)} → ${JSON.stringify(code)}`;
       const held = await renewRefreshLease(this.env.DB, leaseHolder, new Date());
       return held.acquired
         ? null
@@ -420,7 +427,8 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       // and served, so nothing here can un-serve it and the run goes on either way. A violation is
       // logged at error level; a D1 that stays overloaded through the step's retries leaves the
       // numbers unverified. Either way the window stays recorded, so the next run replays it and
-      // checks again. A lost lease is not a D1 hiccup: it ends the run as at every other step.
+      // checks again. A lost lease or changed code is not a D1 hiccup: it ends the run as at every
+      // other step.
       let integrity: NonNullable<RefreshResult['integrity']> = 'unverified';
       // Check names only: the ones that broke, or the one that could not complete.
       let checks: string[] = [];
@@ -435,7 +443,9 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         integrity = gate.ok ? 'ok' : 'violation';
         checks = gate.violations;
       } catch (err) {
-        if (String(err instanceof Error ? err.message : err).includes('lease lost before'))
+        if (
+          /(lease lost|code changed) before /.test(String(err instanceof Error ? err.message : err))
+        )
           throw err;
         const check = incompleteCheck(err);
         checks = check ? [check] : [];
