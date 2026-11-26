@@ -193,6 +193,8 @@ describe('transient staging statements', () => {
       'DROP TABLE IF EXISTS raw_contracts',
       'DROP TABLE IF EXISTS contract_cube',
       'DROP TABLE IF EXISTS contractor_identity',
+      'DROP TABLE IF EXISTS amendment_ocds_value_corrections',
+      'DROP TABLE IF EXISTS refresh_ocds_value_rows',
       'DROP TABLE IF EXISTS refresh_amendment_winners',
       'DROP TABLE IF EXISTS refresh_amendment_rekeyed',
       'DROP TABLE IF EXISTS raw_contract_value_existing',

@@ -144,6 +144,8 @@ const SCRATCH_TABLES = [
   'raw_contract_value_existing',
   'refresh_amendment_rekeyed',
   'refresh_amendment_winners',
+  'refresh_ocds_value_rows',
+  'amendment_ocds_value_corrections',
   'contractor_identity',
   'contract_cube',
 ] as const;
