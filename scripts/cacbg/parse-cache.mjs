@@ -83,16 +83,21 @@ function packageDir(name, from) {
 
 const versions = new Map();
 /** The parser version: 16 hex characters of the hash described above. Modules are named relative to the
- *  entry's directory, so the same sources give the same version wherever the checkout lies. */
-export function parserVersion(entry = PARSER_ENTRY) {
-  if (versions.has(entry)) return versions.get(entry);
+ *  entry's directory, so the same sources give the same version wherever the checkout lies. `node` and
+ *  `format` are this process's Node and FORMAT; they are parameters only so that a test can move them. */
+export function parserVersion(
+  entry = PARSER_ENTRY,
+  { node = process.version, format = FORMAT } = {},
+) {
+  const memo = JSON.stringify([entry, node, format]);
+  if (versions.has(memo)) return versions.get(memo);
   const { modules, packages } = parserClosure(entry);
-  const hash = createHash('sha256').update(`format ${FORMAT}\nnode ${process.version}\n`);
+  const hash = createHash('sha256').update(`format ${format}\nnode ${node}\n`);
   for (const file of modules)
     hash.update(`${path.relative(path.dirname(entry), file)}\n`).update(fs.readFileSync(file));
   for (const id of packages) hash.update(`\n${id}`);
-  versions.set(entry, hash.digest('hex').slice(0, 16));
-  return versions.get(entry);
+  versions.set(memo, hash.digest('hex').slice(0, 16));
+  return versions.get(memo);
 }
 
 /** The inputs of one folder: its name, its listing's hash and each file it reads, in reading order. */

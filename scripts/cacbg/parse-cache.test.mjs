@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { STREAMS } from './extract-checkpoint.mjs';
 import { declaration, memoryCorpus } from './extract-fixture.mjs';
 import {
+  FORMAT,
   entryKey,
   inputsKey,
   parserClosure,
@@ -281,34 +282,65 @@ test('the parser version follows every byte of the parser and every module it re
     const original = parserVersion();
     assert.match(original, /^[0-9a-f]{16}$/);
     assert.equal(parserVersion(entry), original, 'the same sources are the same version');
-    const versionAfter = (edit) => {
+    // The Node that runs the parser and the records' format are part of it too.
+    assert.equal(parserVersion(entry, { node: process.version, format: FORMAT }), original);
+    assert.notEqual(parserVersion(entry, { node: 'v0.0.0-test' }), original, 'another Node');
+    assert.notEqual(parserVersion(entry, { format: FORMAT + 1 }), original, 'another format');
+    const entryAfter = (edit) => {
       const n = fs.mkdtempSync(path.join(copy, 'v-'));
       for (const m of modules) fs.copyFileSync(m, path.join(n, path.basename(m)));
       edit(n);
-      return parserVersion(path.join(n, 'extract-parse.mjs'));
+      return path.join(n, 'extract-parse.mjs');
     };
+    const versionAfter = (edit) => parserVersion(entryAfter(edit));
     // One byte of the parser, a comment included.
     const edited = versionAfter((n) =>
       fs.appendFileSync(path.join(n, 'parse.mjs'), '\n// one more line\n'),
     );
     assert.notEqual(edited, original);
-    // A module the parser starts to import is part of it from then on.
-    const imported = versionAfter((n) => {
-      fs.writeFileSync(path.join(n, 'helper.mjs'), 'export const x = 1;\n');
-      fs.appendFileSync(path.join(n, 'parse.mjs'), "\nexport { x } from './helper.mjs';\n");
-    });
-    assert.notEqual(imported, original);
-    assert.notEqual(imported, edited);
-    // Another release of a package the parser imports, the sources unchanged.
-    const released = versionAfter((n) => {
-      const pkg = path.join(n, 'node_modules', 'fast-xml-parser');
-      fs.mkdirSync(pkg, { recursive: true });
-      fs.writeFileSync(
-        path.join(pkg, 'package.json'),
-        JSON.stringify({ name: 'fast-xml-parser', version: '0.0.0-test' }),
-      );
-    });
+    // A module the parser starts to import is part of it from then on, in each form of import: once it
+    // is imported, a change to that module alone — the parser's own text the same — moves the version.
+    for (const statement of [
+      "export { x } from './helper.mjs';",
+      "import { x } from './helper.mjs';",
+      "import './helper.mjs';",
+    ]) {
+      const withHelper = (helper) =>
+        versionAfter((n) => {
+          fs.writeFileSync(path.join(n, 'helper.mjs'), helper);
+          fs.appendFileSync(path.join(n, 'parse.mjs'), `\n${statement}\n`);
+        });
+      const imported = withHelper('export const x = 1;\n');
+      assert.notEqual(imported, original, statement);
+      assert.notEqual(imported, edited, statement);
+      assert.notEqual(withHelper('export const x = 2;\n'), imported, `${statement} is followed`);
+    }
+    // Another release of a package the parser imports, or of a package that one depends on (entity
+    // decoding, for one, lives in such a dependency), the sources unchanged.
+    const releases = (n, dependencyVersion) => {
+      const manifest = (name, version, dependencies) => {
+        const pkg = path.join(n, 'node_modules', name);
+        fs.mkdirSync(pkg, { recursive: true });
+        fs.writeFileSync(
+          path.join(pkg, 'package.json'),
+          JSON.stringify({ name, version, dependencies }),
+        );
+      };
+      manifest('fast-xml-parser', '0.0.0-test', { 'test-entities': dependencyVersion });
+      manifest('test-entities', dependencyVersion);
+    };
+    const releasedEntry = entryAfter((n) => releases(n, '1.0.0'));
+    assert.deepEqual(parserClosure(releasedEntry).packages, [
+      'fast-xml-parser@0.0.0-test',
+      'test-entities@1.0.0',
+    ]);
+    const released = parserVersion(releasedEntry);
     assert.notEqual(released, original);
+    assert.notEqual(
+      versionAfter((n) => releases(n, '1.0.1')),
+      released,
+      'a dependency of a package is part of the parser',
+    );
     // A dynamic import would hide a module from the walk, so it is refused.
     assert.throws(
       () =>
