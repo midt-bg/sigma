@@ -3,9 +3,9 @@ import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import { getFlows } from './flows';
 
 const pairRow = {
-  authority_id: 'auth:000695089',
-  bidder_id: 'eik:103267194',
-  authority_name: 'Министерство на финансите',
+  authority_id: 'auth:111111111',
+  bidder_id: 'eik:222222222',
+  authority_name: 'Министерство Тест',
   bidder_name: 'ТЕСТ ООД',
   bidder_kind: 'company' as const,
   won_eur: 500000,
@@ -19,7 +19,7 @@ const pairRow = {
 // keeps the assertions reading as intent rather than raw query text, and localises any future change.
 const usesFlowPairsRollup = (sql: string) => sql.includes('FROM flow_pairs');
 const usesBaseAggregation = (sql: string) => sql.includes('FROM contracts c');
-const filtersByYear = (sql: string) => sql.includes('substr(c.signed_at, 1, 4) = ?');
+const filtersByYear = (sql: string) => sql.includes('c.signed_at >= ?');
 
 // The two shapes the pair query can take — the flow_pairs rollup, and the base aggregation a filter
 // switches it to — plus the sector-filter dropdown, which no test here asserts on.
@@ -71,8 +71,8 @@ describe('getFlows', () => {
     expect(data.pairs).toHaveLength(1);
     const pair = data.pairs[0]!;
     expect(pair.rank).toBe(1);
-    expect(pair.authoritySlug).toBe('000695089');
-    expect(pair.bidderSlug).toBe('103267194');
+    expect(pair.authoritySlug).toBe('111111111');
+    expect(pair.bidderSlug).toBe('222222222');
     expect(pair.wonEur).toBe(500000);
     expect(pair.contracts).toBe(10);
   });
@@ -145,7 +145,7 @@ describe('getFlows — funding scope and label truncation', () => {
   });
 
   it('truncates a sankey node label longer than 30 chars with an ellipsis', async () => {
-    const longName = 'Министерство на регионалното развитие и благоустройството';
+    const longName = 'Министерство на тестовите проверки и примерните данни';
     const data = await getFlows(fake([{ ...pairRow, authority_name: longName }]).db, {});
     const node = data.sankey.nodes.find((n) => n.side === 'authority')!;
     expect(node.label.length).toBeLessThanOrEqual(30);
