@@ -457,6 +457,11 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         // `publish` too: the attempt starts over from a fresh snapshot, so a failure after the swap landed
         // only rebuilds what is already served, and hours of finished work are not thrown away.
         //
+        // `verify` too, since a slot that holds a finished ship is only verified again
+        // (scripts/rebuild-slot.mjs): D1 still refusing the verification's reads after their own retries
+        // is the overload seen right after a ship, and a new attempt costs minutes, not the build. A count
+        // that differs refuses the same way every time, and the three-times rule below ends it.
+        //
         // A replayed attempt counts as moving, so the failure budget alone would retry a stage that
         // refuses every time — publish, say — for ever. The same refusal at the same stage, three times
         // without the run getting past its mark, ends the run; tomorrow's cron starts a new one. A child
@@ -464,7 +469,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         // as a yield and never does.
         const retryable =
           status.state === 'yielded' ||
-          ['fetch', 'import', 'snapshot', 'registry', 'publish', 'reindex'].includes(
+          ['fetch', 'import', 'snapshot', 'registry', 'publish', 'reindex', 'verify'].includes(
             status.stage,
           ) ||
           status.signal;
