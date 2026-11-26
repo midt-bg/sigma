@@ -28,6 +28,7 @@ import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
 import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
 import { incompleteCheck, runServedIntegrityGate } from './integrity';
+import { readScheduledPause } from './pause';
 import {
   acquireRegistryLease,
   completeEntryBaseline,
@@ -1049,6 +1050,27 @@ export default {
       )
     )
       jobs.push(['declarations', () => env.DECLARATIONS!.getByName('declarations').startRun()]);
+    // The operator's hold (scripts/scheduled-pause.mjs) is asked only when there is something to hold, and
+    // before anything starts. It has an expiry, so a forgotten hold ends by itself.
+    if (jobs.length) {
+      const { pause, problem } = await readScheduledPause(env.DECLARATIONS_CORPUS, new Date());
+      if (problem)
+        console.error(
+          JSON.stringify({ level: 'error', event: 'etl_scheduled_pause_ignored', problem }),
+        );
+      if (pause) {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            event: 'etl_scheduled',
+            skipped: 'paused',
+            jobs: jobs.map(([job]) => job),
+            ...pause,
+          }),
+        );
+        return;
+      }
+    }
     const results = await Promise.allSettled(
       jobs.map(async ([job, start]) => {
         const result = await start();
