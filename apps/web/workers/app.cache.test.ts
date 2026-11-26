@@ -15,6 +15,7 @@ const reply = vi.hoisted(() => ({
   policy: null as string | null,
   broken: false,
   custom: null as ((request: Request, env: { DB: D1Database }) => Promise<Response>) | null,
+  generation: null as string | null,
 }));
 const limiter = vi.hoisted(() => ({ refusal: null as Response | null }));
 
@@ -27,9 +28,17 @@ const limiter = vi.hoisted(() => ({ refusal: null as Response | null }));
 // must be in the cache key. The import thunk is never invoked, so no real build is loaded.
 vi.mock('react-router', () => ({
   createRequestHandler:
-    () => async (request: Request, context: { cloudflare: { env: { DB: D1Database } } }) => {
+    () =>
+    async (
+      request: Request,
+      context: {
+        cloudflare: { env: { DB: D1Database } };
+        markGeneration?: (generation: string) => void;
+      },
+    ) => {
       rendered.push(request);
       envs.push(context.cloudflare.env);
+      if (reply.generation) context.markGeneration?.(reply.generation);
       const { status, throws, policy, broken, custom } = reply;
       if (held.gate) await held.gate;
       if (throws) throw new Error('render failed');
@@ -194,6 +203,7 @@ beforeEach(() => {
   reply.policy = null;
   reply.broken = false;
   reply.custom = null;
+  reply.generation = null;
   limiter.refusal = null;
   vi.stubEnv('DEV', false);
 });
@@ -384,6 +394,33 @@ describe('app.ts edge cache middleware', () => {
     const stored = [...fakeCache.store.values()][0]!.headers;
     expect(stored).toContainEqual(['cache-control', 'public, s-maxage=1800']);
     expect([...conditional.headers.keys()].some((name) => name.startsWith('x-sigma-'))).toBe(false);
+  });
+
+  it('keeps the build and data generation on a conditional HIT', async () => {
+    vi.stubGlobal('__SIGMA_VERSION__', 'abcdef012345');
+    reply.generation = '2000-03-05 06:07:08';
+    // The Cache API's 304 is not promised to carry the stored entry's custom headers: take them away.
+    const match = fakeCache.match.bind(fakeCache);
+    const spy = vi.spyOn(fakeCache, 'match').mockImplementation(async (req) => {
+      const response = await match(req);
+      if (response?.status !== 304) return response;
+      const headers = new Headers(response.headers);
+      headers.delete('X-Sigma-Version');
+      headers.delete('X-Sigma-Generation');
+      return new Response(null, { status: 304, headers });
+    });
+    try {
+      await get('https://x/contracts');
+      const conditional = await get('https://x/contracts', 'GET', { 'If-None-Match': '"test-v1"' });
+      expect(conditional.status).toBe(304);
+      expect(conditional.edge).toBe('HIT');
+      expect(conditional.headers.get('X-Sigma-Version')).toBe('abcdef012345');
+      expect(conditional.headers.get('X-Sigma-Generation')).toBe('2000-03-05 06:07:08');
+    } finally {
+      spy.mockRestore();
+      // Not unstubAllGlobals: that would also take away the Cache API double the whole file shares.
+      vi.stubGlobal('__SIGMA_VERSION__', undefined);
+    }
   });
 
   it.each(['https://x/contracts', 'https://x/contracts.data'])(

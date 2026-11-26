@@ -56,6 +56,8 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   let coverage: FooterCoverage | null = null;
   try {
     coverage = await withDbRetry(() => getFooterCoverage(getDb(context.cloudflare.env)));
+    // The same row is the data generation; the worker stamps it on the response (workers/health.ts).
+    if (coverage.refreshedAt) context.markGeneration?.(coverage.refreshedAt);
   } catch (error) {
     if (!isD1Refusal(error)) throw error;
     context.markDegraded?.('footer');

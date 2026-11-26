@@ -2,7 +2,23 @@ export interface RequestLogEnv {
   LOG_IP_KEY?: string;
 }
 
+/**
+ * `error` for a 5xx, `warn` for a page served without one of its parts (X-Sigma-Degraded), `info`
+ * otherwise. The entry is written through the console method of the same name, so the Workers Logs
+ * level matches and a sustained run of 5xx can be filtered and alerted on by level alone.
+ */
+export type RequestLogLevel = 'info' | 'warn' | 'error';
+
+/** What the response says about how it was served; absent when the handler threw. */
+export interface ServedBy {
+  /** X-Edge-Cache: HIT, MISS or BYPASS. */
+  edge: string | null;
+  /** X-Sigma-Degraded: the part the page was rendered without. */
+  degraded: string | null;
+}
+
 export interface RequestLogEntry {
+  level: RequestLogLevel;
   ts: string;
   ipHash: string | null;
   method: string;
@@ -11,6 +27,8 @@ export interface RequestLogEntry {
   ms: number;
   q_present: boolean;
   q_len: number;
+  edge: string | null;
+  degraded: string | null;
 }
 
 export type LoggedFetchHandler = (
@@ -73,14 +91,30 @@ export async function ipHash(request: Request, env: RequestLogEnv): Promise<stri
   return hex(signature).slice(0, LOG_IP_HASH_HEX_LENGTH);
 }
 
+export function logLevel(status: number, degraded: string | null): RequestLogLevel {
+  if (status >= 500) return 'error';
+  return degraded ? 'warn' : 'info';
+}
+
+export function servedBy(response: Response): ServedBy {
+  return {
+    edge: response.headers.get('X-Edge-Cache'),
+    degraded: response.headers.get('X-Sigma-Degraded'),
+  };
+}
+
+const UNSERVED: ServedBy = { edge: null, degraded: null };
+
 export async function buildRequestLogEntry(
   request: Request,
   env: RequestLogEnv,
   status: number,
   ms: number,
   now = Date.now(),
+  served: ServedBy = UNSERVED,
 ): Promise<RequestLogEntry> {
   return {
+    level: logLevel(status, served.degraded),
     ts: new Date(now).toISOString(),
     ipHash: await ipHash(request, env),
     method: request.method,
@@ -88,6 +122,7 @@ export async function buildRequestLogEntry(
     status,
     ms,
     ...querySummary(request.url),
+    ...served,
   };
 }
 
@@ -97,9 +132,14 @@ export async function emitRequestLog(
   status: number,
   ms: number,
   now = Date.now(),
+  served: ServedBy = UNSERVED,
 ): Promise<void> {
   try {
-    console.log(JSON.stringify(await buildRequestLogEntry(request, env, status, ms, now)));
+    const entry = await buildRequestLogEntry(request, env, status, ms, now, served);
+    const line = JSON.stringify(entry);
+    if (entry.level === 'error') console.error(line);
+    else if (entry.level === 'warn') console.warn(line);
+    else console.log(line);
   } catch {
     // Logging must not affect the served response.
   }
@@ -112,9 +152,10 @@ export function queueRequestLog(
   status: number,
   ms: number,
   now = Date.now(),
+  served: ServedBy = UNSERVED,
 ): void {
   try {
-    ctx.waitUntil(emitRequestLog(request, env, status, ms, now));
+    ctx.waitUntil(emitRequestLog(request, env, status, ms, now, served));
   } catch {
     // Logging must not affect the served response.
   }
@@ -128,13 +169,15 @@ export async function withRequestLog(
 ): Promise<Response> {
   const startedAt = Date.now();
   let status = 500;
+  let served = UNSERVED;
 
   try {
     const response = await handler(request, env, ctx);
     status = response.status;
+    served = servedBy(response);
     return response;
   } finally {
     const endedAt = Date.now();
-    queueRequestLog(ctx, request, env, status, endedAt - startedAt, endedAt);
+    queueRequestLog(ctx, request, env, status, endedAt - startedAt, endedAt, served);
   }
 }

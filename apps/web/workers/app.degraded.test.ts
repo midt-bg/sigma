@@ -5,7 +5,7 @@ import {
   UNSAFE_withErrorBoundaryProps,
   type ServerBuild,
 } from 'react-router';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The site chrome's own read must not take a page down. The REAL worker (app.ts) drives the REAL
 // React Router request handler over a build assembled from the REAL root module and a loader-less
@@ -331,5 +331,112 @@ describe('a page whose footer read D1 refuses', () => {
     expect(page.headers.get('X-Sigma-Degraded')).toBeNull();
     expect(sql).toEqual([]);
     expect(store.size).toBe(0);
+  });
+});
+
+describe('the build and data generation a response names', () => {
+  beforeEach(() => vi.stubGlobal('__SIGMA_VERSION__', 'abcdef012345'));
+  // Not unstubAllGlobals: that would also take away the Cache API double the whole file shares.
+  afterEach(() => vi.stubGlobal('__SIGMA_VERSION__', undefined));
+
+  it('stamps both on a rendered page and keeps them on the edge copy', async () => {
+    const miss = await get('/accessibility', database('answers').db);
+    expect(miss.headers.get('X-Edge-Cache')).toBe('MISS');
+    expect(miss.headers.get('X-Sigma-Version')).toBe('abcdef012345');
+    expect(miss.headers.get('X-Sigma-Generation')).toBe('2000-03-05 06:07:08');
+
+    // A copy from the cache tells which build and data generation rendered it, even after the
+    // database moved on: a check compares this, not the bytes, with what /health reports.
+    vi.stubGlobal('__SIGMA_VERSION__', 'fedcba987654');
+    const hit = await get('/accessibility', database('answers').db);
+    expect(hit.headers.get('X-Edge-Cache')).toBe('HIT');
+    expect(hit.headers.get('X-Sigma-Version')).toBe('abcdef012345');
+    expect(hit.headers.get('X-Sigma-Generation')).toBe('2000-03-05 06:07:08');
+  });
+
+  it('stamps the single-fetch data twin the same way', async () => {
+    const data = await get('/fixture.data', database('answers').db);
+    expect(data.headers.get('X-Sigma-Version')).toBe('abcdef012345');
+    expect(data.headers.get('X-Sigma-Generation')).toBe('2000-03-05 06:07:08');
+  });
+
+  it('names no generation when nothing has been published yet', async () => {
+    const { db } = fakeD1([{ when: FOOTER_SQL, first: { as_of: null, refreshed_at: null } }]);
+    const page = await get('/accessibility', db);
+    expect(page.status).toBe(200);
+    expect(page.headers.get('X-Sigma-Generation')).toBeNull();
+  });
+
+  it('leaves the root loader working outside the worker, where nobody collects the generation', async () => {
+    const { loader } = await import('../app/root');
+    const data = await loader({
+      request: new Request('https://example.invalid/accessibility'),
+      context: { cloudflare: { env: { DB: database('answers').db } } },
+    } as unknown as Parameters<typeof loader>[0]);
+    expect(data.refreshedAt).toBe('2000-03-05 06:07:08');
+  });
+
+  it('names no generation for a page rendered without the footer row', async () => {
+    const page = await get('/accessibility', database('overloaded').db);
+    expect(page.headers.get('X-Sigma-Degraded')).toBe('footer');
+    expect(page.headers.get('X-Sigma-Version')).toBe('abcdef012345');
+    expect(page.headers.get('X-Sigma-Generation')).toBeNull();
+  });
+});
+
+describe('/health through the worker', () => {
+  const HEALTH_DB = () =>
+    fakeD1([
+      {
+        when: 'JOIN home_totals',
+        first: { generation: '2000-03-05 06:07:08', as_of: '2000-03-04', version: 5 },
+      },
+    ]);
+  // An isolate reuses a report for a few seconds; each test starts past the previous one's.
+  let clock = Date.parse('2000-03-06T00:00:00Z');
+  beforeEach(() => {
+    clock += 60_000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(clock);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('is answered by this deployment, never from or into the edge cache', async () => {
+    const match = vi.spyOn(edgeCache, 'match');
+    const put = vi.spyOn(edgeCache, 'put');
+    for (let i = 0; i < 2; i++) {
+      const response = await get('/health', HEALTH_DB().db);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(response.headers.get('X-Edge-Cache')).toBe('BYPASS');
+      expect(JSON.parse(response.body)).toMatchObject({
+        status: 'ok',
+        data: { version: 5, generation: '2000-03-05 06:07:08' },
+      });
+    }
+    expect(match).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+    match.mockRestore();
+    put.mockRestore();
+  });
+
+  it('answers an overloaded D1 with a degraded report, not a 5xx', async () => {
+    const response = await get('/health', throwingD1(new Error(OVERLOADED)).db);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('Retry-After')).toBeNull();
+    expect(JSON.parse(response.body)).toMatchObject({ status: 'degraded', db: 'overloaded' });
+  });
+
+  it('answers HEAD with the headers only', async () => {
+    const response = await workerFetch(
+      new Request('https://example.invalid/health', { method: 'HEAD' }),
+      { DB: HEALTH_DB().db },
+      { waitUntil: () => {} },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(await response.text()).toBe('');
   });
 });

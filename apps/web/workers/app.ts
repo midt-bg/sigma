@@ -25,6 +25,8 @@ import {
   setAllowHeader,
 } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
+import { GENERATION_HEADER, HEALTH_PATH, healthResponse, VERSION_HEADER } from './health';
+import { sigmaVersion } from '../app/lib/meta';
 import { enterFlight, type FlightOutcome, type RenderOwner } from './render-gate';
 import { withRequestLog } from './request-log';
 
@@ -37,6 +39,9 @@ declare module 'react-router' {
     /** A loader that served the page without one of its parts (D1 refused that read) says so here;
      *  the response then stays at the edge only briefly. Absent outside the worker. */
     markDegraded?: (part: DegradedPart) => void;
+    /** The root loader names the data generation it read (`home_totals.refreshed_at`); the worker stamps
+     *  it on the response (X-Sigma-Generation, workers/health.ts). Absent outside the worker. */
+    markGeneration?: (generation: string) => void;
   }
 }
 
@@ -106,7 +111,15 @@ async function cachedResponse(key: Request): Promise<Response | null> {
   const headers = new Headers(cached.headers);
   if (copy && cached !== copy) {
     headers.set('Cache-Control', copy.headers.get('Cache-Control') ?? 'no-store');
-    for (const name of ['Content-Type', 'Content-Security-Policy', 'X-Robots-Tag']) {
+    // A 304 carries what the cache put on it; the full copy's own headers, the build and data
+    // generation among them, are copied over.
+    for (const name of [
+      'Content-Type',
+      'Content-Security-Policy',
+      'X-Robots-Tag',
+      VERSION_HEADER,
+      GENERATION_HEADER,
+    ]) {
       const value = copy.headers.get(name);
       if (value !== null) headers.set(name, value);
     }
@@ -242,6 +255,10 @@ async function respond(
 
   if (request.method === 'OPTIONS') return optionsResponse(import.meta.env.PROD);
 
+  // Answered before the cache is consulted: never looked up, never stored, always this deployment.
+  if (new URL(request.url).pathname === HEALTH_PATH)
+    return healthResponse(request, env, import.meta.env.PROD);
+
   // The loader sees only the query its route reads (app/lib/query-params.ts), the same query the cache
   // key carries, so a junk or unknown value neither mints a new key nor renders into a shared one.
   const routeManifest = isRouteManifest(request);
@@ -335,9 +352,11 @@ async function render(
   try {
     const readEnv = REPLICA_ROUTES.has(normalizedPathname(request)) ? inReadSession(env) : env;
     let part = null as DegradedPart | null;
+    let generation = null as string | null;
     const rendered = await requestHandler(request, {
       cloudflare: { env: readEnv, ctx },
       markDegraded: (missing) => void (part = missing),
+      markGeneration: (read) => void (generation = read),
     });
     const response = part ? degraded(rendered, part) : rendered;
     if (response.status >= 500) outcome = response.status;
@@ -348,6 +367,9 @@ async function render(
     if (isNoindexNamesPath(request) || !isIndexedHost(request))
       hardened.headers.set('X-Robots-Tag', 'noindex');
     hardened.headers.set('X-Edge-Cache', 'BYPASS');
+    // Set before the edge copy is taken, so a HIT names the build and the data it was rendered from.
+    if (sigmaVersion()) hardened.headers.set(VERSION_HEADER, sigmaVersion());
+    if (generation) hardened.headers.set(GENERATION_HEADER, generation);
     if (!key || !owner) return hardened;
 
     // Once ownership ends, the response can no longer be delivered or change this cache key.
