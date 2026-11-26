@@ -462,8 +462,8 @@ ETL-ът по необходимост е отделен worker — той но�
 | `checkedAt` | кога е четена базата |
 | `code.commit` | комитът на build-а (същият като `<meta name="sigma-version">`) |
 | `data.version`, `data.builtAt`, `data.builtFromCommit` | редът в `data_version` на слота (виж „Версията на данните“) |
-| `data.generation`, `data.asOf` | `home_totals.refreshed_at` и `as_of` — последното публикуване на обновяване или изграждане |
-| `runs.refresh` | `publishedAt` (= `data.generation`); `unsettledWindows` — записани прозорци, които минал integrity gate още не е уредил; `oldestUnsettledAgeSeconds` — възрастта на най-стария от тях; `verdict` и `verdictAt` — присъдата на последния ход, стигнал до гейта (`ok`, `violation`, `unverified`), и кога е взета; `verifiedAt` — кога ход за последно е завършил с `ok` (`refresh_verdict`) |
+| `data.generation`, `data.asOf` | `home_totals.refreshed_at` и `as_of`. Поколението се мести, когато обновяване започне да пише обслужвани данни и пак когато свърши, и при публикуване на изграждане — казва „данните може да са се променили“, не „ход е завършил“. `asOf` е датата на последния обслужван договор |
+| `runs.refresh` | `publishedAt` (= `data.generation`; не е краят на завършен ход — за това са `verdictAt` и `verifiedAt`); `unsettledWindows` — записани прозорци, които минал integrity gate още не е уредил; `oldestUnsettledAgeSeconds` — възрастта на най-стария от тях; `verdict` и `verdictAt` — присъдата на последния ход, стигнал до гейта (`ok`, `violation`, `unverified`), и кога е взета; `verifiedAt` — кога ход за последно е завършил с `ok` (`refresh_verdict`) |
 | `runs.registry` | `changesThrough` — последният приключил ден, чиито промени в регистъра са насрочени за четене (`registry_entry_state.seeded_through`) |
 | `runs.declarations` | `relatedPersonsPublishedAt` — последното публикуване на свързаните лица (`rp_generation`) |
 

@@ -319,15 +319,18 @@ CREATE INDEX idx_refresh_amendment_winners
   ON refresh_amendment_winners(unp, contract_number);
 
 -- @refresh-batch setup
--- Invalidate the freshness markers BEFORE anything is rebuilt; `@refresh-batch globals` writes the true
--- values back at the end. The groups below run as separate batches with nothing transactional spanning
--- them, so a failure part-way through leaves the domain tables advanced while `data_freshness` and
--- `home_totals` still advertise the PREVIOUS slice — a reader is then told a date that is confidently
--- wrong rather than unknown. Nulling `as_of` first makes an interrupted refresh read as „unknown slice":
--- getCoverageMeta already coalesces a missing as_of to null, and the ETL catch-up planner falls back to
--- raw_contracts. Only `as_of` is touched: `refreshed_at` is NOT NULL, and the row counts stay readable.
-UPDATE data_freshness SET as_of = NULL;
-UPDATE home_totals SET as_of = NULL;
+-- The groups below run as separate batches with nothing transactional spanning them, so a run can die
+-- between any two. What the site says about its own data therefore moves with the data, never ahead of
+-- it and never behind it:
+--   • the as-of date (home_totals.as_of, „последен договор") is written in `@refresh-batch contracts`, in
+--     the same batch as the contract rows it describes. It used to be NULLed here and rewritten in
+--     `globals`, so that a run dying in between would read as „unknown" instead of a date the served
+--     contracts had already passed; that left the site without a date. Now there is no gap to cover.
+--   • the data generation (home_totals.refreshed_at: /health, X-Sigma-Generation, „данни обновени") moves
+--     here, before the first served row of this run changes, and again in `@refresh-batch cleanup`, after
+--     the last: a page rendered before this run carries an older generation than /health as soon as the
+--     run has changed anything, even if it dies, and a page rendered during it is older once it ends.
+UPDATE home_totals SET refreshed_at = datetime('now') WHERE id = 1;
 
 -- The base-wins dedup probes contracts by АОП document number — index it (no-op if already present).
 CREATE INDEX IF NOT EXISTS idx_contracts_cnum ON contracts(contract_number);
@@ -1826,6 +1829,11 @@ FROM bidders b
 WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL)
   OR b.id IN (SELECT bidder_key FROM contractor_identity);
 
+-- The as-of date, in the same batch as the contract rows it describes (see `@refresh-batch setup`): this
+-- is the only batch that adds or removes a contract or changes its signing date. The expression is the
+-- one scripts/precompute.sql writes, so a refreshed slot and a rebuilt one agree; a seek on
+-- idx_contracts_signed.
+UPDATE home_totals SET as_of = (SELECT MAX(signed_at) FROM contracts WHERE signed_at <= date('now')) WHERE id = 1;
 
 
 -- 5) Promote window amendments into served domain history and roll touched contracts.
@@ -2436,7 +2444,7 @@ SELECT 1,
   (SELECT COALESCE(SUM(suspect), 0) FROM contract_cube),
   (SELECT MIN(signed_at) FROM contracts WHERE signed_at >= '2020-01-01' AND signed_at <= date('now')),
   (SELECT MAX(signed_at) FROM contracts WHERE signed_at <= date('now')),
-  -- Freshness is the latest in-corpus signed contract date. data_freshness is maintained above.
+  -- The as-of date `@refresh-batch contracts` already wrote: no batch since has changed a contract's date.
   (SELECT MAX(signed_at) FROM contracts WHERE signed_at <= date('now')),
   datetime('now');
 
@@ -2564,6 +2572,9 @@ FROM (
 GROUP BY division;
 
 -- @refresh-batch cleanup
+-- The data generation moves again, after the last batch that writes served data (see `@refresh-batch setup`).
+-- A new batch that writes served rows goes ABOVE this batch, never after it.
+UPDATE home_totals SET refreshed_at = datetime('now') WHERE id = 1;
 DROP TABLE IF EXISTS refresh_joint_tender_leads;
 DROP TABLE IF EXISTS refresh_unp_prefix_authorities;
 DROP TABLE IF EXISTS refresh_joint_authority_members;

@@ -220,12 +220,13 @@ function resolveCatchupPlan() {
   const maxLoadedDate = latestLoadedDate();
   if (!maxLoadedDate) {
     // No watermark. That reads as „nothing is loaded" — and for a first run it IS, so the full backfill
-    // below is right. But the two witnesses latestLoadedDate consults are both transient, and they can
-    // fall silent together for a completely different reason:
+    // below is right. But the two witnesses latestLoadedDate consults can fall silent together for a
+    // completely different reason:
     //   • raw_contracts is the transient staging, torn down in a finally after every load;
-    //   • refresh-slice.sql NULLs data_freshness.as_of in `setup`, before any served rows change,
-    //     and rewrites it only in `globals` after the writes.
-    //     Every batch is its own atomic statement group, so ANY failure in between leaves as_of NULL.
+    //   • data_freshness is rewritten by DELETE + INSERT (normalize-raw.sql on a full derive, the
+    //     `globals` batch of refresh-slice.sql on a slice), so a derive cut between the two leaves it
+    //     empty. (Until 2026-11 refresh-slice.sql also NULLed its as_of in `setup`, so every slice that
+    //     died before `globals` did; it no longer touches it anywhere else.)
     // So an INTERRUPTED derive is indistinguishable from a cold start by watermark alone, and the
     // consequences differ sharply: a cold start wants the whole feed, while an interrupted derive over a
     // populated surface would silently re-derive from DEFAULT_FROM — a 2020→today rebuild opening with
@@ -246,8 +247,8 @@ function resolveCatchupPlan() {
     if (!explicitFrom && servedCorpusRows() > 0) {
       throw new Error(
         'catch-up cannot plan: no load watermark, but the served surface is not empty.\n' +
-          '  Both witnesses are transient and empty right now — raw_contracts (torn down after each\n' +
-          '  load) and data_freshness.as_of (NULLed by refresh-slice.sql until its final batches). That\n' +
+          '  Both witnesses are empty right now — raw_contracts (torn down after each load) and\n' +
+          '  data_freshness.as_of (rewritten whole by every derive, empty if one was cut half-way). That\n' +
           '  is what an INTERRUPTED derive looks like, and it is indistinguishable here from a first run.\n' +
           '  Refusing rather than guessing: planning from the default start would re-derive the whole\n' +
           '  feed over a populated surface.\n' +

@@ -377,8 +377,8 @@ export async function releaseRefreshLease(db: D1Database, holder: string): Promi
 // half-applied window consistent. The groups are separate atomic batches with cross-group data
 // dependencies — `tenders` writes EOP procedure headers, then `contracts` classifies their
 // contracts against those estimates — so a death in between leaves rows derived from
-// two different states of the window, and no later window re-derives them: after an abort
-// data_freshness.as_of is NULL and the planner falls back to a three-day lookback from today.
+// two different states of the window, and no later window re-derives them: after an abort the planner's
+// own lookback starts from data_freshness.as_of, which says nothing about where the run stopped.
 // The cure is to REPLAY: a run records the exact [from, to] it is about to cover before it stages
 // anything, and after the served gate passed the covered range is SUBTRACTED from every recorded
 // promise — a promise inside the range is deleted, one straddling it is shrunk to what is still

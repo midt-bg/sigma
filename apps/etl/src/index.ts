@@ -421,7 +421,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       };
       await runGroup(resolution);
 
-      // Query the resolved keys and affected history before invalidating freshness or
+      // Query the resolved keys and affected history before moving the data generation or
       // writing served rows. A transient FX failure leaves the current slice intact.
       await fenced('load-fx', async () => {
         const fx = await loadFxRates(this.env.DB, { fetchedAt });
