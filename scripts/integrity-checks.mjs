@@ -30,6 +30,13 @@
 // docs/integrity-gate.md).
 const EPS_EUR = 5.0;
 
+// D1 allows only so much work inside any ten seconds, and the heavier checks read the contracts whole: run
+// back to back against a served database they add up to the limit by themselves (7429, „overloaded“). A
+// runner against D1 waits BREATHER_MS after a query that read HEAVY_ROWS rows or more — the cron's gate
+// (apps/etl/src/integrity.ts) and the slot rebuild's verification (scripts/rebuild-slot.mjs) alike.
+export const HEAVY_ROWS = 100_000;
+export const BREATHER_MS = 2_000;
+
 function num(v) {
   return v === null || v === undefined ? 0 : Number(v);
 }

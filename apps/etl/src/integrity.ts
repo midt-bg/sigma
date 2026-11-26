@@ -1,8 +1,12 @@
 import {
+  BREATHER_MS,
+  HEAVY_ROWS,
   runIntegrityChecks,
   summarizeIntegrity,
   type IntegrityResult,
 } from '../../../scripts/integrity-checks.mjs';
+
+export { BREATHER_MS, HEAVY_ROWS };
 
 // The cron refresh writes to the served D1 directly (no work-DB/ship step). Before this gate the
 // steady-state path ran NONE of the reconciliation checks the CLI paths run (import.mjs /
@@ -37,9 +41,8 @@ const brief = (r: IntegrityResult) => ({ name: r.name, detail: r.detail });
 // The served D1 allows only so much work inside any ten seconds, and the gate runs straight after the
 // slice derive has spent most of that. Its heavier checks read the contracts whole, so run back to back
 // they add up to the limit by themselves — and a retry then repeats the same burst and fails the same
-// way. After a query that read a table's worth of rows the gate therefore waits before the next one.
-export const HEAVY_ROWS = 100_000;
-export const BREATHER_MS = 2_000;
+// way. After a query that read a table's worth of rows the gate therefore waits before the next one
+// (HEAVY_ROWS, BREATHER_MS — shared with the slot rebuild's verification, scripts/integrity-checks.mjs).
 
 export async function runServedIntegrityGate(
   db: D1Database,
