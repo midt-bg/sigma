@@ -867,3 +867,58 @@ test('a failed copy starts no new copies, with many in flight, and the run fails
   assert.match(out, /stopped after [0-3] of 40: copy into sigma-declarations-dst: HTTP 403/);
   assert.ok(writes(r2.requests).length <= 4, `${writes(r2.requests).length} copies were started`);
 });
+
+test('a source without corpus is not a match: verify, plan and copy all say so', async () => {
+  const empty = new Map([[C('accepted.json'), object('{"runId":"x"}')]]);
+  for (const argv of [
+    ['verify', '--from', FROM, '--to', TO],
+    ['verify', '--from', FROM, '--to', TO, '--allow-extra'],
+    ['plan', '--from', FROM, '--to', TO],
+    ['copy', '--from', FROM, '--to', TO],
+  ]) {
+    for (const dst of [new Map(), sourceBucket()]) {
+      const r2 = fakeR2({ [FROM]: empty, [TO]: dst });
+      const { code, out } = await run(argv, r2);
+      assert.equal(code, 1, `${argv.join(' ')}\n${out}`);
+      assert.match(
+        out,
+        /failed: sigma-declarations-src holds no corpus objects: nothing to \w+; check --from/,
+      );
+      assert.doesNotMatch(out, /holds the source corpus exactly/);
+      assert.deepEqual(writes(r2.requests), []);
+    }
+  }
+});
+
+test('a folder named with --folders that the source lacks fails the run', async () => {
+  for (const argv of [
+    ['verify', '--from', FROM, '--to', TO, '--folders', '2024,2099'],
+    ['verify', '--from', FROM, '--to', TO, '--folders', '2099', '--allow-extra'],
+    ['plan', '--from', FROM, '--to', TO, '--folders', '2099'],
+    ['copy', '--from', FROM, '--to', TO, '--folders', '2024,2099'],
+  ]) {
+    const r2 = fakeR2({ [FROM]: sourceBucket(), [TO]: new Map() });
+    const { code, out } = await run(argv, r2);
+    assert.equal(code, 1, argv.join(' '));
+    assert.match(
+      out,
+      /failed: sigma-declarations-src holds no corpus folder 2099: check --folders/,
+    );
+    assert.deepEqual(writes(r2.requests), []);
+  }
+});
+
+test('verify fails on objects the target lacks, with no other difference', async () => {
+  const dst = sourceBucket();
+  dst.delete(C('2025y/b-002.xml'));
+  const r2 = fakeR2({ [FROM]: sourceBucket(), [TO]: dst });
+  const { code, lines } = await run(['verify', '--from', FROM, '--to', TO, '--allow-extra'], r2);
+  assert.equal(code, 1);
+  assert.ok(lines.some((l) => l.startsWith('ok      2024: ')));
+  assert.ok(lines.some((l) => l.startsWith('DIFFERS 2025y: count 3/2')));
+  assert.deepEqual(
+    lines.filter((l) => l.startsWith('  ')),
+    [`  missing ${C('2025y/b-002.xml')}`],
+  );
+  assert.equal(lines.at(-1), 'verify: DIFFERENCES — see above');
+});

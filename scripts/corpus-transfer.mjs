@@ -394,7 +394,8 @@ export const USAGE =
 
 /**
  * The command over an injected client (see r2Client) and log. Answers the exit code: 0 done / matched,
- * 1 a difference (verify) or a stopped copy, 2 a refusal before anything was read.
+ * 1 a difference (verify), a stopped copy, or a source with no corpus (or no named folder) to carry,
+ * 2 a refusal before anything was read.
  */
 export async function runTransfer(argv, { client, log = console.log, random = Math.random }) {
   let action;
@@ -434,6 +435,16 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
       inventory(client, from, folders),
       inventory(client, to, folders),
     ]);
+    // Nothing to compare is not a match: a mistyped --from (an empty bucket that exists), swapped buckets
+    // or a mistyped folder would otherwise read as „the target holds the source corpus exactly".
+    const absent = (folders ?? []).filter((f) => !src.has(f));
+    if (absent.length)
+      throw new Fatal(
+        `${from} holds no corpus folder ${absent.join(', ')}: check --folders and --from`,
+      );
+    if (!src.size)
+      throw new Fatal(`${from} holds no corpus objects: nothing to ${action}; check --from`);
+
     // Content settled by the stored sha256 only where the ETag cannot say (objects written in parts).
     const checked = [];
     const sameContent = async (a, b) => {
