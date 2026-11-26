@@ -713,6 +713,32 @@ function refreshedSince(read, builtAt) {
 }
 
 /**
+ * A slot is ready only with the register's baseline accepted: the catch-up pass after the declarations read
+ * every company they asked for, and the daily run then reads the register's new entries from where the
+ * build left off. With the baseline open the daily run skips those reads until it closes it, and the slot
+ * may lack partidas the declarations' links were decided against. A verdict, never retried, and before the
+ * slot gets its version.
+ *
+ * A slot with no register at all needs no baseline: every registry table but the cursors counts nothing in
+ * the ship's receipt — nothing was asked of the register and nothing read from it (a snapshot with no
+ * winner to read). The counts are the receipt's, which the slot was just counted against.
+ */
+function refuseOpenBaseline(name, read, counts) {
+  const register = Object.entries(counts).filter(
+    ([t]) => t.startsWith('registry_') && !REGISTRY_CURSORS.includes(t),
+  );
+  if (register.every(([, n]) => n === 0)) return;
+  const status = read('SELECT baseline_status FROM registry_entry_state WHERE id = 1')[0]
+    ?.baseline_status;
+  if (status !== 'ready')
+    throw new SlotVerdict(
+      `${name} holds the register with its baseline ${status ?? 'missing'}, not accepted: the register ` +
+        'pass after the declarations did not finish in this build. The slot is not ready — build it ' +
+        'again without resume',
+    );
+}
+
+/**
  * The verification, a stage of its own: it needs nothing but the slot, so it runs right after the ship and
  * again later on the same slot without building anything (`SIGMA_REBUILD_VERIFY=1`). The ship's receipt says
  * what the slot must hold and which rules built it; the slot is counted against it, the integrity gate runs,
@@ -749,6 +775,7 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
       `Slot counts differ from the snapshot: ${mismatched.map((t) => `${t} ${served[t]} ≠ ${counts[t]}`).join(', ')}` +
         refreshedSince(read, builtAt),
     );
+  refuseOpenBaseline(name, read, counts);
   let results;
   try {
     results = await check(read, { label: `rebuilt slot ${name}`, exit: false });

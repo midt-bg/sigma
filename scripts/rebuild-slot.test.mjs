@@ -1518,3 +1518,60 @@ test('a table the build leaves without saying where it goes stops the build, nam
   assert.deepEqual(run.ran, ['prepare', 'import']);
   assert.deepEqual(Object.keys(s.receipts()), ['prepare'], 'the import never finished');
 });
+
+test('a slot whose register baseline was never accepted is refused, once, before it gets a version', async (t) => {
+  // The register read, the catch-up pass that accepts its baseline did not finish.
+  const s = builtSlot(t);
+  const run = slotRun(s, { runId: 'run-a', register: registerOnePerson });
+  const refused = await runRebuild({}, run.ops).catch((error) => error);
+  assert.match(refused.message, /baseline building, not accepted.*build it again without resume/);
+  assert.ok(verdictEvent(refused), 'a verdict: no new attempt verifies it again');
+  assert.deepEqual(run.ran, ['prepare', 'import', 'registry', 'local', 'ship']);
+  assert.deepEqual(s.stamp(), [], 'no version');
+  assert.ok(!('verify' in s.receipts()), 'no verification receipt');
+
+  // Without the cursor row at all, the same.
+  s.slot.exec('DELETE FROM registry_entry_state');
+  const counts = JSON.parse(
+    s.slot.prepare("SELECT detail FROM rebuild_state WHERE stage='ship'").get().detail,
+  );
+  counts.counts.registry_entry_state = 0;
+  s.slot
+    .prepare("UPDATE rebuild_state SET detail = ? WHERE stage='ship'")
+    .run(JSON.stringify(counts));
+  await assert.rejects(
+    runRebuild({ verify: true }, slotRun(s, { runId: 'run-a' }).ops),
+    /baseline missing, not accepted/,
+  );
+  assert.deepEqual(s.stamp(), []);
+});
+
+test('a slot with no register at all needs no baseline', async (t) => {
+  // Nothing asked of the register, nothing read: the cursors alone, the baseline still open. The local
+  // build carries them into the snapshot the ship takes whole.
+  const open = (db) => {
+    db.exec(`INSERT INTO registry_entry_state (id, seeded_through, baseline_status)
+      VALUES (1, '2026-11-20', 'building')`);
+    return [];
+  };
+  const s = builtSlot(t);
+  await runRebuild({}, slotRun(s, { runId: 'run-a', register: open }).ops);
+  assert.equal(
+    s.slot.prepare('SELECT baseline_status FROM registry_entry_state').get().baseline_status,
+    'building',
+  );
+  assert.equal(s.stamp().length, 1, 'verified and stamped');
+
+  // One queued company is a register asked for: no longer "no register".
+  const asked = builtSlot(t);
+  const queued = (db) => {
+    db.exec(`INSERT INTO registry_queue (eik, reason, queued_at)
+      VALUES ('${TEST_EIK}', 'new', '2026-11-20T00:00:00Z')`);
+    return open(db);
+  };
+  await assert.rejects(
+    runRebuild({}, slotRun(asked, { runId: 'run-a', register: queued }).ops),
+    /baseline building, not accepted/,
+  );
+  assert.deepEqual(asked.stamp(), []);
+});
