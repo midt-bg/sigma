@@ -172,8 +172,10 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
           .sort()
       : [];
   // The checkpoint lives with the corpus and is bound to this logical run and to its inputs: the
-  // stamped corpus, the identity rules, the output schema, and the registry facts the resolver read.
-  const runId = process.env.SIGMA_RUN_ID;
+  // stamped corpus, the identity rules, the output schema, and the registry facts the resolver read. A
+  // resumed slot rebuild names the earlier run of the same build whose reading it may adopt
+  // (SIGMA_CHECKPOINT_RUN_ID, scripts/rebuild-slot.mjs `checkpointRun`); the fingerprint still decides.
+  const runId = process.env.SIGMA_CHECKPOINT_RUN_ID || process.env.SIGMA_RUN_ID;
   const checkpointing = Boolean(store.remote && runId);
   const fingerprint = checkpointFingerprint([
     digest(Buffer.from(JSON.stringify(stamp?.inventory ?? []))),

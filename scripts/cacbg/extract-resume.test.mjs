@@ -102,6 +102,46 @@ test('an extract interrupted at any folder resumes into byte-identical output', 
   clearStaging();
 });
 
+test('a resumed slot rebuild reads on from the checkpoint of the run it continues', async () => {
+  clearStaging();
+  const { store } = corpus();
+  delete process.env.SIGMA_RUN_ID;
+  assert.equal(await run({ store }), 0);
+  const golden = outputs();
+
+  clearStaging();
+  const shared = corpus();
+  const earlier = '00000000-0000-4000-8000-0000000000a1';
+  const resumed = '00000000-0000-4000-8000-0000000000b2';
+  process.env.SIGMA_RUN_ID = earlier;
+  assert.equal(await run({ store: shared.store, yieldAfterFolders: 1 }), 75);
+  // A new logical run: on its own it would read every folder again.
+  clearStaging();
+  process.env.SIGMA_RUN_ID = resumed;
+  process.env.SIGMA_CHECKPOINT_RUN_ID = earlier;
+  const reads = [];
+  const get = shared.store.get;
+  shared.store.get = async (key) => {
+    reads.push(key);
+    return get(key);
+  };
+  try {
+    assert.equal(await run({ store: shared.store }), 0);
+  } finally {
+    delete process.env.SIGMA_CHECKPOINT_RUN_ID;
+    delete process.env.SIGMA_RUN_ID;
+  }
+  assert.deepEqual(outputs(), golden);
+  assert.ok(
+    !reads.includes('2024/list.xml'),
+    'the folder the earlier run accepted is not read again',
+  );
+  assert.ok(reads.includes('2025/list.xml'));
+  const head = JSON.parse(shared.objects.get(headKey(earlier)).toString('utf8'));
+  assert.deepEqual(head.folders, FOLDERS, 'it reads on under the run it continues');
+  assert.equal(shared.objects.get(headKey(resumed)), undefined);
+});
+
 test('a checkpoint from other inputs is ignored, and a missing part refuses the whole head', async () => {
   clearStaging();
   const first = corpus();
