@@ -12,6 +12,7 @@ import {
   pendingTouchedRows,
   pendingWindows,
   recordPendingWindow,
+  recordRefreshVerdict,
   refreshDerivedContractCount,
   refreshSliceStatementGroups,
   registryClient,
@@ -21,11 +22,12 @@ import {
   renewRefreshLease,
   runRefreshSliceStatementGroup,
   settlePendingWindows,
+  type RefreshVerdictRecord,
 } from '@sigma/ingest';
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
 import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
-import { runServedIntegrityGate } from './integrity';
+import { incompleteCheck, runServedIntegrityGate } from './integrity';
 import {
   acquireRegistryLease,
   completeEntryBaseline,
@@ -94,6 +96,8 @@ interface RefreshResult {
   uncoveredWindows: number | null;
   /** The check after the write: `ok` settles the window, anything else leaves it for the next run. */
   integrity?: 'ok' | 'violation' | 'unverified';
+  /** Whether the run's verdict (`integrity`, or `skipped` for an empty run) reached refresh_verdict. */
+  verdictRecorded?: boolean;
   /** Set when the run did nothing because another live instance holds the refresh lease. */
   skipped?: 'lease-held';
   /** The instance that held the lease when this run stepped aside. */
@@ -128,6 +132,31 @@ function fence(step: WorkflowStep, lostLease: (name: string) => Promise<string |
     });
 }
 
+// The verdict is stored so it can be read from outside the Workflow log (refresh_verdict), but storing
+// it is not the run's work: a write that fails through the step's retries is logged at error level —
+// loud, where an alert sees it — and the run goes on as it would have. Not fenced: the row describes
+// this run alone, and a lease lost meanwhile is the next writing step's to report.
+async function storeVerdict(
+  step: WorkflowStep,
+  write: (decidedAt: string) => Promise<void>,
+  verdict: RefreshVerdictRecord['verdict'],
+): Promise<boolean> {
+  try {
+    await step.do('record-verdict', async () => write(new Date().toISOString()));
+    return true;
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        event: 'etl_refresh_verdict_unrecorded',
+        verdict,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return false;
+  }
+}
+
 // The on-platform daily refresh reads storage.eop.bg buckets directly. It is intentionally a small
 // steady-state job: if D1 is many days behind, the Workflow caps to a recent window and logs a
 // warning; the large first-run/backfill catch-up is the CLI's job to avoid D1/CPU/subrequest limits.
@@ -139,6 +168,9 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
   ): Promise<RefreshResult> {
     const params = event.payload ?? {};
     const fetchedAt = new Date().toISOString();
+    // Which run a stored verdict belongs to, without its instance id: the instance's own creation time,
+    // which — unlike `fetchedAt` — stays the same when the runtime replays run() from cached steps.
+    const runStartedAt = new Date(event.timestamp ?? fetchedAt).toISOString();
 
     // One writer at a time on the served D1. Every scratch table below is shared, and since the
     // touched sets outlive a run, an overlapping run's cleanup could drop the ids this run just
@@ -293,6 +325,20 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         await fenced('settle-windows-empty', async () =>
           settlePendingWindows(this.env.DB, { from: plan.from, to: plan.to }, new Date()),
         );
+        // Recorded as what it is — nothing to verify — so it can never stand in for a verdict.
+        const verdictRecorded = await storeVerdict(
+          step,
+          (decidedAt) =>
+            recordRefreshVerdict(this.env.DB, {
+              runStartedAt,
+              windowFrom: plan.from,
+              windowTo: plan.to,
+              verdict: 'skipped',
+              checks: [],
+              decidedAt,
+            }),
+          'skipped',
+        );
         outcome = {
           ...plan,
           days: results.length,
@@ -300,6 +346,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
           derived: 0,
           pendingTouched: 0,
           uncoveredWindows: 0,
+          verdictRecorded,
         };
         return outcome;
       }
@@ -373,27 +420,46 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       // logged at error level; a D1 that stays overloaded through the step's retries leaves the
       // numbers unverified. Either way the window stays recorded, so the next run replays it and
       // checks again. A lost lease is not a D1 hiccup: it ends the run as at every other step.
-      let integrity: RefreshResult['integrity'] = 'unverified';
+      let integrity: NonNullable<RefreshResult['integrity']> = 'unverified';
+      // Check names only: the ones that broke, or the one that could not complete.
+      let checks: string[] = [];
       try {
-        const reconciled = await fenced('integrity-gate', () =>
+        const gate = await fenced('integrity-gate', () =>
           runServedIntegrityGate(this.env.DB, {
             info: (e) => console.log(JSON.stringify({ level: 'info', ...e })),
             warn: (e) => console.warn(JSON.stringify({ level: 'warn', ...e })),
             error: (e) => console.error(JSON.stringify({ level: 'error', ...e })),
           }),
         );
-        integrity = reconciled ? 'ok' : 'violation';
+        integrity = gate.ok ? 'ok' : 'violation';
+        checks = gate.violations;
       } catch (err) {
         if (String(err instanceof Error ? err.message : err).includes('lease lost before'))
           throw err;
+        const check = incompleteCheck(err);
+        checks = check ? [check] : [];
         console.error(
           JSON.stringify({
             level: 'error',
             event: 'etl_integrity_unverified',
+            check,
             error: err instanceof Error ? err.message : String(err),
           }),
         );
       }
+      const verdictRecorded = await storeVerdict(
+        step,
+        (decidedAt) =>
+          recordRefreshVerdict(this.env.DB, {
+            runStartedAt,
+            windowFrom: plan.from,
+            windowTo: plan.to,
+            verdict: integrity,
+            checks,
+            decidedAt,
+          }),
+        integrity,
+      );
 
       // The verified coverage is subtracted from every promise: fulfilled ones go, straddling ones
       // shrink to what is still outstanding, out-of-reach ones stay — and are named, run after run,
@@ -446,6 +512,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         pendingTouched: pending.total,
         uncoveredWindows: integrity === 'ok' ? windows.remaining.length : null,
         integrity,
+        verdictRecorded,
       };
       return outcome;
     } catch (err) {

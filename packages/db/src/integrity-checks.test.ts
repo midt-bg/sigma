@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BASE_SCHEMA } from './base-schema';
 import {
   assertIntegrity,
+  CHECK_NAMES,
+  CHECKS,
   checkAmendmentTwins,
   checkCurrentAmountParity,
   checkDateSanity,
@@ -579,5 +581,16 @@ describe('summarizeIntegrity message', () => {
     );
     expect(summary.ok).toBe(true);
     expect(summary.message).toBeNull();
+  });
+});
+
+// The Worker names the check whose query failed before it has a result to read the name from, so the
+// roster's ids are listed up front. A check added to CHECKS without its id — or an id renamed in one
+// place only — would make the stored verdict name the wrong check.
+describe('CHECK_NAMES', () => {
+  it('lists every check id in roster order', async () => {
+    // An empty answer to every query: each check self-skips or fails, and either way reports its id.
+    const results = await Promise.all(CHECKS.map((check) => check(() => [])));
+    expect(results.map((r) => r.name)).toEqual(CHECK_NAMES);
   });
 });

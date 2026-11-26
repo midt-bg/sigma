@@ -71,18 +71,22 @@ lease-а - подновяват го и спират, ако вече не е т
 6. ⛨ `create-transient-staging`
 7. ⛨ `ingest-storage-eop-bucket` (чете storage.eop.bg → raw_* таблици)
 8. `pending-touched` - празен прозорец прескача derive-а само ако няма чакащи докоснати ID-та
-   И няма наследен незавършен прозорец (тогава ⛨ `settle-windows-empty` погасява само собственото обещание); наследено обещание се
+   И няма наследен незавършен прозорец (тогава ⛨ `settle-windows-empty` погасява само собственото обещание, а
+   `record-verdict` записва `skipped` - бяг без нищо за проверка, който никога не се чете като присъда); наследено обещание се
    удостоверява само от derive + гейт
 9. ⛨ `load-fx` (#158)
 10. ⛨ за всеки batch: `derive-slice:{batch}` (пуска refresh-slice групите)
 11. ⛨ `derive-slice:count`
 12. ⛨ `integrity-gate` (#156; post-commit аларма: разминаване → `etl_integrity_violation` с падналите
     проверки, D1 без отговор след повторните опити → `etl_integrity_unverified`; ходът завършва и в двата случая)
-13. ⛨ `settle-windows` - чак след минал гейт: изважда покритието от обещанията (покритите
+13. `record-verdict` - записва присъдата (`ok` / `violation` / `unverified`) и имената на проверките в
+    `refresh_verdict`; неуспешен запис се логва `etl_refresh_verdict_unrecorded`, без да проваля хода
+    (виж [`integrity-gate.md`](integrity-gate.md#the-stored-verdict))
+14. ⛨ `settle-windows` - чак след минал гейт: изважда покритието от обещанията (покритите
     изчезват, частично покритите се свиват, извън обсега остават и се логват); наследено обещание
     се погасява само ако бягът е видял поне един bucket (иначе `etl_refresh_replay_unverified`)
-14. `drop-transient-staging` (в `finally`; само ако lease-ът е още наш)
-15. `release-refresh-lease` (в `finally`, винаги; собствен провал се логва, не подменя грешката на бяга)
+15. `drop-transient-staging` (в `finally`; само ако lease-ът е още наш)
+16. `release-refresh-lease` (в `finally`, винаги; собствен провал се логва, не подменя грешката на бяга)
 
 ✅ **Зарежда FX** — `load-fx` стъпка след ingest, преди derive групите (Worker-native, само реални дупки в покритието; виж `docs/adr/0029-worker-native-fx-load.md`). ❌ **Не вика `assertIntegrity`** — reconciliation гейтът пристига с #156 (ред: FX → derive → gate).
 

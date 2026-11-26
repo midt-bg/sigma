@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, throwingD1 } from '@sigma/test-support';
-import { BREATHER_MS, HEAVY_ROWS, runServedIntegrityGate, type GateLog } from './integrity';
+import {
+  BREATHER_MS,
+  HEAVY_ROWS,
+  incompleteCheck,
+  runServedIntegrityGate,
+  type GateLog,
+} from './integrity';
 
 interface Captured {
   level: 'info' | 'warn' | 'error';
@@ -86,7 +92,10 @@ function servedD1(seed: Seed = {}): D1Database {
 describe('runServedIntegrityGate', () => {
   it('passes (logs ok, does not throw) on a clean served D1', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1(), log)).resolves.toBe(true);
+    await expect(runServedIntegrityGate(servedD1(), log)).resolves.toEqual({
+      ok: true,
+      violations: [],
+    });
     const ok = log.events.find((e) => e.event.event === 'etl_integrity_ok');
     expect(ok?.level).toBe('info');
     expect(log.events.some((e) => e.level === 'error')).toBe(false);
@@ -94,7 +103,10 @@ describe('runServedIntegrityGate', () => {
 
   it('returns false and logs a violation when a check fails over the live D1 (empty corpus)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1({ contracts: 0 }), log)).resolves.toBe(false);
+    await expect(runServedIntegrityGate(servedD1({ contracts: 0 }), log)).resolves.toEqual({
+      ok: false,
+      violations: ['non-empty-corpus'],
+    });
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.level).toBe('error');
     expect(violation?.event.checks).toEqual([
@@ -104,13 +116,19 @@ describe('runServedIntegrityGate', () => {
 
   it('returns false on a hard data-integrity violation (negative ok amount_eur)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1({ negOk: 3 }), log)).resolves.toBe(false);
+    await expect(runServedIntegrityGate(servedD1({ negOk: 3 }), log)).resolves.toEqual({
+      ok: false,
+      violations: ['no-negative-values'],
+    });
     expect(log.events.some((e) => e.event.event === 'etl_integrity_violation')).toBe(true);
   });
 
   it('alerts but does NOT throw on a warn-only condition (out-of-range dates)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1({ badDates: 2 }), log)).resolves.toBe(true);
+    await expect(runServedIntegrityGate(servedD1({ badDates: 2 }), log)).resolves.toEqual({
+      ok: true,
+      violations: [],
+    });
     expect(log.events.some((e) => e.event.event === 'etl_integrity_warn')).toBe(true);
     expect(log.events.some((e) => e.level === 'error')).toBe(false);
   });
@@ -129,7 +147,10 @@ describe('runServedIntegrityGate', () => {
 
   it('names the doubled annex total in the violation (annex-total-suspect-basis)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(servedD1({ annexWrong: 2 }), log)).resolves.toBe(false);
+    await expect(runServedIntegrityGate(servedD1({ annexWrong: 2 }), log)).resolves.toEqual({
+      ok: false,
+      violations: ['annex-total-suspect-basis'],
+    });
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.event.checks).toEqual([
       expect.objectContaining({ name: 'annex-total-suspect-basis' }),
@@ -140,7 +161,7 @@ describe('runServedIntegrityGate', () => {
     const log = fakeLog();
     await expect(
       runServedIntegrityGate(servedD1({ rollups: true, homeDrift: 5_000 }), log),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ ok: false, violations: ['rollup-reconciliation'] });
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.level).toBe('error');
     expect(violation?.event.checks).toEqual([
@@ -152,7 +173,10 @@ describe('runServedIntegrityGate', () => {
     const pausesFor = async (seed: Seed): Promise<number[]> => {
       const pauses: number[] = [];
       const pause = async (ms: number) => void pauses.push(ms);
-      await expect(runServedIntegrityGate(servedD1(seed), fakeLog(), pause)).resolves.toBe(true);
+      await expect(runServedIntegrityGate(servedD1(seed), fakeLog(), pause)).resolves.toEqual({
+        ok: true,
+        violations: [],
+      });
       return pauses;
     };
     expect(await pausesFor({ rollups: true, reconcileRowsRead: HEAVY_ROWS })).toEqual([
@@ -166,5 +190,36 @@ describe('runServedIntegrityGate', () => {
     const overloaded = throwingD1(new Error('D1 DB is overloaded')).db;
     await expect(runServedIntegrityGate(overloaded, log)).rejects.toThrow('overloaded');
     expect(log.events.some((e) => e.event.event === 'etl_integrity_violation')).toBe(false);
+  });
+
+  it('names the check whose query failed, so the verdict can say what was not verified', async () => {
+    // The roster's first query is the corpus check's: that is the check that could not complete.
+    const first = throwingD1(new Error('D1 DB is overloaded')).db;
+    const err = await runServedIntegrityGate(first, fakeLog()).catch((e: unknown) => e);
+    expect(String(err)).toContain(
+      'integrity check non-empty-corpus could not complete: D1 DB is overloaded',
+    );
+    expect(incompleteCheck(err)).toBe('non-empty-corpus');
+    // A later check: everything answers except the folded reconciliation query.
+    const db = servedD1({ rollups: true });
+    const prepare = db.prepare.bind(db);
+    const refusing = throwingD1(new Error('overloaded')).db;
+    db.prepare = (sql: string) =>
+      sql.includes('clean_total') ? refusing.prepare(sql) : prepare(sql);
+    const later = await runServedIntegrityGate(db, fakeLog()).catch((e: unknown) => e);
+    expect(incompleteCheck(later)).toBe('rollup-reconciliation');
+  });
+});
+
+describe('incompleteCheck', () => {
+  it("reads the check name back out of the gate's own message, and nothing else", () => {
+    expect(incompleteCheck(new Error('integrity check eik-validity could not complete: x'))).toBe(
+      'eik-validity',
+    );
+    expect(incompleteCheck('integrity check date-sanity could not complete: y')).toBe(
+      'date-sanity',
+    );
+    expect(incompleteCheck(new Error('D1 DB is overloaded'))).toBeNull();
+    expect(incompleteCheck(new Error('refresh lease lost before integrity-gate'))).toBeNull();
   });
 });

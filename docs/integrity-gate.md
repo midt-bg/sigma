@@ -19,7 +19,7 @@ in after the rollups are built when the backend publishes them:
 | `import.mjs` → `runSliceDerive()` | D1 | after the refresh-slice batches |
 | `import.mjs` → `runWorkBackfill()` | sqlite work DB | after `assertFxValued`; rollup checks self-skip (rollups are built later, on the served D1) |
 | `ship-domain.mjs` | served D1 | after `precompute.sql` on the database users read |
-| `apps/etl` Workflow → `integrity-gate` step | served D1 (async runner) | the 6-hourly cron refresh, after each slice derive; runs `runIntegrityChecks` and retains the window for replay on a violation. FX coverage is checked before derive. |
+| `apps/etl` Workflow → `integrity-gate` step | served D1 (async runner) | the 6-hourly cron refresh, after each slice derive; runs the shared roster and retains the window for replay on a violation. It stores the verdict in `refresh_verdict` ([below](#the-stored-verdict)). FX coverage is checked before derive. |
 
 The runner the checks receive may be **synchronous** (the sqlite3/wrangler CLI orchestrators return rows
 directly) or **asynchronous** (the Workflow runs `env.DB.prepare(sql).all()`, a Promise). The checks
@@ -173,6 +173,51 @@ Two boundaries are deliberate, documented so the gate is not mistaken for more t
   error during the check is retried by the step; if the retries run out, the run logs
   `etl_integrity_unverified` and carries `integrity: 'unverified'`. In both cases the window stays
   recorded, so the next run replays it and checks again.
+
+## The stored verdict
+
+The cron refresh's verdict does not live only in the Workflow log. A run that ends `violation` or
+`unverified` still shows up as a *completed* instance there, the same as a healthy one. So every run
+that reaches the gate stores its verdict in the step `record-verdict`, one row per run, in the runtime
+table `refresh_verdict` on the served D1. The refresh creates the table itself (`CREATE TABLE IF NOT
+EXISTS` in the same batch), in the same way as `refresh_lease` and `refresh_pending_window`, so no
+migration or ship touches it.
+
+| column | meaning |
+| --- | --- |
+| `run_started_at` | when the Workflow instance was created (ISO); the key, so a retried write replaces its own row. It names the run without exposing the instance id. |
+| `window_from`, `window_to` | the contract window the run refreshed |
+| `verdict` | `ok`, `violation`, `unverified` or `skipped` |
+| `checks` | JSON array of check **names** only (the `name` ids of `scripts/integrity-checks.mjs`): the checks that broke (`violation`), or the one whose query could not complete (`unverified`, empty if it failed outside a check) |
+| `decided_at` | when the gate decided (ISO) |
+
+- **Only `ok` is healthy.** `violation` and `unverified` both mean the numbers are not shown to
+  reconcile. A reader must never present either one as healthy.
+- **`skipped`** is a run that returned early: nothing staged, nothing pending, nothing inherited.
+  It verified nothing, so it is stored only as evidence that the refresh ran. It is never read as the
+  verdict, so it cannot replace the last real one with an `ok` it did not earn.
+- **Some runs record nothing:** a run that fails before the gate, and a run that steps aside for a
+  held lease. A run that errored keeps its window pending, and the older row stays the latest. A
+  reader therefore compares `decided_at` and `last_run_at` with the clock.
+- **The write is one small batch.** It retries through the step like every other write. If it still
+  fails, it does not fail the run, which has already served and checked its numbers. The run logs
+  `etl_refresh_verdict_unrecorded` at error level and carries `verdictRecorded: false`.
+- **Retention:** rows older than 90 days are pruned by the write that adds a new one.
+- **Not recorded:** the CLI paths (`import.mjs`, `ship-domain.mjs`) and a rebuilt slot until its
+  first refresh. On such a slot the table does not exist yet, which a reader treats as "no verdict".
+
+The one-row read is `getLatestRefreshVerdict` in `@sigma/db` (`packages/db/src/queries/refresh-verdict.ts`).
+It returns `null` when the table is missing or holds no gate verdict yet, and every other error
+propagates. The query walks `idx_refresh_verdict_decided` from the newest row:
+
+```sql
+SELECT v.verdict, v.decided_at, v.checks, v.window_from, v.window_to, v.run_started_at,
+  (SELECT MAX(decided_at) FROM refresh_verdict) AS last_run_at
+FROM refresh_verdict v
+WHERE v.verdict <> 'skipped'
+ORDER BY v.decided_at DESC
+LIMIT 1
+```
 
 ## Scope
 

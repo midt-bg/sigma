@@ -593,6 +593,22 @@ export const CHECKS = [
   checkAmendmentTwins,
 ];
 
+// Each check's stable id, in CHECKS order — known BEFORE the check runs, so a caller whose query failed
+// part-way (an overloaded D1) can name the check that could not complete. A check reports the same id
+// in its result; packages/db/src/integrity-checks.test.ts holds the two lists in lockstep.
+export const CHECK_NAMES = [
+  'non-empty-corpus',
+  'rollup-reconciliation',
+  'current-amount-parity',
+  'annex-total-suspect-basis',
+  'framework-ceilings-unsummed',
+  'no-negative-values',
+  'eik-validity',
+  'date-sanity',
+  'staging-reconciliation',
+  'amendment-twin-dedup',
+];
+
 export async function runIntegrityChecks(runner) {
   // Sequential, not Promise.all: preserve the printed order and avoid firing every check's reads at
   // D1 at once. Each `fn` may return a value (sync runner) or a Promise (async/D1 runner); await both.

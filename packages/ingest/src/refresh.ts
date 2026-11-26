@@ -518,3 +518,72 @@ export async function settlePendingWindows(
   // inside their own promise, so the pieces of an earlier promise never start after a later one.
   return { settled, remaining };
 }
+
+// ── the refresh verdict ────────────────────────────────────────────────────────────────────────────
+// The served gate's verdict used to live only in the Workflow log: a run that ended `unverified` or
+// `violation` still showed as a completed instance, indistinguishable from a healthy one. It is now
+// stored, one row per run, in a runtime table the refresh creates itself — like refresh_lease and
+// refresh_pending_window, it describes the pipeline, not the data, and no migration or ship touches it.
+//
+// `skipped` is a run that returned early with nothing staged, nothing pending and nothing inherited:
+// it verified nothing, so it is recorded as such and never read as a verdict (the one-row read,
+// getLatestRefreshVerdict in @sigma/db, passes over it). A run that fails before the gate records nothing: its instance is errored, and its
+// window stays pending. A run that steps aside for a held lease records nothing either.
+export type RefreshVerdict = 'ok' | 'violation' | 'unverified' | 'skipped';
+
+export interface RefreshVerdictRecord {
+  /** When the run was created (the Workflow instance's timestamp, ISO) — which run it was, without its id. */
+  runStartedAt: string;
+  windowFrom: string;
+  windowTo: string;
+  verdict: RefreshVerdict;
+  /** Check names only: the ones that broke (violation) or the one that could not complete (unverified). */
+  checks: string[];
+  decidedAt: string;
+}
+
+/** Rows older than this are pruned by the write that adds a new one: four runs a day, a few hundred rows. */
+export const REFRESH_VERDICT_RETENTION_DAYS = 90;
+
+const VERDICT_DDL = `CREATE TABLE IF NOT EXISTS refresh_verdict (
+  run_started_at TEXT PRIMARY KEY,
+  window_from TEXT NOT NULL,
+  window_to TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN ('ok', 'violation', 'unverified', 'skipped')),
+  checks TEXT NOT NULL,
+  decided_at TEXT NOT NULL
+)`;
+const VERDICT_INDEX =
+  'CREATE INDEX IF NOT EXISTS idx_refresh_verdict_decided ON refresh_verdict (decided_at)';
+
+function verdictStatements(db: D1Database, v: RefreshVerdictRecord): D1PreparedStatement[] {
+  const cutoff = new Date(
+    Date.parse(v.decidedAt) - REFRESH_VERDICT_RETENTION_DAYS * 86_400_000,
+  ).toISOString();
+  return [
+    db.prepare(VERDICT_DDL),
+    db.prepare(VERDICT_INDEX),
+    // Keyed by the run: a retried step rewrites its own row, never adds a second one.
+    db
+      .prepare(
+        `INSERT INTO refresh_verdict (run_started_at, window_from, window_to, verdict, checks, decided_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(run_started_at) DO UPDATE SET window_from = ?2, window_to = ?3, verdict = ?4,
+           checks = ?5, decided_at = ?6`,
+      )
+      .bind(
+        v.runStartedAt,
+        v.windowFrom,
+        v.windowTo,
+        v.verdict,
+        JSON.stringify(v.checks),
+        v.decidedAt,
+      ),
+    db.prepare('DELETE FROM refresh_verdict WHERE decided_at < ?1').bind(cutoff),
+  ];
+}
+
+/** Record one run's verdict: one small batch (the table, its index, the row, the pruning). */
+export async function recordRefreshVerdict(db: D1Database, v: RefreshVerdictRecord): Promise<void> {
+  await db.batch(verdictStatements(db, v));
+}

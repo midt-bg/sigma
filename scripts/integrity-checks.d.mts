@@ -42,6 +42,8 @@ export function checkAmendmentTwins(runner: IntegrityRunner): Promise<IntegrityR
 export const AMENDMENT_OCID_TWINS_SQL: string;
 
 export const CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
+/** Each check's stable id, in CHECKS order (the `name` its result carries). */
+export const CHECK_NAMES: string[];
 export function runIntegrityChecks(runner: IntegrityRunner): Promise<IntegrityResult[]>;
 
 export interface IntegritySummary {
