@@ -414,7 +414,8 @@ compared)“ изброява допълнителните обекти) или
   ```bash
   git tag vX.Y.Z && git push origin vX.Y.Z          # → production
   ```
-- **Staging** — ръчно стартиране:
+- **Staging** — всеки push в `main` (всеки слят PR), така че staging винаги е пред production. Ръчно
+  стартиране е нужно само за повторение без нов комит:
   ```bash
   gh workflow run deploy.yml -f environment=staging  # → staging  (или Actions tab → Run workflow)
   ```
