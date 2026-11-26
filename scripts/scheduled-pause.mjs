@@ -39,7 +39,7 @@ export function describePause(text, now) {
   } catch {
     hold = null;
   }
-  const until = Date.parse(hold?.until);
+  const until = typeof hold?.until === 'string' ? Date.parse(hold.until) : Number.NaN;
   if (Number.isNaN(until) || typeof hold?.reason !== 'string')
     return `not a valid hold, ignored by the ETL (which logs etl_scheduled_pause_ignored): ${text.trim()}`;
   if (until <= now.getTime())

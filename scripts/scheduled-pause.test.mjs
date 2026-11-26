@@ -101,6 +101,7 @@ test('show reads the object as the ETL does', () => {
   assert.match(show(stored('{"reason":"no expiry"}')), /^b: not a valid hold, ignored by the ETL/);
   assert.match(show(stored('{"until":"2026-11-27T00:00:00Z"}')), /not a valid hold/);
   assert.match(show(stored('garbage')), /not a valid hold/);
+  assert.match(show(stored('{"until":4102444800000,"reason":"a number"}')), /not a valid hold/);
   const absent = fakeWrangler(() => {
     throw Object.assign(new Error('Command failed'), {
       stderr: 'The specified key does not exist.',
@@ -132,6 +133,13 @@ test('show does not report „no hold" when it could not read the bucket', () =>
 test('an unknown action or a missing bucket is a usage error', () => {
   for (const argv of [[], ['pause', 'b'], ['show'], ['set', '--hours', '2']])
     assert.throws(() => runPause(argv, { wrangler: fakeWrangler().wrangler }), /usage:/);
+});
+
+test('describePause reads a hold as expired at its very expiry, as the ETL does', () => {
+  assert.match(
+    describePause('{"until":"2026-11-26T10:00:00.000Z","reason":"r"}', NOW),
+    /^expired at/,
+  );
 });
 
 test('describePause names the minutes left', () => {
