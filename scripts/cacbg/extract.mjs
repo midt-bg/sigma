@@ -175,8 +175,9 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
   // stamped corpus, the identity rules, the output schema, and the registry facts the resolver read. A
   // resumed slot rebuild names the earlier run of the same build whose reading it may adopt
   // (SIGMA_CHECKPOINT_RUN_ID, scripts/rebuild-slot.mjs `checkpointRun`); the fingerprint still decides.
-  const runId = process.env.SIGMA_CHECKPOINT_RUN_ID || process.env.SIGMA_RUN_ID;
-  const checkpointing = Boolean(store.remote && runId);
+  const own = process.env.SIGMA_RUN_ID;
+  let runId = process.env.SIGMA_CHECKPOINT_RUN_ID || own;
+  let checkpointing = Boolean(store.remote && runId);
   const fingerprint = checkpointFingerprint([
     digest(Buffer.from(JSON.stringify(stamp?.inventory ?? []))),
     identityRules ?? 'no-identity',
@@ -188,15 +189,39 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
   fs.mkdirSync(partsDir, { recursive: true });
   if (checkpointing) {
     const accepted = await readHead(store, runId, fingerprint);
+    let restored = false;
     if (accepted?.folders.length) {
-      // Restoring is progress too: without these reports the coordinator sees a silent container.
-      await restoreParts(store, {
-        runId,
-        fingerprint,
-        dir: partsDir,
-        head: accepted,
-        onFolder: (folder) => progress('extract', accepted.processed ?? 0, undefined, true),
-      });
+      try {
+        // Restoring is progress too: without these reports the coordinator sees a silent container.
+        await restoreParts(store, {
+          runId,
+          fingerprint,
+          dir: partsDir,
+          head: accepted,
+          onFolder: (folder) => progress('extract', accepted.processed ?? 0, undefined, true),
+        });
+        restored = true;
+      } catch (error) {
+        // An adopted checkpoint is days old when a resume reads it, and the bucket expires its first
+        // parts up to a pass earlier than its head. Refusing would fail every later resume the same way
+        // until the head expired too, so it counts as no checkpoint: the corpus is read from the start,
+        // under this run. This run's own checkpoint is never that old, and a part missing there stays a
+        // refusal.
+        if (error.code !== 'CHECKPOINT_PART_MISSING' || runId === own) throw error;
+        console.log(
+          JSON.stringify({
+            event: 'extract_checkpoint_unusable',
+            run: runId,
+            reason: error.message,
+          }),
+        );
+        runId = own;
+        checkpointing = Boolean(runId);
+        fs.rmSync(partsDir, { recursive: true, force: true });
+        fs.mkdirSync(partsDir, { recursive: true });
+      }
+    }
+    if (restored) {
       head = accepted;
       seenHash = seenHashFrom(partsDir, accepted.folders);
       stats = accepted.stats ?? stats;
