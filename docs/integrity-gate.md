@@ -137,7 +137,15 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    that annex-side number, and no contract under the number itself. That is a second one-query definition,
    `AMENDMENT_RAW_NUMBER_TWINS_SQL`, counted by the gate and deleted by `refresh-slice.sql` on every
    refresh in the same way; the removed row is no contract's annex input, so no count or sum moves.
-8. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
+8. **OCDS corrections use the latest eligible release** (`ocds-source-value`). An OCDS amendment with an
+   after-value fails the check if a later OCDS release supersedes it or an EOP annex exists under either
+   contract number. For contracts without an EOP annex, the latest release must have an after-value if it
+   has a document number, carries a positive value in the signing currency and differs from the unambiguous
+   signing value by at least half a cent in that currency. A missing after-value fails the local build gate.
+   The served gate reports it as a warning because a daily window only re-evaluates contracts it reaches.
+   Slots built before the correction rule can carry these rows until a refresh reaches them or a full build
+   replaces the slot. The check reports counts only.
+9. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
    contract of the work database is staged through `raw_served_contract_value_base`, which reads a served
    row as the daily `amendments` batch does (a test holds the two equal), and evaluated by the rule itself
    (`raw_contract_annex_evidence` / `raw_contract_values`). Any row whose `value_flag`, `amount_eur`, other amounts (`amount`,

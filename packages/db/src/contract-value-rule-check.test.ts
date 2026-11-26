@@ -446,7 +446,7 @@ describe('contract-value-rule (build gate)', () => {
     expect(results.find((r) => r.name === 'contract-value-rule')).toMatchObject({ ok: true });
     store(db, 'U-OK', "value_flag = 'review'");
     await expect(assertIntegrity(runner(db), quiet)).rejects.toThrow(
-      /1 of 11 checks broke \(test build\): contract-value-rule — 1 of 7 contract\(s\) differ/,
+      /1 of \d+ checks broke \(test build\): contract-value-rule — 1 of 7 contract\(s\) differ/,
     );
   });
 

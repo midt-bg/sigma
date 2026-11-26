@@ -155,7 +155,7 @@ WITH ocds AS (
   HAVING COUNT(signing_value) = COUNT(*) AND COUNT(DISTINCT signing_value) = 1
     AND COUNT(DISTINCT COALESCE(NULLIF(currency, ''), 'BGN')) = 1
 )
-SELECT o.id, s.signing_value AS value_before, o.release_value AS value_after
+SELECT o.id, o.currency, s.signing_value AS value_before, o.release_value AS value_after
 FROM ocds o
 JOIN signings s ON s.unp = o.unp AND s.contract_number = o.contract_number
 WHERE o.rn = 1 AND o.raw_after IS NULL
@@ -168,6 +168,13 @@ UPDATE raw_amendments
 SET value_before = (SELECT c.value_before FROM amendment_ocds_value_corrections c WHERE c.id = raw_amendments.id),
     value_after = (SELECT c.value_after FROM amendment_ocds_value_corrections c WHERE c.id = raw_amendments.id)
 WHERE id IN (SELECT id FROM amendment_ocds_value_corrections);
+
+SELECT 'OCDS source value (' || currency || ')' AS diagnostic,
+  COUNT(*) AS corrections,
+  SUM(value_after < value_before) AS downward_corrections,
+  ROUND(SUM(value_after - value_before), 2) AS net_change
+FROM amendment_ocds_value_corrections
+GROUP BY currency;
 
 DROP TABLE amendment_ocds_value_corrections;
 

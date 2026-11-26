@@ -1869,22 +1869,29 @@ WHERE source LIKE 'ocds:%'
         OR e.contract_number_raw = amendments.contract_number)
   );
 
--- A contract value corrected at the source and published only as OCDS contract updates: the same decision as
--- scripts/derive-amendments.sql (see the comment there), made here over everything the full path would see
--- for an affected contract — this window's OCDS rows and the OCDS rows earlier windows served. Affected are
--- the contracts the window reaches (raw_contract_value_scope) that have no EOP annex, staged or served. For
--- every OCDS row of such a contract this records the shape it must have: the latest release, when it is in
--- the signing currency and differs from the signing value, carries before = the signing value and after =
--- the release value; every other row carries the release value as value_before and no after-value. A row
--- reads its release value from its after-value once transformed, so an earlier window's corrected row goes
--- back to the #286 shape when a later release supersedes it. The signing value comes from the served
--- contracts, which `@refresh-batch contracts` has already brought up to date. The shapes are applied to the
--- served rows after the promotion below, then to this run's value inputs and winners.
+-- Re-evaluate OCDS releases on contracts reached by this window. Find the few keys with OCDS rows
+-- before checking for EOP annexes, which must be looked up by unp to match either contract number.
+-- Earlier windows may have promoted an OCDS release to an after-value. Use that amount when a
+-- later release supersedes it and the row goes back to storing the release amount as value_before.
+-- Ranked staged rows with their own raw_after retain it, as on the full path. The OCDS importer
+-- supplies only value_before. The contracts batch has already refreshed signing values.
+-- The ranking and eligibility block is shared with the ocds-source-value gate (lockstep-tested).
 DROP TABLE IF EXISTS refresh_ocds_value_rows;
 CREATE TABLE refresh_ocds_value_rows AS
-WITH keys AS MATERIALIZED (
+WITH ocds_keys AS MATERIALIZED (
   SELECT k.unp, k.contract_number
   FROM raw_contract_value_scope k
+  WHERE EXISTS (
+      SELECT 1 FROM raw_amendments o
+      WHERE o.unp = k.unp AND o.contract_number = k.contract_number AND o.source LIKE 'ocds:%'
+    )
+    OR EXISTS (
+      SELECT 1 FROM amendments o
+      WHERE o.unp = k.unp AND o.contract_number = k.contract_number AND o.source LIKE 'ocds:%'
+    )
+), keys AS MATERIALIZED (
+  SELECT k.unp, k.contract_number
+  FROM ocds_keys k
   WHERE NOT EXISTS (
       SELECT 1 FROM raw_amendments e
       WHERE e.source LIKE 'eop:%' AND e.unp = k.unp
@@ -1897,7 +1904,8 @@ WITH keys AS MATERIALIZED (
     )
 ), staged AS MATERIALIZED (
   SELECT a.natural_key, a.unp, a.contract_number, a.published_at, a.currency, a.document_number,
-    CASE WHEN a.raw_after IS NULL THEN a.value_before ELSE a.raw_after END AS release_value
+    CASE WHEN a.raw_after IS NULL THEN a.value_before ELSE a.raw_after END AS release_value,
+    a.raw_after IS NULL AS release_only
   FROM keys k
   JOIN raw_amendment_publications a ON a.unp = k.unp AND a.contract_number = k.contract_number
   WHERE a.source LIKE 'ocds:%'
@@ -1905,12 +1913,14 @@ WITH keys AS MATERIALIZED (
   SELECT * FROM staged
   UNION ALL
   SELECT s.natural_key, s.unp, s.contract_number, s.published_at, s.currency, s.document_number,
-    CASE WHEN s.value_after IS NULL THEN s.value_before ELSE s.value_after END
+    CASE WHEN s.value_after IS NULL THEN s.value_before ELSE s.value_after END, 1
   FROM keys k
   CROSS JOIN amendments s ON s.unp = k.unp AND s.contract_number = k.contract_number
   WHERE s.source LIKE 'ocds:%'
     AND NOT EXISTS (SELECT 1 FROM staged w WHERE w.natural_key = s.natural_key)
-), ranked AS (
+),
+-- @ocds-value-decision-lockstep start
+ranked AS (
   SELECT o.*,
     ROW_NUMBER() OVER (
       PARTITION BY o.unp, o.contract_number ORDER BY o.published_at DESC, o.natural_key DESC
@@ -1926,8 +1936,8 @@ WITH keys AS MATERIALIZED (
   HAVING COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
     AND COUNT(DISTINCT COALESCE(NULLIF(c.currency, ''), 'BGN')) = 1
 ), decided AS (
-  SELECT r.natural_key, r.unp, r.contract_number, r.release_value, s.signing_value,
-    r.rn = 1 AND s.signing_value IS NOT NULL
+  SELECT r.natural_key, r.unp, r.contract_number, r.rn, r.release_only, r.release_value, s.signing_value,
+    r.rn = 1 AND r.release_only AND s.signing_value IS NOT NULL
       AND NULLIF(r.document_number, '') IS NOT NULL
       AND r.currency = s.currency
       AND r.release_value > 0
@@ -1935,10 +1945,12 @@ WITH keys AS MATERIALIZED (
   FROM ranked r
   LEFT JOIN signings s ON s.unp = r.unp AND s.contract_number = r.contract_number
 )
+-- @ocds-value-decision-lockstep end
 SELECT natural_key, unp, contract_number,
   CASE WHEN corrected THEN signing_value ELSE release_value END AS value_before,
   CASE WHEN corrected THEN release_value END AS value_after
-FROM decided;
+FROM decided
+WHERE release_only;
 
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, contract_number_raw, link_method, unp,
@@ -2047,10 +2059,7 @@ WHERE raw_contract_value_annexes.natural_key = r.natural_key
     OR raw_contract_value_annexes.effective_after IS NOT r.value_after);
 
 DELETE FROM refresh_amendment_winners
-WHERE EXISTS (
-  SELECT 1 FROM refresh_ocds_value_rows r
-  WHERE r.unp = refresh_amendment_winners.unp AND r.contract_number = refresh_amendment_winners.contract_number
-);
+WHERE (unp, contract_number) IN (SELECT unp, contract_number FROM refresh_ocds_value_rows);
 INSERT INTO refresh_amendment_winners
 SELECT natural_key, unp, contract_number, currency, effective_after, annex_count
 FROM (

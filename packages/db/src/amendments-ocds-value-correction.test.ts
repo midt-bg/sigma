@@ -7,13 +7,18 @@
 //
 // Runs the REAL scripts through the sqlite3 CLI. All names, numbers and amounts are invented.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BASE_SCHEMA } from './base-schema';
-import { checkContractValueRule } from '../../../scripts/integrity-checks.mjs';
+import {
+  assertIntegrity,
+  checkContractValueRule,
+  checkOcdsSourceValue,
+  OCDS_SOURCE_VALUE_DECISION_SQL,
+} from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration = (name: string) => resolve(root, 'packages/db/migrations', name);
@@ -169,7 +174,9 @@ interface ContractState {
 const contractState = (dbPath: string): ContractState | undefined =>
   sqliteJson<ContractState>(
     dbPath,
-    `SELECT annex_count, current_value, value_flag, amount, ROUND(amount_eur, 2) AS amount_eur
+    `SELECT annex_count, current_value, value_flag, amount, ROUND(amount_eur, 2) AS amount_eur,
+       signing_value_eur, current_value_eur, current_value_currency,
+       fx_converted, fx_rate
      FROM contracts WHERE contract_number = '${CONTRACT}'`,
   )[0];
 
@@ -177,15 +184,17 @@ const timeline = (dbPath: string) =>
   sqliteJson<Record<string, unknown>>(
     dbPath,
     `SELECT published_at, substr(source, 1, 4) AS source, value_before, value_after, value_delta,
-       raw_value_after, description
+       raw_value_after, raw_value_delta, value_evidence_known, value_suspect, description
      FROM amendments WHERE contract_number = '${CONTRACT}' ORDER BY published_at, id`,
   );
 
 const homeValue = (dbPath: string) =>
   sqliteJson<{ v: number }>(dbPath, 'SELECT ROUND(value_eur, 2) AS v FROM home_totals')[0]?.v;
 
-const valueRule = (dbPath: string) =>
-  checkContractValueRule((sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql));
+const integrityRunner = (dbPath: string) => (sql: string) =>
+  sqliteJson<Record<string, unknown>>(dbPath, sql);
+const valueRule = (dbPath: string) => checkContractValueRule(integrityRunner(dbPath));
+const sourceValueGate = (dbPath: string) => checkOcdsSourceValue(integrityRunner(dbPath));
 
 let dir: string;
 let fullDb: string;
@@ -208,7 +217,7 @@ describe('OCDS source correction on the full build', () => {
       fullDb,
       `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-23', value: MISTYPED })}`,
     );
-    expect(contractState(fullDb)).toEqual({
+    expect(contractState(fullDb)).toMatchObject({
       annex_count: 1,
       current_value: null,
       value_flag: 'review',
@@ -224,7 +233,7 @@ describe('OCDS source correction on the full build', () => {
        ${release({ published: '2026-11-23', value: MISTYPED })}
        ${release({ published: '2026-11-24', value: CORRECT, description: NOTE })}`,
     );
-    expect(contractState(fullDb)).toEqual({
+    expect(contractState(fullDb)).toMatchObject({
       annex_count: 2,
       current_value: CORRECT,
       value_flag: 'ok',
@@ -233,7 +242,7 @@ describe('OCDS source correction on the full build', () => {
     });
     // The timeline: the earlier release is unchanged (no after-value); the correction reads as the change
     // from the signing value to the corrected one, with the source's explanation.
-    expect(timeline(fullDb)).toEqual([
+    expect(timeline(fullDb)).toMatchObject([
       {
         published_at: '2026-11-23',
         source: 'ocds',
@@ -262,7 +271,7 @@ describe('OCDS source correction on the full build', () => {
     expect(sqliteJson(fullDb, 'SELECT * FROM raw_amendments ORDER BY id')).toEqual(before);
   });
 
-  it('changes nothing when the latest release repeats the signing value', () => {
+  it('changes nothing when the latest release repeats the signing value', async () => {
     fullBuild(
       fullDb,
       `${tender()} ${contract(CORRECT)} ${release({ published: '2026-11-23', value: CORRECT })}`,
@@ -273,6 +282,7 @@ describe('OCDS source correction on the full build', () => {
       amount: CORRECT,
     });
     expect(timeline(fullDb)).toMatchObject([{ value_before: CORRECT, value_after: null }]);
+    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
   });
 
   it('decides by the latest release only: an earlier differing one followed by the signing value changes nothing', () => {
@@ -304,7 +314,7 @@ describe('OCDS source correction on the full build', () => {
     expect(timeline(fullDb)).toMatchObject([{ source: 'eop:', value_after: MISTYPED + 100000 }]);
   });
 
-  it('changes nothing for a release in another currency than the signing value', () => {
+  it('changes nothing for a release in another currency than the signing value', async () => {
     // A lev contract whose later release states the euro amount: a different number, not a correction.
     fullBuild(
       fullDb,
@@ -312,14 +322,16 @@ describe('OCDS source correction on the full build', () => {
        ${release({ published: '2026-11-24', value: 3741205, currency: 'EUR' })}`,
     );
     expect(contractState(fullDb)).toMatchObject({ current_value: null, amount: 7317200 });
+    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
   });
 
-  it('changes nothing for a non-positive release value or a release without a document number', () => {
+  it('changes nothing for a non-positive release value or a release without a document number', async () => {
     fullBuild(
       fullDb,
       `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-24', value: 0 })}`,
     );
     expect(contractState(fullDb)).toMatchObject({ current_value: null, amount: MISTYPED });
+    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
     rmSync(fullDb);
 
     fullBuild(
@@ -328,9 +340,10 @@ describe('OCDS source correction on the full build', () => {
        ${release({ published: '2026-11-24', value: CORRECT, doc: null })}`,
     );
     expect(contractState(fullDb)).toMatchObject({ current_value: null, amount: MISTYPED });
+    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
   });
 
-  it('changes nothing when the contract publications disagree on the signing value', () => {
+  it('changes nothing when the contract publications disagree on the signing value', async () => {
     // Two lots under one contract number, signed for different amounts: there is no single "before".
     const secondLot = contract(MISTYPED + 1)
       .replace(`'DOC-${CONTRACT}'`, `'DOC-${CONTRACT}-2'`)
@@ -346,6 +359,7 @@ describe('OCDS source correction on the full build', () => {
         `SELECT DISTINCT current_value FROM contracts WHERE contract_number = '${CONTRACT}'`,
       ),
     ).toEqual([{ current_value: null }]);
+    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
   });
 
   it('holds an implausible "correction" upwards with the existing annex guards', () => {
@@ -354,7 +368,7 @@ describe('OCDS source correction on the full build', () => {
       fullDb,
       `${tender()} ${contract(CORRECT)} ${release({ published: '2026-11-24', value: MISTYPED })}`,
     );
-    expect(contractState(fullDb)).toEqual({
+    expect(contractState(fullDb)).toMatchObject({
       annex_count: 1,
       current_value: MISTYPED,
       value_flag: 'annex_suspect',
@@ -400,7 +414,7 @@ describe('OCDS source correction on the daily path', () => {
     readScript(dailyDb, script('refresh-slice.sql'));
     fullBuild(fullDb, `${first} ${second}`);
 
-    expect(contractState(dailyDb)).toEqual({
+    expect(contractState(dailyDb)).toMatchObject({
       annex_count: 2,
       current_value: CORRECT,
       value_flag: 'ok',
@@ -411,6 +425,7 @@ describe('OCDS source correction on the daily path', () => {
     expect(timeline(dailyDb)).toEqual(timeline(fullDb));
     expect(homeValue(dailyDb)).toBe(CORRECT);
     expect((await valueRule(dailyDb)).ok).toBe(true);
+    expect(await sourceValueGate(dailyDb)).toMatchObject({ ok: true, warn: false });
 
     // The same window again: nothing moves.
     const contracts = sqliteJson(dailyDb, 'SELECT * FROM contracts ORDER BY id');
@@ -458,5 +473,118 @@ describe('OCDS source correction on the daily path', () => {
       current_value: MISTYPED + 100000,
     });
     expect(timeline(dailyDb)).toMatchObject([{ source: 'eop:' }]);
+  });
+
+  it('replaces a served correction with the EOP annex that arrives in a later window', () => {
+    const first = `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-24', value: CORRECT })}`;
+    const second = eopAnnex(MISTYPED, MISTYPED + 100000);
+    dailyWindows(dailyDb, [first]);
+    expect(contractState(dailyDb)?.current_value).toBe(CORRECT);
+
+    resetRawStaging(dailyDb);
+    sqlite(dailyDb, second);
+    readScript(dailyDb, script('refresh-slice.sql'));
+    fullBuild(fullDb, `${first} ${second}`);
+    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
+    expect(contractState(dailyDb)?.current_value).toBe(MISTYPED + 100000);
+    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
+    expect(timeline(dailyDb)).toMatchObject([{ source: 'eop:' }]);
+  });
+
+  it('takes up an already served release when the contract arrives in a later window', () => {
+    const first = `${tender()} ${release({ published: '2026-11-24', value: CORRECT })}`;
+    const second = contract(MISTYPED);
+    dailyWindows(dailyDb, [first]);
+    expect(contractState(dailyDb)).toBeUndefined();
+    expect(timeline(dailyDb)).toMatchObject([{ value_before: CORRECT, value_after: null }]);
+
+    resetRawStaging(dailyDb);
+    sqlite(dailyDb, second);
+    readScript(dailyDb, script('refresh-slice.sql'));
+    fullBuild(fullDb, `${first} ${second}`);
+    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
+    expect(contractState(dailyDb)?.current_value).toBe(CORRECT);
+    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
+  });
+
+  it('preserves an explicit staged after-value and its before-value as the full path does', () => {
+    const first = `${tender()} ${contract(MISTYPED)}`;
+    const second = `${release({ published: '2026-11-24', value: CORRECT })}
+      UPDATE raw_amendments SET value_after = ${CORRECT + 1};`;
+    dailyWindows(dailyDb, [first, second]);
+    fullBuild(fullDb, `${first} ${second}`);
+    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
+    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
+    expect(timeline(dailyDb)).toMatchObject([{ value_before: CORRECT, value_after: CORRECT + 1 }]);
+  });
+});
+
+describe('OCDS source value integrity check', () => {
+  it('uses the daily ranking and eligibility SQL', () => {
+    const slice = readFileSync(script('refresh-slice.sql'), 'utf8');
+    const block = slice.split('-- @ocds-value-decision-lockstep start\n')[1];
+    expect(block?.split('\n-- @ocds-value-decision-lockstep end')[0]).toBe(
+      OCDS_SOURCE_VALUE_DECISION_SQL,
+    );
+  });
+
+  it('warns on a missing correction in the served gate and fails the full build gate', async () => {
+    fullBuild(
+      fullDb,
+      `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-24', value: MISTYPED })}`,
+    );
+    // Old served shape: the release amount is in value_before and the contract still uses signing value.
+    sqlite(fullDb, `UPDATE amendments SET value_before = ${CORRECT};`);
+    expect((await valueRule(fullDb)).ok).toBe(true);
+
+    const run = integrityRunner(fullDb);
+    const results = await assertIntegrity(run, { exit: false });
+    expect(results.find((r) => r.name === 'ocds-source-value')).toMatchObject({
+      ok: true,
+      warn: true,
+      detail: expect.stringContaining('missing after-values on eligible releases: 1'),
+    });
+    await expect(assertIntegrity(run, { exit: false, build: true })).rejects.toThrow(
+      /ocds-source-value.*missing after-values on eligible releases: 1/,
+    );
+  });
+
+  it.each([
+    [CONTRACT, null],
+    ['ANNEX-NUMBER', CONTRACT],
+  ])('rejects an after-value beside an EOP annex under %s', async (number, rawNumber) => {
+    fullBuild(
+      fullDb,
+      `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-24', value: CORRECT })}`,
+    );
+    sqlite(
+      fullDb,
+      `INSERT INTO amendments (id, natural_key, unp, source, contract_number, contract_number_raw)
+       VALUES ('test-eop', 'test-eop', '${UNP}', 'eop:test', '${number}', ${rawNumber ? `'${rawNumber}'` : 'NULL'});`,
+    );
+    expect(await sourceValueGate(fullDb)).toMatchObject({
+      ok: false,
+      warn: false,
+      detail: expect.stringContaining('after-values beside an EOP annex: 1'),
+    });
+  });
+
+  it('rejects an after-value superseded by a later release even when the publication dates tie', async () => {
+    fullBuild(
+      fullDb,
+      `${tender()} ${contract(MISTYPED)}
+       ${release({ published: '2026-11-23', value: MISTYPED })}
+       ${release({ published: '2026-11-24', value: CORRECT })}`,
+    );
+    sqlite(
+      fullDb,
+      `UPDATE amendments SET published_at = '2026-11-24', value_after = ${CORRECT}
+       WHERE published_at = '2026-11-23';`,
+    );
+    expect(await sourceValueGate(fullDb)).toMatchObject({
+      ok: false,
+      warn: false,
+      detail: expect.stringContaining('superseded after-values: 1'),
+    });
   });
 });

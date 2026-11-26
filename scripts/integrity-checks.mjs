@@ -535,6 +535,86 @@ WHERE o.source LIKE 'ocds:%'
       AND e.source LIKE 'eop:%'
   )`;
 
+// Shared with refresh-slice.sql. The lockstep test keeps the gate and refresh on the same
+// ranking and eligibility rules. keys holds contracts without an EOP annex.
+export const OCDS_SOURCE_VALUE_DECISION_SQL = `ranked AS (
+  SELECT o.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY o.unp, o.contract_number ORDER BY o.published_at DESC, o.natural_key DESC
+    ) AS rn
+  FROM ocds o
+), signings AS (
+  SELECT k.unp, k.contract_number, MIN(c.signing_value) AS signing_value,
+    MIN(COALESCE(NULLIF(c.currency, ''), 'BGN')) AS currency
+  FROM keys k
+  CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
+  WHERE c.id GLOB 'c:[eo]:*'
+  GROUP BY k.unp, k.contract_number
+  HAVING COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
+    AND COUNT(DISTINCT COALESCE(NULLIF(c.currency, ''), 'BGN')) = 1
+), decided AS (
+  SELECT r.natural_key, r.unp, r.contract_number, r.rn, r.release_only, r.release_value, s.signing_value,
+    r.rn = 1 AND r.release_only AND s.signing_value IS NOT NULL
+      AND NULLIF(r.document_number, '') IS NOT NULL
+      AND r.currency = s.currency
+      AND r.release_value > 0
+      AND ABS(r.release_value - s.signing_value) >= 0.005 AS corrected
+  FROM ranked r
+  LEFT JOIN signings s ON s.unp = r.unp AND s.contract_number = r.contract_number
+)`;
+
+// Read the release amount from value_after when the row was promoted and from value_before otherwise.
+// The OCDS importer supplies only a release amount, so every served OCDS row is a release candidate.
+const OCDS_SOURCE_VALUE_SQL = `WITH ocds AS MATERIALIZED (
+  SELECT natural_key, unp, contract_number, published_at, currency, document_number,
+    COALESCE(value_after, value_before) AS release_value, 1 AS release_only
+  FROM amendments
+  WHERE source LIKE 'ocds:%' AND unp IS NOT NULL AND contract_number IS NOT NULL
+), ocds_keys AS (
+  SELECT DISTINCT unp, contract_number FROM ocds
+), keys AS MATERIALIZED (
+  SELECT k.unp, k.contract_number
+  FROM ocds_keys k
+  WHERE NOT EXISTS (
+    SELECT 1 FROM amendments e
+    WHERE e.source LIKE 'eop:%' AND e.unp = k.unp
+      AND (e.contract_number = k.contract_number OR e.contract_number_raw = k.contract_number)
+  )
+),
+${OCDS_SOURCE_VALUE_DECISION_SQL}
+SELECT
+  SUM(a.value_after IS NOT NULL AND k.unp IS NULL) AS beside_eop,
+  SUM(a.value_after IS NOT NULL AND k.unp IS NOT NULL AND d.rn > 1) AS superseded,
+  SUM(a.value_after IS NULL AND d.corrected) AS missed
+FROM decided d
+JOIN amendments a ON a.natural_key = d.natural_key
+LEFT JOIN keys k ON k.unp = d.unp AND k.contract_number = d.contract_number`;
+
+// contract-value-rule replays the value rule using the stored annexes. It can pass even when
+// the affected contract and its stored OCDS row both predate the source correction rule.
+export async function checkOcdsSourceValue(runner, { build = false } = {}) {
+  const name = 'ocds-source-value';
+  if (!(await tableExists(runner, 'amendments')) || !(await tableExists(runner, 'contracts')))
+    return { name, ok: true, skipped: true, detail: 'amendments or contracts table absent' };
+
+  const result = (await rows(runner, OCDS_SOURCE_VALUE_SQL))[0] ?? {};
+  const besideEop = num(result.beside_eop);
+  const superseded = num(result.superseded);
+  const missed = num(result.missed);
+  const ok = besideEop === 0 && superseded === 0 && (!build || missed === 0);
+  const warn = ok && missed > 0;
+  return {
+    name,
+    ok,
+    warn,
+    skipped: false,
+    detail:
+      warn || !ok
+        ? `OCDS after-values beside an EOP annex: ${besideEop}, superseded after-values: ${superseded}, missing after-values on eligible releases: ${missed}`
+        : 'all eligible OCDS corrections are present and no EOP or later release supersedes them',
+  };
+}
+
 // 7) Amendment twin dedup (#286). The OCDS→EOP bridge lets an OCDS amendment reach the same contract as
 //    its EOP twin; the prefer-EOP dedup keeps only one per (unp, contract_number) by DELETE-ing OCDS rows
 //    before promotion — the SOLE guard, since promotion is unconditional. On the incremental path a twin
@@ -728,6 +808,7 @@ export const CHECKS = [
   checkDateSanity,
   checkStagingReconciliation,
   checkAmendmentTwins,
+  checkOcdsSourceValue,
 ];
 
 // Each check's stable id, in CHECKS order — known BEFORE the check runs, so a caller whose query failed
@@ -744,13 +825,14 @@ export const CHECK_NAMES = [
   'date-sanity',
   'staging-reconciliation',
   'amendment-twin-dedup',
+  'ocds-source-value',
 ];
 
-export async function runIntegrityChecks(runner) {
+export async function runIntegrityChecks(runner, { build = false } = {}) {
   // Sequential, not Promise.all: preserve the printed order and avoid firing every check's reads at
   // D1 at once. Each `fn` may return a value (sync runner) or a Promise (async/D1 runner); await both.
   const results = [];
-  for (const fn of CHECKS) results.push(await fn(runner));
+  for (const fn of CHECKS) results.push(await fn(runner, { build }));
   return results;
 }
 
@@ -812,7 +894,7 @@ export async function assertIntegrity(
   runner,
   { label = 'integrity', exit = true, build = false } = {},
 ) {
-  const results = await runIntegrityChecks(runner);
+  const results = await runIntegrityChecks(runner, { build });
   if (build) for (const fn of BUILD_CHECKS) results.push(await fn(runner));
   for (const r of results) {
     const tag = r.skipped ? 'SKIP' : r.warn ? 'WARN' : r.ok ? ' ok ' : 'FAIL';
