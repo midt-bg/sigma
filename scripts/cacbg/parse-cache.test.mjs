@@ -407,4 +407,48 @@ test('a restored entry is renewed in the bucket, so its expiry only takes entrie
   assert.equal(puts.length, 1, 'nothing to renew when there is no entry');
 });
 
+test('a cache that cannot be written costs the next run a parse, never this run', async () => {
+  const golden = await extract(memoryCorpus(corpusFolders()), { CACBG_PARSE_CACHE: 'off' });
+  const corpus = memoryCorpus(corpusFolders());
+  const { put } = corpus.store;
+  let failing = true;
+  // The store gives up on the cache's writes after its retries; everything else it writes as usual.
+  corpus.store.put = async (key, body) => {
+    if (failing && key.startsWith('parse-cache/')) throw Error('Corpus request failed: 503');
+    return put(key, body);
+  };
+  const failedLines = (run) =>
+    run.logs
+      .filter((l) => l.startsWith('{"event":"declarations_parse_cache_write_failed"'))
+      .map((l) => JSON.parse(l));
+
+  // Every folder parsed, none kept: the run completes with the output of a run without a cache.
+  const cold = await extract(corpus);
+  assert.equal(cold.code, 0);
+  same(cold, golden, 'a run whose cache writes fail');
+  assert.deepEqual([cold.cache.parsed, cold.cache.writeFailed], [5, 5]);
+  assert.equal(entries(corpus).size, 0);
+  const failed = failedLines(cold);
+  assert.deepEqual(
+    failed.map((f) => f.folder),
+    ['2022', '2023', '2024', '2024y', '2025'],
+  );
+  assert.match(failed[0].key, /^parse-cache\/[0-9a-f]{16}\/2022\/[0-9a-f]{64}\.jsonl\.gz$/);
+  assert.equal(failed[0].reason, 'Corpus request failed: 503');
+
+  // The next run parses those folders again and keeps them.
+  failing = false;
+  const next = await extract(corpus);
+  same(next, golden);
+  assert.deepEqual([next.cache.restored, next.cache.parsed, next.cache.writeFailed], [0, 5, 0]);
+  assert.equal(entries(corpus).size, 5);
+
+  // A restored entry whose renewal cannot be written is still restored, whole.
+  failing = true;
+  const warm = await extract(corpus);
+  same(warm, golden, 'a run whose renewals fail');
+  assert.deepEqual([warm.cache.restored, warm.cache.parsed, warm.cache.writeFailed], [5, 0, 5]);
+  assert.equal(failedLines(warm).length, 5);
+});
+
 test('cleanup', () => fs.rmSync(dir, { recursive: true, force: true }));

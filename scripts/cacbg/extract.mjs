@@ -436,6 +436,20 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
     restored: 0,
     parsed: 0,
     unusable: 0,
+    writeFailed: 0,
+  };
+  // The cache only saves a later run a parse: an entry that cannot be written is reported and the run
+  // goes on with the records it has; the next run parses that folder again.
+  const onWriteFailed = (folder, key) => (error) => {
+    cacheReport.writeFailed++;
+    console.log(
+      JSON.stringify({
+        event: 'declarations_parse_cache_write_failed',
+        folder,
+        key,
+        reason: error instanceof Error ? error.message : `${error}`,
+      }),
+    );
   };
   const done = new Set(head.folders);
   const order = [...head.folders];
@@ -477,6 +491,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
                   }),
                 );
               },
+              onWriteFailed: onWriteFailed(folder, key),
             })
           : null;
       const restored = Boolean(parsed);
@@ -493,7 +508,8 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
         });
         if (!parsed) continue;
         cacheReport.parsed++;
-        if (key) await saveEntry(store, { key, records });
+        if (key)
+          await saveEntry(store, { key, records, onWriteFailed: onWriteFailed(folder, key) });
       }
       openParts(folder);
       const n = await resolveFolder(readRecords(records), {

@@ -158,12 +158,20 @@ async function checkRecords(file, folder) {
   return end;
 }
 
+const rethrow = (error) => {
+  throw error;
+};
+
 /**
  * Restore a folder's records from the cache into `out`. Returns the records' `end` counts, or null when
  * there is no usable entry: absent, or failing a check (`onUnusable` hears why). Streams throughout: the
- * entry goes to disk, then through gunzip into `out`.
+ * entry goes to disk, then through gunzip into `out`. A renewal that cannot be written goes to
+ * `onWriteFailed`; the records restored are whole either way.
  */
-export async function restoreEntry(store, { key, folder, out, onUnusable = () => {} }) {
+export async function restoreEntry(
+  store,
+  { key, folder, out, onUnusable = () => {}, onWriteFailed = rethrow },
+) {
   const gz = `${out}.gz`;
   try {
     let end;
@@ -179,19 +187,31 @@ export async function restoreEntry(store, { key, folder, out, onUnusable = () =>
     }
     // An entry is renewed each time a run uses it, so the bucket's expiry only ever takes an entry no run
     // has used for the whole expiry period (docs/deploy.md). One put of the same bytes.
-    if (store.remote) await store.put(key, fs.readFileSync(gz));
+    if (store.remote) {
+      try {
+        await store.put(key, fs.readFileSync(gz));
+      } catch (error) {
+        onWriteFailed(error);
+      }
+    }
     return end;
   } finally {
     fs.rmSync(gz, { force: true });
   }
 }
 
-/** Keep a folder's freshly parsed records under `key`: compressed on disk first, then one put. */
-export async function saveEntry(store, { key, records }) {
+/**
+ * Keep a folder's freshly parsed records under `key`: compressed on disk first, then one put. A write
+ * that fails goes to `onWriteFailed`, and `records` stay as they are: the cache only saves the next run
+ * a parse, so a run that cannot write it carries on, and the next run parses the folder again.
+ */
+export async function saveEntry(store, { key, records, onWriteFailed = rethrow }) {
   const gz = `${records}.gz`;
   try {
     await pipeline(fs.createReadStream(records), createGzip(), fs.createWriteStream(gz));
     await store.put(key, fs.readFileSync(gz));
+  } catch (error) {
+    onWriteFailed(error);
   } finally {
     fs.rmSync(gz, { force: true });
   }
