@@ -263,6 +263,8 @@ DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
 -- an EARLIER window is not in this window's raw_amendments, yet its OCDS twin must still be dropped, or the
 -- INSERT OR REPLACE promotion below (keyed by a natural_key that never matches across sources) would leave
 -- both rows and double annex_count (issue #286, review nikimilenkov HIGH 1).
+-- As on the full path, an EOP annex the value resolver moved onto its contract is matched on its annex-side
+-- number (contract_number_raw) too: the OCDS release of the same annex still carries that number.
 DELETE FROM raw_amendments
 WHERE source LIKE 'ocds:%'
   AND (
@@ -270,13 +272,15 @@ WHERE source LIKE 'ocds:%'
       SELECT 1 FROM raw_amendments e
       WHERE e.source LIKE 'eop:%'
         AND e.unp = raw_amendments.unp
-        AND e.contract_number = raw_amendments.contract_number
+        AND (e.contract_number = raw_amendments.contract_number
+          OR e.contract_number_raw = raw_amendments.contract_number)
     )
     OR EXISTS (
       SELECT 1 FROM amendments s
       WHERE s.source LIKE 'eop:%'
         AND s.unp = raw_amendments.unp
-        AND s.contract_number = raw_amendments.contract_number
+        AND (s.contract_number = raw_amendments.contract_number
+          OR s.contract_number_raw = raw_amendments.contract_number)
     )
   );
 
