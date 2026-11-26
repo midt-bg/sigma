@@ -522,6 +522,27 @@ export function slotReader(
 }
 
 /**
+ * Why counts can differ without a defect: the slot was served and refreshed after its ship — a former live
+ * slot still holds the receipt of the build that made it, and the refresh has moved its rows on since.
+ * Verifying it again proves nothing; it is rebuilt. Only a hint for the message, so a read that fails is
+ * no hint.
+ */
+function refreshedSince(read, builtAt) {
+  try {
+    const at = read('SELECT MAX(refreshed_at) AS at FROM data_freshness')[0]?.at;
+    const utc = (t) => Date.parse(/[TZ]/.test(t) ? t : `${t.replace(' ', 'T')}Z`);
+    if (at && builtAt && utc(at) > utc(builtAt))
+      return (
+        ` — the slot was refreshed (${at}) after its ship (${builtAt}): it has been served since, and the` +
+        ' ship receipt no longer describes it. Nothing to verify: rebuild the slot'
+      );
+  } catch {
+    // no hint
+  }
+  return '';
+}
+
+/**
  * The verification, a stage of its own: it needs nothing but the slot, so it runs right after the ship and
  * again later on the same slot without building anything (`SIGMA_REBUILD_VERIFY=1`). The ship's receipt says
  * what the slot must hold and which rules built it; the slot is counted against it, the integrity gate runs,
@@ -553,7 +574,8 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
   const mismatched = tables.filter((t) => Number(served[t]) !== counts[t]);
   if (mismatched.length)
     throw new Error(
-      `Slot counts differ from the snapshot: ${mismatched.map((t) => `${t} ${served[t]} ≠ ${counts[t]}`).join(', ')}`,
+      `Slot counts differ from the snapshot: ${mismatched.map((t) => `${t} ${served[t]} ≠ ${counts[t]}`).join(', ')}` +
+        refreshedSince(read, builtAt),
     );
   const results = await check(read, { label: `rebuilt slot ${name}`, exit: false });
   const at = (now ?? (() => new Date().toISOString()))();

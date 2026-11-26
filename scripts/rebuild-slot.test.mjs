@@ -457,6 +457,24 @@ test('a real failure is not tried again and leaves no version', async (t) => {
   assert.deepEqual(lost.stamp(), []);
 });
 
+test('a slot refreshed after its ship is named as one, not as a defect of the build', async (t) => {
+  const s = builtSlot(t);
+  await build(s, { now: () => '2026-11-20T10:00:00.000Z' });
+  // Served and refreshed since: the refresh moved its rows and stamped its time in its own format.
+  s.slot.exec(`INSERT INTO bidders (id, name) VALUES ('bidder:new', 'НОВ ТЕСТ ЕООД');
+    INSERT INTO data_freshness (source, as_of, rows, refreshed_at)
+      VALUES ('eop', '2026-11-20', 1, '2026-11-20 16:00:00');`);
+  const verify = () =>
+    verifySlot('sigma-test', { read: s.reader(), apply: s.apply, runId: 'r', check: passes });
+  await assert.rejects(
+    verify(),
+    /bidders 2 ≠ 1, data_freshness 1 ≠ 0 — the slot was refreshed \(2026-11-20 16:00:00\)/,
+  );
+  // A refresh stamp older than the ship says nothing of the kind.
+  s.slot.exec("UPDATE data_freshness SET refreshed_at = '2026-11-20 09:00:00'");
+  await assert.rejects(verify(), (error) => !/refreshed/.test(error.message));
+});
+
 test('a verification on its own refuses a slot nothing finished shipping to', async (t) => {
   const s = builtSlot(t);
   const verify = () =>
