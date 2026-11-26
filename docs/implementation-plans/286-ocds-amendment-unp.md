@@ -27,7 +27,7 @@ real release carries only:
 - `ocid: "ocds-e82gsb-425867"` and `tender.id: "425867"` (the EOP internal
   procedure id = the OCID suffix)
 - `contracts[].id: "180821"` (the contract number)
-- `buyer.identifier.id: "000024948"` (authority EIK)
+- `buyer.identifier.id: "999000260"` (authority EIK)
 - `contracts[].value` — the **pre-amendment** value
 
 The EOP base "договори" feed, by contrast, carries **both** join anchors:
