@@ -189,7 +189,8 @@ export const UNVERIFY_SQL =
   `${REBUILD_STATE_DDL}\nDELETE FROM rebuild_state WHERE stage IN ('ship','verify');\n` +
   'DELETE FROM data_version;\n';
 
-/** What this run has already put in the slot. A slot without the table has nothing to offer. */
+/** What this run has already put in the slot: each finished stage, with the run that finished it and its
+ *  detail. A slot without the table has nothing to offer. */
 export function slotState(name, runId, read = d1Json, anyRun = false) {
   if (!read(name, "SELECT 1 AS found FROM sqlite_master WHERE name='rebuild_state'").length)
     return new Map();
@@ -197,8 +198,31 @@ export function slotState(name, runId, read = d1Json, anyRun = false) {
   // An operator who asks to resume adopts what an earlier run of the same rebuild left behind.
   const where = anyRun ? '' : ` WHERE run_id=${sqlLiteral(runId)}`;
   return new Map(
-    read(name, `SELECT stage, detail FROM rebuild_state${where}`).map((r) => [r.stage, r.detail]),
+    read(name, `SELECT stage, run_id, detail FROM rebuild_state${where}`).map((r) => [
+      r.stage,
+      { runId: r.run_id, detail: r.detail },
+    ]),
   );
+}
+
+/**
+ * Under which run the declarations stage keeps its checkpoints (scripts/cacbg/extract-checkpoint.mjs). The
+ * local stages leave nothing in the slot, so a resumed build reads the declarations again — but the reading
+ * already accepted by an earlier run of the same build is still in R2, keyed by the run that prepared the
+ * slot. It is adopted only when that run was the same code: the checkpoint's fingerprint guards the inputs
+ * (corpus, identity rules, registry), not the extractor, and a fix deployed between the runs must not be
+ * resumed past. Otherwise, and for a fresh build, the run keeps its own.
+ */
+export function checkpointRun(done, runId, commit) {
+  const prepared = done.get('prepare');
+  if (!prepared || prepared.runId === runId || !commit) return runId;
+  let recorded = null;
+  try {
+    recorded = JSON.parse(prepared.detail ?? 'null')?.commit ?? null;
+  } catch {
+    // a receipt without a commit adopts nothing
+  }
+  return recorded === commit ? prepared.runId : runId;
 }
 
 /** A batch of partidas, straight into the slot: its rows, the queue entries it cleared or added, and
@@ -640,27 +664,38 @@ export async function finishBuild(
 
 /**
  * The order of a run, apart from what each stage does. `ops` are the stages, each of which writes the slot
- * except `state` and `rehydrate`, which only read it:
+ * except `state`, `rehydrate` and `local`:
  *
  *   state(anyRun)  the receipts in the slot (`slotState`)   prepare()  empty and shape the slot
  *   rehydrate()    the slot's rows into the local build      unverify() take the stamp and the ship away
- *   import(), registry(), local(), ship()  the build's stages; ship() ships and verifies
+ *   import(), registry()  stages that leave their rows and their receipt in the slot
+ *   local(done)    precompute, the live links, the declarations and the search index — on the local disk
+ *   ship()         the finished snapshot into the slot, then the verification
  *   verify()       the verification on its own
  *
- * A verification on its own builds and empties nothing. A build run takes the stamp and the ship away
- * before it writes anything a resume keeps — a fresh one by emptying the slot, which takes them along.
+ * A run continues at the first stage the slot holds no receipt for. A slot that holds a finished ship needs
+ * only its verification — after a container stopped in it, after a resume — and neither builds nor
+ * empties anything. The local stages leave nothing durable in the slot, so they always run again (what the
+ * declarations already read is kept in R2, `checkpointRun`). A build run takes the stamp and the ship away
+ * right before its first write — a fresh one by emptying the slot, which takes them along — so a slot
+ * being rewritten never looks verified, and a run that only verifies never erases its own input.
  */
 export async function runRebuild({ verify = false, resume = false }, ops) {
   if (verify) return ops.verify();
   const done = await ops.state(resume);
-  if (done.has('prepare')) await ops.rehydrate(done);
-  else await ops.prepare();
-  // From here on this run writes the slot: whatever an earlier run shipped and verified no longer stands.
-  await ops.unverify();
-  if (!done.has('import')) await ops.import();
-  if (!done.has('registry')) await ops.registry();
-  await ops.local();
-  return ops.ship();
+  if (done.has('ship')) return ops.verify();
+  let unverified = !done.has('prepare');
+  if (unverified) await ops.prepare();
+  else await ops.rehydrate(done);
+  const writing = async (op) => {
+    if (!unverified) await ops.unverify();
+    unverified = true;
+    return op();
+  };
+  if (!done.has('import')) await writing(ops.import);
+  if (!done.has('registry')) await writing(ops.registry);
+  await ops.local(done);
+  return writing(ops.ship);
 }
 
 async function main() {
@@ -706,6 +741,7 @@ async function main() {
   const db = join(work, 'slot.sqlite');
   const today = new Date().toISOString().slice(0, 10);
   const runId = process.env.SIGMA_RUN_ID ?? '';
+  const commit = process.env.SIGMA_SOURCE_COMMIT || null;
   // Every file into the slot carries its receipt: the rows of a chunk are not repeatable, and wrangler can
   // report a failure for a file that landed (scripts/d1-retry.mjs).
   const apply = wranglerFileSender({ d1Name: target.name, remote: true, dir: work, cwd: webDir });
@@ -752,7 +788,8 @@ async function main() {
       stage('import');
       emptySlot(target.name, apply);
       wrangler(['d1', 'migrations', 'apply', target.name, '--remote']);
-      apply('state-prepare', receipt('prepare'));
+      // The commit that prepared the slot decides whether a resume may adopt its checkpoints.
+      apply('state-prepare', receipt('prepare', JSON.stringify({ commit })));
     },
     unverify: () => apply('unverify', UNVERIFY_SQL),
 
@@ -792,7 +829,7 @@ async function main() {
       )([], receipt('registry'));
     },
 
-    local: async () => {
+    local: async (done) => {
       // 3. Public ownership, then the rollups and the entity search index.
       stage('precompute');
       const { PUBLIC_OWNERSHIP_SQL } = await import('../apps/etl/src/public-ownership.ts');
@@ -849,7 +886,7 @@ async function main() {
             '--r2',
             ...extra,
           ],
-          { SIGMA_REBUILD: '1' },
+          { SIGMA_REBUILD: '1', SIGMA_CHECKPOINT_RUN_ID: checkpointRun(done, runId, commit) },
         );
       await declarations('--until', 'candidates');
       // The catch-up pass reads the requested companies and accepts the baseline for winners and
@@ -909,7 +946,7 @@ async function main() {
         verifyRead,
         runId,
         version,
-        commit: process.env.SIGMA_SOURCE_COMMIT || null,
+        commit,
       });
     },
   };

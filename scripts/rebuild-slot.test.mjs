@@ -19,6 +19,7 @@ import {
   registryTables,
   rehydrate,
   runRebuild,
+  checkpointRun,
   shippedTables,
   slotFlusher,
   slotReader,
@@ -157,9 +158,9 @@ test('a long sqlite3 statement reports progress and a failing one rejects', asyn
 test('the slot says which stages this run already finished', () => {
   const answers = {
     "SELECT 1 AS found FROM sqlite_master WHERE name='rebuild_state'": [{ found: 1 }],
-    "SELECT stage, detail FROM rebuild_state WHERE run_id='run-7'": [
-      { stage: 'prepare', detail: null },
-      { stage: 'import', detail: '2026-09-17' },
+    "SELECT stage, run_id, detail FROM rebuild_state WHERE run_id='run-7'": [
+      { stage: 'prepare', run_id: 'run-7', detail: null },
+      { stage: 'import', run_id: 'run-7', detail: '2026-09-17' },
     ],
   };
   const read = (name, sql) => answers[sql] ?? [];
@@ -168,6 +169,10 @@ test('the slot says which stages this run already finished', () => {
     ['prepare', 'import'],
     'a recorded stage is not repeated',
   );
+  assert.deepEqual(slotState('slot', 'run-7', read).get('import'), {
+    runId: 'run-7',
+    detail: '2026-09-17',
+  });
   // A slot that has never been prepared offers nothing, and must not be queried further.
   assert.equal(slotState('slot', 'run-7', () => []).size, 0);
 
@@ -751,9 +756,9 @@ test('the slot preserves annex and signing evidence, including unknown legacy pr
   assert.deepEqual(slot.prepare('PRAGMA foreign_key_check').all(), []);
 });
 
-// The order of a run, with every stage replaced by a record of the call. `state` and `rehydrate` only read
-// the slot; every other stage writes it.
-const READS_ONLY = new Set(['state', 'rehydrate']);
+// The order of a run, with every stage replaced by a record of the call. `state`, `rehydrate` and `local`
+// do not write the slot; every other stage does.
+const READS_ONLY = new Set(['state', 'rehydrate', 'local']);
 function stages(receipts = []) {
   const calls = [];
   const op = (name, result) => async (arg) => {
@@ -790,24 +795,228 @@ test('a verification on its own builds nothing and empties nothing', async () =>
 test('a fresh build empties the slot first and runs every stage', async () => {
   const run = stages();
   assert.deepEqual(await runRebuild({}, run.ops), { version: 7 });
-  assert.deepEqual(run.calls, [
-    'state(false)',
-    'prepare',
-    'unverify',
-    'import',
-    'registry',
-    'local',
-    'ship',
-  ]);
+  // Emptying the slot takes the stamp and the receipts with it: nothing else to take away.
+  assert.deepEqual(run.calls, ['state(false)', 'prepare', 'import', 'registry', 'local', 'ship']);
 });
 
-test('a resumed build takes the stamp and the ship away before its first write, and skips what is done', async () => {
+test('a resumed build takes the stamp and the ship away right before its first write, and skips what is done', async () => {
   const run = stages(['prepare', 'import', 'registry']);
   await runRebuild({ resume: true }, run.ops);
-  assert.deepEqual(run.calls, ['state(true)', 'rehydrate', 'unverify', 'local', 'ship']);
+  assert.deepEqual(run.calls, ['state(true)', 'rehydrate', 'local', 'unverify', 'ship']);
   assert.equal(run.writes()[0], 'unverify', 'nothing is written before the stamp is gone');
 
   const afterImport = stages(['prepare', 'import']);
   await runRebuild({ resume: true }, afterImport.ops);
-  assert.deepEqual(afterImport.writes(), ['unverify', 'registry', 'local', 'ship']);
+  assert.deepEqual(afterImport.writes(), ['unverify', 'registry', 'ship']);
+});
+
+test('a slot that holds a finished ship is only verified, by a retry or a resume alike', async () => {
+  for (const resume of [false, true]) {
+    const run = stages(['prepare', 'import', 'registry', 'ship']);
+    assert.deepEqual(await runRebuild({ resume }, run.ops), { version: 7 });
+    assert.deepEqual(
+      run.calls,
+      [`state(${resume})`, 'verify'],
+      'no rehydrate, no unverify, no build',
+    );
+  }
+});
+
+test('a resume adopts the declarations checkpoints of the run that prepared the slot, if it was the same code', () => {
+  const done = (runId, detail) => new Map([['prepare', { runId, detail }]]);
+  const same = JSON.stringify({ commit: 'c0ffee1' });
+  assert.equal(
+    checkpointRun(new Map(), 'run-b', 'c0ffee1'),
+    'run-b',
+    'a fresh build keeps its own',
+  );
+  assert.equal(
+    checkpointRun(done('run-b', same), 'run-b', 'c0ffee1'),
+    'run-b',
+    'a retry is its own',
+  );
+  assert.equal(checkpointRun(done('run-a', same), 'run-b', 'c0ffee1'), 'run-a', 'a resume adopts');
+  for (const [detail, commit] of [
+    [JSON.stringify({ commit: 'deadbee' }), 'c0ffee1'], // a fix deployed in between
+    [null, 'c0ffee1'], // prepared by code that did not record its commit
+    ['not json', 'c0ffee1'],
+    [same, null], // this run does not know its own commit
+  ])
+    assert.equal(checkpointRun(done('run-a', detail), 'run-b', commit), 'run-b');
+});
+
+// A whole run against a real slot: each stage writes its receipt as main() does — the import and the ship
+// sealed into their last file, the registry with its last flush, the prepare on its own — and the run can be
+// stopped right after any stage, or inside the ship after a number of its files. What ran is recorded, so a
+// test can assert what a later run did NOT do again.
+function slotRun(s, { runId, stopAfter, stopInShipAfter, commit = 'c0ffee1' }) {
+  const ran = [];
+  let shipping = false;
+  let shipFiles = 0;
+  const apply = (label, sql) => {
+    if (shipping && /^ship-(?!schema|clear-)/.test(label) && shipFiles++ === stopInShipAfter)
+      throw new Error('container stopped inside the ship');
+    s.apply(label, sql);
+  };
+  const stage = (name, work) => async (arg) => {
+    ran.push(name);
+    const result = await work(arg);
+    if (stopAfter === name) throw new Error(`container stopped after ${name}`);
+    return result;
+  };
+  const at = () => new Date().toISOString();
+  const ops = {
+    state: (anyRun) => slotState('sigma-test', runId, s.read, anyRun),
+    rehydrate: stage('rehydrate', () => {}),
+    prepare: stage('prepare', () => {
+      emptySlot('sigma-test', apply, s.read);
+      for (const file of readdirSync('packages/db/migrations')
+        .filter((name) => name.endsWith('.sql'))
+        .sort())
+        s.slot.exec(readFileSync(join('packages/db/migrations', file), 'utf8'));
+      apply('state-prepare', receiptSql('prepare', runId, at(), JSON.stringify({ commit })));
+    }),
+    unverify: stage('unverify', () => apply('unverify', UNVERIFY_SQL)),
+    import: stage('import', () =>
+      fillSlot('sigma-test', s.snapshot, s.dir, {
+        label: 'import',
+        apply,
+        read: s.read,
+        seal: () => receiptSql('import', runId, at()),
+      }),
+    ),
+    registry: stage('registry', () => apply('registry-batch', receiptSql('registry', runId, at()))),
+    local: stage('local', (done) => ({ checkpoints: checkpointRun(done, runId, commit) })),
+    ship: stage('ship', () => {
+      shipping = true;
+      return finishBuild('sigma-test', s.snapshot, s.dir, {
+        apply,
+        read: s.read,
+        verifyRead: s.reader(),
+        runId,
+        version: 7,
+        commit,
+        check: passes,
+      });
+    }),
+    verify: stage('verify', () =>
+      verifySlot('sigma-test', { read: s.reader(), apply, runId, check: passes }),
+    ),
+  };
+  return { ops, ran };
+}
+
+test('a build stopped after any stage continues at the next one and does not redo the finished ones', async (t) => {
+  const order = ['prepare', 'import', 'registry', 'local', 'ship'];
+  // What the next run does once the slot holds a stage's receipt. The local stages leave nothing in the
+  // slot, so a stop after them costs them again; the ship is followed by its verification alone.
+  const next = {
+    prepare: ['rehydrate', 'unverify', 'import', 'registry', 'local', 'ship'],
+    import: ['rehydrate', 'unverify', 'registry', 'local', 'ship'],
+    registry: ['rehydrate', 'local', 'unverify', 'ship'],
+    local: ['rehydrate', 'local', 'unverify', 'ship'],
+    ship: ['verify'],
+  };
+  for (const stopAfter of order)
+    for (const [label, flags, runId] of [
+      ['the coordinator’s retry of the same run', {}, 'run-a'],
+      ['an operator’s resume', { resume: true }, 'run-b'],
+    ]) {
+      const s = builtSlot(t);
+      // The ship ends in its verification: stopped right after the ship, the container never finished it.
+      if (stopAfter === 'ship') s.overload(VERIFY_ATTEMPTS);
+      const first = slotRun(s, {
+        runId: 'run-a',
+        stopAfter: stopAfter === 'ship' ? null : stopAfter,
+      });
+      await assert.rejects(
+        runRebuild({}, first.ops),
+        stopAfter === 'ship' ? /overloaded/ : new RegExp(`stopped after ${stopAfter}`),
+      );
+      assert.deepEqual(first.ran, order.slice(0, order.indexOf(stopAfter) + 1));
+      assert.deepEqual(s.stamp(), [], `${stopAfter}: no stamp before a verification`);
+
+      const second = slotRun(s, { runId });
+      const result = await runRebuild(flags, second.ops);
+      assert.deepEqual(second.ran, next[stopAfter], `${label} after ${stopAfter}`);
+      for (const finished of order.slice(0, order.indexOf(stopAfter) + 1))
+        if (finished !== 'local')
+          assert.ok(!second.ran.includes(finished), `${label} redid ${finished}`);
+      assert.equal(result.version, 7);
+      // The stamp names the run that shipped the rows it vouches for.
+      const shipped = stopAfter === 'ship' ? 'run-a' : runId;
+      assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: shipped }]);
+    }
+});
+
+test('a stop after the ship and before its verification resumes into the verification only', async (t) => {
+  const s = builtSlot(t);
+  s.overload(VERIFY_ATTEMPTS); // D1 does not let the verification finish
+  const first = slotRun(s, { runId: 'run-a' });
+  await assert.rejects(runRebuild({}, first.ops), /overloaded/);
+  assert.deepEqual(s.receipts(), {
+    prepare: 'run-a',
+    import: 'run-a',
+    registry: 'run-a',
+    ship: 'run-a',
+  });
+  const sentBefore = s.sent.length;
+  const resumed = slotRun(s, { runId: 'run-b' });
+  assert.equal((await runRebuild({ resume: true }, resumed.ops)).version, 7);
+  assert.deepEqual(resumed.ran, ['verify']);
+  assert.deepEqual(s.sent.slice(sentBefore), ['data-version'], 'nothing but the stamp is written');
+  assert.deepEqual(s.receipts().ship, 'run-a', 'the ship it verified is still there');
+  assert.deepEqual(s.receipts().verify, 'run-b');
+});
+
+test('a slot whose ship did not finish never passes a verification', async (t) => {
+  const s = builtSlot(t);
+  const first = slotRun(s, { runId: 'run-a', stopInShipAfter: 1 });
+  await assert.rejects(runRebuild({}, first.ops), /inside the ship/);
+  assert.ok(!('ship' in s.receipts()), 'half a ship holds no receipt');
+  // Asked to verify it, the run refuses — nothing to verify.
+  await assert.rejects(
+    runRebuild({ verify: true }, slotRun(s, { runId: 'run-v' }).ops),
+    /holds no finished ship/,
+  );
+  assert.deepEqual(s.stamp(), []);
+  // Resumed, it ships again from the start and only then verifies.
+  const resumed = slotRun(s, { runId: 'run-b' });
+  await runRebuild({ resume: true }, resumed.ops);
+  assert.deepEqual(resumed.ran, ['rehydrate', 'local', 'unverify', 'ship']);
+  assert.equal(s.stamp().length, 1);
+});
+
+test('a fresh build after a stopped one starts clean and adopts nothing', async (t) => {
+  const s = builtSlot(t);
+  await assert.rejects(runRebuild({}, slotRun(s, { runId: 'run-a', stopAfter: 'ship' }).ops));
+  s.overload(0);
+  const fresh = slotRun(s, { runId: 'run-c' });
+  await runRebuild({}, fresh.ops);
+  assert.deepEqual(fresh.ran, ['prepare', 'import', 'registry', 'local', 'ship']);
+  assert.deepEqual(
+    s.receipts(),
+    { import: 'run-c', prepare: 'run-c', registry: 'run-c', ship: 'run-c', verify: 'run-c' },
+    'the earlier run’s receipts went with the emptied slot',
+  );
+  assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: 'run-c' }]);
+});
+
+test('a resume reads the declarations under the run that prepared the slot', async (t) => {
+  const s = builtSlot(t);
+  await assert.rejects(runRebuild({}, slotRun(s, { runId: 'run-a', stopAfter: 'registry' }).ops));
+  const resumed = slotRun(s, { runId: 'run-b' });
+  const local = resumed.ops.local;
+  let checkpoints;
+  resumed.ops.local = async (done) => ({ checkpoints } = await local(done));
+  await runRebuild({ resume: true }, resumed.ops);
+  assert.equal(checkpoints, 'run-a');
+  // Code deployed in between reads them again, under its own run.
+  const t2 = builtSlot(t);
+  await assert.rejects(runRebuild({}, slotRun(t2, { runId: 'run-a', stopAfter: 'registry' }).ops));
+  const fixed = slotRun(t2, { runId: 'run-b', commit: 'deadbee' });
+  const fixedLocal = fixed.ops.local;
+  fixed.ops.local = async (done) => ({ checkpoints } = await fixedLocal(done));
+  await runRebuild({ resume: true }, fixed.ops);
+  assert.equal(checkpoints, 'run-b');
 });
