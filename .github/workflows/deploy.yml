@@ -237,6 +237,7 @@ jobs:
 
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
+        id: web
         if: steps.guard.outputs.ok == 'true' && env.SIGMA_COMPONENT == 'site'
         env: *cloudflare
         run: pnpm --filter @sigma/web run deploy
@@ -348,3 +349,49 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         env: *cloudflare
         run: bash scripts/ensure-r2-lifecycle.sh "${SIGMA_DECLARATIONS_BUCKET:-sigma-declarations}"
+
+      # Last, once the site is live: /health and a few key pages with their .data twins must name THIS commit
+      # and the data generation of the bound slot, whatever the edge cache holds (scripts/post-deploy-check.mjs,
+      # docs/deploy.md „Проверка след внедряване“). Plain GETs to the public site, no credential. Only after a
+      # web deploy that succeeded: never for the rebuild runner, never when an earlier step failed or skipped
+      # the web Worker. Staging blocks on a failure. Production does not (continue-on-error): its domain sits
+      # behind bot protection that may challenge a CI runner, so a red result there is shown in the job summary
+      # and the cutover runbook's manual check stays the gate. A failure rolls nothing back.
+      - name: Post-deploy check — this commit and its data generation are served
+        if: steps.web.outcome == 'success'
+        continue-on-error: ${{ needs.detect.outputs.env == 'production' }}
+        env:
+          SIGMA_DEPLOY_ENV: ${{ needs.detect.outputs.env }}
+        run: |
+          # Production's domain, or the Worker's workers.dev address elsewhere.
+          strict=()
+          if [ "$SIGMA_DEPLOY_ENV" = production ]; then
+            site="https://sigma.midt.bg"
+            strict=(--strict)
+          else
+            site="https://${SIGMA_WEB_NAME}.cf-midt.workers.dev"
+          fi
+          log="$RUNNER_TEMP/post-deploy-check.log"
+          set +e
+          node scripts/post-deploy-check.mjs "$site" --commit "$SIGMA_SOURCE_COMMIT" "${strict[@]}" 2>&1 | tee "$log"
+          status="${PIPESTATUS[0]}"
+          set -e
+          {
+            if [ "$status" = 0 ]; then
+              echo "### Post-deploy check: passed ($SIGMA_DEPLOY_ENV, $site)"
+            elif [ "$SIGMA_DEPLOY_ENV" = production ]; then
+              echo "### Post-deploy check: FAILED on production — not blocking ($site)"
+              echo
+              echo "The deploy stays green. Run the check by hand (docs/runbooks/production-cutover.md, step 5) before relying on the release."
+            else
+              echo "### Post-deploy check: FAILED ($SIGMA_DEPLOY_ENV, $site)"
+            fi
+            echo
+            echo '```'
+            cat "$log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" != 0 ] && [ "$SIGMA_DEPLOY_ENV" = production ]; then
+            echo "::warning title=Post-deploy check::failed on production; non-blocking — see the job summary"
+          fi
+          exit "$status"
