@@ -17,11 +17,13 @@ export interface DeclarationEnv {
   SIGMA_SOURCE_COMMIT?: string;
 }
 /** The idle blue/green slot a rebuild writes (ADR-0048); absent for the weekly declarations run.
- * `resume` continues whatever the slot already holds from an earlier rebuild instead of emptying it. */
+ * `resume` continues whatever the slot already holds from an earlier rebuild instead of emptying it.
+ * `verify` builds nothing: it only verifies what an earlier rebuild shipped into the slot, and stamps it. */
 export interface RebuildTarget {
   name: string;
   id: string;
   resume?: boolean;
+  verify?: boolean;
 }
 /** What `monitor()` saw, under its own storage key: the alarm owns `run` and must not race a promise. */
 interface ContainerExit {
@@ -165,6 +167,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         SIGMA_D1_NAME: target.name,
         SIGMA_REBUILD: '1',
         ...(target.resume ? { SIGMA_REBUILD_RESUME: '1' } : {}),
+        ...(target.verify ? { SIGMA_REBUILD_VERIFY: '1' } : {}),
       });
     }
     return env;
@@ -192,7 +195,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         attempt: 0,
         attemptStartedAt: now,
         failures: 0,
-        stage: target ? 'import' : 'fetch',
+        stage: target ? (target.verify ? 'verify' : 'import') : 'fetch',
         completed: 0,
         progressVersion: 0,
         attemptProgressVersion: 0,

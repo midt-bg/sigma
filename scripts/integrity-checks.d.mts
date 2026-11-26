@@ -23,6 +23,10 @@ export interface IntegrityResult {
   detail: string;
 }
 
+/** A D1 runner waits BREATHER_MS after a query that read HEAVY_ROWS rows or more. */
+export const HEAVY_ROWS: number;
+export const BREATHER_MS: number;
+
 export function checkNonEmptyCorpus(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkRollupReconciliation(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkCurrentAmountParity(runner: IntegrityRunner): Promise<IntegrityResult>;

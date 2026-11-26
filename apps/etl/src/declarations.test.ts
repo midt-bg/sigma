@@ -352,6 +352,7 @@ it('rebuilds only an idle slot, passes both slots to the container and follows t
     SIGMA_LIVE_D1_ID: 'test',
     SIGMA_REBUILD: '1',
   });
+  expect(env).not.toHaveProperty('SIGMA_REBUILD_VERIFY');
   for (const [stage, completed] of [
     ['registry', 5],
     ['extract', 10],
@@ -366,6 +367,20 @@ it('rebuilds only an idle slot, passes both slots to the container and follows t
   await f.job().alarm();
   expect(f.run()).toMatchObject({ state: 'running', reason: 'timeout' });
   await f.resume();
+  f.answer({ state: 'complete', stage: 'verify', audit: true, published: true });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'complete', target: idle });
+});
+
+it('verifies a shipped slot on its own: the container hears it and the run starts at verify', async () => {
+  const f = fixture();
+  const idle = { name: 'sigma-idle', id: '11111111-2222-3333-4444-555555555555', verify: true };
+  expect(await f.job().startRun('r', idle)).toMatchObject({ target: idle, stage: 'verify' });
+  await f.job().alarm();
+  const env = (f.container.start.mock.calls[0] as unknown as [{ env: Record<string, string> }])[0]
+    .env;
+  expect(env).toMatchObject({ SIGMA_D1_NAME: idle.name, SIGMA_REBUILD_VERIFY: '1' });
+  expect(env).not.toHaveProperty('SIGMA_REBUILD_RESUME');
   f.answer({ state: 'complete', stage: 'verify', audit: true, published: true });
   await f.job().alarm();
   expect(f.run()).toMatchObject({ state: 'complete', target: idle });

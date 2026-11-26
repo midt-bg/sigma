@@ -9,18 +9,26 @@ import {
   clearFiles,
   dataVersionSql,
   fillSlot,
+  finishBuild,
   emptySlot,
   ifNotExists,
   ownershipStatements,
   parentsFirst,
+  receiptSql,
   registryBatchSql,
   registryTables,
   rehydrate,
+  runRebuild,
   shippedTables,
   slotFlusher,
+  slotReader,
   slotState,
   sqlite,
+  UNVERIFY_SQL,
+  VERIFY_ATTEMPTS,
+  verifySlot,
 } from './rebuild-slot.mjs';
+import { BREATHER_MS, HEAVY_ROWS } from './integrity-checks.mjs';
 
 test('the slot takes the served tables only, parents first, with DDL safe on a migrated slot', () => {
   const staging = readFileSync('scripts/work-staging-schema.sql', 'utf8');
@@ -47,6 +55,7 @@ test('the slot takes the served tables only, parents first, with DDL safe on a m
         '_cf_KV',
         'd1_migrations',
         'rp_prev_persons',
+        'data_version',
         'persons',
         'declarations',
       ],
@@ -271,13 +280,240 @@ test('the slot records the rules that built it, in one row', () => {
   assert.throws(() => dataVersionSql({ version: '2', builtAt: 'x' }), /Invalid data version/);
 });
 
-test('the data version is written only after every check of the slot', () => {
-  const source = readFileSync('scripts/rebuild-slot.mjs', 'utf8');
-  const main = source.slice(source.indexOf('async function main()'));
-  const written = main.indexOf("apply(\n    'data-version'");
-  assert.ok(written > 0, 'main writes the data version');
-  assert.ok(main.indexOf('assertIntegrity(') < written, 'after the integrity gate');
-  assert.ok(main.indexOf('Slot counts differ from the snapshot') < written, 'after the row counts');
+// A slot and a finished snapshot, both shaped by the migrations, the snapshot with a few rows. The slot is
+// reached through the same seams as D1: `apply` runs a file, `answer` one read — the latter failing as D1
+// does when it is overloaded, as often as a test asks.
+const OVERLOADED =
+  'D1 DB is overloaded. Too many resources consumed within a 10 second window. [code: 7429]';
+function builtSlot(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-verify-'));
+  const snapshot = join(dir, 'snap.sqlite');
+  const source = new DatabaseSync(snapshot);
+  const slot = new DatabaseSync(':memory:');
+  t.after(() => {
+    slot.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  for (const file of readdirSync('packages/db/migrations')
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
+    const sql = readFileSync(join('packages/db/migrations', file), 'utf8');
+    source.exec(sql);
+    slot.exec(sql);
+  }
+  source.exec(`INSERT INTO authorities (id, name) VALUES ('auth:test', 'Община Тест');
+    INSERT INTO bidders (id, name) VALUES ('bidder:test', 'ТЕСТ ГРУП ЕООД');`);
+  source.close();
+  const sent = [];
+  const retried = [];
+  let failures = 0;
+  let gaps = 0;
+  const reads = { count: 0 };
+  return {
+    dir,
+    snapshot,
+    slot,
+    sent,
+    retried,
+    reads,
+    /** The next `n` reads fail as an overloaded D1 does. */
+    overload: (n) => (failures = n),
+    /** The next `n` counts come back without a row, or with a count missing, as wrangler can answer. */
+    truncate: (n) => (gaps = n),
+    apply: (label, sql) => {
+      sent.push(label);
+      slot.exec(sql);
+    },
+    read: (_, sql) => slot.prepare(sql).all(),
+    reader: (name = 'sigma-test') =>
+      slotReader(name, {
+        answer: (_, sql) => {
+          reads.count++;
+          if (failures > 0) {
+            failures--;
+            throw new Error(OVERLOADED);
+          }
+          const results = slot.prepare(sql).all();
+          if (gaps > 0 && sql.startsWith('SELECT (SELECT COUNT(*)')) {
+            const [row] = results;
+            delete row[Object.keys(row)[gaps-- % 2 ? 0 : 1]];
+            return { results: gaps % 2 ? [] : [row], meta: { rows_read: 1 } };
+          }
+          return { results, meta: { rows_read: 1 } };
+        },
+        sleep: () => {},
+        log: (line) => retried.push(JSON.parse(line)),
+      }),
+    stamp: () =>
+      slot
+        .prepare('SELECT version, source_commit, run_id FROM data_version')
+        .all()
+        .map((r) => ({ ...r })),
+    receipts: () =>
+      Object.fromEntries(
+        slot
+          .prepare('SELECT stage, run_id FROM rebuild_state ORDER BY stage')
+          .all()
+          .map((r) => [r.stage, r.run_id]),
+      ),
+  };
+}
+const passes = async () => [{ name: 'test', ok: true, skipped: false }];
+const build = (s, extra = {}) =>
+  finishBuild('sigma-test', s.snapshot, s.dir, {
+    apply: s.apply,
+    read: s.read,
+    verifyRead: s.reader(),
+    runId: 'run-build',
+    version: 7,
+    commit: 'c0ffee1',
+    check: passes,
+    ...extra,
+  });
+
+test('a verification D1 refuses for a while still finishes the build and stamps the slot once', async (t) => {
+  const s = builtSlot(t);
+  s.overload(2);
+  const result = await build(s);
+  assert.equal(result.version, 7);
+  assert.equal(result.rows, 2);
+  assert.equal(s.retried.length, 2, 'two reads were refused and tried again');
+  assert.ok(s.retried.every((e) => e.event === 'd1_call_retried' && e.error === OVERLOADED));
+  assert.equal(s.sent.filter((l) => l === 'data-version').length, 1, 'stamped once');
+  assert.equal(s.sent.indexOf('state-ship'), s.sent.indexOf('data-version') - 1);
+  assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: 'run-build' }]);
+  assert.deepEqual(s.receipts(), { ship: 'run-build', verify: 'run-build' });
+});
+
+test('an incomplete count is a failed read and is read again, not a difference', async (t) => {
+  const s = builtSlot(t);
+  s.truncate(2);
+  const result = await build(s);
+  assert.equal(result.version, 7);
+  assert.equal(s.retried.length, 2);
+  assert.ok(s.retried.every((e) => e.error.startsWith('Incomplete answer from sigma-test')));
+  assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: 'run-build' }]);
+
+  // Past the bound it is still no verdict on the slot: the build fails on the read, and leaves no stamp.
+  const short = builtSlot(t);
+  short.truncate(VERIFY_ATTEMPTS);
+  await assert.rejects(build(short), /Incomplete answer/);
+  assert.deepEqual(short.stamp(), []);
+});
+
+test('a verification D1 refuses past the bound leaves no stamp, and a verification on its own stamps it', async (t) => {
+  const s = builtSlot(t);
+  s.overload(VERIFY_ATTEMPTS);
+  await assert.rejects(build(s), new RegExp(OVERLOADED.slice(0, 20)));
+  assert.equal(s.retried.length, VERIFY_ATTEMPTS - 1, 'the bound holds');
+  assert.deepEqual(s.stamp(), [], 'no version without a verification that passed');
+  assert.deepEqual(s.receipts(), { ship: 'run-build' }, 'the ship stays for a later verification');
+
+  // The same slot, later, by code that already computes a newer version: nothing is built again, and the
+  // slot carries the version and the commit of the build that shipped it, not of the code that verified.
+  const sentBefore = s.sent.length;
+  const result = await verifySlot('sigma-test', {
+    read: s.reader(),
+    apply: s.apply,
+    runId: 'run-verify',
+    check: passes,
+  });
+  assert.deepEqual(s.sent.slice(sentBefore), ['data-version'], 'only the stamp is written');
+  assert.equal(result.version, 7);
+  assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: 'run-build' }]);
+  assert.deepEqual(s.receipts(), { ship: 'run-build', verify: 'run-verify' });
+  const detail = JSON.parse(
+    s.slot.prepare("SELECT detail FROM rebuild_state WHERE stage='verify'").get().detail,
+  );
+  assert.deepEqual(detail, {
+    shipRun: 'run-build',
+    version: 7,
+    tables: detail.tables,
+    rows: 2,
+    checks: 1,
+  });
+});
+
+test('a real failure is not tried again and leaves no version', async (t) => {
+  // The snapshot holds no contracts: the integrity gate's own verdict, not a fault of D1.
+  const empty = builtSlot(t);
+  await assert.rejects(build(empty, { check: undefined }), /integrity gate failed: .*non-empty/);
+  assert.deepEqual(empty.retried, []);
+  assert.deepEqual(empty.stamp(), []);
+  assert.ok(!('verify' in empty.receipts()));
+
+  // A slot that lost a row after the ship.
+  const lost = builtSlot(t);
+  lost.overload(VERIFY_ATTEMPTS);
+  await assert.rejects(build(lost));
+  lost.slot.exec("DELETE FROM bidders WHERE id='bidder:test'");
+  const readsBefore = lost.reads.count;
+  await assert.rejects(
+    verifySlot('sigma-test', { read: lost.reader(), apply: lost.apply, runId: 'r', check: passes }),
+    /Slot counts differ from the snapshot: bidders 0 ≠ 1/,
+  );
+  assert.equal(lost.retried.length, VERIFY_ATTEMPTS - 1, 'the count verdict was not retried');
+  assert.ok(lost.reads.count - readsBefore <= 10, 'one read per question, none repeated');
+  assert.deepEqual(lost.stamp(), []);
+});
+
+test('a slot refreshed after its ship is named as one, not as a defect of the build', async (t) => {
+  const s = builtSlot(t);
+  await build(s, { now: () => '2026-11-20T10:00:00.000Z' });
+  // Served and refreshed since: the refresh moved its rows and stamped its time in its own format.
+  s.slot.exec(`INSERT INTO bidders (id, name) VALUES ('bidder:new', 'НОВ ТЕСТ ЕООД');
+    INSERT INTO data_freshness (source, as_of, rows, refreshed_at)
+      VALUES ('eop', '2026-11-20', 1, '2026-11-20 16:00:00');`);
+  const verify = () =>
+    verifySlot('sigma-test', { read: s.reader(), apply: s.apply, runId: 'r', check: passes });
+  await assert.rejects(
+    verify(),
+    /bidders 2 ≠ 1, data_freshness 1 ≠ 0 — the slot was refreshed \(2026-11-20 16:00:00\)/,
+  );
+  // A refresh stamp older than the ship says nothing of the kind.
+  s.slot.exec("UPDATE data_freshness SET refreshed_at = '2026-11-20 09:00:00'");
+  await assert.rejects(verify(), (error) => !/refreshed/.test(error.message));
+});
+
+test('a verification on its own refuses a slot nothing finished shipping to', async (t) => {
+  const s = builtSlot(t);
+  const verify = () =>
+    verifySlot('sigma-test', { read: s.reader(), apply: s.apply, runId: 'r', check: passes });
+  await assert.rejects(verify(), /holds no finished ship: there is nothing to verify/);
+  s.apply('state-prepare', receiptSql('prepare', 'run-build', '2026-11-26T00:00:00Z'));
+  await assert.rejects(verify(), /holds no finished ship/);
+  assert.deepEqual(s.stamp(), []);
+});
+
+test('a build run takes the stamp and the ship away before it writes the slot', async (t) => {
+  const s = builtSlot(t);
+  await build(s);
+  assert.equal(s.stamp().length, 1);
+  s.apply('unverify', UNVERIFY_SQL);
+  assert.deepEqual(s.stamp(), [], 'the slot no longer looks verified to a deploy');
+  assert.deepEqual(s.receipts(), {}, 'and a later verification finds no ship to adopt');
+  // On a slot the run just prepared it is harmless.
+  const fresh = builtSlot(t);
+  fresh.apply('unverify', UNVERIFY_SQL);
+  assert.deepEqual(fresh.receipts(), {});
+});
+
+test('the verification waits after a heavy read, and not after a light one', () => {
+  const pauses = [];
+  const beats = [];
+  const read = slotReader('sigma-test', {
+    answer: (_, sql) => ({
+      results: [{ sql }],
+      meta: { rows_read: sql === 'heavy' ? HEAVY_ROWS : 5 },
+    }),
+    sleep: (ms) => pauses.push(ms),
+    beat: () => beats.push(1),
+  });
+  assert.deepEqual(read('light'), [{ sql: 'light' }]);
+  assert.deepEqual(pauses, []);
+  read('heavy');
+  assert.deepEqual(pauses, [BREATHER_MS]);
+  assert.equal(beats.length, 2, 'every answered read is progress of the stage');
 });
 
 test('the slot is emptied children first, without the full-text shadow tables', () => {
@@ -450,4 +686,65 @@ test('the slot preserves annex and signing evidence, including unknown legacy pr
     [],
   );
   assert.deepEqual(slot.prepare('PRAGMA foreign_key_check').all(), []);
+});
+
+// The order of a run, with every stage replaced by a record of the call. `state` and `rehydrate` only read
+// the slot; every other stage writes it.
+const READS_ONLY = new Set(['state', 'rehydrate']);
+function stages(receipts = []) {
+  const calls = [];
+  const op = (name, result) => async (arg) => {
+    calls.push(name === 'state' ? `state(${arg})` : name);
+    return result;
+  };
+  const ops = {
+    state: op('state', new Map(receipts.map((r) => [r, null]))),
+    rehydrate: op('rehydrate'),
+    prepare: op('prepare'),
+    unverify: op('unverify'),
+    import: op('import'),
+    registry: op('registry'),
+    local: op('local'),
+    ship: op('ship', { version: 7 }),
+    verify: op('verify', { version: 7 }),
+  };
+  const writes = () => calls.filter((c) => !READS_ONLY.has(c.replace(/\(.*/, '')));
+  return { ops, calls, writes };
+}
+
+test('a verification on its own builds nothing and empties nothing', async () => {
+  for (const resume of [false, true]) {
+    const run = stages(['prepare', 'import', 'registry']);
+    assert.deepEqual(await runRebuild({ verify: true, resume }, run.ops), { version: 7 });
+    assert.deepEqual(run.calls, ['verify'], 'not even the receipts are read');
+  }
+  // The container's flags are what reach it.
+  const source = readFileSync('scripts/rebuild-slot.mjs', 'utf8');
+  assert.match(source, /verify: process\.env\.SIGMA_REBUILD_VERIFY === '1'/);
+  assert.match(source, /resume: process\.env\.SIGMA_REBUILD_RESUME === '1'/);
+});
+
+test('a fresh build empties the slot first and runs every stage', async () => {
+  const run = stages();
+  assert.deepEqual(await runRebuild({}, run.ops), { version: 7 });
+  assert.deepEqual(run.calls, [
+    'state(false)',
+    'prepare',
+    'unverify',
+    'import',
+    'registry',
+    'local',
+    'ship',
+  ]);
+});
+
+test('a resumed build takes the stamp and the ship away before its first write, and skips what is done', async () => {
+  const run = stages(['prepare', 'import', 'registry']);
+  await runRebuild({ resume: true }, run.ops);
+  assert.deepEqual(run.calls, ['state(true)', 'rehydrate', 'unverify', 'local', 'ship']);
+  assert.equal(run.writes()[0], 'unverify', 'nothing is written before the stamp is gone');
+
+  const afterImport = stages(['prepare', 'import']);
+  await runRebuild({ resume: true }, afterImport.ops);
+  assert.deepEqual(afterImport.writes(), ['unverify', 'registry', 'local', 'ship']);
 });
