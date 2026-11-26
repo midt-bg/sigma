@@ -800,6 +800,8 @@ test('a verification on its own builds nothing and empties nothing', async () =>
   const source = readFileSync('scripts/rebuild-slot.mjs', 'utf8');
   assert.match(source, /verify: process\.env\.SIGMA_REBUILD_VERIFY === '1'/);
   assert.match(source, /resume: process\.env\.SIGMA_REBUILD_RESUME === '1'/);
+  // The completion line names the ship that passed.
+  assert.match(source, /shipRun: result\.shipRun,\s+builtAt: result\.builtAt,/);
 });
 
 test('a fresh build empties the slot first and runs every stage', async () => {
@@ -1017,8 +1019,16 @@ test('a stop after the ship and before its verification resumes into the verific
   // Once the ship has begun, its own receipt is the only one that describes the slot.
   assert.deepEqual(s.receipts(), { ship: 'run-a' });
   const sentBefore = s.sent.length;
+  const shipped = JSON.parse(
+    s.slot.prepare("SELECT detail FROM rebuild_state WHERE stage='ship'").get().detail,
+  );
   const resumed = slotRun(s, { runId: 'run-b' });
-  assert.equal((await runRebuild({ resume: true }, resumed.ops)).version, 7);
+  const result = await runRebuild({ resume: true }, resumed.ops);
+  assert.equal(result.version, 7);
+  // It names the ship it verified, not the run that verified it: the operator compares these with the
+  // build they started before switching to the slot.
+  assert.equal(result.shipRun, 'run-a');
+  assert.equal(result.builtAt, shipped.builtAt);
   assert.deepEqual(resumed.ran, ['verify']);
   assert.deepEqual(s.sent.slice(sentBefore), ['data-version'], 'nothing but the stamp is written');
   assert.deepEqual(s.receipts().ship, 'run-a', 'the ship it verified is still there');

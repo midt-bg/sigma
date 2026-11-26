@@ -88,6 +88,10 @@ wrangler workflows trigger sigma-rebuild-cutover '{"targetName":"<празен �
   `wrangler d1 execute <слот> --remote --command "SELECT * FROM data_version"` и
   `wrangler d1 execute <слот> --remote --command "SELECT * FROM rebuild_state WHERE stage IN ('ship','verify')"`.
   Без ред във `data_version` слотът не е проверен и внедряването на production отказва.
+- `data_version.run_id` и `built_at` (и `shipRun`, `builtAt` в реда `declarations_job_complete` в логовете)
+  назовават изпращането, което е минало проверката. Сравнете ги с хода, който сте пуснали: `"resume": true`
+  върху слот, който вече държи завършено по-старо изграждане, само го проверява и пак завършва `complete`.
+  Друг `run_id` или `built_at` отпреди началото на хода значи, че е проверено по-старо изграждане, не новото.
 - `node scripts/release-schema.mjs plan <слот>` — всички миграции са в журнала, паритетът е наред.
 
 ## Фаза 4 — превключването, в тих прозорец

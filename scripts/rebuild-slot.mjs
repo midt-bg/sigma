@@ -639,7 +639,10 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
         }),
       ),
   );
-  return { version, commit, tables: tables.length, rows };
+  // Which ship passed: a run that only verifies may find an earlier finished build in the slot (a
+  // resume of a slot whose earlier build was never switched to), and the operator compares these with
+  // the build they started before switching to it.
+  return { version, commit, tables: tables.length, rows, shipRun: shipped.run_id || null, builtAt };
 }
 
 /**
@@ -1011,6 +1014,9 @@ async function main() {
       rows: result.rows,
       dataVersion: result.version,
       sourceCommit: result.commit,
+      // The ship that passed: on a run that only verified, an earlier build's.
+      shipRun: result.shipRun,
+      builtAt: result.builtAt,
     }),
   );
 }
