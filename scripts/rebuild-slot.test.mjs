@@ -20,6 +20,8 @@ import {
   finishBuild,
   emptySlot,
   ifNotExists,
+  migratedTables,
+  NOT_SHIPPED,
   ownershipStatements,
   parentsFirst,
   receiptSql,
@@ -29,6 +31,7 @@ import {
   runRebuild,
   checkpointRun,
   shippedTables,
+  SHIPPED_UNMIGRATED,
   slotFlusher,
   slotOps,
   slotReader,
@@ -282,9 +285,17 @@ test('a resumed rebuild takes the schema from the migrations and only the data f
   let asked = '';
   const tables = await rehydrate(db, 'sigma-idle', dir, {
     read: (_name, sql) => {
+      // The tables the slot takes that no migration makes, with the slot's own DDL.
+      if (sql.includes('SELECT name, sql'))
+        return [
+          {
+            name: 'pipeline_stats',
+            sql: 'CREATE TABLE pipeline_stats (id INTEGER PRIMARY KEY, contracts_inserted INTEGER)',
+          },
+        ];
       asked = sql;
       // The slot also carries the rebuild's own bookkeeping, which the local schema knows nothing of.
-      return [{ name: 'contracts' }, { name: 'rebuild_state' }];
+      return [{ name: 'contracts' }, { name: 'pipeline_stats' }, { name: 'rebuild_state' }];
     },
     wrangler: (args) => {
       exported = args;
@@ -295,7 +306,11 @@ test('a resumed rebuild takes the schema from the migrations and only the data f
       new DatabaseSync(file).exec(sql);
     },
   });
-  assert.deepEqual(tables, ['contracts'], 'only tables the local schema knows travel back');
+  assert.deepEqual(
+    tables,
+    ['contracts', 'pipeline_stats'],
+    'only tables the local schema knows travel back, and those the slot takes outside the migrations',
+  );
   assert.ok(exported.includes('--no-schema'), 'the slot gives rows, never its schema');
   // The virtual search index and the platform's own tables are never asked for: D1 refuses to export
   // a database that holds a virtual table, and nothing else needs them.
@@ -702,6 +717,7 @@ test('the finished build clears what the slot holds before it ships, by the slot
       label: 'ship',
       apply: (label) => sent.push(label),
       read: () => [{ parent: 1, child: 25000 }],
+      served: new Set(['parent', 'child']),
     });
     assert.deepEqual(sent, [
       'ship-schema',
@@ -735,6 +751,7 @@ test('a stage’s receipt travels in its last file, so the rows and the receipt 
       label: 'ship',
       apply: (label, sql) => sent.push([label, sql]),
       read: () => [{}],
+      served: new Set(['parent', 'child', 'empty_rollup']),
       seal: (counts) => {
         sealed.push(counts);
         return 'SEAL;\n';
@@ -763,6 +780,7 @@ test('a stage’s receipt travels in its last file, so the rows and the receipt 
       label: 'import',
       apply: (label, sql) => bareSent.push([label, sql]),
       read: () => [{}],
+      served: new Set(['parent']),
       seal: () => 'SEAL;\n',
     });
     assert.deepEqual(bareSent.at(-1), ['import-seal', 'SEAL;\n']);
@@ -981,9 +999,18 @@ function slotRun(
   const step = async (name, args, env = {}) => {
     steps.push({ name, script: args[0], args, env });
     const arg = (flag) => args[args.indexOf(flag) + 1];
-    if (args[0] === 'scripts/import.mjs')
-      copyFileSync(s.snapshot, args.find((a) => a.startsWith('--work-db=')).slice(10));
-    else if (args[0] === 'scripts/tr/rebuild-registry.mjs' && args.includes('--slot')) {
+    if (args[0] === 'scripts/import.mjs') {
+      const workDb = args.find((a) => a.startsWith('--work-db=')).slice(10);
+      copyFileSync(s.snapshot, workDb);
+      // The import's normalisation also leaves a table no migration makes: its own counts, which the
+      // integrity gate reconciles the slot against.
+      exec(
+        workDb,
+        readFileSync('scripts/normalize-raw.sql', 'utf8').match(
+          /CREATE TABLE IF NOT EXISTS pipeline_stats \([^;]+\);/,
+        )[0] + "INSERT INTO pipeline_stats VALUES (1, 0, 0, '2026-11-20T00:00:00Z');",
+      );
+    } else if (args[0] === 'scripts/tr/rebuild-registry.mjs' && args.includes('--slot')) {
       const db = new DatabaseSync(arg('--db'));
       try {
         const eiks = register?.(db) ?? [];
@@ -1380,6 +1407,31 @@ const served = (s) =>
       ]),
   );
 
+// The tables the ship counts in its receipt, and those the slot serves without one: none.
+const uncounted = (s) => {
+  const { counts } = JSON.parse(
+    s.slot.prepare("SELECT detail FROM rebuild_state WHERE stage='ship'").get().detail,
+  );
+  const staging = new Set(
+    [
+      ...readFileSync('scripts/work-staging-schema.sql', 'utf8').matchAll(
+        /CREATE TABLE (?:IF NOT EXISTS )?(\w+)/g,
+      ),
+    ].map((m) => m[1]),
+  );
+  return s.slot
+    .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+    .all()
+    .map((r) => r.name)
+    .filter(
+      (t) =>
+        !(t in counts) &&
+        t !== 'related_persons_internal' &&
+        !staging.has(t) &&
+        !NOT_SHIPPED.some(([pattern]) => pattern.test(t)),
+    );
+};
+
 test('a registry-only person reaches the slot, and the person page finds them', async (t) => {
   const s = builtSlot(t);
   await runRebuild(
@@ -1388,6 +1440,7 @@ test('a registry-only person reaches the slot, and the person page finds them', 
   );
   assert.equal(s.slot.prepare(PERSON_SQL).get(TEST_INDENT)?.name, TEST_PERSON);
   assert.equal(s.stamp().length, 1);
+  assert.deepEqual(uncounted(s), [], 'the receipt counts every table the slot serves');
 });
 
 test('a build stopped after any stage serves the same rows as one that never stopped', async (t) => {
@@ -1410,5 +1463,58 @@ test('a build stopped after any stage serves the same rows as one that never sto
       await runRebuild(flags, run(runId).ops);
       assert.deepEqual(served(s), expected, `a ${label} after ${stopAfter}`);
       assert.equal(s.slot.prepare(PERSON_SQL).get(TEST_INDENT)?.name, TEST_PERSON);
+      assert.deepEqual(uncounted(s), [], `a ${label} after ${stopAfter} counts every table`);
     }
+});
+
+test('every table the build leaves is either taken by the slot or left out by name', async () => {
+  // The build's own SQL on the served schema and the work staging, as the import and the local stages run
+  // it: whatever tables it leaves behind must each be classified, or a real build would stop on them.
+  const db = new DatabaseSync(':memory:');
+  try {
+    for (const file of readdirSync('packages/db/migrations')
+      .filter((name) => name.endsWith('.sql'))
+      .sort())
+      db.exec(readFileSync(join('packages/db/migrations', file), 'utf8'));
+    db.exec(readFileSync('scripts/work-staging-schema.sql', 'utf8'));
+    const { PUBLIC_OWNERSHIP_SQL } = await import('../apps/etl/src/public-ownership.ts');
+    for (const sql of [
+      readFileSync('scripts/normalize-raw.sql', 'utf8'),
+      readFileSync('scripts/seed-state-owned.sql', 'utf8'),
+      PUBLIC_OWNERSHIP_SQL.map((statement) => `${statement};`).join('\n'),
+      ownershipStatements(readFileSync('scripts/refresh-slice.sql', 'utf8')),
+      readFileSync('scripts/precompute.sql', 'utf8'),
+      readFileSync('scripts/person-search-index.sql', 'utf8'),
+    ])
+      db.exec(sql);
+    const left = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+      .all()
+      .map((r) => r.name);
+    const staging = readFileSync('scripts/work-staging-schema.sql', 'utf8');
+    const shipped = shippedTables(left, staging);
+    for (const t of SHIPPED_UNMIGRATED.keys())
+      assert.ok(shipped.includes(t), `${t} is left by the build and taken by the slot`);
+    for (const t of migratedTables())
+      if (!NOT_SHIPPED.some(([pattern]) => pattern.test(t)))
+        assert.ok(shipped.includes(t), `${t}, a served table, is taken by the slot`);
+    assert.ok(!shipped.includes('contractor_identity') && !shipped.includes('raw_contracts'));
+    assert.throws(
+      () => shippedTables([...left, 'scratch_notes'], staging),
+      /left scratch_notes in its snapshot/,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('a table the build leaves without saying where it goes stops the build, naming it', async (t) => {
+  const s = builtSlot(t);
+  const snapshot = new DatabaseSync(s.snapshot);
+  snapshot.exec("CREATE TABLE scratch_notes (note TEXT); INSERT INTO scratch_notes VALUES ('x');");
+  snapshot.close();
+  const run = slotRun(s, { runId: 'run-a' });
+  await assert.rejects(runRebuild({}, run.ops), /left scratch_notes in its snapshot/);
+  assert.deepEqual(run.ran, ['prepare', 'import']);
+  assert.deepEqual(Object.keys(s.receipts()), ['prepare'], 'the import never finished');
 });

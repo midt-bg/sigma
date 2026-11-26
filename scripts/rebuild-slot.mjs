@@ -42,20 +42,88 @@ export function dataVersionSql({ version, commit, runId, builtAt }) {
   );
 }
 
-/** Tables a served slot never takes from the snapshot: SQLite's and Cloudflare's own, the migration ledger,
- *  the full-text index's shadow tables, the work staging, the ship's generations, and the slot's own record
- *  of the rules that built it — written by the verification alone, never carried in with the rows. */
-export function shippedTables(tables, stagingSql) {
+/**
+ * Tables the build leaves in its snapshot that no migration makes, and the slot takes all the same — each
+ * with what reads it there. A resumed build brings them back from the slot with the slot's own DDL
+ * (`rehydrate`), so its ship counts them as a whole build's does.
+ */
+export const SHIPPED_UNMIGRATED = new Map([
+  [
+    'state_owned_eik',
+    'the public-enterprise list: public stakes (packages/db queries/public-stakes.ts)',
+  ],
+  [
+    'public_owned_eik',
+    'companies in public hands: public stakes, the register (apps/etl/src/registry.ts)',
+  ],
+  ['pipeline_stats', 'the import’s counts: the integrity gate reconciles the slot against them'],
+  // normalize-raw's canonical names; the refresh rebuilds them before it reads them.
+  ['authority_canonical_name', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+  ['authority_canonical_type', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+  ['bidder_canonical_name', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+]);
+
+/**
+ * Tables a served slot never takes from the snapshot, and why. The work staging
+ * (scripts/work-staging-schema.sql) is left out with them: the import's raw tables, read by nothing served.
+ */
+export const NOT_SHIPPED = [
+  [/^sqlite_/, 'SQLite’s own'],
+  [/^_cf_/, 'Cloudflare’s own'],
+  [/^d1_migrations$/, 'the migration ledger: the slot keeps its own'],
+  [/^search_index_/, 'the full-text index’s shadow tables: SQLite fills them from search_index'],
+  [/^rp_(next|prev)_/, 'the declarations ship’s generations: the served database’s alone'],
+  [/^contractor_identity$/, 'the import’s working table: nothing served reads it'],
+  [/^data_version$/, 'written by the verification alone, never carried in with the rows'],
+  [/^rebuild_state$/, 'the stages’ receipts: each stage writes its own'],
+];
+
+let migrated = null;
+/** The tables the migrations make — the served schema. */
+export function migratedTables() {
+  if (!migrated) {
+    const db = new DatabaseSync(':memory:');
+    try {
+      const dir = resolve(root, 'packages/db/migrations');
+      for (const file of readdirSync(dir)
+        .filter((n) => /^\d+.*\.sql$/.test(n))
+        .sort())
+        db.exec(readFileSync(join(dir, file), 'utf8'));
+      migrated = new Set(
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+          .all()
+          .map((r) => r.name),
+      );
+    } finally {
+      db.close();
+    }
+  }
+  return migrated;
+}
+
+/**
+ * The tables of a snapshot the slot takes: every table the migrations make and every one in
+ * SHIPPED_UNMIGRATED, none in NOT_SHIPPED or the work staging. A table in neither list stops the build
+ * with its name: the slot would otherwise take it, or lose it, without anyone having said which.
+ */
+export function shippedTables(tables, stagingSql, served = migratedTables()) {
   const staging = new Set(
     [...stagingSql.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)/g)].map((m) => m[1]),
   );
-  return tables.filter(
-    (t) =>
-      !/^(sqlite_|_cf_|rp_next_|rp_prev_|d1_migrations$|search_index_)/.test(t) &&
-      t !== 'contractor_identity' &&
-      t !== 'data_version' &&
-      !staging.has(t),
-  );
+  const unknown = [];
+  const shipped = tables.filter((t) => {
+    if (staging.has(t) || NOT_SHIPPED.some(([pattern]) => pattern.test(t))) return false;
+    if (served.has(t) || SHIPPED_UNMIGRATED.has(t)) return true;
+    unknown.push(t);
+    return false;
+  });
+  if (unknown.length)
+    throw new Error(
+      `The build left ${unknown.join(', ')} in its snapshot, and nothing says whether the slot takes it: ` +
+        'make it in a migration, or name it in SHIPPED_UNMIGRATED or NOT_SHIPPED (scripts/rebuild-slot.mjs).',
+    );
+  return shipped;
 }
 
 /** Parents before children, by the snapshot's own foreign keys. */
@@ -315,7 +383,12 @@ export function clearFiles(label, tables, rows, keys = {}) {
  * `seal(counts)` is the stage's receipt. It travels in the LAST file, in the same transaction as the last
  * rows: a slot holds the receipt exactly when it holds every row, and a stop between the two cannot leave
  * a filled slot that looks unfilled, or the reverse. */
-export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json, seal }) {
+export function fillSlot(
+  name,
+  snapshotPath,
+  work,
+  { label, apply, read = d1Json, seal, served = migratedTables() },
+) {
   const snap = new DatabaseSync(snapshotPath, { readOnly: true });
   try {
     const master = snap
@@ -324,6 +397,7 @@ export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json
     const tables = shippedTables(
       master.filter((m) => m.type === 'table').map((m) => m.name),
       readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'),
+      served,
     );
     apply(
       `${label}-schema`,
@@ -421,6 +495,14 @@ export async function rehydrate(db, name, work, deps = {}) {
     .sort())
     await apply('import', db, readFileSync(join(migrationsDir, file), 'utf8'));
   await apply('import', db, readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'));
+  // The tables the slot takes that no migration makes come back with the slot's own DDL.
+  const unmigrated = read(
+    name,
+    `SELECT name, sql FROM sqlite_master WHERE type='table'
+       AND name IN (${[...SHIPPED_UNMIGRATED.keys()].map(sqlLiteral).join(',')}) ORDER BY name`,
+  );
+  if (unmigrated.length)
+    await apply('import', db, unmigrated.map((t) => `${ifNotExists(t.sql)};`).join('\n'));
   // Only tables the local schema knows: the slot also carries this rebuild's own bookkeeping, and the
   // search index is a virtual table D1 refuses to export at all.
   const local = new DatabaseSync(db, { readOnly: true });
