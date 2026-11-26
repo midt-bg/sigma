@@ -508,6 +508,33 @@ WHERE NOT EXISTS (SELECT 1 FROM contracts c WHERE c.tender_id = 't:' || o.unp)
         OR (e.source LIKE 'ocds:%' AND e.document_number = o.document_number))
   )`;
 
+// The served OCDS amendments that are twins of an EOP annex the value resolver moved onto its contract.
+// The resolver rewrites such an annex's contract_number to the contract it links to and keeps the number
+// it was published under in contract_number_raw; the OCDS release of the same annex still carries that
+// published number, so a (unp, contract_number) comparison never brings the two together. Under the same
+// УНП, an OCDS row is such a twin when an EOP annex was published under the number the OCDS row is keyed
+// by — the prefer-EOP rule, matched on the annex-side number. A row whose number names a contract of its
+// own is never a twin here: it is that contract's annex input, and the resolver moves an annex only when
+// its number names no contract. So a row named here hangs on no contract, is no contract's annex input,
+// and removing it changes no annex_count, current value or amount. Only OCDS rows are named.
+//
+// ONE DEFINITION for the gate below and for the removal in scripts/refresh-slice.sql
+// (`@refresh-batch amendments`): the block between the @raw-number-twin-lockstep markers there must equal
+// this text byte for byte (packages/db/src/amendments-ocid-twins.test.ts).
+export const AMENDMENT_RAW_NUMBER_TWINS_SQL = `SELECT o.id
+FROM amendments o
+WHERE o.source LIKE 'ocds:%'
+  AND o.unp IS NOT NULL AND o.contract_number IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM contracts c
+    WHERE c.tender_id = 't:' || o.unp AND c.contract_number = o.contract_number
+  )
+  AND EXISTS (
+    SELECT 1 FROM amendments e
+    WHERE e.unp = o.unp AND e.contract_number_raw = o.contract_number
+      AND e.source LIKE 'eop:%'
+  )`;
+
 // 7) Amendment twin dedup (#286). The OCDS→EOP bridge lets an OCDS amendment reach the same contract as
 //    its EOP twin; the prefer-EOP dedup keeps only one per (unp, contract_number) by DELETE-ing OCDS rows
 //    before promotion — the SOLE guard, since promotion is unconditional. On the incremental path a twin
@@ -515,7 +542,9 @@ WHERE NOT EXISTS (SELECT 1 FROM contracts c WHERE c.tender_id = 't:' || o.unp)
 //    the served table; this gate is the post-condition of that (and of the full path): no (unp,
 //    contract_number) may carry BOTH an EOP and an OCDS served amendment, or annex_count double-counts —
 //    and no OCDS amendment may stay served under its OCID beside the annex it duplicates
-//    (AMENDMENT_OCID_TWINS_SQL above; the slice path removes those in `@refresh-batch amendments`).
+//    (AMENDMENT_OCID_TWINS_SQL above), nor under the number its EOP twin was published under before the
+//    value resolver moved it (AMENDMENT_RAW_NUMBER_TWINS_SQL above); the slice path removes both kinds in
+//    `@refresh-batch amendments`.
 export async function checkAmendmentTwins(runner) {
   const name = 'amendment-twin-dedup';
   if (!(await tableExists(runner, 'amendments')))
@@ -531,10 +560,16 @@ export async function checkAmendmentTwins(runner) {
       'n',
     ),
   );
+  const hasContracts = await tableExists(runner, 'contracts');
   const ocidTwins =
-    (await tableExists(runner, 'tenders')) && (await tableExists(runner, 'contracts'))
+    (await tableExists(runner, 'tenders')) && hasContracts
       ? num(await scalar(runner, `SELECT COUNT(*) AS n FROM (${AMENDMENT_OCID_TWINS_SQL})`, 'n'))
       : 0;
+  const rawNumberTwins = hasContracts
+    ? num(
+        await scalar(runner, `SELECT COUNT(*) AS n FROM (${AMENDMENT_RAW_NUMBER_TWINS_SQL})`, 'n'),
+      )
+    : 0;
   const fails = [];
   if (pairs > 0)
     fails.push(
@@ -544,13 +579,17 @@ export async function checkAmendmentTwins(runner) {
     fails.push(
       `${ocidTwins} OCDS amendment(s) are served under their OCID beside the annex they duplicate — the OCID twin removal in refresh-slice.sql did not run or regressed`,
     );
+  if (rawNumberTwins > 0)
+    fails.push(
+      `${rawNumberTwins} OCDS amendment(s) are served under the number their EOP twin was published under before the value resolver linked it — prefer-EOP dedup missed the annex-side number`,
+    );
   return {
     name,
     ok: fails.length === 0,
     skipped: false,
     detail: fails.length
       ? fails.join('; ')
-      : 'no (unp, contract_number) carries both an EOP and an OCDS amendment and no OCDS amendment is served under its OCID beside its twin (prefer-EOP dedup intact)',
+      : 'no (unp, contract_number) carries both an EOP and an OCDS amendment and no OCDS amendment is served under its OCID or its annex-side number beside its twin (prefer-EOP dedup intact)',
   };
 }
 

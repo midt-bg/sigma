@@ -1857,14 +1857,16 @@ WHERE source LIKE 'ocds:%'
 -- #286 convergence (review nikimilenkov HIGH 1), the other direction of the served-table reconciliation
 -- above: an EOP annex arriving in THIS window supersedes an OCDS twin a PRIOR slice already served for the
 -- same (unp, contract_number). Drop the stale served OCDS row before promotion so the rollup never counts
--- both. The full path needs no equivalent — promote-amendments.sql rebuilds `amendments` wholesale.
+-- both. The full path needs no equivalent — promote-amendments.sql rebuilds `amendments` wholesale. An
+-- EOP annex the value resolver moved onto its contract is matched on its annex-side number too.
 DELETE FROM amendments
 WHERE source LIKE 'ocds:%'
   AND EXISTS (
     SELECT 1 FROM raw_amendments e
     WHERE e.source LIKE 'eop:%'
       AND e.unp = amendments.unp
-      AND e.contract_number = amendments.contract_number
+      AND (e.contract_number = amendments.contract_number
+        OR e.contract_number_raw = amendments.contract_number)
   );
 
 INSERT OR REPLACE INTO amendments (
@@ -1922,6 +1924,33 @@ WHERE NOT EXISTS (SELECT 1 FROM contracts c WHERE c.tender_id = 't:' || o.unp)
         OR (e.source LIKE 'ocds:%' AND e.document_number = o.document_number))
   )
 -- @ocid-twin-lockstep end
+);
+
+-- Served OCDS amendments keyed by the number their EOP twin was published under, before the value resolver
+-- moved that annex onto its contract. The prefer-EOP deletes above now match that number, but a twin served
+-- before they did is never staged again. Remove every such twin here, on every run, by the SAME definition
+-- the `amendment-twin-dedup` gate counts (scripts/integrity-checks.mjs, AMENDMENT_RAW_NUMBER_TWINS_SQL — the
+-- block between the markers must stay byte-identical to it, enforced by
+-- packages/db/src/amendments-ocid-twins.test.ts). Only OCDS rows go, and never one whose number names a
+-- contract: a removed row was no contract's annex input, so no annex_count, current value or amount changes
+-- with it. Idempotent: a second run finds nothing.
+DELETE FROM amendments
+WHERE id IN (
+-- @raw-number-twin-lockstep start
+SELECT o.id
+FROM amendments o
+WHERE o.source LIKE 'ocds:%'
+  AND o.unp IS NOT NULL AND o.contract_number IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM contracts c
+    WHERE c.tender_id = 't:' || o.unp AND c.contract_number = o.contract_number
+  )
+  AND EXISTS (
+    SELECT 1 FROM amendments e
+    WHERE e.unp = o.unp AND e.contract_number_raw = o.contract_number
+      AND e.source LIKE 'eop:%'
+  )
+-- @raw-number-twin-lockstep end
 );
 
 -- Materialise affected inputs before the UPDATE to bound D1's statement compiler.
