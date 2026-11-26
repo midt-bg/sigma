@@ -682,10 +682,11 @@ SELECT i.id,
     SELECT 1 FROM raw_contract_suspect_annexes a
     WHERE a.id = i.id AND a.natural_key = i.current_annex_key
   ) OR (
-    -- A later leading annex can carry forward, unchanged, the total of an earlier suspect annex:
-    -- its before-value is that total and its after-value repeats it (in lev or, at the peg, in euro).
-    -- Such an annex adds nothing, so the contract keeps the verdict of the suspect annex. An annex
-    -- that changes the total is new evidence: a correction, or a real step, counts as it reads.
+    -- A later leading annex can carry forward the total of an earlier suspect annex: its before-value
+    -- is that total (in lev or, at the peg, in euro) and its after-value repeats it, or moves it by
+    -- less than 1% — a small step on the suspect base is still that base. Such an annex adds no
+    -- evidence about the total, so the contract keeps the verdict of the suspect annex. An annex that
+    -- changes the total by more is new evidence: a correction, or a real step, counts as it reads.
     i.signing_value > 0 AND EXISTS (
       SELECT 1 FROM raw_contract_value_annex_history a
       JOIN raw_contract_suspect_annexes s ON s.id = a.id AND s.natural_key <> a.natural_key
@@ -694,7 +695,7 @@ SELECT i.id,
         AND a.value_treatment IS NULL AND a.value_before > 0
         AND (p.ccy = a.ccy OR (p.ccy IN ('BGN', 'EUR') AND a.ccy IN ('BGN', 'EUR')))
         AND ABS(p.after_basis - a.before_basis) < 0.01 * a.before_basis
-        AND ABS(a.reported_after - a.value_before) < 0.01
+        AND ABS(a.reported_after - a.value_before) < 0.01 * a.value_before
     )
   ) OR (
     -- A later leading annex can inherit a total that a previous annex already restated down.

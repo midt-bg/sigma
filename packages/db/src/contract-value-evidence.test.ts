@@ -795,6 +795,20 @@ describe('contract value evidence across full and daily imports', () => {
       flag: 'annex_total_suspect',
     },
     {
+      label: 'a doubled total carried forward with a step under one percent',
+      first: [10_000, 20_000],
+      second: [20_000, 20_060],
+      amount: 10_000,
+      flag: 'annex_total_suspect',
+    },
+    {
+      label: 'a doubled total followed by a real step',
+      first: [10_000, 20_000],
+      second: [20_000, 23_000],
+      amount: 23_000,
+      flag: 'ok',
+    },
+    {
       label: 'a doubled total that a later annex corrects',
       first: [10_000, 20_000],
       second: [20_000, 11_000],
