@@ -47,6 +47,8 @@ Of #128's five checkboxes: **1** (shared owners) contingently unblocked via §3.
 
 **Legal identity:** register operated by the **Сметна палата, дирекция „Публичен регистър"**; declarations filed/published **под чл. 75 ЗСП** (chain: ЗПКОНПИ repealed → ЗПК in force 6 Oct 2023 → ЗИД ЗСП transferred ЛЗВПД declaration publication to the Court of Audit). Publication is a **statutory obligation** → declared facts are public-by-law and republishable. No open-data licence and no explicit reuse restriction. Methodology page cites **ЗСП чл. 75**, not ЗПКОНПИ.
 
+**Update 2026-11:** the law of 2026 (Закон за противодействие на корупцията сред лица, заемащи публични длъжности, ДВ бр. 51/2026) repealed чл. 74–87 ЗСП. Since **2 November 2026** the register is kept by the **Комисия за противодействие на корупцията** (чл. 104, т. 1), which publishes the declarations (чл. 66, ал. 2); everyone has a right of access to the data in it (чл. 69, ал. 2). The address is unchanged (`register.cacbg.bg`) and the declarations for earlier years stay in it, filed under the laws then in force. The methodology page cites the law in force and names both bodies.
+
 **Structure** (`register.cacbg.bg/<year>/`, JS-driven over static data):
 - `index.html` shell + `../core2.js` (loads `<year>/list.xml`; `/core.php` serves search).
 - **`list.xml`** (2025 ≈ 4.8 MB): `root → MainCategory → Category[Name] → Institution[Name] → Person[Name] → Position[Name] → Declaration{Sent, xmlFile}`. **15,925 persons / 34,862 declarations for 2025.** High-signal categories incl. **„Лицата, упълномощени по реда на ЗОП … да сключват договорите"** — procurement signatories.
@@ -170,7 +172,7 @@ Domain tables + rollups ride the existing pipeline (`normalize-raw.sql` → `pre
 ## 8. Guardrails (non-negotiable — DPA-verified)
 
 **Legal / personal-data (КЗЛД- and CJEU-grounded):**
-- **Officials' declared facts** — lawful to republish with a source link (ЗСП publication obligation + GDPR 6(1)(c)/(f) + Art. 85 expression margin). Green-light.
+- **Officials' declared facts** — lawful to republish with a source link (statutory publication obligation — ЗСП until 2026, the 2026 law after it — + GDPR 6(1)(c)/(f) + Art. 85 expression margin). Green-light.
 - **Third-party (spouse/child) data** — КЗЛД: publishable only to the extent the law explicitly provides; the declarant's consent does **not** extend to third persons; otherwise **anonymize**. → family-relation rows **internal-only for v1**; if ever surfaced, masked on **every** format, hard-gated on #173 (incl. the `.data` twin).
 - **Strip on publication:** address, ЕГН, ID-doc/bank numbers (КЗЛД list) — never store-for-publish.
 - **Storage-limitation:** no statutory online-retention window → indefinite republication conflicts with the DPA principle. Add a **retention/refresh statement** to the methodology page.
@@ -188,7 +190,7 @@ Domain tables + rollups ride the existing pipeline (`normalize-raw.sql` → `pre
 ## 9. Public methodology page (clear and explicit — a hard requirement)
 
 The public site MUST carry a plain-language methodology page. It is part of the libel defence: a reader must see exactly how a link was made and be able to re-derive it. It states, explicitly:
-1. **Sources + legal basis** — CACBG declarations (ЗСП чл. 75, Сметна палата); ЕРИК (Изборен кодекс); targeted TR per-ЕИК (public company facts). Each with a direct source link.
+1. **Sources + legal basis** — CACBG declarations (the law in force: since 2 November 2026 the Комисия за противодействие на корупцията keeps the register, the Сметна палата before it — see §3.1); ЕРИК (Изборен кодекс); targeted TR per-ЕИК (public company facts). Each with a direct source link.
 2. **What is shown and what is not** — officials' own declared holdings; **family holdings are NOT published** (v1); addresses/ЕГН never shown.
 3. **The matching rule, verbatim** — declared company **full name** (incl. legal form) is normalized and matched **exactly** against the winner's registered name, which is paired 1:1 with its ЕИК in the procurement source; because Bulgarian trade names are **nationally unique** (ЗТРРЮЛНЦ/ТЗ), an exact match is the same legal entity. Ambiguous cases (truncated names, no exact match) are **excluded or human-confirmed, never guessed**. Every link shows its full evidence chain.
    **Superseded in part by #279 / ADR-0033:** a name match is no longer *sufficient* to publish. Every link additionally rests on a checkable **Търговски регистър** fact, and the methodology page carries the six-rung evidence ladder verbatim, together with the disclosures that make it honest: the register carries **no ЕГН**, so a three-name match is not proof of identity and a namesake is possible; the match must therefore be a **full three-token subset inside a single registry entity**; seats move, so a registered seat only confirms a period it predates; erased entries are skipped; and every published link shows its **entry number and lookup date**.

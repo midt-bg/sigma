@@ -1,4 +1,5 @@
-// Pure parsers for the CACBG register (Сметна палата, декларации по чл.75 ЗСП).
+// Pure parsers for the CACBG register of declarations (kept by the Комисия за противодействие на
+// корупцията since 2 November 2026; by the Сметна палата under чл. 75 ЗСП before that).
 // Recognized source roots:
 //   • <PublicPerson>      — asset declaration (декларация за имущество). Company SHARES in the
 //                            „Дялове/Прехвърляне на дялове в дружества" tables (col 4 = company).

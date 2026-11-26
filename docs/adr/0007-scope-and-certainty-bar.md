@@ -18,6 +18,9 @@ We must decide how much certainty a claim needs before it is published, and what
 1. **Public data only.** Sources are the CACBG public declaration register (Сметна палата, чл.75 ЗСП)
    and the ЦАИС ЕОП open contract data we already ingest. No restricted registers (BO register parked
    post-CJEU C-37/20; TR bulk-reuse avoided — per-ЕИК lookup only, later leg).
+   _Note, November 2026:_ the same register is kept by the Комисия за противодействие на корупцията
+   since 2 November 2026 (ДВ бр. 51/2026, чл. 104, т. 1), which repealed чл. 74–87 ЗСП; the decision
+   stands unchanged. See spec §3.1.
 2. **Certainty bar = 1.0 for publication.** A conflict link is auto-published only when the official↔
    company↔ЕИК resolution is **deterministic**. Anything ambiguous is withheld or routed to a human/
    secondary-confirmation tail — never guessed.
