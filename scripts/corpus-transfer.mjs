@@ -27,6 +27,7 @@ export const PRODUCTION_BUCKET = 'sigma-declarations';
 const FOLDER = /^20\d{2}[A-Za-z0-9_]{0,8}$/;
 const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
 const ATTEMPTS = 5;
+const RECEIPT = '.index.json';
 
 /**
  * The corpus part of a bucket key: `{ folder, name }` for a file the crawler fetched (`list.xml` and the
@@ -37,7 +38,7 @@ export function corpusKey(key) {
   if (!key.startsWith(CORPUS_PREFIX)) return null;
   const parts = key.slice(CORPUS_PREFIX.length).split('/');
   if (parts.length !== 2 || !FOLDER.test(parts[0])) return null;
-  if (parts[1] !== '.index.json' && !isXmlFile(parts[1])) return null;
+  if (parts[1] !== RECEIPT && !isXmlFile(parts[1])) return null;
   return { folder: parts[0], name: parts[1] };
 }
 
@@ -474,31 +475,46 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
         log(
           `${different.length} different objects are left as they are; --overwrite-different replaces them with the source's`,
         );
+      // A folder's receipt goes last. The crawler takes a receipt that matches the folder's list without
+      // opening a single file, so a receipt that arrived before its files — and a copy stopped in between —
+      // would leave a folder the next run skips and then cannot read. The receipts are copied only once
+      // every other object this run had to copy is in.
+      const receipt = (o) => o.key.endsWith(`/${RECEIPT}`);
+      const files = work.filter((o) => !receipt(o));
+      const receipts = work.filter(receipt);
       let done = 0;
       let doneBytes = 0;
       let stopped;
-      let next = 0;
       const step = Math.max(1, Math.ceil(work.length / 20));
-      await Promise.all(
-        Array.from({ length: Math.min(concurrency, work.length) }, async () => {
-          while (!stopped && next < work.length) {
-            const object = work[next++];
-            try {
-              await client.copy(from, to, object.key, object.etag);
-            } catch (error) {
-              stopped ??= error;
-              return;
+      const copyAll = async (objects) => {
+        let next = 0;
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, objects.length) }, async () => {
+            while (!stopped && next < objects.length) {
+              const object = objects[next++];
+              try {
+                await client.copy(from, to, object.key, object.etag);
+              } catch (error) {
+                stopped ??= error;
+                return;
+              }
+              done++;
+              doneBytes += object.size;
+              if (done % step === 0 || done === work.length)
+                log(`copied ${done}/${work.length} (${sizeText(doneBytes)})`);
             }
-            done++;
-            doneBytes += object.size;
-            if (done % step === 0 || done === work.length)
-              log(`copied ${done}/${work.length} (${sizeText(doneBytes)})`);
-          }
-        }),
-      );
+          }),
+        );
+      };
+      await copyAll(files);
+      if (!stopped) await copyAll(receipts);
       if (stopped) {
         if (!(stopped instanceof Fatal)) throw stopped;
         log(`stopped after ${done} of ${work.length}: ${stopped.message}`);
+        if (done < files.length && receipts.length)
+          log(
+            `${receipts.length} folder receipts were held back: they follow once every file before them is in`,
+          );
         log('what was copied stays; run copy again to carry on from there');
         return 1;
       }

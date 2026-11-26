@@ -255,6 +255,8 @@ test('copy carries only what is missing, leaves different and extra objects, nev
   assert.equal(dst.get(C('parse-cache/0123456789abcdef/2024/aa.jsonl.gz')), undefined);
   assert.match(out, /1 different objects are left as they are; --overwrite-different/);
   assert.match(out, /copied 6 objects/);
+  // The folder receipt is the last write: it follows every file the run had to copy.
+  assert.equal(puts.at(-1).key, C('2024/.index.json'));
   // The copy names the listed version and keeps the object's metadata.
   const one = puts.find((r) => r.key === C('2024/a-002.xml'));
   assert.equal(one.headers['x-amz-copy-source'], `/${FROM}/${C('2024/a-002.xml')}`);
@@ -771,4 +773,97 @@ test('objects of different sizes differ without reading their heads', async () =
     [`  different ${C('2024/a.xml')}`],
   );
   assert.equal(r2.requests.filter((r) => r.method === 'HEAD').length, 0);
+});
+
+test('a copy stopped inside a folder leaves no receipt for it; the next run finishes the folder', async () => {
+  const dst = new Map();
+  const failing = fakeR2(
+    { [FROM]: sourceBucket(), [TO]: dst },
+    {
+      fault: (r) =>
+        r.method === 'PUT' && r.key === C('2024/list.xml')
+          ? new Response('<Error><Code>AccessDenied</Code></Error>', { status: 403 })
+          : undefined,
+    },
+  );
+  const first = await run(['copy', '--from', FROM, '--to', TO, '--concurrency', '1'], failing);
+  assert.equal(first.code, 1);
+  assert.ok(dst.has(C('2024/a-001.xml')) && dst.has(C('2024/a-002.xml')), first.out);
+  assert.equal(dst.has(C('2024/.index.json')), false, 'a receipt over a folder that is not whole');
+  assert.match(first.out, /1 folder receipts were held back/);
+
+  const again = fakeR2({ [FROM]: sourceBucket(), [TO]: dst });
+  const second = await run(['copy', '--from', FROM, '--to', TO, '--concurrency', '1'], again);
+  assert.equal(second.code, 0, second.out);
+  assert.deepEqual(
+    writes(again.requests).map((r) => r.key),
+    [
+      '2024/list.xml',
+      '2025y/b-001.xml',
+      '2025y/b-002.xml',
+      '2025y/list.xml',
+      '2024/.index.json',
+    ].map(C),
+  );
+  const check = await run(
+    ['verify', '--from', FROM, '--to', TO],
+    fakeR2({ [FROM]: sourceBucket(), [TO]: dst }),
+  );
+  assert.equal(check.code, 0, check.out);
+});
+
+test('with --overwrite-different a receipt is replaced only after the files of every folder', async () => {
+  const stale = object('{"files":1}', { contentType: 'application/json' });
+  const build = () =>
+    new Map([
+      [C('2024/list.xml'), object('<list>2024</list>')],
+      [C('2024/.index.json'), stale],
+      [C('2024/a-001.xml'), object('<d>a7</d>')],
+    ]);
+  const ok = build();
+  const r2 = fakeR2({ [FROM]: sourceBucket(), [TO]: ok });
+  const copied = await run(['copy', '--from', FROM, '--to', TO, '--overwrite-different'], r2);
+  assert.equal(copied.code, 0, copied.out);
+  assert.equal(writes(r2.requests).at(-1).key, C('2024/.index.json'));
+  assert.equal(ok.get(C('2024/.index.json')).etag, md5('{"files":2}'));
+
+  const dst = build();
+  const failing = fakeR2(
+    { [FROM]: sourceBucket(), [TO]: dst },
+    {
+      fault: (r) =>
+        r.method === 'PUT' && r.key === C('2024/a-001.xml')
+          ? new Response('<Error><Code>AccessDenied</Code></Error>', { status: 403 })
+          : undefined,
+    },
+  );
+  const stopped = await run(
+    ['copy', '--from', FROM, '--to', TO, '--overwrite-different', '--concurrency', '2'],
+    failing,
+  );
+  assert.equal(stopped.code, 1);
+  assert.equal(dst.get(C('2024/.index.json')), stale, 'the receipt waits for its folder');
+});
+
+test('a failed copy starts no new copies, with many in flight, and the run fails', async () => {
+  const src = new Map(
+    Array.from({ length: 40 }, (_, i) => [
+      C(`2024/a-${String(i).padStart(3, '0')}.xml`),
+      object(`<d>${i}</d>`),
+    ]),
+  );
+  let puts = 0;
+  const r2 = fakeR2(
+    { [FROM]: src, [TO]: new Map() },
+    {
+      fault: (r) =>
+        r.method === 'PUT' && ++puts === 1
+          ? new Response('<Error><Code>AccessDenied</Code></Error>', { status: 403 })
+          : undefined,
+    },
+  );
+  const { code, out } = await run(['copy', '--from', FROM, '--to', TO, '--concurrency', '4'], r2);
+  assert.equal(code, 1);
+  assert.match(out, /stopped after [0-3] of 40: copy into sigma-declarations-dst: HTTP 403/);
+  assert.ok(writes(r2.requests).length <= 4, `${writes(r2.requests).length} copies were started`);
 });
