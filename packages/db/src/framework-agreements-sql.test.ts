@@ -19,8 +19,11 @@ const migrations = [
   'packages/db/migrations/0002_current_value_currency.sql',
   'packages/db/migrations/0003_related_persons_foundation.sql',
   'packages/db/migrations/0009_interest_link_evidence.sql',
+  // The officials search figure reads the Trade Register's roles (registry_roles, uncertain_after).
+  'packages/db/migrations/0013_registry.sql',
   'packages/db/migrations/0014_person_profile.sql',
   'packages/db/migrations/0015_person_observations.sql',
+  'packages/db/migrations/0017_registry_identity_observations.sql',
   'packages/db/migrations/0018_person_entities.sql',
   'packages/db/migrations/0006_amendment_restated.sql',
   'packages/db/migrations/0007_amendment_value_suspect.sql',

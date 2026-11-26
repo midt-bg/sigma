@@ -462,6 +462,18 @@ WHERE COALESCE(NULLIF(c.contract_subject, ''), t.title) IS NOT NULL;
 -- read), title = name, subtitle = latest declared institution (disambiguates homonyms), amount = contract €
 -- of their linked winners, each winner counted once. Published-only inherits the surface's expiry — a
 -- withdrawn/left-office official drops out.
+-- The officials figure reads the public-ownership tables (a seat where the public holds a stake is not the
+-- person's company). They are created by the ownership step, which a database built another way may not
+-- have run yet; empty tables mean no company is known to be public.
+CREATE TABLE IF NOT EXISTS state_owned_eik (
+  eik TEXT PRIMARY KEY,
+  ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal', 'mixed')),
+  canonical_name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS public_owned_eik (
+  eik TEXT PRIMARY KEY,
+  ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal'))
+);
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'official', il.person_id, p.name,
   (SELECT group_concat(DISTINCT s.name) FROM person_sources s
@@ -472,12 +484,19 @@ SELECT 'official', il.person_id, p.name,
                ELSE COALESCE(NULLIF(d.position, ''), d.institution) END
    FROM declarations d WHERE d.person_id = il.person_id
    ORDER BY d.declared_year DESC, d.id DESC LIMIT 1),
-  -- amount = the CONTEMPORANEOUS conflict-window € (contracts signed while the stake was declared), the same
-  -- per-link subquery as LINK_SELECT.contemporaneous_value_eur, summed across the official's SURFACED links.
-  -- The redundant-family collapse (WHERE below) leaves at most one link per (official, ЕИК), so no winner's €
-  -- is double-counted. family_ownership reaches the index identically to self (ADR-0032) — the office-holder
-  -- is searchable, the relative never named. Never the lifetime total.
-  SUM((SELECT SUM(cc.amount_eur) FROM contracts cc
+  -- amount = „стойност в периода на длъжността", by the rule of the officials list (person_contracts in
+  -- packages/db/src/queries/related-people-list.ts). A contract counts when BOTH hold at its signing: the
+  -- declared interest covers the year — inside the declared years, and not a year whose comparable filing
+  -- leaves the company out — AND the person is in office — a declaration for an office in that year, and the
+  -- day inside the office bounds (first office year to the exit filing nothing reopens). A declared
+  -- management the register records only as a seat on a collegial body adds nothing, as in the list's default
+  -- view. The redundant-family collapse (WHERE below) leaves at most one link per (official, ЕИК), so no
+  -- winner's € is double-counted. family_ownership reaches the index identically to self (ADR-0032) — the
+  -- office-holder is searchable, the relative never named. Never the lifetime total, and never the declared
+  -- years alone: the years of a stake say nothing about whether the person held an office in them.
+  -- To it is added the register's part (rg below): the companies the register alone records the person in,
+  -- which the list shows in the same row. NULL only when neither part has a contract to count.
+  COALESCE(SUM((SELECT SUM(cc.amount_eur) FROM contracts cc
          JOIN tenders tt ON tt.id = cc.tender_id
          JOIN authorities aa ON aa.id = tt.authority_id
          JOIN bidders bb ON bb.id = cc.bidder_id
@@ -485,6 +504,21 @@ SELECT 'official', il.person_id, p.name,
          AND il.first_declared_year IS NOT NULL AND il.last_declared_year IS NOT NULL
          AND cc.signed_at IS NOT NULL
          AND strftime('%Y',cc.signed_at) BETWEEN il.first_declared_year AND il.last_declared_year
+         AND (cc.signed_at IS NOT NULL AND date(cc.signed_at)>=ob.opened AND date(cc.signed_at)<=ob.closed)
+         AND NOT (il.relation='manages' AND NOT EXISTS (SELECT 1 FROM interest_link_evidence be
+    WHERE be.link_key=il.link_key AND (be.matched_fact LIKE 'role:owner:%'
+      OR be.matched_fact IN ('role:manager:00070','role:manager:00071'))))
+         AND EXISTS (SELECT 1 FROM declarations dy
+           WHERE dy.declared_year=strftime('%Y',cc.signed_at)
+             AND dy.person_id IN (SELECT il.person_id UNION ALL
+               SELECT same_person.person_id FROM person_registry_links own_person
+               JOIN person_registry_links same_person ON same_person.registry_indent=own_person.registry_indent
+               WHERE own_person.person_id=il.person_id)
+             AND (
+  NULLIF(TRIM(dy.institution),'') IS NOT NULL
+  AND NULLIF(TRIM(dy.position),'') IS NOT NULL
+  AND dy.declared_year GLOB '[0-9][0-9][0-9][0-9]'
+))
          AND NOT EXISTS (
   SELECT 1 FROM interest_link_observations missing
   JOIN interest_links source_link ON source_link.link_key=missing.link_key
@@ -495,8 +529,108 @@ SELECT 'official', il.person_id, p.name,
       SELECT 1 FROM person_registry_links source_person JOIN person_registry_links target_person
         ON target_person.registry_indent=source_person.registry_indent
       WHERE source_person.person_id=source_link.person_id AND target_person.person_id=il.person_id))
-)))
+))) + COALESCE(MAX(rg.amount),0), MAX(rg.amount))
 FROM interest_links il JOIN persons p ON p.id = il.person_id
+-- The office bounds of every person with a published link, by the list's rule (officeBounds in
+-- packages/db/src/queries/declaration-source.ts): open with the first office year, closed on the day of the
+-- exit filing when nothing later reopens the office, otherwise with the last office year.
+LEFT JOIN (
+  SELECT d.person_id,
+    MIN(d.declared_year)||'-01-01' opened,
+    CASE WHEN MAX(CASE WHEN lower(m.declaration_type)='vacate' AND COALESCE(m.declared_on,'')<>''
+                       THEN date(m.declared_on) END)
+              > COALESCE(MAX(CASE WHEN lower(m.declaration_type)='entry' AND COALESCE(m.declared_on,'')<>''
+                                  THEN date(m.declared_on) END),'')
+          AND strftime('%Y', MAX(CASE WHEN lower(m.declaration_type)='vacate'
+                                      AND COALESCE(m.declared_on,'')<>'' THEN date(m.declared_on) END))
+              >= MAX(d.declared_year)
+         THEN MAX(CASE WHEN lower(m.declaration_type)='vacate' AND COALESCE(m.declared_on,'')<>''
+                       THEN date(m.declared_on) END)
+         ELSE MAX(d.declared_year)||'-12-31' END closed
+  FROM declarations d LEFT JOIN declaration_metadata m ON m.declaration_id=d.id
+  WHERE d.person_id IN (SELECT person_id FROM interest_links WHERE status='published') AND (
+  NULLIF(TRIM(d.institution),'') IS NOT NULL
+  AND NULLIF(TRIM(d.position),'') IS NOT NULL
+  AND d.declared_year GLOB '[0-9][0-9][0-9][0-9]'
+)
+  GROUP BY d.person_id
+) ob ON ob.person_id = il.person_id
+-- The register's part of the same figure, per person, by the rule of the list's registry rows
+-- (registryPeriodSums in packages/db/src/queries/related-people-list.ts, whose text this is): an owner's or
+-- the manager's role at a private winner the declared row does not answer for — not a seat where the public
+-- holds a stake, not the person's own office — and a contract signed while a role stood, in a declared
+-- office year, inside the office bounds.
+LEFT JOIN (
+  SELECT ro.person_id, SUM(c.amount_eur) amount
+  FROM (
+    SELECT pe.person_id, pe.registry_indent identity, r.eik
+    FROM person_registry_links pe CROSS JOIN registry_roles r ON r.subject_id=pe.registry_indent
+      AND r.subject_kind='person' AND r.role IN ('sole_owner','partner','trader','manager',
+                     'board_of_directors','management_board','governing_body')
+    JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
+    JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
+    WHERE pe.person_id IN (SELECT person_id FROM interest_links WHERE status='published')
+      AND NOT EXISTS (SELECT 1 FROM interest_links il LEFT JOIN person_registry_links lp ON lp.person_id=il.person_id
+        WHERE il.eik=r.eik AND (il.person_id=pe.person_id OR lp.registry_indent=pe.registry_indent)
+          AND (il.interest_class='ex_officio_board' OR il.status='suppressed' OR (il.status = 'published'
+    AND il.interest_class IN ('private_ownership', 'family_ownership')
+    AND EXISTS (SELECT 1 FROM interest_link_evidence e
+                WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed')))))
+      AND NOT ((r.eik='000703415' AND EXISTS (SELECT 1 FROM declarations office_d
+      WHERE office_d.person_id IN (SELECT lp2.person_id FROM person_registry_links lp2 WHERE lp2.registry_indent=pe.registry_indent) AND instr(office_d.category,'органи на БЧК')>0)))
+      AND NOT (r.role NOT IN ('sole_owner', 'partner', 'trader') AND (r.eik IN ('', '175327305', '201230426', '202815436')
+    OR r.eik IN (SELECT ps_s.eik FROM state_owned_eik ps_s)
+    OR r.eik IN (SELECT ps_p.eik FROM public_owned_eik ps_p)
+    OR EXISTS (SELECT 1 FROM registry_roles ps_o
+      WHERE ps_o.eik = r.eik AND ps_o.subject_kind = 'entity' AND ps_o.role IN ('sole_owner', 'partner')
+        AND ps_o.removed_on IS NULL AND ps_o.uncertain_after IS NULL
+        AND (ps_o.subject_name LIKE '%министерство%' OR ps_o.subject_name LIKE '%Министерство%' OR ps_o.subject_name LIKE '%МИНИСТЕРСТВО%' OR ps_o.subject_name LIKE '%министъра%' OR ps_o.subject_name LIKE '%Министъра%' OR ps_o.subject_name LIKE '%МИНИСТЪРА%' OR ps_o.subject_name LIKE '%държавата%' OR ps_o.subject_name LIKE '%Държавата%' OR ps_o.subject_name LIKE '%ДЪРЖАВАТА%' OR ps_o.subject_name LIKE 'държава%' OR ps_o.subject_name LIKE 'Държава%' OR ps_o.subject_name LIKE 'ДЪРЖАВА%' OR ps_o.subject_name LIKE 'община%' OR ps_o.subject_name LIKE 'Община%' OR ps_o.subject_name LIKE 'ОБЩИНА%' OR ps_o.subject_name LIKE 'столична община%' OR ps_o.subject_name LIKE 'Столична община%' OR ps_o.subject_name LIKE 'СТОЛИЧНА ОБЩИНА%' OR ps_o.subject_name LIKE '%народна банка%' OR ps_o.subject_name LIKE '%Народна банка%' OR ps_o.subject_name LIKE '%НАРОДНА БАНКА%'
+          OR ps_o.subject_id IN (SELECT ps_s2.eik FROM state_owned_eik ps_s2)
+          OR ps_o.subject_id IN (SELECT ps_p2.eik FROM public_owned_eik ps_p2)
+          OR (EXISTS (SELECT 1 FROM authorities ps_a WHERE ps_a.id = 'auth:' || ps_o.subject_id)
+            AND NOT EXISTS (SELECT 1 FROM registry_deeds ps_d WHERE ps_d.eik = ps_o.subject_id AND ps_d.outcome = 'ok'))))))
+    GROUP BY pe.person_id, r.eik
+    HAVING MAX(r.role IN ('sole_owner','partner','trader','manager'))
+  ) ro
+  JOIN bidders cb ON cb.eik_normalized=ro.eik JOIN contracts c ON c.bidder_id=cb.id
+  JOIN (
+  SELECT d.person_id,
+    MIN(d.declared_year)||'-01-01' opened,
+    CASE WHEN MAX(CASE WHEN lower(m.declaration_type)='vacate' AND COALESCE(m.declared_on,'')<>''
+                       THEN date(m.declared_on) END)
+              > COALESCE(MAX(CASE WHEN lower(m.declaration_type)='entry' AND COALESCE(m.declared_on,'')<>''
+                                  THEN date(m.declared_on) END),'')
+          AND strftime('%Y', MAX(CASE WHEN lower(m.declaration_type)='vacate'
+                                      AND COALESCE(m.declared_on,'')<>'' THEN date(m.declared_on) END))
+              >= MAX(d.declared_year)
+         THEN MAX(CASE WHEN lower(m.declaration_type)='vacate' AND COALESCE(m.declared_on,'')<>''
+                       THEN date(m.declared_on) END)
+         ELSE MAX(d.declared_year)||'-12-31' END closed
+  FROM declarations d LEFT JOIN declaration_metadata m ON m.declaration_id=d.id
+  WHERE d.person_id IN (SELECT person_id FROM interest_links WHERE status='published') AND (
+  NULLIF(TRIM(d.institution),'') IS NOT NULL
+  AND NULLIF(TRIM(d.position),'') IS NOT NULL
+  AND d.declared_year GLOB '[0-9][0-9][0-9][0-9]'
+)
+  GROUP BY d.person_id
+  ) rob ON rob.person_id=ro.person_id
+  WHERE (c.signed_at IS NOT NULL AND date(c.signed_at)>=rob.opened AND date(c.signed_at)<=rob.closed)
+    AND EXISTS (SELECT 1 FROM declarations dy WHERE dy.person_id=ro.person_id
+      AND dy.declared_year=strftime('%Y',c.signed_at) AND (
+  NULLIF(TRIM(dy.institution),'') IS NOT NULL
+  AND NULLIF(TRIM(dy.position),'') IS NOT NULL
+  AND dy.declared_year GLOB '[0-9][0-9][0-9][0-9]'
+))
+    AND EXISTS (SELECT 1 FROM registry_roles rr
+      WHERE rr.subject_id=ro.identity AND rr.subject_kind='person' AND rr.eik=ro.eik
+        AND rr.role IN ('sole_owner','partner','trader','manager',
+                     'board_of_directors','management_board','governing_body') AND (c.signed_at IS NOT NULL AND rr.added_on<>'' AND date(c.signed_at)>=date(rr.added_on)
+          AND (rr.uncertain_after IS NULL OR date(c.signed_at)<date(rr.uncertain_after))
+          AND (date(c.signed_at)<date(rr.removed_on) OR (rr.removed_on IS NULL AND EXISTS (
+            SELECT 1 FROM registry_deeds rd WHERE rd.eik=rr.eik AND rd.outcome='ok'
+              AND date(c.signed_at)<=date(rd.fetched_at))))))
+  GROUP BY ro.person_id
+) rg ON rg.person_id = il.person_id
 -- Self OR family stake (ADR-0032). Two guards mirror the /conflicts read layer (related-persons.ts):
 --  (N9) index only a link whose winner has LIVE contracts, so a stale-zero-contract link never becomes a dead
 --       search hit that 404s on click;

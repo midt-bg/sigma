@@ -16,8 +16,11 @@ const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_
 // The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
 // person_sources (0018).
 const personMigrationPaths = [
+  // The officials search figure reads the Trade Register's roles (registry_roles, uncertain_after).
+  'packages/db/migrations/0013_registry.sql',
   'packages/db/migrations/0014_person_profile.sql',
   'packages/db/migrations/0015_person_observations.sql',
+  'packages/db/migrations/0017_registry_identity_observations.sql',
   'packages/db/migrations/0018_person_entities.sql',
 ].map((p) => resolve(root, p));
 // #305 Tier-2: served amendments gained value_restated/value_treatment (promote + refresh-slice write them).

@@ -273,7 +273,7 @@ describe('search', () => {
       title: 'Иван Минев',
       subtitle: 'Бивш кмет · Община Тестово · 2018–2019',
       formerOfficial: true,
-      amountLabel: 'по договори',
+      amountLabel: 'по договори в периода на длъжността',
       href: `/persons/${personSlug('person:ИВАН МИНЕВ')}`,
     });
     // No filing on record: the index's own line stays, and nothing says the person left office.

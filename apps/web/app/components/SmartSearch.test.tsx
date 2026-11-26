@@ -183,6 +183,25 @@ it('announces each suggestion as an option, grouped and labelled by kind', async
   expect(options()[3]!.textContent).toContain('Всички резултати');
 });
 
+// Beside a company the figure is the company's own total. Beside a person a bare figure would read as money
+// of theirs, so the person's row says what it counts — the contracts in the period of the office.
+it('shows a bare sum beside a company and a labelled one beside a person', async () => {
+  const groups = TWO_GROUPS.groups.map((g) => ({
+    ...g,
+    hits: g.hits.map((h) => ({ ...h, amountEur: 1_500_000 })),
+  }));
+  await mount(results(groups));
+  await type('тест');
+  const person = options()[0]!.querySelector('.smart-search-option-amt')!;
+  expect(person.textContent).toContain('1,5');
+  expect(person.querySelector('.smart-search-option-amt-note')!.textContent).toBe(
+    'в периода на длъжността',
+  );
+  const company = options()[1]!.querySelector('.smart-search-option-amt')!;
+  expect(company.textContent).toContain('1,5');
+  expect(company.querySelector('.smart-search-option-amt-note')).toBeNull();
+});
+
 // aria-activedescendant is the only thing a screen reader follows here: focus never leaves the input.
 it('walks the options with the arrows and announces the active one', async () => {
   await mount();

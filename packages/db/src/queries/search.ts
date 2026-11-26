@@ -35,7 +35,9 @@ const GROUPS: {
   {
     kind: 'official',
     label: 'Лица',
-    amountLabel: 'по договори',
+    // The index holds the list's „стойност в периода на длъжността" (the officials block of precompute.sql),
+    // and the row says so: a bare sum beside a name reads as every contract of the person's companies.
+    amountLabel: 'по договори в периода на длъжността',
     limit: 6,
     path: '/conflicts',
   },

@@ -9,6 +9,8 @@ import { kindLabel } from '../lib/search-labels';
 // Below this length we don't query — single letters match almost everything and just add noise.
 const MIN_QUERY = 2;
 const DEBOUNCE_MS = 150;
+/** What the sum beside a person counts — the results page's label, short enough for the list. */
+const OFFICIAL_AMOUNT_NOTE = 'в периода на длъжността';
 
 interface SmartSearchProps {
   variant: 'hero' | 'drawer';
@@ -264,8 +266,17 @@ export function SmartSearch({
                         </span>
                         {meta && <span className="smart-search-option-meta">{meta}</span>}
                       </span>
+                      {/* Beside a company the sum is the company's own total. Beside a person a bare sum
+                          would read as money of theirs, so it says what it counts, as the results page does. */}
                       {hit.amountEur != null && (
-                        <span className="smart-search-option-amt">{money(hit.amountEur)}</span>
+                        <span className="smart-search-option-amt">
+                          {money(hit.amountEur)}
+                          {hit.kind === 'official' && (
+                            <span className="smart-search-option-amt-note">
+                              {OFFICIAL_AMOUNT_NOTE}
+                            </span>
+                          )}
+                        </span>
                       )}
                     </li>
                   );

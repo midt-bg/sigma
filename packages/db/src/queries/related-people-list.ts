@@ -1,4 +1,4 @@
-import { officeOrganizationSql, type OfficeFiling } from '@sigma/shared';
+import { officeOrganizationSql, publicStakeSeatSql, type OfficeFiling } from '@sigma/shared';
 import {
   declarationWindow,
   declaredOfficeYear,
@@ -17,9 +17,68 @@ import { publicStakeEiks } from './public-stakes';
 // A declared management the register records only as a seat on a collegial body — not as the manager, not as
 // an owner — or does not record at all: like the register's own board seats, it is listed only when the seats
 // are asked for (ADR-0047 §4, 30.09). A declared stake and a registered manager are listed by default.
-const BOARD_SEAT = `(il.relation='manages' AND NOT EXISTS (SELECT 1 FROM interest_link_evidence be
+// The officials block of the search index (precompute.sql, refresh-slice.sql) carries the same text.
+export const BOARD_SEAT = `(il.relation='manages' AND NOT EXISTS (SELECT 1 FROM interest_link_evidence be
     WHERE be.link_key=il.link_key AND (be.matched_fact LIKE 'role:owner:%'
       OR be.matched_fact IN ('role:manager:00070','role:manager:00071'))))`;
+
+/** The register's roles the list reads for a person at a company: the owners, the manager and the members of
+ *  a governing body (getRegistryRolePersonRows says why these and no others). */
+export const LISTED_ROLES = `('sole_owner','partner','trader','manager',
+                     'board_of_directors','management_board','governing_body')`;
+/** Of them, the ones listed by default: ownership and sole management, not a seat on a collegial body. */
+export const DIRECT_ROLES = `('sole_owner','partner','trader','manager')`;
+
+/** SQL: the registry role `role` stood on the day `signedAt`. An open role counts only up to the last
+ *  successful read of the partida — the same predicate as during_role (person-activity.ts). */
+export const roleCoversSigning = (role: string, signedAt: string): string =>
+  `(${signedAt} IS NOT NULL AND ${role}.added_on<>'' AND date(${signedAt})>=date(${role}.added_on)
+          AND (${role}.uncertain_after IS NULL OR date(${signedAt})<date(${role}.uncertain_after))
+          AND (date(${signedAt})<date(${role}.removed_on) OR (${role}.removed_on IS NULL AND EXISTS (
+            SELECT 1 FROM registry_deeds rd WHERE rd.eik=${role}.eik AND rd.outcome='ok'
+              AND date(${signedAt})<=date(rd.fetched_at)))))`;
+
+/** SQL: the person's declared row already answers for the company `eik` — it holds it, or the tie is an office
+ *  held there, or it was taken down on an objection. `personId` and `identity` are SQL expressions. */
+export const declaredRowAnswers = (personId: string, identity: string, eik: string): string =>
+  `EXISTS (SELECT 1 FROM interest_links il LEFT JOIN person_registry_links lp ON lp.person_id=il.person_id
+        WHERE il.eik=${eik} AND (il.person_id=${personId} OR lp.registry_indent=${identity})
+          AND (il.interest_class='ex_officio_board' OR il.status='suppressed' OR (${SURFACED_OWNERSHIP})))`;
+
+/**
+ * The register's part of „стойност в периода на длъжността" for the officials block of the search index
+ * (precompute.sql, refresh-slice.sql): per person, the contracts of the companies the register alone records
+ * them in, by the rule of getRegistryRolePersonRows's default view — an owner's or the manager's role at a
+ * private winner, not a seat where the public holds a stake, not the person's own office, not a company the
+ * declared row answers for; the contract signed while a role stood AND in a declared office year inside the
+ * office bounds. `people` is an SQL query of the person ids to compute for. The scripts carry this text;
+ * search-sql.test.ts compares.
+ */
+export const registryPeriodSums = (people: string): string => `
+  SELECT ro.person_id, SUM(c.amount_eur) amount
+  FROM (
+    SELECT pe.person_id, pe.registry_indent identity, r.eik
+    FROM person_registry_links pe CROSS JOIN registry_roles r ON r.subject_id=pe.registry_indent
+      AND r.subject_kind='person' AND r.role IN ${LISTED_ROLES}
+    JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
+    JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
+    WHERE pe.person_id IN (${people})
+      AND NOT ${declaredRowAnswers('pe.person_id', 'pe.registry_indent', 'r.eik')}
+      AND NOT ${officeOrganizationSql('SELECT lp2.person_id FROM person_registry_links lp2 WHERE lp2.registry_indent=pe.registry_indent', 'r.eik')}
+      AND NOT ${publicStakeSeatSql('r')}
+    GROUP BY pe.person_id, r.eik
+    HAVING MAX(r.role IN ${DIRECT_ROLES})
+  ) ro
+  JOIN bidders cb ON cb.eik_normalized=ro.eik JOIN contracts c ON c.bidder_id=cb.id
+  JOIN (${officeBounds(`d.person_id IN (${people})`)}
+  ) rob ON rob.person_id=ro.person_id
+  WHERE ${withinOffice('rob', 'c.signed_at')}
+    AND EXISTS (SELECT 1 FROM declarations dy WHERE dy.person_id=ro.person_id
+      AND dy.declared_year=strftime('%Y',c.signed_at) AND ${declaredOfficeYear('dy')})
+    AND EXISTS (SELECT 1 FROM registry_roles rr
+      WHERE rr.subject_id=ro.identity AND rr.subject_kind='person' AND rr.eik=ro.eik
+        AND rr.role IN ${LISTED_ROLES} AND ${roleCoversSigning('rr', 'c.signed_at')})
+  GROUP BY ro.person_id`;
 
 const CTE = `WITH ${PAID_BY_AUTHORITY}, links AS MATERIALIZED (
   SELECT il.*, COALESCE(pl.registry_indent,il.person_id) identity, p.name, ${BOARD_SEAT} board
@@ -224,12 +283,11 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     FROM person_registry_links pl JOIN persons p ON p.id=pl.person_id
   ), roles AS MATERIALIZED (
     SELECT pe.person_id, pe.identity, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner,
-      MAX(r.role IN ('sole_owner','partner','trader','manager')) direct
+      MAX(r.role IN ${DIRECT_ROLES}) direct
     -- CROSS JOIN reads from the few listed people to their roles; left free, the planner walked every
     -- company with contracts and looked each one's roles up instead.
     FROM people pe CROSS JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
-      AND r.role IN ('sole_owner','partner','trader','manager',
-                     'board_of_directors','management_board','governing_body')
+      AND r.role IN ${LISTED_ROLES}
     JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
     JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
     WHERE (?1 IS NULL OR r.eik IN (SELECT eik FROM paid))
@@ -238,9 +296,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
       -- bodies. A tie taken down on an objection stays down. A company their declared row holds is there, once.
       -- Every other company the register records them in stays, and the row says what their declarations say
       -- about it.
-      AND NOT EXISTS (SELECT 1 FROM interest_links il LEFT JOIN person_registry_links lp ON lp.person_id=il.person_id
-        WHERE il.eik=r.eik AND (il.person_id=pe.person_id OR lp.registry_indent=pe.identity)
-          AND (il.interest_class='ex_officio_board' OR il.status='suppressed' OR (${SURFACED_OWNERSHIP})))
+      AND NOT ${declaredRowAnswers('pe.person_id', 'pe.identity', 'r.eik')}
       AND NOT ${officeOrganizationSql('SELECT lp2.person_id FROM person_registry_links lp2 WHERE lp2.registry_indent=pe.identity', 'r.eik')}
       AND NOT (r.role NOT IN ('sole_owner','partner','trader') AND r.eik IN (SELECT value FROM json_each(?2)))
     GROUP BY pe.person_id, r.eik
@@ -263,13 +319,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
           AND dy.declared_year=strftime('%Y',c.signed_at) AND ${declaredOfficeYear('dy')})
         AND ${withinOffice('ob', 'c.signed_at')} AND EXISTS (SELECT 1 FROM registry_roles rr
         WHERE rr.subject_id=ro.identity AND rr.subject_kind='person' AND rr.eik=ro.eik
-          AND rr.role IN ('sole_owner','partner','trader','manager',
-                          'board_of_directors','management_board','governing_body')
-          AND c.signed_at IS NOT NULL AND rr.added_on<>'' AND date(c.signed_at)>=date(rr.added_on)
-          AND (rr.uncertain_after IS NULL OR date(c.signed_at)<date(rr.uncertain_after))
-          AND (date(c.signed_at)<date(rr.removed_on) OR (rr.removed_on IS NULL AND EXISTS (
-            SELECT 1 FROM registry_deeds rd WHERE rd.eik=rr.eik AND rd.outcome='ok'
-              AND date(c.signed_at)<=date(rd.fetched_at)))))) in_window
+          AND rr.role IN ${LISTED_ROLES} AND ${roleCoversSigning('rr', 'c.signed_at')})) in_window
     FROM roles ro JOIN company_contracts c ON c.eik=ro.eik
     LEFT JOIN office_bounds ob ON ob.person_id=ro.person_id
     GROUP BY ro.person_id, c.id

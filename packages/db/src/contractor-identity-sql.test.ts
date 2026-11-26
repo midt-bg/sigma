@@ -36,8 +36,11 @@ const migration7 = readFileSync(
 // The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
 // person_sources (0018).
 const personMigrations = [
+  // The officials search figure reads the Trade Register's roles (registry_roles, uncertain_after).
+  '0013_registry.sql',
   '0014_person_profile.sql',
   '0015_person_observations.sql',
+  '0017_registry_identity_observations.sql',
   '0018_person_entities.sql',
 ]
   .map((f) => readFileSync(resolve(root, 'packages/db/migrations', f), 'utf8'))

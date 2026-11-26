@@ -550,6 +550,15 @@
   color: var(--ink-mid);
   white-space: nowrap;
 }
+/* What a person's sum counts, under it. */
+.smart-search-option-amt:has(.smart-search-option-amt-note) {
+  text-align: right;
+}
+.smart-search-option-amt-note {
+  display: block;
+  margin-top: 3px;
+  font: 400 0.75rem/1.3 var(--font-mono);
+}
 /* Below ~800 px the kind and the amount left the name 50–140 px, and the names were cut after a few
    letters — the part that tells one suggestion from the next. Put kind and amount on a line of their
    own and let the name wrap. */
