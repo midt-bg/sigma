@@ -867,13 +867,28 @@ type RebuildPayload = {
   resume?: boolean;
   verify?: boolean;
 };
+const REBUILD_PAYLOAD_KEYS: readonly string[] = ['targetName', 'targetId', 'resume', 'verify'];
 export class RebuildWorkflow extends WorkflowEntrypoint<Env, RebuildPayload> {
   override async run(event: WorkflowEvent<RebuildPayload>, step: WorkflowStep) {
     const containers = this.env.DECLARATIONS;
     if (!containers) throw new NonRetryableError('The declarations container is not bound');
-    const { targetName, targetId, resume, verify } = event.payload ?? {};
+    const payload = event.payload ?? {};
+    const { targetName, targetId, resume, verify } = payload;
     if (!targetName || !targetId)
       throw new NonRetryableError('Name the idle slot: { "targetName": …, "targetId": … }');
+    // A flag the run does not understand must not be read as „no flag": without `verify` or `resume` the
+    // run empties the slot and builds it for hours — the opposite of what was asked.
+    const unknown = Object.keys(payload).filter((key) => !REBUILD_PAYLOAD_KEYS.includes(key));
+    if (unknown.length)
+      throw new NonRetryableError(
+        `Unknown rebuild input: ${unknown.join(', ')} (known: ${REBUILD_PAYLOAD_KEYS.join(', ')})`,
+      );
+    for (const [key, value] of [
+      ['resume', resume],
+      ['verify', verify],
+    ] as const)
+      if (value !== undefined && typeof value !== 'boolean')
+        throw new NonRetryableError(`"${key}" must be true or false, not ${JSON.stringify(value)}`);
     const start = await step.do('start-rebuild', async () => {
       const { runId, state } = await containers.getByName('rebuild').startRun(event.instanceId, {
         name: targetName,

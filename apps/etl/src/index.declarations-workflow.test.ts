@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it, vi } from 'vitest';
+import { NonRetryableError } from 'cloudflare:workflows';
 import worker, {
   declarationsDue,
   DeclarationsWorkflow,
@@ -135,10 +136,10 @@ it('passes the operator resume flag to the rebuild', async () => {
     id: 'x',
     resume: true,
   });
-  // A verification on its own: the flag travels, and only a literal true counts.
+  // A verification on its own: the flag travels; false is no flag.
   for (const [verify, expected] of [
     [true, { name: 'sigma-green', id: 'x', verify: true }],
-    ['yes', { name: 'sigma-green', id: 'x' }],
+    [false, { name: 'sigma-green', id: 'x' }],
   ] as const) {
     startRun.mockClear();
     await new RebuildWorkflow({} as never, env).run(
@@ -150,6 +151,29 @@ it('passes the operator resume flag to the rebuild', async () => {
     );
     expect(startRun).toHaveBeenCalledWith('wf-verify', expected);
   }
+});
+
+it('refuses a flag it does not understand instead of building the slot from nothing', async () => {
+  const startRun = vi.fn(async () => ({ runId: 'rb', state: 'running' }));
+  const env = { DECLARATIONS: { getByName: () => ({ startRun }) } } as unknown as Env;
+  const step = { do: async (_name: string, fn: () => Promise<unknown>) => fn(), sleep: vi.fn() };
+  for (const [extra, refusal] of [
+    [{ verify: 'true' }, /"verify" must be true or false, not "true"/],
+    [{ verify: 'yes' }, /"verify" must be true or false/],
+    [{ resume: 1 }, /"resume" must be true or false, not 1/],
+    [{ verfy: true }, /Unknown rebuild input: verfy/],
+  ] as const) {
+    const run = new RebuildWorkflow({} as never, env).run(
+      {
+        instanceId: 'wf-typo',
+        payload: { targetName: 'sigma-green', targetId: 'x', ...extra },
+      } as never,
+      step as never,
+    );
+    await expect(run).rejects.toThrow(refusal);
+    await expect(run).rejects.toBeInstanceOf(NonRetryableError);
+  }
+  expect(startRun).not.toHaveBeenCalled();
 });
 
 it('starts a rebuild of the named idle slot and waits for it', async () => {
