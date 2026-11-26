@@ -63,9 +63,14 @@ export function SmartSearch({
     if (suggested?.q === debounced && suggested.results !== null) return;
     const controller = new AbortController();
     fetch(`/search/suggest?q=${encodeURIComponent(debounced)}`, { signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<SearchResults>) : null))
-      // Throttled (429), offline or an error: no suggestions for this text, and the form still submits
-      // to /search. An abort only means a newer text replaced it.
+      .then((res) =>
+        res.ok && !res.headers.has('X-Sigma-Degraded')
+          ? (res.json() as Promise<SearchResults>)
+          : null,
+      )
+      // Throttled (429), offline, an error, or the empty answer the route gives while the database is
+      // overloaded: no suggestions for this text, and the form still submits to /search. An abort only
+      // means a newer text replaced it.
       .catch(() => null)
       .then((results) => {
         if (!controller.signal.aborted) setSuggested({ q: debounced, results });

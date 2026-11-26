@@ -383,6 +383,21 @@ it('shows no list, stale or empty, when the suggestions are refused', async () =
   expect(container.querySelector('form')!.getAttribute('action')).toBe('/search');
 });
 
+// While D1 is overloaded the route answers 200 with an empty list and names it degraded. Read as a refusal,
+// it shows no list — not „no matches" for text that may well match — and the next use asks again.
+it('reads the degraded empty answer as a refusal, not as „no matches"', async () => {
+  await mount();
+  const degraded = vi.fn(async (_url: string) =>
+    Response.json(results([]), { headers: { 'X-Sigma-Degraded': 'suggest' } }),
+  );
+  vi.stubGlobal('fetch', degraded);
+  await type('тест');
+  expect(degraded).toHaveBeenCalledTimes(1);
+  expect(options()).toHaveLength(0);
+  expect(pop().hasAttribute('hidden')).toBe(true);
+  expect(container.querySelector('[role="status"]')!.textContent).toBe('');
+});
+
 // With JS off the listbox never renders, so the plain form is the whole feature.
 it('is a real GET form to /search even before any of this runs', async () => {
   await mount();

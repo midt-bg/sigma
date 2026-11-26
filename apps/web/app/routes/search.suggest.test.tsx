@@ -6,7 +6,12 @@ const { searchMock } = vi.hoisted(() => ({ searchMock: vi.fn() }));
 // The route now wraps the env in getDb() before calling search (#225, the read-only D1 chokepoint for
 // #199); stub it as a pass-through so search still receives a non-null handle and the call-args
 // assertions hold.
-vi.mock('@sigma/db', () => ({ search: searchMock, getDb: (env: unknown) => env }));
+// The refusal check (lib/retry.ts) keeps the real D1 overload predicate.
+vi.mock('@sigma/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@sigma/db')>()),
+  search: searchMock,
+  getDb: (env: unknown) => env,
+}));
 
 import { loader, trimGroup } from './search.suggest';
 
@@ -68,6 +73,34 @@ describe('loader', () => {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'public, s-maxage=120, stale-while-revalidate=86400',
     });
+  });
+
+  it('answers an empty, unstored, degraded list when D1 refuses the read', async () => {
+    // getDb's retrying wrapper turns D1's back-pressure into a 503 Response; the raw error counts too.
+    for (const refusal of [
+      new Response('D1 is overloaded', { status: 503 }),
+      new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.'),
+    ]) {
+      searchMock.mockRejectedValueOnce(refusal);
+      const res = await loader({
+        request: new Request('https://x/search/suggest?q=%20тест%20'),
+        context: ctx(),
+      } as never);
+      expect(res.data).toEqual({ query: 'тест', groups: [], empty: true });
+      expect(res.init?.status ?? 200).toBe(200);
+      expect(res.init?.headers).toMatchObject({
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Sigma-Degraded': 'suggest',
+      });
+    }
+  });
+
+  it('still fails on any other error', async () => {
+    searchMock.mockRejectedValueOnce(new Error('D1_ERROR: no such table: search_index'));
+    await expect(
+      loader({ request: new Request('https://x/search/suggest?q=тест'), context: ctx() } as never),
+    ).rejects.toThrow('no such table');
   });
 
   it('defaults the query to an empty string when q is absent', async () => {
