@@ -48,7 +48,10 @@ export interface Health {
       /** Seconds since the oldest of them was recorded; null when there is none. */
       oldestUnsettledAgeSeconds: number | null;
     };
-    /** How far the commercial-register change feed has been followed. */
+    /**
+     * The last closed day whose commercial-register changes the run has scheduled for reading
+     * (`registry_entry_state.seeded_through`, the marker the registry run itself advances).
+     */
     registry: { changesThrough: string | null };
     /** When the related persons were last published. */
     declarations: { relatedPersonsPublishedAt: string | null };
@@ -81,13 +84,13 @@ const CORE_SQL = `SELECT
   d.version AS version,
   d.source_commit AS source_commit,
   d.built_at AS built_at,
-  r.changes_through AS changes_through,
+  r.seeded_through AS changes_through,
   EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refresh_pending_window') AS has_windows,
   EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'rp_generation') AS has_related
 FROM (SELECT 1)
 LEFT JOIN home_totals h ON h.id = 1
 LEFT JOIN data_version d ON d.id = 1
-LEFT JOIN registry_sync r ON r.id = 1`;
+LEFT JOIN registry_entry_state r ON r.id = 1`;
 
 // ── The refresh's integrity outcome ─────────────────────────────────────────────────────────────────────
 // The refresh does not store its integrity verdict yet; it settles a recorded window only after the gate

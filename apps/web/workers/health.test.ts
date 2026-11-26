@@ -45,8 +45,9 @@ function published(db: DatabaseSync): void {
       VALUES (1, 3, 100, 1, 1, 0, '2000-05-30', '2000-05-31 04:05:06');
     INSERT INTO data_version (id, version, source_commit, built_at, run_id)
       VALUES (1, 5, '0123456789abcdef0123456789abcdef01234567', '2000-05-01T00:00:00Z', 'synthetic-run');
-    INSERT INTO registry_sync (id, changes_through, holder, expires_at)
-      VALUES (1, '2000-05-29', '${HOLDER}', '2000-06-01T12:05:00.000Z');
+    INSERT INTO registry_sync (id, holder, expires_at)
+      VALUES (1, '${HOLDER}', '2000-06-01T12:05:00.000Z');
+    INSERT INTO registry_entry_state (id, seeded_through) VALUES (1, '2000-05-29');
   `);
 }
 
@@ -114,6 +115,15 @@ describe('health', () => {
     });
     // The single-row tables with the list of run tables, then both run tables: two statements.
     expect(prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads the register position from the marker the registry run advances', () => {
+    // A column that no run writes reports nothing for ever: the read follows the run's own write.
+    const run = readFileSync(resolve(REPO, 'apps/etl/src/registry.ts'), 'utf8');
+    expect(run).toMatch(/UPDATE registry_entry_state SET seeded_through=/);
+    const report = readFileSync(resolve(REPO, 'apps/web/workers/health.ts'), 'utf8');
+    expect(report).toMatch(/r\.seeded_through AS changes_through/);
+    expect(report).toMatch(/LEFT JOIN registry_entry_state r ON r\.id = 1/);
   });
 
   it('answers on a slot no run has touched yet with one statement', async () => {

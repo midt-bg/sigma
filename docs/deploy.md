@@ -461,7 +461,7 @@ ETL-ът по необходимост е отделен worker — той но�
 | `data.version`, `data.builtAt`, `data.builtFromCommit` | редът в `data_version` на слота (виж „Версията на данните“) |
 | `data.generation`, `data.asOf` | `home_totals.refreshed_at` и `as_of` — последното публикуване на обновяване или изграждане |
 | `runs.refresh` | `publishedAt` (= `data.generation`); `unsettledWindows` — записани прозорци, които минал integrity gate още не е уредил; `oldestUnsettledAgeSeconds` — възрастта на най-стария от тях |
-| `runs.registry` | `changesThrough` — докъде е проследен потокът от промени в регистъра |
+| `runs.registry` | `changesThrough` — последният приключил ден, чиито промени в регистъра са насрочени за четене (`registry_entry_state.seeded_through`) |
 | `runs.declarations` | `relatedPersonsPublishedAt` — последното публикуване на свързаните лица (`rp_generation`) |
 
 Без id на акаунт или база, без име на слот, без притежател на lease, без id на ход и без нищо за лица.
@@ -469,7 +469,7 @@ ETL-ът по необходимост е отделен worker — той но�
 - **Деградиралият отговор е пак HTTP 200.** Монитор трябва да проверява полето `status` в тялото
   (`"status":"ok"`), не кода на отговора.
 - **Цена:** една заявка към D1, когато в слота още няма таблиците, които ходовете създават при първото си
-  пускане, и две, когато ги има — първата чете редовете на `home_totals`, `data_version` и `registry_sync`
+  пускане, и две, когато ги има — първата чете редовете на `home_totals`, `data_version` и `registry_entry_state`
   и кои таблици на ходовете съществуват, втората — прозорците и `rp_generation`. Един isolate
   преизползва отчета до 5 с (деградиралия — до 2 с), така че поредица проверки или монитори чете базата
   веднъж; затова `checkedAt` може да е с толкова по-стар. Отговорът пак е `no-store`.
