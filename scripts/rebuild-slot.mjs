@@ -217,8 +217,9 @@ export function slotFlusher(name, snapshot, apply) {
       dir: resolve(root, 'data/work/rebuild'),
       cwd: webDir,
     });
-  return async (eiks) => {
-    send('registry-batch', registryBatchSql(snapshot, eiks, tables, cursors, since));
+  // `seal` rides with the batch: the registry's receipt goes in with its last cursors.
+  return async (eiks, seal = '') => {
+    send('registry-batch', registryBatchSql(snapshot, eiks, tables, cursors, since) + seal);
     since = new Date().toISOString();
   };
 }
@@ -275,8 +276,12 @@ export function clearFiles(label, tables, rows, keys = {}) {
 
 /** Put a whole local snapshot into the slot: the snapshot's own DDL where the migrations left a gap,
  * then every table emptied children-first and filled parents-first, in chunks of twenty thousand rows.
- * Used twice — once after a long stage, so its hours are durable, and once for the finished build. */
-export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json }) {
+ * Used twice — once after a long stage, so its hours are durable, and once for the finished build.
+ *
+ * `seal(counts)` is the stage's receipt. It travels in the LAST file, in the same transaction as the last
+ * rows: a slot holds the receipt exactly when it holds every row, and a stop between the two cannot leave
+ * a filled slot that looks unfilled, or the reverse. */
+export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json, seal }) {
   const snap = new DatabaseSync(snapshotPath, { readOnly: true });
   try {
     const master = snap
@@ -335,29 +340,34 @@ export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json
         ]),
     );
     for (const [file, sql] of clearFiles(label, withRows, held, keys)) apply(file, sql);
-    const counts = {};
+    const counts = Object.fromEntries(
+      withRows.map((t) => [t, snap.prepare(`SELECT COUNT(*) n FROM ${sqlIdent(t)}`).get().n]),
+    );
+    const last = withRows.findLast((t) => counts[t] > 0);
     let shipped = 0;
     for (const table of withRows) {
       const cols = snap
         .prepare(`PRAGMA table_info(${sqlIdent(table)})`)
         .all()
         .map((c) => c.name);
-      const n = snap.prepare(`SELECT COUNT(*) n FROM ${sqlIdent(table)}`).get().n;
-      counts[table] = n;
+      const n = counts[table];
       for (let offset = 0, part = 0; offset < n; offset += 20_000, part++) {
         const rows = snap
           .prepare(
             `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} LIMIT 20000 OFFSET ${offset}`,
           )
           .all();
+        const sealed = seal && table === last && offset + 20_000 >= n ? seal(counts) : '';
         apply(
           `ship-${table}-${String(part).padStart(3, '0')}`,
-          `PRAGMA defer_foreign_keys=ON;\n${insertStatements(table, cols, rows).join('')}`,
+          `PRAGMA defer_foreign_keys=ON;\n${insertStatements(table, cols, rows).join('')}${sealed}`,
         );
         shipped += rows.length;
         progress(label === 'ship' ? 'ship' : label, shipped);
       }
     }
+    // A snapshot without a single row still finishes the stage.
+    if (seal && !last) apply(`${label}-seal`, seal(counts));
     return { counts, withRows, shipped };
   } finally {
     snap.close();
@@ -600,8 +610,8 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
 }
 
 /**
- * The end of a build: the finished snapshot into the slot, the ship's receipt — what the slot now holds and
- * which rules built it — and the verification. A verification that fails leaves the receipt, so it can be
+ * The end of a build: the finished snapshot into the slot, with the ship's receipt in its last file — what
+ * the slot now holds and which rules built it — and the verification. A verification that fails leaves the receipt, so it can be
  * run again on its own.
  */
 export async function finishBuild(
@@ -610,12 +620,20 @@ export async function finishBuild(
   work,
   { apply, read = d1Json, verifyRead, runId, version, commit, check, now },
 ) {
-  const { counts } = fillSlot(name, snapshotPath, work, { label: 'ship', apply, read });
-  const at = (now ?? (() => new Date().toISOString()))();
-  apply(
-    'state-ship',
-    receiptSql('ship', runId, at, JSON.stringify({ version, commit, builtAt: at, counts })),
-  );
+  fillSlot(name, snapshotPath, work, {
+    label: 'ship',
+    apply,
+    read,
+    seal: (counts) => {
+      const at = (now ?? (() => new Date().toISOString()))();
+      return receiptSql(
+        'ship',
+        runId,
+        at,
+        JSON.stringify({ version, commit, builtAt: at, counts }),
+      );
+    },
+  });
   stage('verify');
   return verifySlot(name, { read: verifyRead, apply, runId, check, now });
 }
@@ -691,8 +709,8 @@ async function main() {
   // Every file into the slot carries its receipt: the rows of a chunk are not repeatable, and wrangler can
   // report a failure for a file that landed (scripts/d1-retry.mjs).
   const apply = wranglerFileSender({ d1Name: target.name, remote: true, dir: work, cwd: webDir });
-  const record = (name, detail = null) =>
-    apply(`state-${name}`, receiptSql(name, runId, new Date().toISOString(), detail));
+  const receipt = (name, detail = null) =>
+    receiptSql(name, runId, new Date().toISOString(), detail);
   let reads = 0;
   const verifyRead = slotReader(target.name, { beat: () => progress('verify', ++reads) });
   const complete = ({ version, commit, tables, rows }) =>
@@ -734,7 +752,7 @@ async function main() {
       stage('import');
       emptySlot(target.name, apply);
       wrangler(['d1', 'migrations', 'apply', target.name, '--remote']);
-      record('prepare');
+      apply('state-prepare', receipt('prepare'));
     },
     unverify: () => apply('unverify', UNVERIFY_SQL),
 
@@ -747,8 +765,7 @@ async function main() {
         `--to=${today}`,
         '--no-ship',
       ]);
-      fillSlot(target.name, db, work, { label: 'import', apply });
-      record('import');
+      fillSlot(target.name, db, work, { label: 'import', apply, seal: () => receipt('import') });
     },
 
     // 2. The Trade Register: every winner's partida, through the daily ETL's own reader and writer. Each
@@ -768,8 +785,11 @@ async function main() {
       ]);
       // The accepted baseline is written after the last batch, so the cursors travel once more — a
       // resumed rebuild must not inherit a registry that still calls itself "building".
-      await slotFlusher(target.name, new DatabaseSync(db, { readOnly: true }), apply)([]);
-      record('registry');
+      await slotFlusher(
+        target.name,
+        new DatabaseSync(db, { readOnly: true }),
+        apply,
+      )([], receipt('registry'));
     },
 
     local: async () => {

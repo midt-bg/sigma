@@ -218,13 +218,20 @@ test('a registry batch carries its rows, the queue it cleared and what it queued
   // The flusher sends one file per batch and only asks for what the batch touched.
   const sent = [];
   const flush = slotFlusher('slot', db, (label, body) => sent.push([label, body]));
-  return flush(['222222222']).then(() => {
-    assert.equal(sent.length, 1);
-    assert.equal(sent[0][0], 'registry-batch');
-    assert.match(sent[0][1], /'222222222'/);
-    assert.ok(!sent[0][1].includes('111111111'));
-    db.close();
-  });
+  return flush(['222222222'])
+    .then(() => {
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0][0], 'registry-batch');
+      assert.match(sent[0][1], /'222222222'/);
+      assert.ok(!sent[0][1].includes('111111111'));
+    })
+    .then(() => flush([], 'SEAL;\n'))
+    .then(() => {
+      // The registry's receipt rides with its last cursors.
+      assert.equal(sent.length, 2);
+      assert.match(sent[1][1], /INSERT OR REPLACE INTO "registry_sync"[\s\S]*SEAL;\n$/);
+      db.close();
+    });
 });
 
 test('a resumed rebuild takes the schema from the migrations and only the data from the slot', async (t) => {
@@ -380,7 +387,9 @@ test('a verification D1 refuses for a while still finishes the build and stamps 
   assert.equal(s.retried.length, 2, 'two reads were refused and tried again');
   assert.ok(s.retried.every((e) => e.event === 'd1_call_retried' && e.error === OVERLOADED));
   assert.equal(s.sent.filter((l) => l === 'data-version').length, 1, 'stamped once');
-  assert.equal(s.sent.indexOf('state-ship'), s.sent.indexOf('data-version') - 1);
+  // The ship's receipt is no file of its own: it went in with the last rows, and the stamp came next.
+  assert.ok(!s.sent.includes('state-ship'));
+  assert.match(s.sent[s.sent.indexOf('data-version') - 1], /^ship-\w+-\d{3}$/);
   assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: 'run-build' }]);
   assert.deepEqual(s.receipts(), { ship: 'run-build', verify: 'run-build' });
 });
@@ -619,6 +628,60 @@ test('the finished build clears what the slot holds before it ships, by the slot
       'ship-child-000',
     ]);
     assert.deepEqual(result.counts, { parent: 1, child: 2 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a stage’s receipt travels in its last file, so the rows and the receipt land together', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-seal-'));
+  try {
+    const snapshot = join(dir, 'snap.sqlite');
+    const db = new DatabaseSync(snapshot);
+    db.exec(`CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id));
+      CREATE TABLE empty_rollup (id INTEGER PRIMARY KEY);
+      INSERT INTO parent VALUES (1);
+      WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM k WHERE i < 20001)
+        INSERT INTO child SELECT i, 1 FROM k;`);
+    db.close();
+    const sent = [];
+    const sealed = [];
+    fillSlot('sigma-test', snapshot, dir, {
+      label: 'ship',
+      apply: (label, sql) => sent.push([label, sql]),
+      read: () => [{}],
+      seal: (counts) => {
+        sealed.push(counts);
+        return 'SEAL;\n';
+      },
+    });
+    assert.deepEqual(
+      sealed,
+      [{ parent: 1, child: 20001, empty_rollup: 0 }],
+      'sealed once, with every count',
+    );
+    assert.deepEqual(
+      sent.map(([label, sql]) => [label, sql.endsWith('SEAL;\n')]),
+      [
+        ['ship-schema', false],
+        ['ship-parent-000', false],
+        ['ship-child-000', false],
+        ['ship-child-001', true],
+      ],
+      'the last chunk of the last table with rows carries it — after an empty table, too',
+    );
+    // A snapshot without a row still finishes the stage.
+    const bare = join(dir, 'bare.sqlite');
+    new DatabaseSync(bare).exec('CREATE TABLE parent (id INTEGER PRIMARY KEY)');
+    const bareSent = [];
+    fillSlot('sigma-test', bare, dir, {
+      label: 'import',
+      apply: (label, sql) => bareSent.push([label, sql]),
+      read: () => [{}],
+      seal: () => 'SEAL;\n',
+    });
+    assert.deepEqual(bareSent.at(-1), ['import-seal', 'SEAL;\n']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
