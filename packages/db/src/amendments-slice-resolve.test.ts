@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { checkAmendmentTwins } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrations = [
@@ -363,5 +364,174 @@ describe('refresh-slice #306 value-anchor resolver', () => {
       { contract_number: 'Д-1', annex_count: 1 },
       { contract_number: 'Д-2', annex_count: 0 },
     ]);
+  });
+});
+
+// The OCDS release of an annex arrives keyed by its OCID (`ocds-` + six characters + `-` + tender.id) and
+// carries the number the annex was published under. The slice bridges it to the УНП through the tender.id,
+// from the window or from the served tenders.
+function seedOcdsAnnex(
+  dbPath: string,
+  opts: { unp: string; annexCnum: string; valueBefore: number; day: string; seq: string },
+): void {
+  const { unp, annexCnum, valueBefore, day, seq } = opts;
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_amendments
+      (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number, contract_number,
+       contract_date, published_at, unp, tender_ext_id, procurement_subject, contract_kind,
+       value_before, value_after, value_delta, currency, description)
+     VALUES
+      ('ocds:${day}', 2026, 'ocds', '${day}T00:00:00Z', '1', 'ocds-tst001-T-${unp}-${seq}', '${annexCnum}',
+       '2026-06-02', '2026-06-09', 'ocds-tst001-T-${unp}', 'T-${unp}', 'Subject ${unp}', 'works',
+       ${valueBefore}, NULL, NULL, 'BGN', 'OCDS release');`,
+  );
+}
+
+// The EOP annex is published under ANNEX-1, a number no contract carries, and the slice resolver moves it
+// onto FILING-1 by value, keeping ANNEX-1 in contract_number_raw. Its OCDS release still carries ANNEX-1, so
+// the prefer-EOP rule must match it on that number, whichever window brings which side.
+describe('refresh-slice prefer-EOP dedup on the annex-side number', () => {
+  const AUTH = '123456786';
+  const SUPPLIER = '987654308';
+  const contract = (unp = 'UNP-TW') => {
+    seedTender(db, unp, AUTH);
+    seedContract(db, {
+      unp,
+      cnum: 'FILING-1',
+      signing: 1000,
+      authorityEik: AUTH,
+      contractorEik: SUPPLIER,
+    });
+  };
+  const eopAnnex = (unp = 'UNP-TW') =>
+    seedAnnex(db, {
+      unp,
+      annexCnum: 'ANNEX-1',
+      valueBefore: 1000,
+      valueAfter: 1200,
+      authorityEik: AUTH,
+      contractorEik: SUPPLIER,
+    });
+  const ocdsTwin = (day: string, unp = 'UNP-TW') =>
+    seedOcdsAnnex(db, { unp, annexCnum: 'ANNEX-1', valueBefore: 1000, day, seq: '1' });
+  const served = () =>
+    sqliteJson<{ unp: string; contract_number: string; source: string }>(
+      db,
+      `SELECT unp, contract_number, CASE WHEN source LIKE 'ocds:%' THEN 'ocds' ELSE 'eop' END AS source
+       FROM amendments ORDER BY unp, contract_number, source`,
+    );
+  const rollup = () =>
+    sqliteJson<ContractRow>(
+      db,
+      'SELECT contract_number, annex_count, current_value FROM contracts ORDER BY tender_id, contract_number',
+    );
+  const gate = () =>
+    checkAmendmentTwins((sql: string) => sqliteJson<Record<string, unknown>>(db, sql));
+  const onlyEop = [{ unp: 'UNP-TW', contract_number: 'FILING-1', source: 'eop' }];
+  const rolled = [{ contract_number: 'FILING-1', annex_count: 1, current_value: 1200 }];
+
+  it('drops the twin when one window brings both sides', async () => {
+    contract();
+    eopAnnex();
+    ocdsTwin('2026-06-08');
+    readScript(db, refreshSlice);
+    expect(served()).toEqual(onlyEop);
+    expect(rollup()).toEqual(rolled);
+    await expect(gate()).resolves.toMatchObject({ ok: true });
+  });
+
+  it('drops the twin that arrives after its EOP annex was served', async () => {
+    contract();
+    eopAnnex();
+    readScript(db, refreshSlice);
+    resetStaging(db);
+    // Only the release arrives; its procedure is bridged through the served tenders.
+    ocdsTwin('2026-06-12');
+    readScript(db, refreshSlice);
+    expect(served()).toEqual(onlyEop);
+    expect(rollup()).toEqual(rolled);
+    await expect(gate()).resolves.toMatchObject({ ok: true });
+  });
+
+  it('removes a served twin when its EOP annex arrives later', async () => {
+    contract();
+    ocdsTwin('2026-06-08');
+    readScript(db, refreshSlice);
+    // No EOP annex yet: the release is served under the number it carries, on no contract.
+    expect(served()).toEqual([{ unp: 'UNP-TW', contract_number: 'ANNEX-1', source: 'ocds' }]);
+    resetStaging(db);
+    eopAnnex();
+    readScript(db, refreshSlice);
+    expect(served()).toEqual(onlyEop);
+    expect(rollup()).toEqual(rolled);
+    await expect(gate()).resolves.toMatchObject({ ok: true });
+  });
+
+  it('converges a twin an earlier build left served, on a window that does not stage it, and replays idempotently', async () => {
+    contract();
+    eopAnnex();
+    readScript(db, refreshSlice);
+    // What a build before this rule left behind: the release served beside its moved EOP annex.
+    sqlite(
+      db,
+      `INSERT INTO amendments (id, natural_key, contract_number, unp, published_at, document_number, source)
+       VALUES ('am:legacy','am:legacy','ANNEX-1','UNP-TW','2026-06-09','ocds-tst001-T-UNP-TW-1','ocds:2026-06-08');`,
+    );
+    await expect(gate()).resolves.toMatchObject({ ok: false });
+    // An unrelated window: another procedure's contract.
+    resetStaging(db);
+    seedTender(db, 'UNP-OTHER', AUTH);
+    seedContract(db, {
+      unp: 'UNP-OTHER',
+      cnum: 'FILING-9',
+      signing: 300,
+      authorityEik: AUTH,
+      contractorEik: SUPPLIER,
+    });
+    readScript(db, refreshSlice);
+    const converged = [...onlyEop];
+    expect(served()).toEqual(converged);
+    await expect(gate()).resolves.toMatchObject({ ok: true });
+    // Replaying the same window changes nothing.
+    const before = { served: served(), rollup: rollup() };
+    readScript(db, refreshSlice);
+    expect({ served: served(), rollup: rollup() }).toEqual(before);
+    expect(before.rollup).toContainEqual(rolled[0]);
+  });
+
+  it('keeps an OCDS annex whose number only coincides with an annex-side number elsewhere', async () => {
+    contract();
+    eopAnnex();
+    // Another procedure files a contract under the very number the moved EOP annex was published under,
+    // and its own OCDS annex carries that number.
+    seedTender(db, 'UNP-TW2', AUTH);
+    seedContract(db, {
+      unp: 'UNP-TW2',
+      cnum: 'ANNEX-1',
+      signing: 700,
+      authorityEik: AUTH,
+      contractorEik: SUPPLIER,
+    });
+    seedOcdsAnnex(db, {
+      unp: 'UNP-TW2',
+      annexCnum: 'ANNEX-1',
+      valueBefore: 700,
+      day: '2026-06-08',
+      seq: '1',
+    });
+    readScript(db, refreshSlice);
+    expect(served()).toEqual([
+      ...onlyEop,
+      { unp: 'UNP-TW2', contract_number: 'ANNEX-1', source: 'ocds' },
+    ]);
+    expect(rollup()).toEqual([
+      ...rolled,
+      { contract_number: 'ANNEX-1', annex_count: 1, current_value: null },
+    ]);
+    // A replay keeps it.
+    readScript(db, refreshSlice);
+    expect(served()).toContainEqual({ unp: 'UNP-TW2', contract_number: 'ANNEX-1', source: 'ocds' });
+    await expect(gate()).resolves.toMatchObject({ ok: true });
   });
 });
