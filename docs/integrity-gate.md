@@ -17,7 +17,7 @@ in after the rollups are built when the backend publishes them:
 |---|---|---|
 | `import.mjs` → `runFullDerive()` | D1 | after `precompute.sql` |
 | `import.mjs` → `runSliceDerive()` | D1 | after the refresh-slice batches |
-| `import.mjs` → `runWorkBackfill()` | sqlite work DB | after `assertFxValued`; rollup checks self-skip (rollups are built later, on the served D1) |
+| `import.mjs` → `runWorkBackfill()` | sqlite work DB | after `assertFxValued`; rollup checks self-skip (rollups are built later, on the served D1). The only site that also runs the build checks (`build: true`, invariant 8) |
 | `ship-domain.mjs` | served D1 | after `precompute.sql` on the database users read |
 | `apps/etl` Workflow → `integrity-gate` step | served D1 (async runner) | the 6-hourly cron refresh, after each slice derive; runs the shared roster and retains the window for replay on a violation. It stores the verdict in `refresh_verdict` ([below](#the-stored-verdict)). FX coverage is checked before derive. |
 
@@ -35,6 +35,11 @@ site with no per-site branching:
   and not shipped to the served D1) and that it is **fresh** (its recorded `contracts_inserted` still
   equals the live `COUNT(*)`), so it runs right after a full normalize and skips on the slice path and
   the served D1.
+
+The **build checks** (`BUILD_CHECKS`) are not part of that roster. They need the work staging and
+evaluate every contract at once, which no served gate can afford, so only `assertIntegrity(runner, {
+build: true })` on the work database runs them. `runIntegrityChecks` (the cron gate, the stored verdict,
+`CHECK_NAMES`) never includes them, and they never appear there as a skip or a warning.
 
 ## Invariants
 
@@ -127,6 +132,23 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    same OCDS publication is already served there; a row whose OCID carries contracts of its own is the
    key, not a twin. The definition is one query, `AMENDMENT_OCID_TWINS_SQL`: the gate counts it and
    `refresh-slice.sql` deletes it on every refresh, so the gate is the post-condition of that removal.
+8. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
+   contract of the work database is staged through `raw_served_contract_value_base`, the projection the
+   daily `amendments` batch re-values from, and evaluated by the rule itself (`raw_contract_annex_evidence`
+   / `raw_contract_values`). Any row whose `value_flag`, `amount_eur`, other amounts (`amount`,
+   `current_value`, `signing_value_eur`, `current_value_eur`; money to half a cent), current-value currency
+   or conversion marker, signing rate (relative 1e-9) or annex count differs **fails the build**. The detail
+   gives the count, the count per kind and the `amount_eur` that would move, never a row. It proves that the
+   build and the daily path agree, so a contract that a later window re-values does not move for no reason.
+   Two kinds of legacy row (`own_estimate_source` NULL) are **held as stored and counted** in the detail,
+   because their stored inputs cannot settle them: a `value_suspect` verdict the rule no longer reaches
+   (the branch that set it may have read the own estimate, which was never stored), and a `value_low`
+   verdict whose own estimate was never stored (`keep_symbolic` keeps it). A fresh build stores
+   `own_estimate_source` on every row, so both counts are 0 there and every row passes by construction.
+   The check writes and empties transient staging; on 200k contracts it takes about 9 s on local SQLite.
+   Stored rows come in line with a changed rule only through a rebuilt slot: the change raises the data
+   version, and the deploy preflight runs production only on a slot built at that version
+   ([deploy.md](deploy.md), „Версията на данните“).
 
 ## Tolerances (and what is *not* tolerated)
 
