@@ -26,11 +26,11 @@ test('the guard is the CACBG one generalized, not a second copy', () => {
 });
 
 test('safeEik accepts only a bare 9/13-digit code and returns it verbatim', () => {
-  assert.equal(safeEik('115536179'), '115536179');
-  assert.equal(safeEik('1155361790001'), '1155361790001');
+  assert.equal(safeEik('999000100'), '999000100');
+  assert.equal(safeEik('9990001000001'), '9990001000001');
   // Leading zeros survive — public bodies are exactly this shape, and losing them decides a link
   // against a DIFFERENT company.
-  assert.equal(safeEik('000696327'), '000696327');
+  assert.equal(safeEik('000999011'), '000999011');
 });
 
 test('safeEik refuses anything that could leave the intended path or URL', () => {
@@ -39,17 +39,17 @@ test('safeEik refuses anything that could leave the intended path or URL', () =>
     null,
     undefined,
     '..',
-    '../115536179',
-    '/115536179',
-    '115536179/../x',
-    '115536179?x=1',
-    '115536179#f',
+    '../999000100',
+    '/999000100',
+    '999000100/../x',
+    '999000100?x=1',
+    '999000100#f',
     '11553617x',
     '11553617',
-    '1155361790',
-    'ЕИК 115536179',
-    ' 115536179',
-    '115536179 ',
+    '9990001000',
+    'ЕИК 999000100',
+    ' 999000100',
+    '999000100 ',
   ]) {
     assert.throws(() => safeEik(bad), /unsafe/i, JSON.stringify(bad));
   }

@@ -37,10 +37,10 @@ const withCache = (fn) => {
 };
 
 const deed = (over = {}) => ({
-  eik: '115536179',
+  eik: '999000100',
   httpStatus: 200,
   fetchedAt: '2026-08-05T10:00:00Z',
-  rawPath: 'deeds/115536179.json',
+  rawPath: 'deeds/999000100.json',
   bodySha256: 'a'.repeat(64),
   legalFormCode: 4,
   legalFormVerdict: 'closely_held',
@@ -56,7 +56,7 @@ test('openCache is idempotent — re-opening an existing cache preserves rows', 
   upsertDeed(db, deed());
   db.close();
   db = openCache(file); // must not wipe
-  assert.equal(readDeed(db, '115536179')?.eik, '115536179');
+  assert.equal(readDeed(db, '999000100')?.eik, '999000100');
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -75,9 +75,9 @@ test('openCache quarantines a corrupt cache and starts empty rather than compoun
     'moved aside, never deleted — losing progress, not the evidence of why',
   );
   // Losing the progress is the point of the trade: the run continues on a working cache.
-  assert.equal(coverage(db, ['115536179']).fetched, 0);
+  assert.equal(coverage(db, ['999000100']).fetched, 0);
   upsertDeed(db, deed());
-  assert.equal(readDeed(db, '115536179')?.eik, '115536179', 'and the fresh one is usable');
+  assert.equal(readDeed(db, '999000100')?.eik, '999000100', 'and the fresh one is usable');
 
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
@@ -97,7 +97,7 @@ test('openCache quarantines a file that is valid sqlite but not THIS cache', () 
     fs.readdirSync(dir).filter((n) => n.startsWith('tr-cache.sqlite.corrupt-')).length,
     1,
   );
-  assert.equal(coverage(db, ['115536179']).fetched, 0, 'started empty, not half-migrated');
+  assert.equal(coverage(db, ['999000100']).fetched, 0, 'started empty, not half-migrated');
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -106,18 +106,18 @@ test('upsertDeed replaces on re-fetch rather than duplicating', () =>
   withCache((db) => {
     upsertDeed(db, deed());
     upsertDeed(db, deed({ seatNormalized: 'СОФИЯ', fetchedAt: '2026-09-01T10:00:00Z' }));
-    assert.equal(coverage(db, ['115536179']).fetched, 1);
-    assert.equal(readDeed(db, '115536179').seatNormalized, 'СОФИЯ');
+    assert.equal(coverage(db, ['999000100']).fetched, 1);
+    assert.equal(readDeed(db, '999000100').seatNormalized, 'СОФИЯ');
   }));
 
 test('coverage reports the fraction cached — the input to the fail-closed load gate', () =>
   withCache((db) => {
-    upsertDeed(db, deed({ eik: '115536179' }));
-    upsertDeed(db, deed({ eik: '201122335' }));
-    markOutsideTr(db, '204556676', 'ДЗЗД', new Date(), { unambiguous: true });
+    upsertDeed(db, deed({ eik: '999000100' }));
+    upsertDeed(db, deed({ eik: '999000111' }));
+    markOutsideTr(db, '999000133', 'ДЗЗД', new Date(), { unambiguous: true });
     // Provisional: one observation short of an answer, so NOT covered — it is still a gap.
-    markOutsideTr(db, '203445566', 'ДЗЗД');
-    const c = coverage(db, ['115536179', '201122335', '204556676', '203445566']);
+    markOutsideTr(db, '999000122', 'ДЗЗД');
+    const c = coverage(db, ['999000100', '999000111', '999000133', '999000122']);
     assert.equal(c.wanted, 4);
     assert.equal(c.fetched, 2);
     assert.equal(c.outsideTr, 1);
@@ -134,13 +134,13 @@ test('the index REFUSES a value carrying a ten-digit run (the ЕГН guard)', ()
       () => upsertDeed(db, deed({ seatNormalized: 'СОФИЯ 8001014567' })),
       /ten-digit|ЕГН/i,
     );
-    assert.throws(() => markOutsideTr(db, '204556676', 'подадено от 8001014567'), /ten-digit|ЕГН/i);
+    assert.throws(() => markOutsideTr(db, '999000133', 'подадено от 8001014567'), /ten-digit|ЕГН/i);
   }));
 
 test('valid 9- and 13-digit codes are NOT caught by the ЕГН guard', () =>
   withCache((db) => {
     assert.doesNotThrow(() => upsertDeed(db, deed({ outsideReason: null })));
-    assert.doesNotThrow(() => markOutsideTr(db, '1155361790001', 'клон'));
+    assert.doesNotThrow(() => markOutsideTr(db, '9990001000001', 'клон'));
   }));
 
 // A 13-digit ЕИК (клон/подразделение) CONTAINS ten-digit substrings, so an unanchored /\d{10}/ rejects
@@ -149,9 +149,9 @@ test('valid 9- and 13-digit codes are NOT caught by the ЕГН guard', () =>
 test('a 13-digit ЕИК does not trip the ЕГН guard through its own derived rawPath', () =>
   withCache((db) => {
     assert.doesNotThrow(() =>
-      upsertDeed(db, deed({ eik: '1155361790001', rawPath: '1155361790001.json' })),
+      upsertDeed(db, deed({ eik: '9990001000001', rawPath: '9990001000001.json' })),
     );
-    assert.equal(readDeed(db, '1155361790001').eik, '1155361790001');
+    assert.equal(readDeed(db, '9990001000001').eik, '9990001000001');
   }));
 
 // The rail must not be a hand-maintained allowlist of four field names: upsertDeed binds thirteen
@@ -193,8 +193,8 @@ const INPUT = {
   relativeNames: ['МАРИЯ ИВАНОВА ТЕСТОВА', 'ГЕОРГИ ИВАНОВ ТЕСТОВ'],
 };
 const VERDICT = (over = {}) => ({
-  linkKey: 'person:ИВАН|МВР|201122335',
-  eik: '201122335',
+  linkKey: 'person:ИВАН|МВР|999000111',
+  eik: '999000111',
   rulesVersion: RULES,
   inputsHash: verdictInputsHash(INPUT),
   kind: 'confirmed',
@@ -243,12 +243,12 @@ test('verdictInputsHash REFUSES an input it does not know', () => {
 test('a verdict round-trips, booleans and all', () =>
   withCache((db) => {
     upsertVerdict(db, VERDICT());
-    const got = readVerdict(db, 'person:ИВАН|МВР|201122335');
+    const got = readVerdict(db, 'person:ИВАН|МВР|999000111');
     assert.equal(got.kind, 'confirmed');
     assert.equal(got.publishable, true, 'stored as INTEGER, read back as a boolean');
     assert.equal(got.registryRole, 'owner');
     assert.equal(got.shortName, false);
-    assert.equal(readVerdict(db, 'person:NOBODY|X|201122335'), null);
+    assert.equal(readVerdict(db, 'person:NOBODY|X|999000111'), null);
   }));
 
 test('upsertVerdict replaces on re-decision rather than duplicating', () =>
@@ -257,7 +257,7 @@ test('upsertVerdict replaces on re-decision rather than duplicating', () =>
     upsertVerdict(db, VERDICT({ kind: 'refuted', publishable: false }));
     const n = db.prepare('SELECT COUNT(*) AS n FROM verdicts').get().n;
     assert.equal(n, 1);
-    assert.equal(readVerdict(db, 'person:ИВАН|МВР|201122335').kind, 'refuted');
+    assert.equal(readVerdict(db, 'person:ИВАН|МВР|999000111').kind, 'refuted');
   }));
 
 test('a historical role end round-trips and is cleared by a later live verdict', () =>
@@ -271,7 +271,7 @@ test('a historical role end round-trips and is cleared by a later live verdict',
 test('a verdict is stale when the rules moved, the declaration moved, or it simply aged', () =>
   withCache((db) => {
     upsertVerdict(db, VERDICT());
-    const row = readVerdict(db, 'person:ИВАН|МВР|201122335');
+    const row = readVerdict(db, 'person:ИВАН|МВР|999000111');
     const link = { linkKey: row.linkKey, eik: row.eik, inputsHash: verdictInputsHash(INPUT) };
     const at = (iso) => new Date(iso);
 
@@ -336,15 +336,15 @@ test('canonical link hashes may contain digits without admitting personal data o
   withCache((db) => {
     const digest = `ab1234567890${'c'.repeat(52)}`;
     for (const suffix of ['', '|family']) {
-      const linkKey = `person:identity:${digest}|201122335${suffix}`;
+      const linkKey = `person:identity:${digest}|999000111${suffix}`;
       assert.doesNotThrow(() => upsertVerdict(db, VERDICT({ linkKey })));
       assert.ok(readVerdict(db, linkKey));
     }
     for (const linkKey of [
-      `person:identity:${digest.slice(1)}|201122335`,
+      `person:identity:${digest.slice(1)}|999000111`,
       `person:identity:${digest}|201122336`,
-      `person:identity:${digest}|201122335|8011129876`,
-      'person:ИВАН 8011129876|МВР|201122335',
+      `person:identity:${digest}|999000111|8011129876`,
+      'person:ИВАН 8011129876|МВР|999000111',
     ])
       assert.throws(() => upsertVerdict(db, VERDICT({ linkKey })), /REFUSE TO STORE/);
     assert.throws(
@@ -352,7 +352,7 @@ test('canonical link hashes may contain digits without admitting personal data o
         upsertVerdict(
           db,
           VERDICT({
-            linkKey: `person:identity:${digest}|201122335`,
+            linkKey: `person:identity:${digest}|999000111`,
             matchedFact: '8011129876',
           }),
         ),
@@ -422,13 +422,13 @@ test('an empty-body negative needs a SECOND observation before it becomes perman
     // The measurement behind this says „empty on two consecutive requests"; the code used to mark on
     // the first. An empty body is also what a misbehaving edge returns — one of those must not become
     // a 30-day negative for a real company.
-    assert.equal(markOutsideTr(db, '204556676', 'ДЗЗД — BULSTAT, not TR'), false, 'not yet final');
-    let row = readDeed(db, '204556676');
+    assert.equal(markOutsideTr(db, '999000133', 'ДЗЗД — BULSTAT, not TR'), false, 'not yet final');
+    let row = readDeed(db, '999000133');
     assert.equal(row.status, 'outside_tr_pending');
     assert.match(row.outsideReason, /second observation/);
 
-    assert.equal(markOutsideTr(db, '204556676', 'ДЗЗД — BULSTAT, not TR'), true, 'confirmed');
-    row = readDeed(db, '204556676');
+    assert.equal(markOutsideTr(db, '999000133', 'ДЗЗД — BULSTAT, not TR'), true, 'confirmed');
+    row = readDeed(db, '999000133');
     assert.equal(row.status, 'outside_tr');
     assert.match(row.outsideReason, /ДЗЗД/);
   }));
@@ -437,8 +437,8 @@ test('an UNAMBIGUOUS negative (404) is permanent on one observation', () =>
   withCache((db) => {
     // A 404 says „not here" on its own; only the empty body is ambiguous enough to need corroborating.
     assert.equal(
-      markOutsideTr(db, '204556676', 'HTTP 404', new Date(), { unambiguous: true }),
+      markOutsideTr(db, '999000133', 'HTTP 404', new Date(), { unambiguous: true }),
       true,
     );
-    assert.equal(readDeed(db, '204556676').status, 'outside_tr');
+    assert.equal(readDeed(db, '999000133').status, 'outside_tr');
   }));

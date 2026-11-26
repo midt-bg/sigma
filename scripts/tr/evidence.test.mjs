@@ -36,7 +36,7 @@ const ownersDate = (holders) =>
 const registry = (holders, over = {}) =>
   registryFacts(
     {
-      eik: '201122335',
+      eik: '999000111',
       name: '"АЛФА СТРОЙ" ООД',
       legal_form: 'OOD',
       seat_settlement: null,
@@ -567,7 +567,7 @@ test('MATCHED_FACT_RE bounds a settlement to two tokens and a field to its code 
     'role:cashier:00190', // a role outside the vocabulary
     'relative:owner:МАРИЯ ПЕТРОВА', // a relative's name where a field code belongs
     'seat:', // an empty settlement asserts nothing
-    'eik:201122335', // the ЕИК itself is never stored, only the fact that one matched
+    'eik:999000111', // the ЕИК itself is never stored, only the fact that one matched
   ])
     assert.equal(MATCHED_FACT_RE.test(bad), false, `wrongly accepted: ${bad}`);
 
