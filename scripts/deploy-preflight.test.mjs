@@ -7,6 +7,7 @@ import {
   IDLE_WAIT_MS,
   preflight,
   RELEASE_ENVIRONMENTS,
+  wranglerReads,
 } from './deploy-preflight.mjs';
 
 const ID = '11111111-2222-4333-8444-555555555555';
@@ -230,14 +231,12 @@ const LIVE = {
   expires_at: '2026-11-26T13:00:30.000Z',
 };
 /** The guard over a fake clock: `leases` answers one read each (the last repeats), `sleep` moves time. */
-function guard(environment, leases, { wait = false } = {}) {
+function guard(leases) {
   let clock = T0;
   let reads = 0;
   const slept = [];
   const failures = awaitIdleRefresh({
-    environment,
     readLease: () => leases[Math.min(reads++, leases.length - 1)],
-    wait,
     now: () => new Date(clock),
     sleep: (ms) => {
       slept.push(ms);
@@ -248,51 +247,31 @@ function guard(environment, leases, { wait = false } = {}) {
   return { failures, reads, slept };
 }
 
-test('no refresh on the slot: every environment deploys at once', () => {
-  for (const environment of Object.keys(RELEASE_ENVIRONMENTS))
-    for (const lease of [null, { ...LIVE, expires_at: '2026-11-26T12:00:00.000Z' }])
-      assert.deepEqual(guard(environment, [lease]), { failures: [], reads: 1, slept: [] });
+test('no refresh on the slot, or one whose lease has expired: the deploy goes at once', () => {
+  for (const lease of [null, { ...LIVE, expires_at: '2026-11-26T12:00:00.000Z' }])
+    assert.deepEqual(guard([lease]), { failures: [], reads: 1, slept: [] });
 });
 
-test('production and Dev2 refuse to deploy over a live refresh, without waiting', () => {
-  for (const environment of ['production', 'dev2']) {
-    const { failures, reads, slept } = guard(environment, [LIVE]);
-    assert.equal(reads, 1);
-    assert.deepEqual(slept, []);
-    assert.equal(failures.length, 1);
-    assert.match(
-      failures[0],
-      /a refresh has been writing to the served database since 2026-11-26T12:30:05.000Z \(instance wf-refresh-1, lease renewed until 2026-11-26T13:00:30.000Z\)/,
-    );
-    assert.match(failures[0], /re-run the deploy once it has finished.*wait_for_idle/);
-  }
-});
-
-test('told to wait, production waits for the refresh like staging', () => {
-  assert.deepEqual(guard('production', [LIVE, LIVE, null], { wait: true }), {
+test('the deploy waits for a live refresh to finish, then goes', () => {
+  assert.deepEqual(guard([LIVE, LIVE, null]), {
     failures: [],
     reads: 3,
     slept: [IDLE_POLL_MS, IDLE_POLL_MS],
   });
 });
 
-test('staging waits for a live refresh to finish, then deploys', () => {
-  assert.deepEqual(guard('staging', [LIVE, null]), {
-    failures: [],
-    reads: 2,
-    slept: [IDLE_POLL_MS],
-  });
-});
-
-test('staging gives up after the bound, naming the run', () => {
-  const { failures, reads, slept } = guard('staging', [LIVE]);
+test('the deploy gives up after the bound, naming the run', () => {
+  const { failures, reads, slept } = guard([LIVE]);
   assert.equal(
     slept.reduce((a, b) => a + b, 0),
     IDLE_WAIT_MS,
   );
   assert.equal(reads, IDLE_WAIT_MS / IDLE_POLL_MS + 1);
   assert.equal(failures.length, 1);
-  assert.match(failures[0], /since 2026-11-26T12:30:05.000Z \(instance wf-refresh-1/);
+  assert.match(
+    failures[0],
+    /a refresh has been writing to the served database since 2026-11-26T12:30:05.000Z \(instance wf-refresh-1, lease renewed until 2026-11-26T13:00:30.000Z\)/,
+  );
   assert.match(failures[0], /still running after 10 minutes/);
 });
 
@@ -314,27 +293,75 @@ test('a site deploy asks for the lease last, and only of a slot it may write; th
     });
     return { ...result, asked };
   };
-  const site = ask('production', ready);
-  assert.equal(site.asked, 1);
-  assert.match(site.failures.join('\n'), /instance wf-refresh-1/);
+  const polls = IDLE_WAIT_MS / IDLE_POLL_MS + 1;
+  // Every environment waits the same: production and Dev2 are not turned away at the first read.
+  for (const [environment, name] of [
+    ['production', 'sigma-blue'],
+    ['dev2', 'sigma-dev2-blue'],
+    ['staging', 'sigma-stage-blue'],
+  ]) {
+    const site = ask(environment, { ...ready, SIGMA_D1_NAME: name });
+    assert.equal(site.asked, polls, environment);
+    assert.match(site.failures.join('\n'), /instance wf-refresh-1.*still running after 10 minutes/);
+  }
   assert.equal(ask('production', ready, { component: 'rebuild-runner' }).asked, 0);
   assert.equal(ask('production', ready, { readDataVersion: () => 1 }).asked, 0);
   assert.equal(ask('production', { ...ready, SUPPRESSION_SALT: '' }).asked, 0);
-  // `wait` reaches the guard: told to wait, production polls instead of refusing (here until the bound).
-  const waited = ask('production', ready, { wait: true });
-  assert.equal(waited.asked, IDLE_WAIT_MS / IDLE_POLL_MS + 1);
-  assert.match(waited.failures.join('\n'), /still running after 10 minutes/);
+  // Staging only warns about a slot of another data version — its usual state between a merge that raises
+  // the version and the rebuild — and the warning does not let the deploy past a running refresh.
+  const stale = ask(
+    'staging',
+    { ...ready, SIGMA_D1_NAME: 'sigma-stage-blue' },
+    {
+      readDataVersion: () => 1,
+    },
+  );
+  assert.equal(stale.warnings.length, 1);
+  assert.match(stale.warnings[0], /holds data version 1, the code computes version 2/);
+  assert.equal(stale.asked, polls);
+  assert.match(stale.failures.join('\n'), /still running after 10 minutes/);
 });
 
-test('the deploy runs the guard in the preflight, and can be told to wait', async () => {
+// The reads behind the checks, over a fake wrangler: `answer(sql)` is its stdout, or throws as a failed
+// command does.
+const reads = (answer) => wranglerReads('sigma-blue', (args) => answer(args.at(-1)));
+const rows = (...results) => JSON.stringify([{ results, success: true }]);
+
+test('the slot reads: a row, no row, and a table the run has not created yet', () => {
+  assert.deepEqual(reads(() => rows(LIVE)).readRefreshLease(), LIVE);
+  assert.equal(reads(() => rows()).readRefreshLease(), null);
+  assert.equal(reads(() => rows({ version: 7 })).readDataVersion(), 7);
+  assert.equal(reads(() => rows()).readDataVersion(), null);
+  const missing = (table) => () => {
+    throw Object.assign(new Error('Command failed'), {
+      stdout: JSON.stringify({ error: { text: `no such table: ${table}: SQLITE_ERROR` } }),
+    });
+  };
+  assert.equal(reads(missing('refresh_lease')).readRefreshLease(), null);
+  assert.equal(reads(missing('data_version')).readDataVersion(), null);
+});
+
+test('a slot that cannot be read stops the deploy: an unreadable lease is not an idle slot', () => {
+  const down = () => {
+    throw Object.assign(new Error('Command failed'), {
+      stderr: 'D1_ERROR: Network connection lost',
+    });
+  };
+  assert.throws(() => reads(down).readRefreshLease(), /Command failed/);
+  assert.throws(() => reads(down).readDataVersion(), /Command failed/);
+  // Another table's absence is not this one's.
+  const other = () => {
+    throw Object.assign(new Error('Command failed'), { stdout: 'no such table: data_version' });
+  };
+  assert.throws(() => reads(other).readRefreshLease(), /Command failed/);
+});
+
+test('the deploy runs the guard in the preflight, with no switch that turns the wait off', async () => {
   const { readFileSync } = await import('node:fs');
   const yaml = readFileSync('.github/workflows/deploy.yml', 'utf8');
   assert.match(
     yaml,
-    /wait_for_idle:\n(?:\s+#[^\n]*\n)*\s+description: [^\n]+\n\s+type: boolean\n\s+default: false/,
+    /node scripts\/deploy-preflight\.mjs "\$\{\{ needs\.detect\.outputs\.env \}\}" --component "\$SIGMA_COMPONENT"\n/,
   );
-  assert.match(
-    yaml,
-    /node scripts\/deploy-preflight\.mjs "\$\{\{ needs\.detect\.outputs\.env \}\}" --component "\$SIGMA_COMPONENT" \$\{\{ inputs\.wait_for_idle && '--wait' \|\| '' \}\}/,
-  );
+  assert.doesNotMatch(yaml, /wait_for_idle|--wait/);
 });

@@ -2,7 +2,7 @@
 // Before a deploy writes anything: the environment's settings and the slot they name (docs/deploy.md,
 // „Проверка преди запис“).
 //
-//   node scripts/deploy-preflight.mjs <environment> [--component site|rebuild-runner] [--wait]
+//   node scripts/deploy-preflight.mjs <environment> [--component site|rebuild-runner]
 //     environment: production | staging | dev2
 //
 // Reads SIGMA_D1_NAME, SIGMA_D1_ID, SUPPRESSION_SALT and SUPPRESSION_KEY_VERSION from the environment and
@@ -40,9 +40,8 @@ export function codeDataVersion() {
  * The checks, over injected reads, so every refusal is tested without Cloudflare. `resolveDatabase(name)` answers
  * the id `wrangler d1 info` resolves the name to and the name Cloudflare gives that database (both '' when it
  * resolves to none); `readDataVersion()` the version the slot holds
- * (null when it holds none); `readRefreshLease()` the refresh's lease row (awaitIdleRefresh, which `wait`,
- * `now` and `sleep` are handed to). Returns the failures, which stop the deploy, and the warnings, which do
- * not.
+ * (null when it holds none); `readRefreshLease()` the refresh's lease row (awaitIdleRefresh, which `now`
+ * and `sleep` are handed to). Returns the failures, which stop the deploy, and the warnings, which do not.
  */
 export function preflight({
   environment,
@@ -52,7 +51,6 @@ export function preflight({
   readRefreshLease,
   codeVersion,
   component = 'site',
-  wait,
   now,
   sleep,
   log,
@@ -113,15 +111,14 @@ export function preflight({
     (policy.strict ? failures : warnings).push(message);
   }
   // Last: the slot is the right one and may be written, so only a running refresh still stands in the way.
+  // A warning does not skip it: staging deploys over a slot of another data version, and its refresh runs.
   if (!failures.length)
-    failures.push(
-      ...awaitIdleRefresh({ environment, readLease: readRefreshLease, wait, now, sleep, log }),
-    );
+    failures.push(...awaitIdleRefresh({ readLease: readRefreshLease, now, sleep, log }));
   return { failures, warnings };
 }
 
-/** How long a non-strict deploy waits for a refresh. One takes one to three minutes; a refresh still writing
- *  after ten is stuck or crawling through an overloaded D1, and the deploy says so instead of hanging. */
+/** How long a deploy waits for a refresh. One takes one to three minutes; a refresh still writing after ten
+ *  is stuck or crawling through an overloaded D1, and the deploy says so instead of hanging. */
 export const IDLE_WAIT_MS = 10 * 60_000;
 export const IDLE_POLL_MS = 30_000;
 
@@ -132,22 +129,18 @@ export const IDLE_POLL_MS = 30_000;
  * it. The deploy also writes the schema and the curated lists into the slot before it replaces the Worker.
  * So a site deploy goes ahead only on an idle slot.
  *
- * Staging (and a strict environment told to `wait`) waits up to IDLE_WAIT_MS, reading the lease every
- * IDLE_POLL_MS; a strict environment refuses at once — its deploy is attended, and a re-run is minutes away.
+ * Every environment waits up to IDLE_WAIT_MS, reading the lease every IDLE_POLL_MS, and then refuses.
  * The register and the declarations are not waited for: their writes are per partida / per published
  * generation, survive a replaced Worker (docs/deploy.md), and the register paces itself for hours.
  *
  * `readLease()` answers the row (holder, acquired_at, expires_at) or null. Returns the failures.
  */
 export function awaitIdleRefresh({
-  environment,
   readLease,
-  wait = false,
   now = () => new Date(),
   sleep = sleepSync,
   log = (line) => console.log(line),
 }) {
-  const patient = wait || !RELEASE_ENVIRONMENTS[environment].strict;
   const deadline = now().getTime() + IDLE_WAIT_MS;
   for (;;) {
     const lease = readLease();
@@ -158,11 +151,6 @@ export function awaitIdleRefresh({
     const running =
       `a refresh has been writing to the served database since ${lease.acquired_at} ` +
       `(instance ${lease.holder}, lease renewed until ${lease.expires_at})`;
-    if (!patient)
-      return [
-        `${running}: ${environment} does not deploy over a run — re-run the deploy once it has finished ` +
-          '(a refresh takes minutes), or start it by hand with wait_for_idle',
-      ];
     if (at.getTime() >= deadline)
       return [
         `${running}, still running after ${IDLE_WAIT_MS / 60_000} minutes: look at the instance ` +
@@ -173,18 +161,23 @@ export function awaitIdleRefresh({
   }
 }
 
-/** Cloudflare, read only, through the wrangler CLI as deploy.yml runs it. */
-function wranglerReads(name, config) {
-  const wrangler = (args) =>
-    execFileSync(
-      'pnpm',
-      ['--filter', '@sigma/web', 'exec', 'wrangler', ...args, '--config', config],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
+/** wrangler as deploy.yml runs it: answers stdout, throws on a non-zero exit. */
+const wranglerCli = (config) => (args) =>
+  execFileSync(
+    'pnpm',
+    ['--filter', '@sigma/web', 'exec', 'wrangler', ...args, '--config', config],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+/**
+ * Cloudflare, read only, over `wrangler(args)`. A read that fails for any reason but a table not created
+ * yet throws: the deploy stops before it writes, it does not take an unreadable slot for an idle one.
+ */
+export function wranglerReads(name, wrangler) {
   // One row of the slot, or null when the table is not there yet (the run creates it on first use).
   const readRow = (sql, table) => {
     let out;
@@ -229,7 +222,7 @@ function main() {
   const component = flag('--component', 'site');
   if (!['site', 'rebuild-runner'].includes(component))
     throw new Error(`--component must be site or rebuild-runner, got ${component}`);
-  const reads = wranglerReads(process.env.SIGMA_D1_NAME ?? '', config);
+  const reads = wranglerReads(process.env.SIGMA_D1_NAME ?? '', wranglerCli(config));
   const { failures, warnings } = preflight({
     environment,
     env: process.env,
@@ -238,7 +231,6 @@ function main() {
     readRefreshLease: reads.readRefreshLease,
     codeVersion: codeDataVersion(),
     component,
-    wait: flags.includes('--wait'),
   });
   for (const w of warnings) console.log(`::warning title=Preflight::${w}`);
   for (const f of failures) console.log(`::error title=Preflight::${f}`);
