@@ -108,6 +108,7 @@ describe('request log', () => {
     expect(log).toHaveBeenCalledTimes(1);
     const entry = JSON.parse(log.mock.calls[0]?.[0] as string) as Record<string, unknown>;
     expect(Object.keys(entry)).toEqual([
+      'level',
       'ts',
       'ipHash',
       'method',
@@ -116,8 +117,11 @@ describe('request log', () => {
       'ms',
       'q_present',
       'q_len',
+      'edge',
+      'degraded',
     ]);
     expect(entry).toMatchObject({
+      level: 'info',
       ts: '2023-11-14T22:13:20.000Z',
       method: 'POST',
       path: '/companies',
@@ -144,11 +148,62 @@ describe('request log', () => {
     expect(response.status).toBe(204);
     expect(waitUntil).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(log.mock.calls[0]?.[0] as string)).toMatchObject({ status: 204 });
+    expect(JSON.parse(log.mock.calls[0]?.[0] as string)).toMatchObject({
+      level: 'info',
+      status: 204,
+      edge: null,
+      degraded: null,
+    });
+  });
+
+  it('logs a 5xx at error level, with how it was served', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { ctx, pending } = executionContext();
+
+    await withRequestLog(
+      new Request('http://local/contracts'),
+      { LOG_IP_KEY: LOG_KEY } as Env,
+      ctx,
+      async () => new Response('busy', { status: 503, headers: { 'X-Edge-Cache': 'BYPASS' } }),
+    );
+    await Promise.all(pending);
+
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(error.mock.calls[0]?.[0] as string)).toMatchObject({
+      level: 'error',
+      path: '/contracts',
+      status: 503,
+      edge: 'BYPASS',
+      degraded: null,
+    });
+  });
+
+  it('logs a page served without one of its parts at warn level', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { ctx, pending } = executionContext();
+
+    await withRequestLog(
+      new Request('http://local/accessibility'),
+      { LOG_IP_KEY: LOG_KEY } as Env,
+      ctx,
+      async () =>
+        new Response('page', { headers: { 'X-Edge-Cache': 'HIT', 'X-Sigma-Degraded': 'footer' } }),
+    );
+    await Promise.all(pending);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(warn.mock.calls[0]?.[0] as string)).toMatchObject({
+      level: 'warn',
+      status: 200,
+      edge: 'HIT',
+      degraded: 'footer',
+    });
   });
 
   it('queues one 500 log when the handler throws and then rethrows', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { ctx, pending, waitUntil } = executionContext();
     const error = new Error('handler failed');
 
@@ -166,6 +221,10 @@ describe('request log', () => {
 
     expect(waitUntil).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(log.mock.calls[0]?.[0] as string)).toMatchObject({ status: 500 });
+    expect(JSON.parse(log.mock.calls[0]?.[0] as string)).toMatchObject({
+      level: 'error',
+      status: 500,
+      edge: null,
+    });
   });
 });
