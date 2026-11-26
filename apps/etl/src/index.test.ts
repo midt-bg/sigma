@@ -127,6 +127,7 @@ function stubFetchRoutes(): { frankfurterCalls: () => number } {
 }
 
 const fakeStep: WorkflowStep = {
+  async sleep(_name: string, _duration: unknown) {},
   async do<T>(
     _name: string,
     configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -418,6 +419,7 @@ describe('RefreshWorkflow — an aborted derive is finished by the next run', ()
   // body — the batch never starts, exactly like a D1 error rolling the whole group back.
   const dyingAt = (step: string): WorkflowStep =>
     ({
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -585,6 +587,7 @@ describe('RefreshWorkflow — window replay repairs what the touched sets cannot
           .all() as { window_from: string; window_to: string; holder: string }[]);
   const dyingAt = (step: string): WorkflowStep =>
     ({
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -633,6 +636,7 @@ describe('RefreshWorkflow — window replay repairs what the touched sets cannot
     );
     const names: string[] = [];
     const recording: WorkflowStep = {
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -694,6 +698,7 @@ describe('RefreshWorkflow — promises only shrink across interrupted replays', 
     ).map((r) => `${r.holder}:${r.window_from}..${r.window_to}`);
   const dyingAt = (step: string): WorkflowStep =>
     ({
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -724,7 +729,7 @@ describe('RefreshWorkflow — promises only shrink across interrupted replays', 
     expect(spans(db)).toEqual(['A:2026-07-07..2026-07-10']);
     // C on 08-16: capped to 07-27..08-16, records it, dies at ingest.
     await expect(
-      workflow.run(eventFor('2026-08-16', 'C'), dyingAt('ingest-storage-eop-bucket')),
+      workflow.run(eventFor('2026-08-16', 'C'), dyingAt('ingest-storage-eop-bucket:2026-07-27')),
     ).rejects.toThrow(/boom/);
     expect(spans(db)).toEqual(['A:2026-07-07..2026-07-10', 'C:2026-07-27..2026-08-16']);
     // D on 08-17: capped to 07-28..08-17, succeeds — but every day answered "no bucket", so D has
@@ -788,6 +793,7 @@ describe('RefreshWorkflow — refresh lease', () => {
     stubFetchRoutes();
     const workflow = makeWorkflow(db);
     const dying: WorkflowStep = {
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -825,6 +831,7 @@ describe('RefreshWorkflow — lease fence', () => {
     // Every step runs for real; right before `derive-slice:amendments` a newer instance takes the
     // lease (as it would after this run stalled past the TTL).
     const usurped: WorkflowStep = {
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -936,6 +943,7 @@ describe('RefreshWorkflow — the as-of date and the generation move with the se
     opts: { dieAt?: string; after?: Record<string, () => Promise<void> | void> } = {},
   ): WorkflowStep =>
     ({
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -1158,6 +1166,7 @@ describe('RefreshWorkflow — the as-of date and the generation move with the se
     let once: ReturnType<typeof served> | undefined;
     let again: ReturnType<typeof served> | undefined;
     const replaying: WorkflowStep = {
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),

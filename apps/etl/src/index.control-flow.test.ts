@@ -59,7 +59,9 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
   },
   eop: {
     computeWorkerCatchupPlan: vi.fn(),
-    ingestBucketWindow: vi.fn(),
+    // One bucket day per window unless a test says otherwise; each day is its own step.
+    windowDays: vi.fn((): string[] => ['2026-06-07']),
+    ingestBucketDay: vi.fn(),
   },
   integrity: {
     runServedIntegrityGate: vi.fn(
@@ -127,7 +129,7 @@ afterEach(() => {
 describe('RefreshWorkflow.run — control flow', () => {
   it('runs the full pipeline: stage, ingest, load FX, derive slice groups, gate, count, and drop', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([
+    eop.ingestBucketDay.mockResolvedValue(
       // All seven staged-row counts are non-zero (distinct values) so `staged` guards every term of
       // the sum — including baseAmendments/ocdsAmendments, which no other case exercises.
       dayResult({
@@ -139,7 +141,7 @@ describe('RefreshWorkflow.run — control flow', () => {
         parties: 1,
         lots: 4,
       }),
-    ]);
+    );
     const wf = makeWorkflow();
     const names: string[] = [];
 
@@ -163,7 +165,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('warns when FX loading reports uncovered currency pairs', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.loadFxRates.mockResolvedValueOnce({
       inserted: 1,
       fetched: 2,
@@ -181,7 +183,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('wires the integrity-gate logger to structured console info/warn/error', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     // Drive all three logger callbacks the run() passes into the gate, so each console wrapper runs.
     integrity.runServedIntegrityGate.mockImplementationOnce(async (_db: unknown, log: GateLog) => {
       log.info({ event: 'gate_info' });
@@ -203,7 +205,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('defaults the payload to an empty object when the event carries none', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseTenders: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseTenders: 1 }));
     const wf = makeWorkflow();
 
     const result = await wf.run({} as never, fakeStep([]) as never);
@@ -224,7 +226,7 @@ describe('RefreshWorkflow.run — control flow', () => {
       gapDays: 21,
       originalGapDays: 40,
     });
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 5 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 5 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const wf = makeWorkflow();
 
@@ -239,7 +241,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('short-circuits with a zero-ingest warning and still drops staging when nothing staged', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult()]); // all counts 0
+    eop.ingestBucketDay.mockResolvedValue(dayResult()); // all counts 0
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const wf = makeWorkflow();
     const names: string[] = [];
@@ -258,7 +260,7 @@ describe('RefreshWorkflow.run — control flow', () => {
     // The touched sets survive an abort (refresh-slice.sql keeps them until its cleanup batch), so
     // "nothing staged" no longer means "nothing to do": the previous run's rollups are still owed.
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult()]); // all counts 0
+    eop.ingestBucketDay.mockResolvedValue(dayResult()); // all counts 0
     ingest.pendingTouchedRows.mockResolvedValueOnce({
       contracts: 3,
       bidders: 2,
@@ -283,7 +285,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('finishes the run on a violation: the numbers are served already, the alarm is the log', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 2 }));
     integrity.runServedIntegrityGate.mockResolvedValueOnce({
       ok: false,
       violations: ['rollup-reconciliation'],
@@ -301,7 +303,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('finishes the run when an overloaded D1 outlasts the retries of the check', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 2 }));
     integrity.runServedIntegrityGate.mockRejectedValueOnce(new Error('D1 DB is overloaded'));
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const wf = makeWorkflow();
@@ -316,7 +318,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('records a non-Error failure of the check as text', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 2 }));
     integrity.runServedIntegrityGate.mockRejectedValueOnce('raw string fault');
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const wf = makeWorkflow();
@@ -328,7 +330,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('lets the step retry a D1 error in the check, and a passing retry settles the window', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 2 }));
     integrity.runServedIntegrityGate
       .mockRejectedValueOnce(new Error('D1 DB is overloaded'))
       .mockResolvedValueOnce({ ok: true, violations: [] });
@@ -356,7 +358,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('reports no settled count when the check did not pass', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 2 }));
     integrity.runServedIntegrityGate.mockResolvedValueOnce({
       ok: false,
       violations: ['rollup-reconciliation'],
@@ -370,7 +372,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('ends the run on a lease lost before the check, instead of calling it unverified', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     // drop-stale, record-window, create, ingest, resolve-annexes, load-fx, derive g1 and count renew. The gate's
     // fence and the finally's check find the new holder.
     const ours = { acquired: true, holder: 'wf-60', expiresAt: '2026-06-07T00:30:00.000Z' };
@@ -394,7 +396,7 @@ describe('RefreshWorkflow.run — control flow', () => {
 
   it('drops staging even when ingestion throws', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockRejectedValue(new Error('bucket down'));
+    eop.ingestBucketDay.mockRejectedValue(new Error('bucket down'));
     const wf = makeWorkflow();
     const names: string[] = [];
 
@@ -406,10 +408,127 @@ describe('RefreshWorkflow.run — control flow', () => {
   });
 });
 
+describe('RefreshWorkflow.run — one step per bucket day', () => {
+  it('stages each day of the window in its own fenced step, oldest first, and sums them', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.windowDays.mockReturnValueOnce(['2026-06-05', '2026-06-06', '2026-06-07']);
+    eop.ingestBucketDay
+      .mockResolvedValueOnce({ ...dayResult({ baseContracts: 2 }), day: '2026-06-05' })
+      .mockResolvedValueOnce({ ...dayResult(), day: '2026-06-06', found: false })
+      .mockResolvedValueOnce({ ...dayResult({ lots: 3 }), day: '2026-06-07' });
+    const wf = new RefreshWorkflow({} as never, {
+      DB,
+      REFRESH: {} as Workflow,
+      EOP_OPEN_DATA_BASE_URL: 'https://eop.test',
+    });
+    const names: string[] = [];
+
+    const result = await wf.run({ payload: {} } as never, fakeStep(names) as never);
+
+    expect(eop.windowDays).toHaveBeenCalledWith(PLAN);
+    expect(eop.ingestBucketDay.mock.calls.map((c) => c.slice(0, 2))).toEqual([
+      [DB, '2026-06-05'],
+      [DB, '2026-06-06'],
+      [DB, '2026-06-07'],
+    ]);
+    // Every day gets the run's one fetchedAt and the configured source.
+    const opts = eop.ingestBucketDay.mock.calls.map((c) => c[2]);
+    expect(opts[0]).toEqual({ baseUrl: 'https://eop.test', fetchedAt: expect.any(String) });
+    expect(new Set(opts.map((o) => o.fetchedAt)).size).toBe(1);
+    const ingestSteps = names.filter((n) => n.startsWith('ingest-storage-eop-bucket'));
+    expect(ingestSteps).toEqual([
+      'ingest-storage-eop-bucket:2026-06-05',
+      'ingest-storage-eop-bucket:2026-06-06',
+      'ingest-storage-eop-bucket:2026-06-07',
+    ]);
+    expect(names.indexOf('create-transient-staging')).toBeLessThan(names.indexOf(ingestSteps[0]!));
+    expect(names.indexOf(ingestSteps[2]!)).toBeLessThan(names.indexOf('pending-touched'));
+    // drop-stale, record-window, create, 3 days, resolve-annexes, load-fx, g1, count, gate, settle
+    // + the finally's check: each day is fenced like every other write.
+    expect(ingest.renewRefreshLease).toHaveBeenCalledTimes(13);
+    expect(result).toMatchObject({ days: 3, staged: 5 });
+  });
+
+  it('stops at the day that fails: the days after it are not staged', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.windowDays.mockReturnValueOnce(['2026-06-05', '2026-06-06', '2026-06-07']);
+    eop.ingestBucketDay
+      .mockResolvedValueOnce({ ...dayResult(), day: '2026-06-05' })
+      .mockRejectedValueOnce(new Error('bucket 2026-06-06: HTTP 503'));
+    const names: string[] = [];
+
+    await expect(
+      makeWorkflow().run({ payload: {} } as never, fakeStep(names) as never),
+    ).rejects.toThrow('HTTP 503');
+
+    expect(eop.ingestBucketDay).toHaveBeenCalledTimes(2);
+    expect(names).not.toContain('ingest-storage-eop-bucket:2026-06-07');
+    expect(names).toContain('drop-transient-staging');
+  });
+});
+
+describe('RefreshWorkflow.run — pacing the heavy derive batches', () => {
+  it("sleeps half of D1's ten-second window before each paced batch, outside its step", async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
+    const tail = [
+      'authority-totals',
+      'flow-pairs',
+      'entity-search-index',
+      'official-search-index',
+      'contract-search-index',
+      'globals',
+      'contract-rollup',
+      'cohort-stats',
+      'cleanup',
+    ];
+    ingest.refreshSliceStatementGroups.mockReturnValueOnce([
+      { name: 'resolve-annexes', statements: ['a'] },
+      ...tail.map((name) => ({ name, statements: ['b'] })),
+    ]);
+    const timeline: string[] = [];
+    const step = {
+      do: async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+        timeline.push(name);
+        return fn();
+      },
+      sleep: vi.fn(async (name: string, _ms: number) => {
+        timeline.push(`[sleep] ${name}`);
+      }),
+    };
+
+    await makeWorkflow().run({ payload: {} } as never, step as never);
+
+    const derive = timeline.filter((n) => n.startsWith('derive-slice:') || n.startsWith('[sleep]'));
+    expect(derive).toEqual([
+      'derive-slice:resolve-annexes',
+      'derive-slice:authority-totals',
+      '[sleep] pace:flow-pairs',
+      'derive-slice:flow-pairs',
+      '[sleep] pace:entity-search-index',
+      'derive-slice:entity-search-index',
+      '[sleep] pace:official-search-index',
+      'derive-slice:official-search-index',
+      '[sleep] pace:contract-search-index',
+      'derive-slice:contract-search-index',
+      'derive-slice:globals',
+      '[sleep] pace:contract-rollup',
+      'derive-slice:contract-rollup',
+      '[sleep] pace:cohort-stats',
+      'derive-slice:cohort-stats',
+      '[sleep] pace:cleanup',
+      'derive-slice:cleanup',
+      'derive-slice:count',
+    ]);
+    expect(step.sleep.mock.calls.every(([, ms]) => ms === 5_000)).toBe(true);
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(tail.length + 1);
+  });
+});
+
 describe('RefreshWorkflow.run — refresh lease', () => {
   it('takes the lease first and releases it last, after the staging drop', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     const wf = makeWorkflow();
     const names: string[] = [];
 
@@ -464,7 +583,7 @@ describe('RefreshWorkflow.run — refresh lease', () => {
 
   it('releases the lease even when the run fails', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockRejectedValueOnce(new Error('storage down'));
+    eop.ingestBucketDay.mockRejectedValueOnce(new Error('storage down'));
     const wf = makeWorkflow();
     const names: string[] = [];
 
@@ -480,7 +599,7 @@ describe('RefreshWorkflow.run — refresh lease', () => {
 describe('RefreshWorkflow.run — lease fence', () => {
   it('renews the lease before every writing step and once more before dropping staging', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     const wf = makeWorkflow();
     const names: string[] = [];
 
@@ -503,7 +622,7 @@ describe('RefreshWorkflow.run — lease fence', () => {
 
   it('stops before the next write when the lease is lost, leaves staging to the new holder, still releases', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     // drop-stale, create, ingest renew fine; the renew before load-fx finds a new holder; so does the finally's.
     // One-shot answers, so nothing leaks into the next test: the five renewals before load-fx
     // (drop-stale, record-window, create, ingest, resolve-annexes) succeed; load-fx's fence and the finally's check
@@ -540,7 +659,7 @@ describe('RefreshWorkflow.run — lease fence', () => {
   it('releases the lease even when dropping the staging tables throws', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.dropTransientStaging
       .mockResolvedValueOnce(undefined) // drop-stale at the start
       .mockRejectedValueOnce(new Error('D1 hiccup on drop')); // the finally's drop
@@ -559,7 +678,7 @@ describe('RefreshWorkflow.run — lease fence', () => {
 describe('RefreshWorkflow.run — failures inside finally', () => {
   it('reports the derive failure, not the staging-drop hiccup that followed it', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.refreshDerivedContractCount.mockRejectedValueOnce(new Error('derive failed: the count'));
     ingest.dropTransientStaging
       .mockResolvedValueOnce(undefined) // drop-stale at the start
@@ -583,7 +702,7 @@ describe('RefreshWorkflow.run — failures inside finally', () => {
 describe('RefreshWorkflow.run — window replay', () => {
   it('records its window before staging and clears it only after the gate passed', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     const wf = makeWorkflow();
     const names: string[] = [];
 
@@ -623,7 +742,7 @@ describe('RefreshWorkflow.run — window replay', () => {
       originalFrom: '2026-05-20',
       replayFrom: '2026-05-20',
     });
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const wf = makeWorkflow();
     const names: string[] = [];
@@ -657,7 +776,7 @@ describe('RefreshWorkflow.run — window replay', () => {
 
   it('leaves the window recorded when the run fails, so the next run replays it', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.refreshDerivedContractCount.mockRejectedValueOnce(new Error('derive failed: x'));
     const wf = makeWorkflow();
     const names: string[] = [];
@@ -673,7 +792,7 @@ describe('RefreshWorkflow.run — window replay', () => {
 
   it('clears the window on an empty ingest with nothing pending — it was fully covered', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult()]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult());
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const wf = makeWorkflow();
     const names: string[] = [];
@@ -700,7 +819,7 @@ describe('RefreshWorkflow.run — inherited windows are never certified by an em
       from: '2026-05-25',
       originalFrom: '2026-05-25',
     });
-    eop.ingestBucketWindow.mockResolvedValue([dayResult()]); // nothing staged today
+    eop.ingestBucketDay.mockResolvedValue(dayResult()); // nothing staged today
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const wf = makeWorkflow();
     const names: string[] = [];
@@ -734,7 +853,7 @@ describe('RefreshWorkflow.run — inherited windows are never certified by an em
       originalFrom: '2026-04-01',
       replayFrom: '2026-04-01',
     });
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.settlePendingWindows.mockResolvedValueOnce({
       settled: 1,
       remaining: [
@@ -795,7 +914,7 @@ describe('RefreshWorkflow.run — inherited promises need evidence the source an
       from: '2026-05-25',
       originalFrom: '2026-05-25',
     });
-    eop.ingestBucketWindow.mockResolvedValue([{ ...dayResult(), found: false }]); // nothing found // found: false, nothing staged
+    eop.ingestBucketDay.mockResolvedValue({ ...dayResult(), found: false }); // nothing found, nothing staged
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const wf = makeWorkflow();
 
@@ -818,10 +937,10 @@ describe('RefreshWorkflow.run — inherited promises need evidence the source an
       from: '2026-05-25',
       originalFrom: '2026-05-25',
     });
-    eop.ingestBucketWindow.mockResolvedValue([
-      { ...dayResult(), found: false },
-      { ...dayResult(), day: '2026-06-06', found: true }, // one bucket found: the source answers
-    ]);
+    eop.windowDays.mockReturnValueOnce(['2026-06-05', '2026-06-06']);
+    eop.ingestBucketDay
+      .mockResolvedValueOnce({ ...dayResult(), day: '2026-06-05', found: false })
+      .mockResolvedValueOnce({ ...dayResult(), day: '2026-06-06', found: true }); // one bucket found: the source answers
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const wf = makeWorkflow();
 
@@ -840,7 +959,7 @@ describe('RefreshWorkflow.run — inherited promises need evidence the source an
 describe('RefreshWorkflow.run — release failures never mask the run', () => {
   it('reports the derive failure when both the drop and the release fail after it', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.refreshDerivedContractCount.mockRejectedValueOnce(
       new Error('derive failed: the real one'),
     );
@@ -863,7 +982,7 @@ describe('RefreshWorkflow.run — release failures never mask the run', () => {
 
   it('reports a release failure on an otherwise successful run', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.releaseRefreshLease.mockRejectedValueOnce(new Error('D1 hiccup on release'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const wf = makeWorkflow();
@@ -875,7 +994,7 @@ describe('RefreshWorkflow.run — release failures never mask the run', () => {
 
   it('reports the drop failure, not the release failure, when both fail on a successful run', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.dropTransientStaging
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('D1 hiccup on drop'));
@@ -912,7 +1031,7 @@ describe('RefreshWorkflow.run — the rarer branches of the lease paths', () => 
 
   it('names "nobody" when the lease was lost and no holder is on record', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.renewRefreshLease.mockResolvedValueOnce({
       acquired: false,
       holder: null,
@@ -928,7 +1047,7 @@ describe('RefreshWorkflow.run — the rarer branches of the lease paths', () => 
 
   it('stringifies non-Error rejections from the staging drop and the release', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.dropTransientStaging
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce('drop said no');
@@ -1050,7 +1169,7 @@ describe('RefreshWorkflow.run — the stored verdict', () => {
 
   it('records an ok verdict for the run, after the gate and before the window settles', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     const names: string[] = [];
 
     const result = await run(names);
@@ -1073,7 +1192,7 @@ describe('RefreshWorkflow.run — the stored verdict', () => {
 
   it('records a violation with the names of the broken checks', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     integrity.runServedIntegrityGate.mockResolvedValueOnce({
       ok: false,
       violations: ['rollup-reconciliation', 'eik-validity'],
@@ -1089,7 +1208,7 @@ describe('RefreshWorkflow.run — the stored verdict', () => {
 
   it('records unverified with the check that could not complete', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     integrity.runServedIntegrityGate.mockRejectedValueOnce(
       new Error('integrity check current-amount-parity could not complete: D1 DB is overloaded'),
     );
@@ -1106,7 +1225,7 @@ describe('RefreshWorkflow.run — the stored verdict', () => {
 
   it('records unverified with no check name when the failure names none', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     integrity.runServedIntegrityGate.mockRejectedValueOnce(new Error('step timed out'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -1117,7 +1236,7 @@ describe('RefreshWorkflow.run — the stored verdict', () => {
 
   it('records a run with nothing to verify as skipped, and runs no gate', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult()]); // nothing staged, nothing pending
+    eop.ingestBucketDay.mockResolvedValue(dayResult()); // nothing staged, nothing pending
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const result = await run();
@@ -1130,7 +1249,7 @@ describe('RefreshWorkflow.run — the stored verdict', () => {
 
   it('finishes a healthy run when the verdict cannot be written, and says so at error level', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
     ingest.recordRefreshVerdict.mockRejectedValueOnce(new Error('D1 DB is overloaded'));
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -1149,7 +1268,7 @@ describe('RefreshWorkflow.run — the stored verdict', () => {
 
   it('records nothing for a run that failed before the gate, or stepped aside for the lease', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockRejectedValueOnce(new Error('storage down'));
+    eop.ingestBucketDay.mockRejectedValueOnce(new Error('storage down'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(run()).rejects.toThrow('storage down');
 

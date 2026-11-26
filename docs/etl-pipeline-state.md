@@ -72,14 +72,20 @@ lease-а - подновяват го и спират, ако вече не е т
 5. ⛨ `record-window` - записва точното покритие на този бяг като обещание (отрязания прозорец,
    не обвивката)
 6. ⛨ `create-transient-staging`
-7. ⛨ `ingest-storage-eop-bucket` (чете storage.eop.bg → raw_* таблици)
+7. ⛨ `ingest-storage-eop-bucket:{ден}` - по една стъпка за всеки bucket ден от прозореца, от най-стария
+   (чете storage.eop.bg → raw_* таблици); провал повтаря само своя ден, а денят подменя само своите
+   staging източници, затова повторен ден дава същите редове
 8. `pending-touched` - празен прозорец прескача derive-а само ако няма чакащи докоснати ID-та
    И няма наследен незавършен прозорец (тогава ⛨ `settle-windows-empty` погасява само собственото обещание, а
    `record-verdict` записва `skipped` - бяг без нищо за проверка, който никога не се чете като присъда); наследено обещание се
    удостоверява само от derive + гейт
 9. ⛨ `load-fx` (#158)
 10. ⛨ за всеки batch: `derive-slice:{batch}` (пуска refresh-slice групите; датата „данни към" се
-    движи в `derive-slice:contracts`, поколението в `derive-slice:setup` и `derive-slice:cleanup`)
+    движи в `derive-slice:contracts`, поколението в `derive-slice:setup` и `derive-slice:cleanup`); пред
+    седемте тежки batch-а от `flow-pairs` нататък (`flow-pairs`, трите search-index-а, `contract-rollup`,
+    `cohort-stats`, `cleanup`) стои пауза `pace:{batch}` - Workflow sleep от 5 s, половината от
+    10-секундния прозорец на D1, за да не попада batch-ът в прозорец, изхарчен от предишния (35 s на бяг,
+    без CPU)
 11. ⛨ `derive-slice:count`
 12. ⛨ `integrity-gate` (#156; post-commit аларма: разминаване → `etl_integrity_violation` с падналите
     проверки, D1 без отговор след повторните опити → `etl_integrity_unverified`; ходът завършва и в двата случая)

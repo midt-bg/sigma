@@ -26,7 +26,13 @@ import {
 } from '@sigma/ingest';
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
-import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
+import {
+  computeWorkerCatchupPlan,
+  ingestBucketDay,
+  windowDays,
+  type CatchupPlan,
+  type DayIngestResult,
+} from './eop';
 import { incompleteCheck, runServedIntegrityGate } from './integrity';
 import {
   acquireRegistryLease,
@@ -104,7 +110,7 @@ interface RefreshResult {
   leaseHolder?: string;
 }
 
-function stagedRows(results: Awaited<ReturnType<typeof ingestBucketWindow>>): number {
+function stagedRows(results: DayIngestResult[]): number {
   return results.reduce(
     (n, r) =>
       n +
@@ -131,6 +137,29 @@ function fence(step: WorkflowStep, lostLease: (name: string) => Promise<string |
       return fn();
     });
 }
+
+// The derive batches that come straight after a heavy one. D1 allows only so much work inside any ten
+// seconds (scripts/integrity-checks.mjs), and from `flow-pairs` on the batches read the whole corpus one
+// after another (the search indexes, the cube, the cohort window sort): back to back, the next batch
+// lands in a window its predecessor has already spent, D1 refuses it as overloaded, and the step waits
+// out its 10-second retry backoff — while the site's own reads are refused alongside it. A pause of half
+// the window before each of them means that any ten seconds hold at most five of batch work, as long as
+// a batch runs under five seconds (these take a few each); seven pauses add 35 s to a run, about what
+// the retries they replace cost. It is a Workflow sleep, outside the batch's step: it costs no CPU, the
+// instance hibernates through it, and a retry of the batch is not paced twice (its own backoff already
+// drains the window). `globals` follows the light contract search index and goes unpaced. Worker only:
+// the CLI (`import.mjs --derive=slice`) starts a wrangler process per batch, whose start-up and file
+// import already put seconds between batches, and is an operator's catch-up.
+const PACE_MS = 5_000;
+const PACED_BATCHES = new Set([
+  'flow-pairs',
+  'entity-search-index',
+  'official-search-index',
+  'contract-search-index',
+  'contract-rollup',
+  'cohort-stats',
+  'cleanup',
+]);
 
 // The verdict is stored so it can be read from outside the Workflow log (refresh_verdict), but storing
 // it is not the run's work: a write that fails through the step's retries is logged at error level —
@@ -214,7 +243,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         ? null
         : `refresh lease lost before ${name}: now held by ${held.holder ?? 'nobody'}`;
     });
-    let results: Awaited<ReturnType<typeof ingestBucketWindow>> = [];
+    const results: DayIngestResult[] = [];
     let staged = 0;
     let derived = 0;
     // The runtime logs an error ("...your Worker's code had hung...") on every *successful* instance
@@ -300,12 +329,20 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       await fenced('create-transient-staging', async () =>
         createTransientStaging(this.env.DB, workStagingSchemaSql),
       );
-      results = await fenced('ingest-storage-eop-bucket', async () =>
-        ingestBucketWindow(this.env.DB, plan, {
-          baseUrl: this.env.EOP_OPEN_DATA_BASE_URL,
-          fetchedAt,
-        }),
-      );
+      // One step per bucket day, oldest first: a failure late in the window repeats that day, not
+      // the window. Each day replaces only its own staged sources. The days share nothing but
+      // `fetchedAt`, which lands only in the transient staging rows and in no served one, so a day
+      // staged after the runtime restarted run() (with a newer `fetchedAt`) derives the same rows.
+      for (const day of windowDays(plan)) {
+        results.push(
+          await fenced(`ingest-storage-eop-bucket:${day}`, async () =>
+            ingestBucketDay(this.env.DB, day, {
+              baseUrl: this.env.EOP_OPEN_DATA_BASE_URL,
+              fetchedAt,
+            }),
+          ),
+        );
+      }
       staged = stagedRows(results);
 
       // Work an earlier run left behind: the touched sets survive an abort (refresh-slice.sql keeps
@@ -367,6 +404,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         throw new Error('refresh must resolve annexes before loading FX');
       }
       const runGroup = async (group: (typeof groups)[number]) => {
+        if (PACED_BATCHES.has(group.name)) await step.sleep(`pace:${group.name}`, PACE_MS);
         await fenced(`derive-slice:${group.name}`, async () => {
           const startedAt = Date.now();
           await runRefreshSliceStatementGroup(this.env.DB, group);
