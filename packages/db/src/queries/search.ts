@@ -318,6 +318,8 @@ type BuiltGroup = { group: SearchResults['groups'][number]; bestRank: number; re
 // A registry person's ref is the 64-hex indent; everyone else in the people kinds is a declarant.
 const REGISTRY_REF = /^[0-9a-f]{64}$/;
 
+const MISSING_TABLE = /no such table/i;
+
 /**
  * The two people kinds as ONE group, „Лица": officials with a published stake first, then everyone else with
  * a page. Each declarant's line is their offices by the one rule (`describeOffices`): position, institution,
@@ -352,8 +354,11 @@ async function peopleGroup(
         if (line) hit.subtitle = line;
         if (allOfficesFormer(offices)) hit.formerOfficial = true;
       });
-    } catch {
-      // An env without the declarations tables keeps the index's own line.
+    } catch (error) {
+      // An env without the declarations tables keeps the index's own line. Any other failure fails
+      // the search: without the filings a person who left office reads as still in it, and that
+      // answer would be cached.
+      if (!MISSING_TABLE.test(error instanceof Error ? error.message : String(error))) throw error;
     }
   }
   return {

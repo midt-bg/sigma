@@ -26,6 +26,7 @@ function searchDb(
   officialBestRank = -6,
   hasConflictTable = true,
   personBestRank: number | null = null,
+  filingsError: Error | null = null,
 ): D1Database {
   const officialRows = [
     {
@@ -136,15 +137,19 @@ function searchDb(
     // The people's own filings, for the office line: one official left an office with an exit declaration.
     {
       when: 'FROM declarations d',
-      all: [
-        { year: '2018', type: 'Annualy', declaredOn: null },
-        { year: '2019', type: 'Vacate', declaredOn: '2019-11-04' },
-      ].map((f) => ({
-        person_id: 'person:ИВАН МИНЕВ',
-        institution: 'Община Тестово',
-        position: 'Кмет',
-        ...f,
-      })),
+      all: filingsError
+        ? () => {
+            throw filingsError;
+          }
+        : [
+            { year: '2018', type: 'Annualy', declaredOn: null },
+            { year: '2019', type: 'Vacate', declaredOn: '2019-11-04' },
+          ].map((f) => ({
+            person_id: 'person:ИВАН МИНЕВ',
+            institution: 'Община Тестово',
+            position: 'Кмет',
+            ...f,
+          })),
     },
     // The one ranked read: every kind's best rows with the kind's count.
     {
@@ -283,6 +288,28 @@ describe('search', () => {
     expect(official?.hits[1]?.formerOfficial).toBeUndefined();
   });
 
+  it("keeps the index's line where the declarations tables are absent", async () => {
+    const db = searchDb(
+      -6,
+      true,
+      null,
+      new Error('D1_ERROR: no such table: declarations: SQLITE_ERROR'),
+    );
+    const official = (await search(db, 'иван')).groups.find((g) => g.kind === 'official');
+    expect(official?.hits[0]?.subtitle).toBe('Община Тестово');
+    expect(official?.hits[0]?.formerOfficial).toBeUndefined();
+  });
+
+  it('fails the search when the filings cannot be read, never an answer without them', async () => {
+    // Without the filings the person above would read as still in office, in an answer that is cached.
+    const refused = new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.');
+    await expect(search(searchDb(-6, true, null, refused), 'иван')).rejects.toBe(refused);
+    const gone = new Response('D1 is overloaded', { status: 503 });
+    await expect(search(searchDb(-6, true, null, gone as unknown as Error), 'иван')).rejects.toBe(
+      gone,
+    );
+  });
+
   it('lets свързани лица LEAD when it is the strongest match', async () => {
     // official best rank -6 beats the best company rank -5 → it leads.
     const results = await search(searchDb(-6), 'иван минев');
@@ -385,6 +412,8 @@ const COMPANY_HIT = {
 function probeDb(tableCount: number | null): FakeD1 {
   return fakeD1([
     { when: 'sqlite_master', first: tableCount === null ? null : { n: tableCount } },
+    // The official here has no filing on record.
+    { when: 'FROM declarations d', all: [] },
     {
       when: 'FROM search_index',
       all: rankedRows(
