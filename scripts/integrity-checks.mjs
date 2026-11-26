@@ -580,6 +580,103 @@ export async function checkFrameworkCeilingsUnsummed(runner) {
   };
 }
 
+// 2c) Every stored contract carries what the value rule gives for its stored inputs. The rule is the views
+//     raw_contract_annex_evidence / raw_contract_values (scripts/work-staging-schema.sql); the full build
+//     applies it to the raw publications, `@refresh-batch amendments` to the served rows a window reaches.
+//     This proves a BUILD against it before the build ships: each c:e:/c:o: contract is staged through
+//     raw_served_contract_value_base, the projection the amendments batch re-values from, and evaluated by
+//     the same views; any row whose verdict, money, currency, rate or annex count differs FAILS the build.
+//     It writes and empties transient staging and evaluates every contract at once, so it runs only on a
+//     local work database (BUILD_CHECKS, assertIntegrity `build: true`) and never in a served gate.
+//     Two kinds of legacy row are held as stored, because their stored inputs cannot settle them: a row
+//     published as value_suspect that the rule no longer reaches (the branch that set it may have read an
+//     own estimate that was never stored), and a row published as value_low whose own estimate was never
+//     stored (keep_symbolic in the projection keeps that verdict). Both are counted in the detail.
+const VALUE_RULE_STAGING = [
+  'DELETE FROM raw_contract_value_inputs',
+  'DELETE FROM raw_contract_value_annexes',
+  `INSERT INTO raw_contract_value_annexes (natural_key, unp, contract_number, value_before, raw_after,
+    effective_after, value_delta, currency, published_at, value_treatment, restated, evidence_known,
+    legacy_suspect)
+  SELECT natural_key, unp, contract_number, value_before, raw_value_after, value_after, raw_value_delta,
+    currency, published_at, value_treatment, value_restated, value_evidence_known, value_suspect
+  FROM amendments`,
+  `INSERT INTO raw_contract_value_inputs (id, unp, contract_number, signed_at, signing_value,
+    signing_currency, current_value, current_currency, proc_est_native, proc_est_currency, own_est_native,
+    own_est_currency, framework, keep_symbolic, prior_signing_rate, current_annex_key)
+  SELECT id, unp, contract_number, signed_at, signing_value, currency, current_value, current_value_currency,
+    proc_est_native, proc_est_currency, own_estimate_value, own_estimate_currency, framework, keep_symbolic,
+    prior_signing_rate, natural_key
+  FROM raw_served_contract_value_base WHERE id GLOB 'c:[eo]:*'`,
+];
+// Money compares to half a cent, the signing rate relatively; NULL against a value is a difference.
+const moneyDiffers = (a, b) =>
+  `((${a} IS NULL) <> (${b} IS NULL) OR COALESCE(abs(${a} - ${b}) >= 0.005, 0))`;
+// The rule and the per-row comparison are each materialised once: left to the planner, every reference to a
+// comparison re-evaluates the rule's columns, and the query takes several times as long on 200k contracts.
+const VALUE_RULE_EVALUATION = `WITH rule AS MATERIALIZED (
+  SELECT * FROM raw_contract_values
+), evaluated AS MATERIALIZED (
+  SELECT
+    COALESCE(c.own_estimate_source IS NULL AND c.value_flag = 'value_suspect'
+      AND v.value_flag IS NOT 'value_suspect', 0) AS held_suspect,
+    COALESCE(i.keep_symbolic, 0) AS kept_low,
+    v.value_flag IS NOT c.value_flag AS flag,
+    ${moneyDiffers('v.amount_eur', 'c.amount_eur')} AS amount_eur,
+    ${moneyDiffers('COALESCE(v.amount, c.amount)', 'c.amount')}
+      OR ${moneyDiffers('i.current_value', 'c.current_value')}
+      OR ${moneyDiffers('v.signing_value_eur', 'c.signing_value_eur')}
+      OR ${moneyDiffers('v.current_value_eur', 'c.current_value_eur')} AS other_amount,
+    i.current_currency IS NOT c.current_value_currency OR v.fx_converted IS NOT c.fx_converted AS currency,
+    ((v.fx_rate IS NULL) <> (c.fx_rate IS NULL)
+      OR COALESCE(abs(v.fx_rate - c.fx_rate) > 1e-9 * abs(c.fx_rate), 0)) AS rate,
+    (SELECT COUNT(*) FROM raw_contract_value_annexes a
+      WHERE a.unp = i.unp AND a.contract_number = i.contract_number) IS NOT c.annex_count AS annexes,
+    COALESCE(v.amount_eur, 0) - COALESCE(c.amount_eur, 0) AS moved
+  FROM raw_contract_value_inputs i
+  JOIN contracts c ON c.id = i.id
+  JOIN rule v ON v.id = i.id
+), judged AS (
+  SELECT *, NOT held_suspect AND (flag OR amount_eur OR other_amount OR currency OR rate OR annexes) AS differs
+  FROM evaluated
+)
+SELECT COUNT(*) AS checked, SUM(differs) AS n, SUM(differs AND flag) AS flag,
+  SUM(differs AND amount_eur) AS amount_eur, SUM(differs AND other_amount) AS other_amount,
+  SUM(differs AND currency) AS currency, SUM(differs AND rate) AS rate, SUM(differs AND annexes) AS annexes,
+  SUM(CASE WHEN differs THEN moved END) AS moved, SUM(held_suspect) AS held_suspect, SUM(kept_low) AS kept_low
+FROM judged`;
+export async function checkContractValueRule(runner) {
+  const name = 'contract-value-rule';
+  let r;
+  try {
+    for (const sql of VALUE_RULE_STAGING) await runner(sql);
+    r = (await rows(runner, VALUE_RULE_EVALUATION))[0] ?? {};
+  } finally {
+    await runner('DELETE FROM raw_contract_value_inputs');
+    await runner('DELETE FROM raw_contract_value_annexes');
+  }
+  const n = num(r.n);
+  const held =
+    `held as stored: ${num(r.held_suspect)} legacy value_suspect verdict(s) the rule no longer reaches, ` +
+    `${num(r.kept_low)} legacy value_low verdict(s) without a stored own estimate`;
+  return {
+    name,
+    ok: n === 0,
+    skipped: false,
+    detail:
+      n === 0
+        ? `all ${num(r.checked)} contracts carry what the value rule gives for their stored inputs (${held})`
+        : `${n} of ${num(r.checked)} contract(s) differ from what the value rule gives for their stored ` +
+          `inputs — ${num(r.flag)} flag, ${num(r.amount_eur)} amount_eur, ${num(r.other_amount)} other ` +
+          `amount, ${num(r.currency)} currency, ${num(r.rate)} rate, ${num(r.annexes)} annex count; ` +
+          `${num(r.moved).toFixed(2)} € of amount_eur would move (${held})`,
+  };
+}
+
+// Checks only a local build runs (scripts/import.mjs work backfill, through assertIntegrity `build: true`):
+// they need the work staging and evaluate every contract, which no served gate can afford.
+export const BUILD_CHECKS = [checkContractValueRule];
+
 export const CHECKS = [
   checkNonEmptyCorpus,
   checkRollupReconciliation,
@@ -671,8 +768,12 @@ export function summarizeIntegrity(results, label = 'integrity') {
 // Run all checks, print a one-line summary per check, and FAIL non-zero on any real violation.
 // `exit: true` (default) prints to stderr and calls process.exit(1). Tests pass
 // `exit: false` to get a thrown Error instead (the assertion still fails the same way).
-export async function assertIntegrity(runner, { label = 'integrity', exit = true } = {}) {
+export async function assertIntegrity(
+  runner,
+  { label = 'integrity', exit = true, build = false } = {},
+) {
   const results = await runIntegrityChecks(runner);
+  if (build) for (const fn of BUILD_CHECKS) results.push(await fn(runner));
   for (const r of results) {
     const tag = r.skipped ? 'SKIP' : r.warn ? 'WARN' : r.ok ? ' ok ' : 'FAIL';
     console.log(`   [${tag}] ${r.name}: ${r.detail}`);
