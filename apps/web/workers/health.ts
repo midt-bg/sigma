@@ -218,21 +218,52 @@ export const HEALTH_REUSE_MS = 5_000;
 /** A degraded report is reused for less: a recovered database should show soon. */
 export const DEGRADED_REUSE_MS = 2_000;
 
-let reused: { until: number; report: Promise<Health> } | null = null;
+// Only values cross requests here. A promise belongs to the request that created it: once that request
+// ends (a monitor that gave up mid-read), the runtime never settles it for anyone else, so a later caller
+// that awaited it would fail. A caller that finds a read under way waits on a promise of its own, which
+// the reader resolves with the report, and stops waiting when the read's window is over.
+let reused: { readAt: number; until: number; report: Health } | null = null;
+let reading: { until: number; waiters: Set<(report: Health) => void> } | null = null;
 
 /**
  * The report, read at most once per isolate every HEALTH_REUSE_MS (DEGRADED_REUSE_MS when degraded).
  * Concurrent callers share the read in flight. Only the report is reused: every response is built anew
  * and stays `no-store`.
  */
-export function reusedHealth(env: Env, now = Date.now()): Promise<Health> {
+export async function reusedHealth(env: Env, now = Date.now()): Promise<Health> {
   if (reused && now < reused.until) return reused.report;
-  const entry = { until: now + HEALTH_REUSE_MS, report: health(env, new Date(now)) };
-  reused = entry;
-  void entry.report.then((report) => {
-    if (report.status !== 'ok') entry.until = now + DEGRADED_REUSE_MS;
+  const current = reading;
+  if (current && now < current.until) {
+    const report = await reportOf(current, current.until - now);
+    // The read under way did not finish in its window: its request may have ended. Read anew.
+    return report ?? reusedHealth(env, Date.now());
+  }
+  const entry: NonNullable<typeof reading> = { until: now + HEALTH_REUSE_MS, waiters: new Set() };
+  reading = entry;
+  const report = await health(env, new Date(now));
+  // A read that outlived its window must not replace the report of the read that replaced it.
+  if (!reused || reused.readAt <= now) {
+    const until = now + (report.status === 'ok' ? HEALTH_REUSE_MS : DEGRADED_REUSE_MS);
+    reused = { readAt: now, until, report };
+  }
+  if (reading === entry) reading = null;
+  for (const deliver of entry.waiters) deliver(report);
+  return report;
+}
+
+/** The report of the read under way, or null when it has not come within `ms`. */
+function reportOf(read: NonNullable<typeof reading>, ms: number): Promise<Health | null> {
+  return new Promise((resolve) => {
+    const deliver = (report: Health) => {
+      clearTimeout(timer);
+      resolve(report);
+    };
+    const timer = setTimeout(() => {
+      read.waiters.delete(deliver);
+      resolve(null);
+    }, ms);
+    read.waiters.add(deliver);
   });
-  return entry.report;
 }
 
 /**

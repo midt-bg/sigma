@@ -341,6 +341,66 @@ describe('reusedHealth', () => {
     expect(await reusedHealth(env(DB))).toMatchObject({ status: 'ok', db: 'ok' });
     expect(DEGRADED_REUSE_MS).toBeLessThan(HEALTH_REUSE_MS);
   });
+
+  // A database whose first read is held until `release` — or for good, like a read whose request ended:
+  // the runtime never settles a promise for anyone once the request that created it is over.
+  function holding(): { DB: D1Database; reads: () => number; release: () => void } {
+    const db = servedSchema();
+    published(db);
+    const DB = d1FromSqlite(db);
+    const prepare = DB.prepare.bind(DB);
+    let reads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(DB, 'prepare').mockImplementation((sql) => {
+      const statement = prepare(sql);
+      const first = statement.first.bind(statement);
+      const wait = ++reads === 1 ? held : Promise.resolve();
+      statement.first = ((...args: Parameters<typeof first>) =>
+        wait.then(() => first(...args))) as typeof statement.first;
+      return statement;
+    });
+    return { DB, reads: () => reads, release };
+  }
+
+  it('answers a caller whose read under way never finishes, without waiting on that read', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(clock);
+    const { DB, reads } = holding();
+    let firstSettled = false;
+    void reusedHealth(env(DB)).finally(() => (firstSettled = true));
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    let second: Awaited<ReturnType<typeof reusedHealth>> | undefined;
+    void reusedHealth(env(DB)).then((report) => (second = report));
+    await vi.advanceTimersByTimeAsync(HEALTH_REUSE_MS - 1_000 - 1);
+    expect(second).toBeUndefined();
+    expect(reads()).toBe(1);
+
+    // The held read's window is over: the caller reads for itself and gets its own answer.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(second).toMatchObject({ status: 'ok', db: 'ok' });
+    expect(second?.checkedAt).toBe(new Date(clock + HEALTH_REUSE_MS).toISOString());
+    expect(reads()).toBe(2);
+    expect(firstSettled).toBe(false);
+  });
+
+  it('keeps the read that replaced a late one for the callers that come after it', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(clock);
+    const late = holding();
+    const first = reusedHealth(env(late.DB));
+    const second = reusedHealth(env(late.DB));
+    await vi.advanceTimersByTimeAsync(HEALTH_REUSE_MS);
+    const replacement = await second;
+    expect(late.reads()).toBe(2);
+
+    // The late read finishes after its window: it must not end the window of the read that replaced it.
+    const reportOfLate = await (late.release(), first);
+    expect(reportOfLate).not.toBe(replacement);
+    expect(await reusedHealth(env(late.DB))).toBe(replacement);
+    expect(late.reads()).toBe(2);
+  });
 });
 
 describe('healthResponse', () => {
