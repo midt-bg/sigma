@@ -189,6 +189,15 @@ export const UNVERIFY_SQL =
   `${REBUILD_STATE_DDL}\nDELETE FROM rebuild_state WHERE stage IN ('ship','verify');\n` +
   'DELETE FROM data_version;\n';
 
+/**
+ * Sent before the ship's first write. The ship empties every table and fills it again, so from its first
+ * file on the slot no longer holds what `import` and `registry` left: a ship stopped half-way leaves tables
+ * emptied or half filled, and a resume that trusted their receipts would rebuild on a partial corpus, ship
+ * it and pass its own verification, since the counts would match. So every receipt goes, with the stamp: a
+ * stopped ship is built again from the start, and only its own receipt, in its last file, says it finished.
+ */
+export const SHIP_START_SQL = `${REBUILD_STATE_DDL}\nDELETE FROM rebuild_state;\nDELETE FROM data_version;\n`;
+
 /** What this run has already put in the slot: each finished stage, with the run that finished it and its
  *  detail. A slot without the table has nothing to offer. */
 export function slotState(name, runId, read = d1Json, anyRun = false) {
@@ -644,6 +653,7 @@ export async function finishBuild(
   work,
   { apply, read = d1Json, verifyRead, runId, version, commit, check, now },
 ) {
+  apply('ship-start', SHIP_START_SQL);
   fillSlot(name, snapshotPath, work, {
     label: 'ship',
     apply,
@@ -675,7 +685,8 @@ export async function finishBuild(
  *
  * A run continues at the first stage the slot holds no receipt for. A slot that holds a finished ship needs
  * only its verification — after a container stopped in it, after a resume — and neither builds nor
- * empties anything. The local stages leave nothing durable in the slot, so they always run again (what the
+ * empties anything. A ship that began takes every receipt away (`SHIP_START_SQL`), so one stopped half-way
+ * is built again from the start. The local stages leave nothing durable in the slot, so they always run again (what the
  * declarations already read is kept in R2, `checkpointRun`). A build run takes the stamp and the ship away
  * right before its first write — a fresh one by emptying the slot, which takes them along — so a slot
  * being rewritten never looks verified, and a run that only verifies never erases its own input.

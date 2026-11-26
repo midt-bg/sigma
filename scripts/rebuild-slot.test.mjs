@@ -954,12 +954,8 @@ test('a stop after the ship and before its verification resumes into the verific
   s.overload(VERIFY_ATTEMPTS); // D1 does not let the verification finish
   const first = slotRun(s, { runId: 'run-a' });
   await assert.rejects(runRebuild({}, first.ops), /overloaded/);
-  assert.deepEqual(s.receipts(), {
-    prepare: 'run-a',
-    import: 'run-a',
-    registry: 'run-a',
-    ship: 'run-a',
-  });
+  // Once the ship has begun, its own receipt is the only one that describes the slot.
+  assert.deepEqual(s.receipts(), { ship: 'run-a' });
   const sentBefore = s.sent.length;
   const resumed = slotRun(s, { runId: 'run-b' });
   assert.equal((await runRebuild({ resume: true }, resumed.ops)).version, 7);
@@ -973,17 +969,20 @@ test('a slot whose ship did not finish never passes a verification', async (t) =
   const s = builtSlot(t);
   const first = slotRun(s, { runId: 'run-a', stopInShipAfter: 1 });
   await assert.rejects(runRebuild({}, first.ops), /inside the ship/);
-  assert.ok(!('ship' in s.receipts()), 'half a ship holds no receipt');
+  // The ship had emptied the tables the import filled: neither its receipt nor theirs stands.
+  assert.equal(s.slot.prepare('SELECT COUNT(*) n FROM bidders').get().n, 0);
+  assert.deepEqual(s.receipts(), {}, 'half a ship leaves nothing a resume could build on');
   // Asked to verify it, the run refuses — nothing to verify.
   await assert.rejects(
     runRebuild({ verify: true }, slotRun(s, { runId: 'run-v' }).ops),
     /holds no finished ship/,
   );
   assert.deepEqual(s.stamp(), []);
-  // Resumed, it ships again from the start and only then verifies.
+  // Resumed, it is built again from the start — never from the half-emptied slot — and only then verified.
   const resumed = slotRun(s, { runId: 'run-b' });
   await runRebuild({ resume: true }, resumed.ops);
-  assert.deepEqual(resumed.ran, ['rehydrate', 'local', 'unverify', 'ship']);
+  assert.deepEqual(resumed.ran, ['prepare', 'import', 'registry', 'local', 'ship']);
+  assert.equal(s.slot.prepare('SELECT COUNT(*) n FROM bidders').get().n, 1);
   assert.equal(s.stamp().length, 1);
 });
 
@@ -996,7 +995,7 @@ test('a fresh build after a stopped one starts clean and adopts nothing', async 
   assert.deepEqual(fresh.ran, ['prepare', 'import', 'registry', 'local', 'ship']);
   assert.deepEqual(
     s.receipts(),
-    { import: 'run-c', prepare: 'run-c', registry: 'run-c', ship: 'run-c', verify: 'run-c' },
+    { ship: 'run-c', verify: 'run-c' },
     'the earlier run’s receipts went with the emptied slot',
   );
   assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: 'run-c' }]);
