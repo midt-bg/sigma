@@ -439,6 +439,28 @@ test('a restored entry is renewed in the bucket, so its expiry only takes entrie
   assert.equal(puts.length, 1, 'nothing to renew when there is no entry');
 });
 
+test('records that go on after their end are no entry', async () => {
+  const corpus = memoryCorpus(corpusFolders());
+  await extract(corpus);
+  const [key, body] = [...entries(corpus)][0];
+  const folder = key.split('/')[2];
+  const lines = gunzipSync(body).toString().split('\n').filter(Boolean);
+  // A whole entry, end line and counts true, with one more record behind the end.
+  const longer = gzipSync([...lines, lines[1]].join('\n') + '\n');
+  const store = { get: async (k) => (k === key ? longer : null) };
+  const reasons = [];
+  const out = path.join(dir, 'after-end.jsonl');
+  const restored = await restoreEntry(store, {
+    key,
+    folder,
+    out,
+    onUnusable: (error) => reasons.push(error.message),
+  });
+  assert.equal(restored, null);
+  assert.deepEqual(reasons, ['records go on after their end']);
+  assert.ok(!fs.existsSync(out), 'nothing of it is left to decide over');
+});
+
 test('a cache that cannot be written costs the next run a parse, never this run', async () => {
   const golden = await extract(memoryCorpus(corpusFolders()), { CACBG_PARSE_CACHE: 'off' });
   const corpus = memoryCorpus(corpusFolders());
