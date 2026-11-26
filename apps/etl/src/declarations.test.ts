@@ -415,6 +415,14 @@ it('retries a verification D1 did not let finish, and ends one that refuses ever
   }
   expect(g.run()).toMatchObject({ state: 'failed' });
   expect(g.run().reason).toContain('verify failed 3 times without getting further');
+
+  // Said to be a verdict, it ends the run on the first answer: the same slot answers the same way.
+  const h = fixture();
+  await h.job().startRun('r3', idle);
+  await h.job().alarm();
+  h.answer({ state: 'failed', stage: 'verify', completed: 1, reason: differs, verdict: true });
+  await h.job().alarm();
+  expect(h.run()).toMatchObject({ state: 'failed', reason: differs });
 });
 
 it('stops the container when the workflow instance that started the run is gone', async () => {

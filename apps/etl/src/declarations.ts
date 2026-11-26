@@ -71,6 +71,8 @@ interface ContainerStatus {
   total?: number;
   reason?: string;
   signal?: string;
+  /** The run's own answer that repeating cannot change (a slot verification's verdict). */
+  verdict?: boolean;
   audit?: boolean;
   published?: boolean;
 }
@@ -460,7 +462,8 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         // `verify` too, since a slot that holds a finished ship is only verified again
         // (scripts/rebuild-slot.mjs): D1 still refusing the verification's reads after their own retries
         // is the overload seen right after a ship, and a new attempt costs minutes, not the build. A count
-        // that differs refuses the same way every time, and the three-times rule below ends it.
+        // that differs, or a broken check, is a verdict on the slot: the run says so (`verdict`) and it
+        // ends at once instead of verifying the same slot three times.
         //
         // A replayed attempt counts as moving, so the failure budget alone would retry a stage that
         // refuses every time — publish, say — for ever. The same refusal at the same stage, three times
@@ -468,11 +471,12 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         // killed by a signal at the same point (out of memory) counts too; the platform's own stop arrives
         // as a yield and never does.
         const retryable =
-          status.state === 'yielded' ||
-          ['fetch', 'import', 'snapshot', 'registry', 'publish', 'reindex', 'verify'].includes(
-            status.stage,
-          ) ||
-          status.signal;
+          !status.verdict &&
+          (status.state === 'yielded' ||
+            ['fetch', 'import', 'snapshot', 'registry', 'publish', 'reindex', 'verify'].includes(
+              status.stage,
+            ) ||
+            status.signal);
         if (retryable && status.state === 'failed') {
           const repeats = (run.stageFailures?.[status.stage] ?? 0) + 1;
           run.stageFailures = { ...run.stageFailures, [status.stage]: repeats };

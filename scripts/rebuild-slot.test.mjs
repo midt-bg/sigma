@@ -36,6 +36,7 @@ import {
   sqlite,
   UNVERIFY_SQL,
   VERIFY_ATTEMPTS,
+  verdictEvent,
   verifySlot,
 } from './rebuild-slot.mjs';
 import { BREATHER_MS, HEAVY_ROWS } from './integrity-checks.mjs';
@@ -479,6 +480,50 @@ test('a real failure is not tried again and leaves no version', async (t) => {
   assert.equal(lost.retried.length, VERIFY_ATTEMPTS - 1, 'the count verdict was not retried');
   assert.ok(lost.reads.count - readsBefore <= 10, 'one read per question, none repeated');
   assert.deepEqual(lost.stamp(), []);
+});
+
+test('a verdict on the slot is final, and a read that fails is not one', async (t) => {
+  const s = builtSlot(t);
+  const verify = (extra = {}) =>
+    verifySlot('sigma-test', {
+      read: s.reader(),
+      apply: s.apply,
+      runId: 'r',
+      check: passes,
+      ...extra,
+    });
+  const final = async (promise, message) => {
+    const error = await promise.then(
+      () => assert.fail('the verification passed'),
+      (e) => e,
+    );
+    assert.match(error.message, message);
+    return verdictEvent(error);
+  };
+  // Nothing finished shipping.
+  assert.deepEqual(await final(verify(), /holds no finished ship/), {
+    event: 'declarations_error',
+    stage: 'verify',
+    script: 'rebuild-slot',
+    exitCode: 1,
+    verdict: true,
+  });
+  s.overload(VERIFY_ATTEMPTS);
+  await assert.rejects(build(s));
+  // D1 refusing every read past the bound.
+  s.overload(VERIFY_ATTEMPTS);
+  assert.equal(await final(verify(), /overloaded/), null);
+  // A broken check.
+  assert.ok(await final(verify({ check: undefined }), /integrity gate failed/));
+  // Any other failure of a check.
+  const broken = async () => {
+    throw new Error('the gate itself broke');
+  };
+  assert.equal(await final(verify({ check: broken }), /the gate itself broke/), null);
+  // A count that differs.
+  s.slot.exec("DELETE FROM bidders WHERE id='bidder:test'");
+  assert.ok(await final(verify(), /counts differ/));
+  assert.deepEqual(s.stamp(), []);
 });
 
 test('a slot refreshed after its ship is named as one, not as a defect of the build', async (t) => {

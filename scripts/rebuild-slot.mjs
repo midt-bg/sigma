@@ -565,6 +565,26 @@ export function slotReader(
 }
 
 /**
+ * The verification's answer that the slot is not what its ship receipt says: a count that differs, a
+ * broken integrity check, no finished ship at all. The same idle slot gives the same answer to every new
+ * attempt, so the run reports it as final (`verdictEvent`) and the coordinator ends the run at once. A read
+ * that fails is never one.
+ */
+export class SlotVerdict extends Error {}
+
+/** The error event that tells the coordinator a failure is a verdict, or null for any other failure. */
+export const verdictEvent = (error) =>
+  error instanceof SlotVerdict
+    ? {
+        event: 'declarations_error',
+        stage: 'verify',
+        script: 'rebuild-slot',
+        exitCode: 1,
+        verdict: true,
+      }
+    : null;
+
+/**
  * Why counts can differ without a defect: the slot was served and refreshed after its ship — a former live
  * slot still holds the receipt of the build that made it, and the refresh has moved its rows on since.
  * Verifying it again proves nothing; it is rebuilt. Only a hint for the message, so a read that fails is
@@ -598,7 +618,9 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
     read("SELECT 1 AS found FROM sqlite_master WHERE name='rebuild_state'").length &&
     read("SELECT run_id, detail FROM rebuild_state WHERE stage='ship'")[0];
   if (!shipped?.detail)
-    throw new Error(`${name} holds no finished ship: there is nothing to verify — build the slot`);
+    throw new SlotVerdict(
+      `${name} holds no finished ship: there is nothing to verify — build the slot`,
+    );
   const { counts, version, commit, builtAt } = JSON.parse(shipped.detail);
   const tables = Object.keys(counts);
   const served = {};
@@ -616,11 +638,19 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
   }
   const mismatched = tables.filter((t) => Number(served[t]) !== counts[t]);
   if (mismatched.length)
-    throw new Error(
+    throw new SlotVerdict(
       `Slot counts differ from the snapshot: ${mismatched.map((t) => `${t} ${served[t]} ≠ ${counts[t]}`).join(', ')}` +
         refreshedSince(read, builtAt),
     );
-  const results = await check(read, { label: `rebuilt slot ${name}`, exit: false });
+  let results;
+  try {
+    results = await check(read, { label: `rebuilt slot ${name}`, exit: false });
+  } catch (error) {
+    // A check that broke is a verdict; a read the reader gave up on is not.
+    if (String(error?.message).startsWith('integrity gate failed'))
+      throw new SlotVerdict(error.message);
+    throw error;
+  }
   const at = (now ?? (() => new Date().toISOString()))();
   const rows = Object.values(counts).reduce((a, n) => a + n, 0);
   apply(
@@ -1021,4 +1051,11 @@ async function main() {
   );
 }
 
-if (import.meta.main) await main();
+if (import.meta.main)
+  await main().catch((error) => {
+    const verdict = verdictEvent(error);
+    if (!verdict) throw error;
+    console.log(`Error: ${error.message}`);
+    console.log(JSON.stringify(verdict));
+    process.exit(1);
+  });
