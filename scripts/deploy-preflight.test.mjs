@@ -22,6 +22,7 @@ const run = (environment, env, { resolved = ID, named = env.SIGMA_D1_NAME, held 
     env,
     resolveDatabase: () => ({ id: resolved, name: resolved ? named : '' }),
     readDataVersion: () => held,
+    readRefreshLease: () => null,
     codeVersion: 2,
   });
 
@@ -293,6 +294,36 @@ test('staging gives up after the bound, naming the run', () => {
   assert.equal(failures.length, 1);
   assert.match(failures[0], /since 2026-11-26T12:30:05.000Z \(instance wf-refresh-1/);
   assert.match(failures[0], /still running after 10 minutes/);
+});
+
+test('a site deploy asks for the lease last, and only of a slot it may write; the rebuild runner never', () => {
+  const ask = (environment, env, extra = {}) => {
+    let asked = 0;
+    let clock = T0;
+    const result = preflight({
+      environment,
+      env,
+      resolveDatabase: () => ({ id: ID, name: env.SIGMA_D1_NAME }),
+      readDataVersion: () => 2,
+      readRefreshLease: () => (asked++, LIVE),
+      codeVersion: 2,
+      now: () => new Date(clock),
+      sleep: (ms) => (clock += ms),
+      log: () => {},
+      ...extra,
+    });
+    return { ...result, asked };
+  };
+  const site = ask('production', ready);
+  assert.equal(site.asked, 1);
+  assert.match(site.failures.join('\n'), /instance wf-refresh-1/);
+  assert.equal(ask('production', ready, { component: 'rebuild-runner' }).asked, 0);
+  assert.equal(ask('production', ready, { readDataVersion: () => 1 }).asked, 0);
+  assert.equal(ask('production', { ...ready, SUPPRESSION_SALT: '' }).asked, 0);
+  // `wait` reaches the guard: told to wait, production polls instead of refusing (here until the bound).
+  const waited = ask('production', ready, { wait: true });
+  assert.equal(waited.asked, IDLE_WAIT_MS / IDLE_POLL_MS + 1);
+  assert.match(waited.failures.join('\n'), /still running after 10 minutes/);
 });
 
 test('the deploy runs the guard in the preflight, and can be told to wait', async () => {

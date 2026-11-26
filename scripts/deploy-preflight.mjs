@@ -40,15 +40,22 @@ export function codeDataVersion() {
  * The checks, over injected reads, so every refusal is tested without Cloudflare. `resolveDatabase(name)` answers
  * the id `wrangler d1 info` resolves the name to and the name Cloudflare gives that database (both '' when it
  * resolves to none); `readDataVersion()` the version the slot holds
- * (null when it holds none). Returns the failures, which stop the deploy, and the warnings, which do not.
+ * (null when it holds none); `readRefreshLease()` the refresh's lease row (awaitIdleRefresh, which `wait`,
+ * `now` and `sleep` are handed to). Returns the failures, which stop the deploy, and the warnings, which do
+ * not.
  */
 export function preflight({
   environment,
   env,
   resolveDatabase,
   readDataVersion,
+  readRefreshLease,
   codeVersion,
   component = 'site',
+  wait,
+  now,
+  sleep,
+  log,
 }) {
   const failures = [];
   const warnings = [];
@@ -105,6 +112,11 @@ export function preflight({
       '(docs/deploy.md, „Три пътя за пускане“)';
     (policy.strict ? failures : warnings).push(message);
   }
+  // Last: the slot is the right one and may be written, so only a running refresh still stands in the way.
+  if (!failures.length)
+    failures.push(
+      ...awaitIdleRefresh({ environment, readLease: readRefreshLease, wait, now, sleep, log }),
+    );
   return { failures, warnings };
 }
 
@@ -223,18 +235,11 @@ function main() {
     env: process.env,
     resolveDatabase: reads.resolveDatabase,
     readDataVersion: reads.readDataVersion,
+    readRefreshLease: reads.readRefreshLease,
     codeVersion: codeDataVersion(),
     component,
+    wait: flags.includes('--wait'),
   });
-  // Last, and only for the site: the rebuild runner neither replaces the ETL nor writes to the slot.
-  if (!failures.length && component === 'site')
-    failures.push(
-      ...awaitIdleRefresh({
-        environment,
-        readLease: reads.readRefreshLease,
-        wait: flags.includes('--wait'),
-      }),
-    );
   for (const w of warnings) console.log(`::warning title=Preflight::${w}`);
   for (const f of failures) console.log(`::error title=Preflight::${f}`);
   if (failures.length) {
