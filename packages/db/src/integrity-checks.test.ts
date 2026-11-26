@@ -307,7 +307,8 @@ describe('reconciliation gate — injected violations', () => {
          ('am:UNP-2:C-2:ocds-1','am:UNP-2:C-2:ocds-1','C-2','UNP-2','2026-02-03','ocds-e82gsb-1','ocds:2026-02-03'),
          -- an OCDS row the bridge refused (still keyed by its OCID) next to an EOP annex on the same
          -- contract number: an honest residual, NOT double counting, because every consumer keys on
-         -- (unp, contract_number) and this row's unp matches no contract
+         -- (unp, contract_number) and this row's unp matches no contract — and no served tender names
+         -- its procedure, so it cannot be proved the twin of UNP-1's annex either
          ('am:ocds-3:C-1:ocds-2','am:ocds-3:C-1:ocds-2','C-1','ocds-e82gsb-3','2026-04-07','ocds-e82gsb-2','ocds:2026-04-07'),
          -- NULL contract_number on both sides: cannot roll onto a contract, so it cannot double count
          ('am:UNP-3::E3','am:UNP-3::E3',NULL,'UNP-3','2026-05-06','E3','eop:annexes:2026-05-06'),
@@ -348,6 +349,80 @@ describe('reconciliation gate — injected violations', () => {
     const result = await checkAmendmentTwins(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/^3\b/);
+  });
+
+  // The same annex served twice under two identifier forms: the OCDS release still keyed by its OCID
+  // (`ocds-` + six-character prefix + `-` + tender.id), the EOP annex under the УНП. The served tender
+  // whose eop_tender_id is that tender.id names the УНП. Tender UNP-1 carries tender.id 101.
+  it('amendment-twin-dedup catches an OCDS amendment served under its OCID beside its twin', async () => {
+    const db = track(freshDb());
+    sqlite(
+      db,
+      `UPDATE tenders SET eop_tender_id = '101' WHERE id = 't:1';
+       UPDATE tenders SET eop_tender_id = '202' WHERE id = 't:2';
+       INSERT INTO amendments (id, natural_key, contract_number, unp, published_at, document_number, source)
+       VALUES
+         ('am:UNP-1:C-1:E1','am:UNP-1:C-1:E1','C-1','UNP-1','2026-03-05','E1','eop:annexes:2026-03-05'),
+         -- twin by the prefer-EOP rule: C-1 has an EOP annex under the УНП the OCID resolves to
+         ('am:o101:C-1:R1','am:o101:C-1:R1','C-1','ocds-e82gsb-101','2026-03-05','ocds-e82gsb-101-1/x','ocds:2026-03-05'),
+         -- stale alias: the same OCDS publication is served under the УНП as well
+         ('am:UNP-2:C-3:R2','am:UNP-2:C-3:R2','C-3','UNP-2','2026-04-01','ocds-e82gsb-202-2/x','ocds:2026-04-01'),
+         ('am:o202:C-3:R2','am:o202:C-3:R2','C-3','ocds-e82gsb-202','2026-04-01','ocds-e82gsb-202-2/x','ocds:2026-04-01');
+       -- an OCDS-only procedure (its source_id is an OCID) that carries the same tender.id is no УНП, so
+       -- it does not make the procedure ambiguous
+       INSERT INTO tenders (id, source_id, title, authority_id, procedure_type, eop_tender_id)
+       VALUES ('t:6','UNP-6','Tender Six','auth:1','открита процедура','606'),
+              ('t:ocds-e82gsb-606','ocds-e82gsb-606','Tender Six (OCDS)','auth:1','открита процедура','606');
+       INSERT INTO amendments (id, natural_key, contract_number, unp, published_at, document_number, source)
+       VALUES
+         ('am:UNP-6:C-6:E6','am:UNP-6:C-6:E6','C-6','UNP-6','2026-03-05','E6','eop:annexes:2026-03-05'),
+         ('am:o606:C-6:R6','am:o606:C-6:R6','C-6','ocds-e82gsb-606','2026-03-05','ocds-e82gsb-606-1/x','ocds:2026-03-05');`,
+    );
+    const result = await checkAmendmentTwins(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/^3 OCDS amendment\(s\) are served under their OCID/);
+    // Both forms of the defect are reported side by side.
+    sqlite(
+      db,
+      `INSERT INTO amendments (id, natural_key, contract_number, unp, published_at, document_number, source)
+       VALUES ('am:UNP-1:C-1:R9','am:UNP-1:C-1:R9','C-1','UNP-1','2026-05-01','ocds-e82gsb-101-9/x','ocds:2026-05-01');`,
+    );
+    const both = await checkAmendmentTwins(runner(db));
+    expect(both.detail).toMatch(/^1 \(unp, contract_number\).*; 3 OCDS amendment\(s\)/);
+  });
+
+  it('amendment-twin-dedup keeps OCID rows that are no proven twin', async () => {
+    const db = track(freshDb());
+    sqlite(
+      db,
+      `UPDATE tenders SET eop_tender_id = '101' WHERE id = 't:1';
+       UPDATE tenders SET eop_tender_id = '101' WHERE id = 't:2';
+       INSERT INTO tenders (id, source_id, title, authority_id, procedure_type, eop_tender_id)
+       VALUES ('t:3','UNP-3','Tender Three','auth:1','открита процедура','303'),
+              ('t:ocds-e82gsb-303','ocds-e82gsb-303','Tender Three (OCDS)','auth:1','открита процедура','404'),
+              ('t:4','UNP-4','Tender Four','auth:1','открита процедура','404'),
+              ('t:5','UNP-5','Tender Five','auth:1','открита процедура','505');
+       INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur)
+       VALUES ('c:o:9','t:ocds-e82gsb-303','eik:131071587',10,'EUR','2026-01-01','ok',NULL);
+       INSERT INTO amendments (id, natural_key, contract_number, unp, published_at, document_number, source)
+       VALUES
+         ('am:UNP-1:C-1:E1','am:UNP-1:C-1:E1','C-1','UNP-1','2026-03-05','E1','eop:annexes:2026-03-05'),
+         ('am:UNP-3:C-3:E3','am:UNP-3:C-3:E3','C-3','UNP-3','2026-03-05','E3','eop:annexes:2026-03-05'),
+         ('am:UNP-5:C-5:R5','am:UNP-5:C-5:R5','C-5','UNP-5','2026-03-05','ocds-e82gsb-505-1/x','ocds:2026-03-05'),
+         -- two served procedures claim tender.id 101: no single УНП, no proven twin
+         ('am:o101:C-1:R1','am:o101:C-1:R1','C-1','ocds-e82gsb-101','2026-03-05','ocds-e82gsb-101-1/x','ocds:2026-03-05'),
+         -- a contract hangs on this OCID itself: it is the key, not an alias
+         ('am:o303:C-3:R3','am:o303:C-3:R3','C-3','ocds-e82gsb-303','2026-03-05','ocds-e82gsb-303-1/x','ocds:2026-03-05'),
+         -- the only served tender with tender.id 404 besides an OCDS-only one resolves, but C-4 has no annex
+         ('am:o404:C-4:R4','am:o404:C-4:R4','C-4','ocds-e82gsb-404','2026-03-05','ocds-e82gsb-404-1/x','ocds:2026-03-05'),
+         -- C-5 has only an OCDS annex under the УНП, and it is a different publication
+         ('am:o505:C-5:R6','am:o505:C-5:R6','C-5','ocds-e82gsb-505','2026-03-07','ocds-e82gsb-505-2/x','ocds:2026-03-07'),
+         -- no served tender carries tender.id 999
+         ('am:o999:C-1:R7','am:o999:C-1:R7','C-1','ocds-e82gsb-999','2026-03-05','ocds-e82gsb-999-1/x','ocds:2026-03-05');`,
+    );
+    const result = await checkAmendmentTwins(runner(db));
+    expect(result.ok).toBe(true);
+    expect(result.detail).toMatch(/prefer-EOP dedup intact/);
   });
 
   it('amendment-twin-dedup self-skips when the amendments table is absent (staging-only DB)', async () => {
