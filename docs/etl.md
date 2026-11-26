@@ -416,6 +416,11 @@ integrity gate проверява `framework-ceilings-unsummed`: нито еди
    [`integrity-gate.md`](integrity-gate.md)).
    FX-проверката нарочно **не** е включена тук (проследено в #154). Старата обосновка „Worker-ът не
    зарежда курсове" вече не важи — от #158 стъпката `load-fx` тегли липсващите курсове преди derive-а.
+9. записва присъдата на гейта в `refresh_verdict` на обслужвания D1 (стъпка `record-verdict`, по един
+   ред на бяг): `ok`, `violation`, `unverified` или `skipped` за бяг без нищо за проверка, заедно с имената
+   на проверките. Неуспешен запис не проваля бяга, но се логва `etl_refresh_verdict_unrecorded`. Само
+   `ok` е здраве. Четенето е един ред, `getLatestRefreshVerdict` от `@sigma/db`; виж
+   [`integrity-gate.md`](integrity-gate.md#the-stored-verdict).
 
 ### Слоят „регистър" (`sigma-registry`)
 
