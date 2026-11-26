@@ -142,8 +142,10 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    row as the daily `amendments` batch does (a test holds the two equal), and evaluated by the rule itself
    (`raw_contract_annex_evidence` / `raw_contract_values`). Any row whose `value_flag`, `amount_eur`, other amounts (`amount`,
    `current_value`, `signing_value_eur`, `current_value_eur`; money to half a cent), current-value currency
-   or conversion marker, signing rate (relative 1e-9) or annex count differs **fails the build**. The detail
-   gives the count, the count per kind and the `amount_eur` that would move, never a row. It proves that the
+   or conversion marker, signing rate (relative 1e-9) or annex count differs **fails the build**. An OCDS
+   release that carries a value corrected at the source (docs/etl.md, „Стойност, поправена в източника само с
+   OCDS изменение") is served as an annex with an after-value, so the check reads it like any other annex.
+   The detail gives the count, the count per kind and the `amount_eur` that would move, never a row. It proves that the
    build and the daily path agree, so a contract that a later window re-values does not move for no reason.
    Two kinds of legacy row (`own_estimate_source` NULL) are **held as stored and counted** in the detail,
    because their stored inputs cannot settle them: a `value_suspect` verdict the rule no longer reaches
