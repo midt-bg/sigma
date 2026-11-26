@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { BASE_SCHEMA } from './base-schema';
-import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
+import { assertIntegrity, runIntegrityChecks } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
@@ -1192,8 +1192,9 @@ describe('refresh-slice EOP base derivation', () => {
            VALUES
              ('am:ocds-e82gsb-TSB:C-SB:REL-C-SB', 'am:ocds-e82gsb-TSB:C-SB:REL-C-SB', 'C-SB',
               'ocds-e82gsb-TSB', 1000, 'BGN', '2026-09-01', 'REL-C-SB', 'ocds:2026-09-01'),
-             -- another amendment of the same procedure, served under the OCID but NOT staged again:
-             -- nothing in this window speaks for it, so it stays.
+             -- another amendment of the same procedure, served under the OCID but NOT staged again.
+             -- Beside an EOP annex it is a twin all the same and the served-twin removal takes it;
+             -- without one it is no twin, and nothing in this window speaks for it, so it stays.
              ('am:ocds-e82gsb-TSB:C-SB:REL-OLDER', 'am:ocds-e82gsb-TSB:C-SB:REL-OLDER', 'C-SB',
               'ocds-e82gsb-TSB', 900, 'BGN', '2026-08-01', 'REL-OLDER', 'ocds:2026-08-01');`,
         );
@@ -1205,12 +1206,14 @@ describe('refresh-slice EOP base derivation', () => {
             stale,
             'SELECT unp, document_number FROM amendments ORDER BY document_number',
           ),
-        ).toEqual([
-          ...(withEop
+        ).toEqual(
+          withEop
             ? [{ unp: 'UNP-SB', document_number: 'AMD-E-C-SB' }]
-            : [{ unp: 'UNP-SB', document_number: 'REL-C-SB' }]),
-          { unp: 'ocds-e82gsb-TSB', document_number: 'REL-OLDER' },
-        ]);
+            : [
+                { unp: 'UNP-SB', document_number: 'REL-C-SB' },
+                { unp: 'ocds-e82gsb-TSB', document_number: 'REL-OLDER' },
+              ],
+        );
         expect(annexCount(stale, 'C-SB')).toBe(1);
       }
 
@@ -2243,6 +2246,257 @@ describe('refresh-slice integrity gate', () => {
       const results = await assertIntegrity(run, { label: 'test-slice-authority', exit: false });
       expect(results.every((r) => r.ok)).toBe(true);
       expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('refresh-slice served OCID annex twins', () => {
+  // Before the served-tenders bridge, a window that could not resolve an OCDS amendment's procedure served
+  // it under its OCID — beside the annex it duplicates, where no (unp, contract_number) comparison sees it.
+  // Older such rows are never staged again, so only a removal over the served table converges them. The
+  // gate (`amendment-twin-dedup`) and the removal share one definition (AMENDMENT_OCID_TWINS_SQL).
+  const EIK = '833456781';
+  const tender = (unp: string, tenderId: string): string =>
+    `INSERT INTO raw_tenders
+       (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+        cpv_code, cpv_description, contract_kind, estimated_value, currency, authority_name,
+        authority_eik, authority_type, published_at)
+     VALUES
+       ('eop:tenders:2026-06-01', 2026, '2026-06-09T00:00:00Z', '${unp}', '${tenderId}', 'open',
+        'Test tender', '45000000', 'Construction', 'works', 500000, 'BGN',
+        'Община Тест', '${EIK}', 'public', '2026-06-01');`;
+  const contract = (unp: string, tenderId: string, number: string, signing: number): string =>
+    `INSERT INTO raw_contracts
+       (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+        published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+        cpv_description, contract_kind, estimated_value, procurement_currency, legal_basis,
+        award_criteria, authority_name, authority_eik, authority_type, main_activity, notice_type,
+        lot_id, contract_number, contract_date, signing_value, currency, contract_subject,
+        awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
+        eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
+     VALUES
+       ('eop:contracts:2026-06-01', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-${number}',
+        '2026-06-01', '${unp}', '${tenderId}', 'open', 'Test tender', '45000000',
+        'Construction', 'works', 500000, 'BGN', 'basis', 'lowest', 'Община Тест', '${EIK}',
+        'public', 'activity', 'notice', NULL, '${number}', '2026-06-02', ${signing}, 'BGN',
+        'Test contract', 0, '887777778', 'ТЕСТ ГРУП ЕООД', 'BG', 'small', 0, 1, 1, 0, 0, 30);`;
+  const eopAnnex = (o: {
+    unp: string;
+    number: string;
+    doc: string;
+    published: string;
+    before: number;
+    after: number;
+  }): string =>
+    `INSERT INTO raw_amendments
+       (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+        contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+        procurement_subject, contract_kind, value_before, value_after, value_delta, currency, description)
+     VALUES
+       ('eop:annexes:${o.published}', 2026, 'eop', '2026-09-09T00:00:00Z', '1', '${o.doc}',
+        '${o.number}', '2026-06-02', '${o.published}', '${o.unp}', '${EIK}', 'Община Тест',
+        'Test tender', 'works', ${o.before}, ${o.after}, ${o.after - o.before}, 'BGN', 'annex ${o.doc}');`;
+  const ocdsAnnex = (o: { ocid: string; tenderId: string; number: string; doc: string }): string =>
+    `INSERT INTO raw_amendments
+       (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+        contract_number, contract_date, published_at, unp, tender_ext_id, authority_eik,
+        authority_name, procurement_subject, contract_kind, value_before, value_after, value_delta,
+        currency, description)
+     VALUES
+       ('ocds:2026-09-01', 2026, 'ocds', '2026-09-02T00:00:00Z', '1', '${o.doc}',
+        '${o.number}', '2026-06-02', '2026-09-01', '${o.ocid}', '${o.tenderId}', '${EIK}',
+        'Община Тест', 'Test tender', 'works', 1000, NULL, NULL, 'BGN', 'OCDS annex');`;
+  // A served OCDS row keyed by its OCID, written the way an earlier window promoted it.
+  const servedOcid = (ocid: string, number: string, doc: string): string =>
+    `INSERT INTO amendments (id, natural_key, contract_number, unp, value_before, currency,
+       published_at, document_number, source)
+     VALUES ('am:${ocid}:${number}:${doc}', 'am:${ocid}:${number}:${doc}', '${number}', '${ocid}',
+       1000, 'BGN', '2026-08-17', '${doc}', 'ocds:2026-08-17');`;
+
+  // The served state the twins sit in, built through refresh-slice itself.
+  //   UNP-A (tender.id TA): C-A1 has EOP annexes of the legitimate shapes — two on one date with different
+  //     content, the same amount on two dates, and a later correction; C-A2 has only an OCDS annex, bridged
+  //     to the УНП; C-A3 has none.
+  //   UNP-B / UNP-B2 both carry tender.id TB (an ambiguous procedure); UNP-C (tender.id TC) has a contract
+  //   also served under its own OCID (an OCDS-only procedure keyed by the OCID).
+  function buildServed(dbPath: string): void {
+    initWorkDb(dbPath);
+    sqlite(
+      dbPath,
+      `${tender('UNP-A', 'TA')}
+       ${contract('UNP-A', 'TA', 'C-A1', 100000)}
+       ${contract('UNP-A', 'TA', 'C-A2', 50000)}
+       ${contract('UNP-A', 'TA', 'C-A3', 20000)}
+       ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-1', published: '2026-07-01', before: 100000, after: 110000 })}
+       ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-2', published: '2026-07-01', before: 110000, after: 115000 })}
+       ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-3', published: '2026-07-20', before: 115000, after: 120000 })}
+       ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-4', published: '2026-08-03', before: 115000, after: 120000 })}
+       ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-5', published: '2026-08-20', before: 120000, after: 118000 })}
+       ${ocdsAnnex({ ocid: 'ocds-e82gsb-TA', tenderId: 'TA', number: 'C-A2', doc: 'REL-A2' })}
+       ${tender('UNP-B', 'TB')}
+       ${contract('UNP-B', 'TB', 'C-B1', 30000)}
+       ${eopAnnex({ unp: 'UNP-B', number: 'C-B1', doc: 'B1-1', published: '2026-07-01', before: 30000, after: 33000 })}
+       ${tender('UNP-B2', 'TB2')}
+       ${contract('UNP-B2', 'TB2', 'C-B2', 40000)}
+       ${tender('UNP-C', 'TC')}
+       ${contract('UNP-C', 'TC', 'C-C1', 60000)}
+       ${eopAnnex({ unp: 'UNP-C', number: 'C-C1', doc: 'C1-1', published: '2026-07-01', before: 60000, after: 66000 })}`,
+    );
+    readScript(dbPath, refreshSlicePath);
+    // The second procedure claims tender.id TB too, and a contract hangs on the OCDS-only procedure of TC.
+    sqlite(
+      dbPath,
+      `UPDATE tenders SET eop_tender_id = 'TB' WHERE source_id = 'UNP-B2';
+       CREATE TEMP TABLE ocid_tender AS SELECT * FROM tenders WHERE source_id = 'UNP-C';
+       UPDATE ocid_tender SET id = 't:ocds-e82gsb-TC', source_id = 'ocds-e82gsb-TC', eop_tender_id = NULL;
+       INSERT INTO tenders SELECT * FROM ocid_tender;
+       CREATE TEMP TABLE ocid_contract AS SELECT * FROM contracts WHERE contract_number = 'C-C1';
+       UPDATE ocid_contract SET id = 'c:o:test-c', tender_id = 't:ocds-e82gsb-TC', annex_count = 0,
+         current_value = NULL, amount_eur = NULL, document_number = 'DOC-OCID-C1';
+       INSERT INTO contracts SELECT * FROM ocid_contract;`,
+    );
+    // One ordinary run over an empty window so every rollup reflects the fixture.
+    resetRawStaging(dbPath);
+    readScript(dbPath, refreshSlicePath);
+    resetRawStaging(dbPath);
+  }
+
+  const TWINS = [
+    // beside the EOP annexes of C-A1: a twin by the prefer-EOP rule
+    ['ocds-e82gsb-TA', 'C-A1', 'ocds-e82gsb-TA-1/2026-08-17-contractamendment'],
+    ['ocds-e82gsb-TA', 'C-A1', 'ocds-e82gsb-TA-2/2026-08-19-contractamendment'],
+    // the same OCDS publication C-A2 already serves under the УНП: its stale alias
+    ['ocds-e82gsb-TA', 'C-A2', 'REL-A2'],
+  ] as const;
+  const KEPT = [
+    // another OCDS publication of C-A2, which has no EOP annex: no twin of anything served
+    ['ocds-e82gsb-TA', 'C-A2', 'REL-A2-OTHER'],
+    // a contract number with no annex served under the УНП
+    ['ocds-e82gsb-TA', 'C-A3', 'REL-A3'],
+    // two served procedures claim the tender.id: no single УНП, so no twin can be proved
+    ['ocds-e82gsb-TB', 'C-B1', 'REL-B1'],
+    // the OCID carries a contract of its own: there it is the key the annex hangs on
+    ['ocds-e82gsb-TC', 'C-C1', 'REL-C1'],
+    // no served procedure carries the tender.id at all
+    ['ocds-e82gsb-TNONE', 'C-N1', 'REL-N1'],
+  ] as const;
+
+  const amendmentRows = (dbPath: string) =>
+    sqliteJson<{ unp: string; contract_number: string; document_number: string; source: string }>(
+      dbPath,
+      `SELECT unp, contract_number, document_number, substr(source, 1, 4) AS source
+       FROM amendments ORDER BY unp, contract_number, document_number`,
+    );
+  const contractValues = (dbPath: string) =>
+    sqliteJson<Record<string, unknown>>(
+      dbPath,
+      `SELECT id, annex_count, current_value, amount_eur, value_flag FROM contracts ORDER BY id`,
+    );
+  const sums = (dbPath: string) =>
+    sqliteJson<Record<string, unknown>>(
+      dbPath,
+      `SELECT (SELECT contracts || '/' || value_eur FROM home_totals) AS home,
+              (SELECT group_concat(authority_id || '=' || spent_eur || '/' || contracts) FROM authority_totals) AS auth,
+              (SELECT group_concat(bidder_id || '=' || won_eur || '/' || contracts) FROM company_totals) AS comp`,
+    )[0];
+  const gate = (dbPath: string) =>
+    runIntegrityChecks((sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql));
+  const twinGate = async (dbPath: string) =>
+    (await gate(dbPath)).find((r) => r.name === 'amendment-twin-dedup')!;
+
+  it('the gate sees OCID twins, the refresh removes exactly them, and nothing derived moves', async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-ocid-twins-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      buildServed(dbPath);
+      const valuesBefore = contractValues(dbPath);
+      const sumsBefore = sums(dbPath);
+      // What refresh-slice derived from the annexes: C-A1 counts its five EOP annexes and stands at the
+      // latest after-value; C-A2 counts its one bridged OCDS annex, which carries no after-value.
+      const byNumber = (n: string) =>
+        sqliteJson<{ annex_count: number; current_value: number | null; amount_eur: number }>(
+          dbPath,
+          `SELECT annex_count, current_value, amount_eur FROM contracts WHERE id GLOB 'c:e:*' AND contract_number = '${n}'`,
+        )[0];
+      expect(byNumber('C-A1')).toMatchObject({ annex_count: 5, current_value: 118000 });
+      expect(byNumber('C-A1')!.amount_eur).toBeCloseTo(118000 / 1.95583, 2);
+      expect(byNumber('C-A2')).toMatchObject({ annex_count: 1, current_value: null });
+
+      sqlite(dbPath, [...TWINS, ...KEPT].map(([o, n, d]) => servedOcid(o, n, d)).join('\n'));
+      const served = amendmentRows(dbPath);
+
+      // Before: the gate fails on the three twins and only on them.
+      const before = await twinGate(dbPath);
+      expect(before.ok).toBe(false);
+      expect(before.detail).toMatch(/^3 OCDS amendment\(s\) are served under their OCID/);
+      expect((await gate(dbPath)).filter((r) => !r.ok).map((r) => r.name)).toEqual([
+        'amendment-twin-dedup',
+      ]);
+
+      // An ordinary refresh with nothing new in its window converges them.
+      readScript(dbPath, refreshSlicePath);
+      const removed = TWINS.map(([unp, contract_number, document_number]) => ({
+        unp,
+        contract_number,
+        document_number,
+      }));
+      const after = amendmentRows(dbPath);
+      expect(after).toEqual(
+        served.filter(
+          (r) =>
+            !removed.some(
+              (t) =>
+                t.unp === r.unp &&
+                t.contract_number === r.contract_number &&
+                t.document_number === r.document_number,
+            ),
+        ),
+      );
+      // Every legitimate row survives: all EOP annexes (same date with different content, the same amount
+      // on two dates, the later correction), the bridged OCDS annex, and each kept OCID row.
+      expect(after.filter((r) => r.source === 'eop:')).toHaveLength(7);
+      for (const [unp, contract_number, document_number] of KEPT)
+        expect(after).toContainEqual({ unp, contract_number, document_number, source: 'ocds' });
+      expect(after).toContainEqual({
+        unp: 'UNP-A',
+        contract_number: 'C-A2',
+        document_number: 'REL-A2',
+        source: 'ocds',
+      });
+
+      // The removed rows were no contract's annex input, so every derived value and sum holds.
+      expect(contractValues(dbPath)).toEqual(valuesBefore);
+      expect(sums(dbPath)).toEqual(sumsBefore);
+      // Before the removal the twin check is the only one that fails; after it the whole gate passes.
+      const gateAfter = await gate(dbPath);
+      expect(gateAfter.filter((r) => !r.ok)).toEqual([]);
+      expect(gateAfter.find((r) => r.name === 'amendment-twin-dedup')?.detail).toMatch(
+        /prefer-EOP dedup intact/,
+      );
+
+      // A second run changes nothing.
+      resetRawStaging(dbPath);
+      readScript(dbPath, refreshSlicePath);
+      expect(amendmentRows(dbPath)).toEqual(after);
+      expect(contractValues(dbPath)).toEqual(valuesBefore);
+
+      // The value rule applied again to the same annexes gives the same values: replay C-A1's annexes.
+      resetRawStaging(dbPath);
+      sqlite(
+        dbPath,
+        `${tender('UNP-A', 'TA')}
+         ${contract('UNP-A', 'TA', 'C-A1', 100000)}
+         ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-1', published: '2026-07-01', before: 100000, after: 110000 })}
+         ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-2', published: '2026-07-01', before: 110000, after: 115000 })}
+         ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-3', published: '2026-07-20', before: 115000, after: 120000 })}
+         ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-4', published: '2026-08-03', before: 115000, after: 120000 })}
+         ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-5', published: '2026-08-20', before: 120000, after: 118000 })}`,
+      );
+      readScript(dbPath, refreshSlicePath);
+      expect(contractValues(dbPath)).toEqual(valuesBefore);
+      expect(sqlite(dbPath, 'PRAGMA foreign_key_check;').trim()).toBe('');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

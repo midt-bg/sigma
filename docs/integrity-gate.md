@@ -119,6 +119,14 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    currencies at the row's `fx_rate`) and allows one cent. It self-skips on a schema before migration 0002.
    `scripts/repair-annex-total-suspect.sql` repairs such rows on staging, where the one-time 0002 backfill
    once wrote them.
+7. **No annex is served twice** (`amendment-twin-dedup`). No `(unp, contract_number)` carries both an EOP
+   and an OCDS amendment (the prefer-EOP dedup of #286), and no OCDS amendment stays served under its OCID
+   beside the annex it duplicates. The OCID names the procedure (`ocds-` + six-character prefix + `-` +
+   `tender.id`); the served tender with that `eop_tender_id` gives the УНП, only when exactly one does and
+   never an OCDS-only procedure. Under that УНП the row is a twin when the contract has an EOP annex or the
+   same OCDS publication is already served there; a row whose OCID carries contracts of its own is the
+   key, not a twin. The definition is one query, `AMENDMENT_OCID_TWINS_SQL`: the gate counts it and
+   `refresh-slice.sql` deletes it on every refresh, so the gate is the post-condition of that removal.
 
 ## Tolerances (and what is *not* tolerated)
 

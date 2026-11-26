@@ -33,6 +33,9 @@ export function checkEikValidity(runner: IntegrityRunner): Promise<IntegrityResu
 export function checkDateSanity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkStagingReconciliation(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkAmendmentTwins(runner: IntegrityRunner): Promise<IntegrityResult>;
+/** The ids of served OCDS amendments still keyed by their OCID that duplicate an annex served under the
+ *  resolved УНП. Shared with the removal in scripts/refresh-slice.sql (lockstep-tested). */
+export const AMENDMENT_OCID_TWINS_SQL: string;
 
 export const CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
 export function runIntegrityChecks(runner: IntegrityRunner): Promise<IntegrityResult[]>;

@@ -1872,6 +1872,46 @@ SELECT
 FROM raw_amendment_publications a
 JOIN suppliers ids ON ids.eik_raw IS a.contractor_eik;
 
+-- Served OCDS amendments still keyed by their OCID, beside the annex they duplicate. Before the served-
+-- tenders bridge above existed, a window that could not resolve an amendment's procedure served it under
+-- its OCID; the alias clean-up at the top of this batch reaches such a row only when a later window stages
+-- the same publication again, and an older row is never staged again. Remove every such twin here, on every
+-- run, by the SAME definition the `amendment-twin-dedup` gate counts (scripts/integrity-checks.mjs,
+-- AMENDMENT_OCID_TWINS_SQL — the block between the markers must stay byte-identical to it, enforced by
+-- packages/db/src/amendments-ocid-twins.test.ts). It runs after the promotion so the gate's post-condition
+-- holds at the end of this batch. Only OCDS rows go, and never one whose OCID carries contracts of its own:
+-- a removed row is keyed by an OCID no contract hangs on, so it was no contract's annex input and no
+-- annex_count, current value or amount changes with it. Idempotent: a second run finds nothing, and on a
+-- converged database the query reads no tender (see the definition's comment).
+DELETE FROM amendments
+WHERE id IN (
+-- @ocid-twin-lockstep start
+WITH ocid_rows AS MATERIALIZED (
+  SELECT id, unp, contract_number, document_number, substr(unp, 13) AS tender_ext_id
+  FROM amendments
+  WHERE unp GLOB 'ocds-??????-?*' AND source LIKE 'ocds:%'
+), ocid_procedures AS MATERIALIZED (
+  SELECT t.eop_tender_id AS tender_ext_id, MIN(t.source_id) AS unp
+  FROM tenders t
+  WHERE EXISTS (SELECT 1 FROM ocid_rows)
+    AND t.eop_tender_id IN (SELECT tender_ext_id FROM ocid_rows)
+    AND t.source_id NOT GLOB 'ocds-*'
+  GROUP BY t.eop_tender_id
+  HAVING COUNT(DISTINCT t.source_id) = 1
+)
+SELECT o.id
+FROM ocid_rows o
+JOIN ocid_procedures p ON p.tender_ext_id = o.tender_ext_id
+WHERE NOT EXISTS (SELECT 1 FROM contracts c WHERE c.tender_id = 't:' || o.unp)
+  AND EXISTS (
+    SELECT 1 FROM amendments e
+    WHERE e.unp = p.unp AND e.contract_number = o.contract_number
+      AND (e.source LIKE 'eop:%'
+        OR (e.source LIKE 'ocds:%' AND e.document_number = o.document_number))
+  )
+-- @ocid-twin-lockstep end
+);
+
 -- Materialise affected inputs before the UPDATE to bound D1's statement compiler.
 DROP TABLE IF EXISTS amend_contract_base;
 
