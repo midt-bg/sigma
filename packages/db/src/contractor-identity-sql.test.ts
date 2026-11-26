@@ -58,13 +58,13 @@ INSERT INTO raw_contracts
 VALUES
   ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-VALID', 'C-VALID', '2026-07-01',
    '2026-07-02', '123456786', 'Тестов възложител', 'Валиден ЕИК', 100, 100, 'EUR',
-   '103267194', 'ТИПО ООД'),
+   '999000049', 'ТИПО ООД'),
   ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-TYPO', 'C-TYPO', '2026-07-01',
    '2026-07-02', '123456786', 'Тестов възложител', 'Грешна контролна цифра', 200, 200, 'EUR',
-   '103267195', 'ТИПО ООД'),
+   '999000048', 'ТИПО ООД'),
   ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-EMPTY', 'C-EMPTY', '2026-07-01',
    '2026-07-02', '123456786', 'Тестов възложител', 'Празно име', 300, 300, 'EUR',
-   '103267195', ''),
+   '999000048', ''),
   ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-NULL', 'C-NULL', '2026-07-01',
    '2026-07-02', '123456786', 'Тестов възложител', 'Липсваща самоличност', 400, 400, 'EUR',
    NULL, NULL),
@@ -129,7 +129,7 @@ describe.each(['normalize', 'refresh'] as const)('%s contractor identity', (path
         { contract_number: 'C-GUARD-SPACE', bidder_id: 'name:МАРИЦА ИЗТОК' },
         { contract_number: 'C-NULL', bidder_id: 'unknown:анонимен' },
         { contract_number: 'C-TYPO', bidder_id: 'name:ТИПО ООД' },
-        { contract_number: 'C-VALID', bidder_id: 'eik:103267194' },
+        { contract_number: 'C-VALID', bidder_id: 'eik:999000049' },
       ]);
 
       expect(

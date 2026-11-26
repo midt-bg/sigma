@@ -462,7 +462,7 @@ function seedJointAuthorityFixture(dbPath: string, refresh: boolean): void {
        INSERT INTO tenders
          (id, source_id, title, authority_id, currency, procedure_type, status)
          VALUES
-         ('t:00080-2023-0001', '00080-2023-0001', 'Historical prefix observation',
+         ('t:99980-2023-0001', '99980-2023-0001', 'Historical prefix observation',
           'auth:222222222', 'EUR', 'open', 'published');`,
     );
   }
@@ -473,13 +473,13 @@ function seedJointAuthorityFixture(dbPath: string, refresh: boolean): void {
       (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
        estimated_value, currency, authority_name, authority_eik, authority_type, lot_id, published_at)
     VALUES
-      ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', '00080-2023-0001',
+      ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', '99980-2023-0001',
        'TENDER-PREFIX-HISTORY', 'open', 'Historical prefix observation', 1000, 'EUR',
        'Second Authority', '222222222', 'public', NULL, '2023-01-01'),
       ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', '99999-2023-0001',
        'TENDER-NAME-HISTORY', 'open', 'Historical name observation', 1000, 'EUR',
        'First Authority', '111111111', 'public', NULL, '2023-01-01'),
-      ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', '00080-2024-0030',
+      ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', '99980-2024-0030',
        'TENDER-JOINT-PREFIX', 'open', 'Prefix-led joint tender', 1000, 'EUR',
        'First Authority', '111111111;222222222', 'public', NULL, '2024-01-01'),
       ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', 'UNRESOLVED-2024-0001',
@@ -494,7 +494,7 @@ function seedJointAuthorityFixture(dbPath: string, refresh: boolean): void {
        contractor_eik, contractor_name, eu_funded, bids_received)
     VALUES
       ('eop:contracts:2024-01-01', 2024, 'eop', '2024-01-02T00:00:00Z', 0,
-       'DOC-JOINT-PREFIX', '2024-01-01', '00080-2024-0030', 'TENDER-JOINT-PREFIX', 'open',
+       'DOC-JOINT-PREFIX', '2024-01-01', '99980-2024-0030', 'TENDER-JOINT-PREFIX', 'open',
        'Prefix-led joint tender', 1000, 'EUR', 'First Authority', '111111111;222222222',
        'public', 'CONTRACT-JOINT-PREFIX', '2024-01-02', 100, 'EUR', 'Prefix-led contract', 0,
        '777777777', 'Joint Bidder', 0, 1),
@@ -525,11 +525,11 @@ describe('joint-procurement authority attribution', () => {
           sqliteJson<{ source_id: string; authority_id: string }>(
             dbPath,
             `SELECT source_id, authority_id FROM tenders
-             WHERE source_id IN ('00080-2024-0030', 'UNRESOLVED-2024-0001')
+             WHERE source_id IN ('99980-2024-0030', 'UNRESOLVED-2024-0001')
              ORDER BY source_id`,
           ),
         ).toEqual([
-          { source_id: '00080-2024-0030', authority_id: 'auth:222222222' },
+          { source_id: '99980-2024-0030', authority_id: 'auth:222222222' },
           { source_id: 'UNRESOLVED-2024-0001', authority_id: 'auth:333333333' },
         ]);
 
@@ -544,7 +544,7 @@ describe('joint-procurement authority attribution', () => {
              ORDER BY t.source_id`,
           ),
         ).toEqual([
-          { source_id: '00080-2024-0030', authority_id: 'auth:222222222', ordinal: 0 },
+          { source_id: '99980-2024-0030', authority_id: 'auth:222222222', ordinal: 0 },
           { source_id: 'UNRESOLVED-2024-0001', authority_id: 'auth:333333333', ordinal: 0 },
         ]);
 

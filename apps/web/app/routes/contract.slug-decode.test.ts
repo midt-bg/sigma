@@ -35,7 +35,7 @@ const CASES: Array<{ label: string; id: string }> = [
   // The bug that started it all: АОП number with two "/" in the id.
   {
     label: 'AOP id with "/" and Cyrillic',
-    id: 'c:e:00797-2020-0039:93-ОП20-42/22/:5:eik:102130456:1',
+    id: 'c:e:99997-2020-0039:93-ОП20-42/22/:5:eik:999000077:1',
   },
   // Literal "%" in the source id — contractSlug escapes it to "%25" so RR won't see a malformed escape.
   { label: 'literal "%" in id', id: 'c:e:UNP:50%ADVANCE:_:eik:123456789:1' },
@@ -65,7 +65,7 @@ describe('contract slug decodes end-to-end through React Router matching', () =>
   }
 
   it('the AOP url is genuinely percent-encoded (guards the test itself)', () => {
-    const url = `/contracts/${contractSlug('c:e:00797-2020-0039:93-ОП20-42/22/:5:eik:102130456:1')}`;
+    const url = `/contracts/${contractSlug('c:e:99997-2020-0039:93-ОП20-42/22/:5:eik:999000077:1')}`;
     expect(url).toContain('%2F');
     expect(url).not.toContain('42/22');
   });

@@ -12,8 +12,8 @@ import {
 } from './keyset';
 
 const FILTER_VALUE: Record<string, unknown> = {
-  authority: '000695089',
-  bidder: '103267194',
+  authority: '999000055',
+  bidder: '999000044',
   bids: 'one',
   countBucket: '2-5',
   eu: 'eu',
@@ -32,9 +32,9 @@ function singleFilter(key: string): Record<string, unknown> {
 
 describe('cursor encode/decode', () => {
   it('round-trips a [value, id] pair', () => {
-    const c = encodeCursor('after', 50_840_000_000, 'eik:103267194');
+    const c = encodeCursor('after', 50_840_000_000, 'eik:999000044');
     const d = decodeCursor(c);
-    expect(d).toEqual({ dir: 'after', value: 50_840_000_000, id: 'eik:103267194' });
+    expect(d).toEqual({ dir: 'after', value: 50_840_000_000, id: 'eik:999000044' });
   });
   it('round-trips Cyrillic string values and UTF-8 ids', () => {
     const c = encodeCursor('before', 'доставка на услуги', 'auth:тест-123', 'abc123');

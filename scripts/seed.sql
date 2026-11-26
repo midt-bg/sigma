@@ -4,7 +4,7 @@
 
 INSERT OR IGNORE INTO authorities (id, name, bulstat, region) VALUES
   ('auth-sofia', 'Община София', '000696327', 'София-град'),
-  ('auth-mrrb', 'Министерство на регионалното развитие', '831661388', 'София-град');
+  ('auth-mrrb', 'Министерство на тестовото развитие', '999000166', 'София-град');
 
 INSERT OR IGNORE INTO tenders
   (id, source_id, title, authority_id, cpv_code, estimated_value, currency, procedure_type, status, published_at, deadline_at)
@@ -33,7 +33,7 @@ INSERT OR IGNORE INTO bidders (id, name, bulstat) VALUES
 -- visible as a before/after rather than as an empty page either way.
 
 INSERT OR IGNORE INTO authorities (id, name, bulstat, region) VALUES
-  ('auth-plovdiv', 'Община Пример', '131223340', 'Пловдив');
+  ('auth-plovdiv', 'Община Пример', '999000155', 'Пловдив');
 
 INSERT OR IGNORE INTO tenders
   (id, source_id, title, authority_id, cpv_code, estimated_value, currency, procedure_type, status, published_at, deadline_at)
@@ -44,14 +44,14 @@ VALUES
 
 -- eik_valid=1 so these behave like resolved winners; settlement feeds the seat-confirmation rung.
 INSERT OR IGNORE INTO bidders (id, name, bulstat, eik_normalized, eik_valid, legal_form, settlement) VALUES
-  ('eik:201122335', 'АЛФА СТРОЙ ООД', '201122335', '201122335', 1, 'ООД', 'Пловдив'),
-  ('eik:203445566', 'БЕТА КОНСУЛТ ЕООД', '203445566', '203445566', 1, 'ЕООД', 'София'),
-  ('eik:204556676', 'ГАМА ИНВЕСТ АД', '204556676', '204556676', 1, 'АД', 'Варна');
+  ('eik:999000113', 'АЛФА СТРОЙ ООД', '999000113', '999000113', 1, 'ООД', 'Пловдив'),
+  ('eik:999000120', 'БЕТА КОНСУЛТ ЕООД', '999000120', '999000120', 1, 'ЕООД', 'София'),
+  ('eik:999000138', 'ГАМА ИНВЕСТ АД', '999000138', '999000138', 1, 'АД', 'Варна');
 
 INSERT OR IGNORE INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
-  ('c-conflict-01', 't-conflict-01', 'eik:201122335', 840000, 'BGN', '2022-03-14', 'Д-2022-101', 429000),
-  ('c-conflict-02', 't-conflict-02', 'eik:203445566', 372000, 'BGN', '2022-06-20', 'Д-2022-102', 190000),
-  ('c-conflict-03', 't-conflict-03', 'eik:204556676', 236000, 'BGN', '2022-08-02', 'Д-2022-103', 120000);
+  ('c-conflict-01', 't-conflict-01', 'eik:999000113', 840000, 'BGN', '2022-03-14', 'Д-2022-101', 429000),
+  ('c-conflict-02', 't-conflict-02', 'eik:999000120', 372000, 'BGN', '2022-06-20', 'Д-2022-102', 190000),
+  ('c-conflict-03', 't-conflict-03', 'eik:999000138', 236000, 'BGN', '2022-08-02', 'Д-2022-103', 120000);
 
 -- person id = 'person:' || key(name) || '|' || key(institution) — (name, institution), never a bare
 -- name (ADR-0026), so two namesakes at different bodies stay distinct.
@@ -80,22 +80,22 @@ INSERT OR IGNORE INTO interest_links
    first_declared_year, last_declared_year, contract_count, contract_value_eur,
    first_contract_year, last_contract_year, status)
 VALUES
-  ('il:person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|201122335', 'person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|201122335',
-   'person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР', 'eik:201122335', '201122335', 'АЛФА СТРОЙ ООД',
+  ('il:person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|999000113', 'person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|999000113',
+   'person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР', 'eik:999000113', '999000113', 'АЛФА СТРОЙ ООД',
    'exact_name_key', 'seed-demo', 'B_distinctive', 'owns', 'private_ownership', 1, 'exact', 1,
    '2021', '2023', 1, 429000, '2022', '2022', 'published'),
-  ('il:person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|203445566|family', 'person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|203445566|family',
-   'person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ', 'eik:203445566', '203445566', 'БЕТА КОНСУЛТ ЕООД',
+  ('il:person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|999000120|family', 'person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|999000120|family',
+   'person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ', 'eik:999000120', '999000120', 'БЕТА КОНСУЛТ ЕООД',
    'exact_name_key', 'seed-demo', 'A_seat', 'related', 'family_ownership', 1, 'exact', 1,
    '2021', '2023', 1, 190000, '2022', '2022', 'published'),
-  ('il:person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|204556676', 'person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|204556676',
-   'person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР', 'eik:204556676', '204556676', 'ГАМА ИНВЕСТ АД',
+  ('il:person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|999000138', 'person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|999000138',
+   'person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР', 'eik:999000138', '999000138', 'ГАМА ИНВЕСТ АД',
    'exact_name_key', 'seed-demo', 'C_hold', 'owns', 'management_role', 0, 'none', 1,
    '2021', '2023', 1, 120000, '2022', '2022', 'held');
 
 INSERT OR IGNORE INTO interest_link_authorities (link_key, authority_id, authority_name, contract_count, value_eur, own) VALUES
-  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|201122335', 'auth-plovdiv', 'Община Пример', 1, 429000, 'exact'),
-  ('person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|203445566|family', 'auth-sofia', 'Община София', 1, 190000, 'exact');
+  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|999000113', 'auth-plovdiv', 'Община Пример', 1, 429000, 'exact'),
+  ('person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|999000120|family', 'auth-sofia', 'Община София', 1, 190000, 'exact');
 
 -- Trade Register evidence seals (#279, ADR-0033, migration 0006). NOT optional decoration: since the
 -- evidence ladder landed, SURFACED_OWNERSHIP requires a publishing seal, so a seeded link without one
@@ -108,11 +108,11 @@ INSERT OR IGNORE INTO interest_link_authorities (link_key, authority_id, authori
 INSERT OR IGNORE INTO interest_link_evidence
   (link_key, evidence_kind, registry_role, matched_fact, entry_number, entry_date, lookup_date, rules_version, live_status)
 VALUES
-  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|201122335', 'document', 'owner', 'role:owner:CR_F_19_L',
+  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|999000113', 'document', 'owner', 'role:owner:CR_F_19_L',
    '20220314150210', '2022-03-14', '2026-08-05', 'tr-rules-1', 'live'),
-  ('person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|203445566|family', 'confirmed', NULL, 'seat:СОФИЯ',
+  ('person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|999000120|family', 'confirmed', NULL, 'seat:СОФИЯ',
    '20210902110455', '2021-09-02', '2026-08-05', 'tr-rules-1', 'live'),
   -- The held link is sealed too — seals exist for held links so the review queue can explain itself,
   -- and this one doubles as the fixture's negative case for the seal gate.
-  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|204556676', 'bar_joint_stock', NULL, NULL,
+  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|999000138', 'bar_joint_stock', NULL, NULL,
    NULL, NULL, '2026-08-05', 'tr-rules-1', 'live');

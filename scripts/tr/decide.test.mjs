@@ -33,16 +33,16 @@ function fixture() {
   db.exec(`
     INSERT INTO registry_deeds (eik, name, legal_form, status, seat_settlement, seat_entry_on,
                                 owners_entry_on, outcome, fetched_at) VALUES
-      ('201122335', 'АЛФА СТРОЙ', 'OOD', 'N', 'гр. Пловдив', '2009-05-02', '2009-05-02', 'ok', '2026-09-10T02:00:00Z'),
+      ('999000111', 'АЛФА СТРОЙ', 'OOD', 'N', 'гр. Пловдив', '2009-05-02', '2009-05-02', 'ok', '2026-09-10T02:00:00Z'),
       ('201122336', 'БЕТА ИНВЕСТ', 'AD', 'N', 'гр. София', '2010-01-01', NULL, 'ok', '2026-09-09T02:00:00Z'),
-      ('000696327', NULL, NULL, NULL, NULL, NULL, NULL, 'absent', '2026-09-08T02:00:00Z');
+      ('000999011', NULL, NULL, NULL, NULL, NULL, NULL, 'absent', '2026-09-08T02:00:00Z');
     INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id, subject_name,
                                 share, country, entry_number, added_on, removed_on) VALUES
-      ('201122335', '0000', '00190', 'partner', 'person', '${hash('a')}', 'ИВАН ПЕТРОВ ТЕСТОВ', '500 BGN', NULL,
+      ('999000111', '0000', '00190', 'partner', 'person', '${hash('a')}', 'ИВАН ПЕТРОВ ТЕСТОВ', '500 BGN', NULL,
        '20090502101007', '2009-05-02', NULL),
-      ('201122335', '0000', '00070', 'manager', 'person', '${hash('b')}', 'ГЕОРГИ ДИМИТРОВ ТЕСТОВ', NULL, NULL,
+      ('999000111', '0000', '00070', 'manager', 'person', '${hash('b')}', 'ГЕОРГИ ДИМИТРОВ ТЕСТОВ', NULL, NULL,
        '20090502101007', '2009-05-02', '2019-01-01'),
-      ('201122335', '0000', '05500', 'beneficial_owner', 'person', '${hash('c')}', 'МАРИЯ ИВАНОВА ПЕТРОВА', '100',
+      ('999000111', '0000', '05500', 'beneficial_owner', 'person', '${hash('c')}', 'МАРИЯ ИВАНОВА ПЕТРОВА', '100',
        NULL, '20190101000000', '2019-01-01', NULL);
   `);
   db.close();
@@ -54,19 +54,19 @@ function fixture() {
     ...over,
   });
   const links = [
-    link({ linkKey: 'person:ivan|201122335', eik: '201122335' }),
+    link({ linkKey: 'person:ivan|999000111', eik: '999000111' }),
     link({
-      linkKey: 'person:georgi|201122335',
-      eik: '201122335',
+      linkKey: 'person:georgi|999000111',
+      eik: '999000111',
       declarantName: 'Георги Димитров Тестов',
     }),
     link({
-      linkKey: 'person:maria|201122335',
-      eik: '201122335',
+      linkKey: 'person:maria|999000111',
+      eik: '999000111',
       declarantName: 'Мария Иванова Петрова',
     }),
     link({ linkKey: 'person:ivan|201122336', eik: '201122336' }),
-    link({ linkKey: 'person:ivan|000696327', eik: '000696327' }),
+    link({ linkKey: 'person:ivan|000999011', eik: '000999011' }),
     link({ linkKey: 'person:ivan|201122337', eik: '201122337' }),
   ];
   const linksFile = path.join(dir, 'links.jsonl');
@@ -87,7 +87,7 @@ test('decides each link against the registry as it stands, dated by the day the 
   assert.equal(decide(f), 0);
   const cache = openCache(f.trDb);
   try {
-    const ivan = readVerdict(cache, 'person:ivan|201122335');
+    const ivan = readVerdict(cache, 'person:ivan|999000111');
     assert.equal(ivan.kind, 'document');
     assert.equal(ivan.publishable, true);
     assert.equal(ivan.registryRole, 'owner');
@@ -98,14 +98,14 @@ test('decides each link against the registry as it stands, dated by the day the 
     assert.equal(ivan.decidedAt, '2026-09-10T02:00:00.000Z');
     assert.equal(ivan.reconTerminated, false);
     // A manager whose role ended still shows the company is his; an actual owner is no role the ladder reads.
-    const georgi = readVerdict(cache, 'person:georgi|201122335');
+    const georgi = readVerdict(cache, 'person:georgi|999000111');
     assert.equal(georgi.kind, 'document');
     assert.equal(georgi.registryRole, 'manager');
     assert.equal(georgi.roleEndedOn, '2019-01-01');
-    assert.notEqual(readVerdict(cache, 'person:maria|201122335').kind, 'document');
+    assert.notEqual(readVerdict(cache, 'person:maria|999000111').kind, 'document');
     assert.equal(readVerdict(cache, 'person:ivan|201122336').kind, 'bar_joint_stock');
-    assert.equal(readDeed(cache, '201122335').legalFormVerdict, 'closely_held');
-    assert.equal(readDeed(cache, '201122335').seatNormalized, 'ПЛОВДИВ');
+    assert.equal(readDeed(cache, '999000111').legalFormVerdict, 'closely_held');
+    assert.equal(readDeed(cache, '999000111').seatNormalized, 'ПЛОВДИВ');
   } finally {
     cache.close();
   }
@@ -117,8 +117,8 @@ test('an ЕИК the register has no partida for is outside it; one the layer has
   decide(f, logs);
   const cache = openCache(f.trDb);
   try {
-    assert.equal(readVerdict(cache, 'person:ivan|000696327').kind, 'outside_tr');
-    assert.equal(readDeed(cache, '000696327').status, 'outside_tr');
+    assert.equal(readVerdict(cache, 'person:ivan|000999011').kind, 'outside_tr');
+    assert.equal(readDeed(cache, '000999011').status, 'outside_tr');
     // Not a false „unknown": an absent verdict is what the loader's floor counts.
     assert.equal(readVerdict(cache, 'person:ivan|201122337'), null);
     assert.equal(readDeed(cache, '201122337'), null);
@@ -164,13 +164,13 @@ test('readRegistry gives the standing natural persons of the roles the ladder re
   const f = fixture();
   const src = new DatabaseSync(f.registryDb, { readOnly: true });
   try {
-    const { registry, fetchedAt } = readRegistry(src, '201122335');
+    const { registry, fetchedAt } = readRegistry(src, '999000111');
     assert.equal(fetchedAt, '2026-09-10T02:00:00Z');
     assert.deepEqual(
       registry.holders.map((h) => h.name),
       ['ИВАН ПЕТРОВ ТЕСТОВ'],
     );
-    assert.deepEqual(readRegistry(src, '000696327'), {
+    assert.deepEqual(readRegistry(src, '000999011'), {
       outsideTr: true,
       fetchedAt: '2026-09-08T02:00:00Z',
     });

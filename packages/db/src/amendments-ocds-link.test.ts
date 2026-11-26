@@ -62,9 +62,9 @@ function diagRows(out: string): number[][] {
 
 // EOP УНП for the twin contract (90029), the OCDS-only contract (55500), and the OCDS-only contract
 // whose procedure is contract-only — a "synthetic tender" absent from raw_tenders (77700).
-const UNP_TWIN = '00044-2022-0146';
-const UNP_ONLY = '00099-2022-0009';
-const UNP_SYNTH = '00077-2022-0007';
+const UNP_TWIN = '99944-2022-0146';
+const UNP_ONLY = '99999-2022-0009';
+const UNP_SYNTH = '99977-2022-0007';
 // A fourth OCDS annex whose procedure bridges NOWHERE — its tender.id is in neither raw_tenders nor
 // raw_contracts. On the live corpus ~3/4,800 OCDS amendments are like this (#286 links 4,797/4,800);
 // they honestly keep the OCID in `unp` because they can't be keyed to a contract yet — NOT dropped.

@@ -32,11 +32,11 @@ describe('fetchEopDay', () => {
     const fetchImpl: FetchImpl = vi.fn(async () => ({
       ok: true,
       status: 200,
-      text: async () => '[{"uniqueProcurementNumber":"00044-2023-0018"}]',
+      text: async () => '[{"uniqueProcurementNumber":"99944-2023-0018"}]',
     }));
     const files = await fetchEopDay('2023-05-01', fetchImpl);
     expect(files.length).toBe(3); // три базови файла за ден преди 2026
-    expect(files[0]!.rows).toEqual([{ uniqueProcurementNumber: '00044-2023-0018' }]);
+    expect(files[0]!.rows).toEqual([{ uniqueProcurementNumber: '99944-2023-0018' }]);
     // every fetched URL points at the fixed open-data host, not anything model-controlled
     for (const call of (fetchImpl as ReturnType<typeof vi.fn>).mock.calls) {
       expect(String(call[0])).toMatch(/^https:\/\/storage\.eop\.bg\/open-data-2023-05-01\//);

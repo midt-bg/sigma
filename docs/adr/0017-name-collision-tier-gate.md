@@ -11,11 +11,11 @@
 The adversarial audit of the published set (`scripts/cacbg/audit.mjs`, which rebuilds the
 name-key → ЕИК map from scratch over the live bidder table and re-asserts the libel invariant per
 link) surfaced one hard finding: a link published as `B_distinctive` whose name key
-„ВОДОСНАБДЯВАНЕ И КАНАЛИЗАЦИЯ ЕАД" maps to **two** valid ЕИК (812115210 and 121411430 — different
+„ВОДОСНАБДЯВАНЕ И КАНАЛИЗАЦИЯ ЕАД" maps to **two** valid ЕИК (999000244 and 999000255 — different
 towns). BG trade names are nationally unique in principle (ЗТРРЮЛНЦ чл.21 т.7), but empirically this
 does **not** hold for generic municipal utilities (В и К, Водоснабдяване и канализация).
 
-The link's ЕИК was itself *correct*: the official wrote „…, ЕИК 812115210" in the declaration and the
+The link's ЕИК was itself *correct*: the official wrote „…, ЕИК 999000244" in the declaration and the
 `declared_eik` cross-check passed. The defect was not the resolution — it was the **tier**. The
 `declared_eik` and `extracted_name` fallbacks (ADR-0016) resolve straight to a specific ЕИК and so
 bypass the resolver's own single-name-key → single-ЕИК guard (which only fires on the `exact_name_key`

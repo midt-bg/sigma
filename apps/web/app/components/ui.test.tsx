@@ -141,9 +141,9 @@ describe('NewTabLink', () => {
 
 describe('RegistryCta', () => {
   it("opens the ЕИК's register report in a new tab, as a labelled header action", () => {
-    const a = render(<RegistryCta eik="831646048" />).querySelector('a')!;
-    expect(a.getAttribute('href')).toBe(registryUrl('831646048'));
-    expect(a.getAttribute('href')).toContain('uic=831646048');
+    const a = render(<RegistryCta eik="999000022" />).querySelector('a')!;
+    expect(a.getAttribute('href')).toBe(registryUrl('999000022'));
+    expect(a.getAttribute('href')).toContain('uic=999000022');
     expect(a.className).toBe('source-cta'); // the header-action style, :visited guard included
     expect(a.getAttribute('target')).toBe('_blank');
     expect(a.getAttribute('rel')).toBe('noopener noreferrer');

@@ -71,7 +71,7 @@ requests, 2026-08-04 — well inside the pacing above, so no 429 was encountered
 - Erasure is **structural, not textual**. Entities inside one field are separated by
   `<div class='record-container record-container--preview'>` blocks delimited by `<hr class='hr--report'/>`.
   An erased entity is such a block carrying an erasure marker. **Correction, on implementation:** this ADR
-  first named that marker `field-text--erased`. Re-measured against the full live deed for ЕИК 115536179,
+  first named that marker `field-text--erased`. Re-measured against one company's full live deed,
   that class occurs **zero** times; the register emits `<div class='erasure-text-inline'>` (with
   `<i class='ui-icon ui-icon-erased'>`) and the erased container carries **no `field-text` paragraph at
   all**. The parser therefore treats *either* spelling as erasure — honouring both costs nothing, while
@@ -83,7 +83,7 @@ requests, 2026-08-04 — well inside the pacing above, so no 429 was encountered
   the refutation rule.
 - Seats move. The same company's `CR_F_5_L` shows entry dates 2010-11-04 and 2014-01-23.
 - **An ЕИК that is not a търговец answers `HTTP 200` with a ZERO-BYTE body** — not the 404, and not the
-  HTML, that §3 predicts. Measured on Община София (`000696327`): empty on two consecutive requests,
+  HTML, that §3 predicts. Measured on a municipality's ЕИК: empty on two consecutive requests,
   while a real company returned its full 34,398-byte deed in the same window, so it is the register's
   answer rather than an outage. This is what the „извън ТР" rung actually looks like on the wire. The
   distinction that keeps R6 honest is therefore the **status**, not the empty body: empty under 200 is

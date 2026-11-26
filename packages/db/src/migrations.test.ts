@@ -197,11 +197,11 @@ describe('served migrations', () => {
         dbPath,
         `INSERT INTO persons (id, name) VALUES ('person:a', 'Иван Петров Тестов');
          INSERT INTO bidders (id, name, eik_normalized, eik_valid)
-           VALUES ('eik:201122335', 'АЛФА СТРОЙ ООД', '201122335', 1);
+           VALUES ('eik:999000111', 'АЛФА СТРОЙ ООД', '999000111', 1);
          INSERT INTO interest_links
            (id, link_key, person_id, bidder_id, eik, entity_key, matcher_version, publish_tier,
             relation, interest_class, status)
-         VALUES ('il:k', 'k', 'person:a', 'eik:201122335', '201122335', 'АЛФА СТРОЙ ООД',
+         VALUES ('il:k', 'k', 'person:a', 'eik:999000111', '999000111', 'АЛФА СТРОЙ ООД',
                  'test', 'document', 'owns', 'private_ownership', 'published');
          INSERT INTO interest_link_evidence
            (link_key, evidence_kind, matched_fact, lookup_date, rules_version, live_status)
@@ -243,7 +243,7 @@ describe('served migrations', () => {
            INSERT INTO interest_links
              (id, link_key, person_id, bidder_id, eik, entity_key, matcher_version, publish_tier,
               relation, interest_class, status)
-           VALUES ('il:${status}', '${status}', 'person:a', 'eik:201122335', '201122335',
+           VALUES ('il:${status}', '${status}', 'person:a', 'eik:999000111', '999000111',
                    'АЛФА СТРОЙ ООД', 'test', 'document', 'owns', 'private_ownership', '${status}');`,
         );
 

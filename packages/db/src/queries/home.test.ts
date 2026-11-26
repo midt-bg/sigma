@@ -3,8 +3,8 @@ import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import { getHomeData } from './home';
 
 const authorityRow = {
-  authority_id: 'auth:000695089',
-  name: 'Министерство на финансите',
+  authority_id: 'auth:999000055',
+  name: 'Министерство на тестовете',
   type_group: 'министерство',
   settlement: 'София',
   region: 'Столична',
@@ -19,11 +19,11 @@ const authorityRow = {
 };
 
 const companyRow = {
-  bidder_id: 'eik:103267194',
+  bidder_id: 'eik:999000044',
   name: 'ТЕСТ ООД',
   kind: 'company',
   ownership_kind: null,
-  eik: '103267194',
+  eik: '999000044',
   eik_valid: 1,
   settlement: 'София',
   won_eur: 50000,
@@ -41,9 +41,9 @@ const contractRow = {
   unp: 'UNP-1',
   cpv_code: '45000000',
   eu_funded: 0,
-  authority_id: 'auth:000695089',
-  authority_name: 'Министерство на финансите',
-  bidder_id: 'eik:103267194',
+  authority_id: 'auth:999000055',
+  authority_name: 'Министерство на тестовете',
+  bidder_id: 'eik:999000044',
   bidder_name: 'ТЕСТ ООД',
   bidder_kind: 'company',
   procedure_type: 'Открита процедура',
@@ -117,10 +117,10 @@ describe('getHomeData', () => {
     const data = await getHomeData(fake(totalsRow).db);
 
     expect(data.topCompanies).toHaveLength(1);
-    expect(data.topCompanies[0]!.slug).toBe('103267194');
+    expect(data.topCompanies[0]!.slug).toBe('999000044');
 
     expect(data.topMinistries).toHaveLength(1);
-    expect(data.topMinistries[0]!.slug).toBe('000695089');
+    expect(data.topMinistries[0]!.slug).toBe('999000055');
 
     expect(data.topMunicipalities).toHaveLength(1);
   });

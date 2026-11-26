@@ -120,7 +120,7 @@ describe('base EOP mapper', () => {
     const row = mapBaseRecord(
       'annexes',
       {
-        uniqueProcurementNumber: '00224-2025-0005',
+        uniqueProcurementNumber: '99924-2025-0005',
         contractNumber: '212221',
         publicationDate: '05.03.2026',
         lastContractValue: '24837,96',
@@ -144,7 +144,7 @@ describe('base EOP mapper', () => {
     const row = mapBaseRecord(
       'annexes',
       {
-        uniqueProcurementNumber: '00224-2025-0009',
+        uniqueProcurementNumber: '99924-2025-0009',
         contractNumber: '990001',
         publicationDate: '05.03.2026',
         lastContractValue: '442000',
@@ -170,7 +170,7 @@ describe('base EOP mapper', () => {
     const row = mapBaseRecord(
       'annexes',
       {
-        uniqueProcurementNumber: '00224-2025-0010',
+        uniqueProcurementNumber: '99924-2025-0010',
         contractNumber: '990002',
         publicationDate: '05.03.2026',
         lastContractValue: '1000000',

@@ -75,7 +75,7 @@ describe('scripts/seed.sql produces a surface a developer can actually see', () 
     seededDb((dbPath) => {
       const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
       expect(board.some((r) => String(r.company).includes('ГАМА ИНВЕСТ'))).toBe(false);
-      expect(rows(dbPath, lit(COMPANY_SQL, '204556676'))).toHaveLength(0);
+      expect(rows(dbPath, lit(COMPANY_SQL, '999000138'))).toHaveLength(0);
     });
   });
 

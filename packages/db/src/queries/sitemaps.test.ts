@@ -130,13 +130,13 @@ describe('streamCompanySitemap', () => {
   it('encodes the slug and skips natural-person (ЕТ) profiles', async () => {
     const db = fakeDb({
       companies: [
-        { bidder_id: 'eik:103267194', name: 'ТЕСТ ООД', last_date: '2026-01-01' },
+        { bidder_id: 'eik:999000044', name: 'ТЕСТ ООД', last_date: '2026-01-01' },
         { bidder_id: 'name:ЕТ ИВАН', name: 'ЕТ ИВАН ПЕТРОВ', last_date: null }, // filtered out
       ],
       asOf: '2026-06-01',
     });
     const xml = await streamCompanySitemap(db, 'https://x.test').text();
-    expect(xml).toContain('/companies/103267194');
+    expect(xml).toContain('/companies/999000044');
     expect(xml).not.toContain('ИВАН'); // natural person excluded
     expect(xml.match(/<url>/g) ?? []).toHaveLength(1);
   });
@@ -159,11 +159,11 @@ describe('streamCompanySitemap', () => {
 
   it('falls back to the dataset as_of when a company has no last_date', async () => {
     const db = fakeDb({
-      companies: [{ bidder_id: 'eik:103267194', name: 'ТЕСТ ООД', last_date: null }],
+      companies: [{ bidder_id: 'eik:999000044', name: 'ТЕСТ ООД', last_date: null }],
       asOf: '2026-06-01',
     });
     const xml = await streamCompanySitemap(db, 'https://x.test').text();
-    expect(xml).toContain('/companies/103267194</loc><lastmod>2026-06-01</lastmod>');
+    expect(xml).toContain('/companies/999000044</loc><lastmod>2026-06-01</lastmod>');
   });
 
   it('skips an all-filtered page and continues to the next (empty-chunk loop)', async () => {

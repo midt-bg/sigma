@@ -72,13 +72,13 @@ VALUES
   ('t:1','UNP-1','Tender One','auth:1','45000000','открита процедура','BGN','awarded'),
   ('t:2','UNP-2','Tender Two','auth:2','15000000','открита процедура','BGN','awarded');
 INSERT INTO bidders (id, name, eik_normalized, eik_valid) VALUES
-  ('eik:131071587','Valid Bidder','131071587',1),
+  ('eik:999000011','Valid Bidder','999000011',1),
   ('name:NAMED BIDDER','Named Bidder',NULL,0);
 INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur)
 VALUES
-  ('c:1','t:1','eik:131071587',100000,'EUR','2021-05-01','ok',100000),
+  ('c:1','t:1','eik:999000011',100000,'EUR','2021-05-01','ok',100000),
   ('c:2','t:1','name:NAMED BIDDER',250000,'EUR','2022-09-15','ok',250000),
-  ('c:3','t:2','eik:131071587',50000,'EUR','2023-01-20','ok',50000);
+  ('c:3','t:2','eik:999000011',50000,'EUR','2023-01-20','ok',50000);
 `;
 
 function freshDb(): string {
@@ -180,7 +180,7 @@ describe('reconciliation gate — injected violations', () => {
     // a clean-valued contract whose tender_id resolves to no tender → unattributed
     sqlite(
       db,
-      "INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur) VALUES ('c:orphan','t:nope','eik:131071587',9000,'EUR','2022-01-01','ok',9000);",
+      "INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur) VALUES ('c:orphan','t:nope','eik:999000011',9000,'EUR','2022-01-01','ok',9000);",
     );
     precompute(db);
     const result = await checkRollupReconciliation(runner(db));
@@ -406,7 +406,7 @@ describe('reconciliation gate — injected violations', () => {
               ('t:4','UNP-4','Tender Four','auth:1','открита процедура','404'),
               ('t:5','UNP-5','Tender Five','auth:1','открита процедура','505');
        INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur)
-       VALUES ('c:o:9','t:ocds-e82gsb-303','eik:131071587',10,'EUR','2026-01-01','ok',NULL);
+       VALUES ('c:o:9','t:ocds-e82gsb-303','eik:999000011',10,'EUR','2026-01-01','ok',NULL);
        INSERT INTO amendments (id, natural_key, contract_number, unp, published_at, document_number, source)
        VALUES
          ('am:UNP-1:C-1:E1','am:UNP-1:C-1:E1','C-1','UNP-1','2026-03-05','E1','eop:annexes:2026-03-05'),
@@ -502,7 +502,7 @@ describe('reconciliation gate — injected violations', () => {
 
   it('eik-validity catches eik_valid=1 with a non-numeric eik_normalized', async () => {
     const db = track(freshDb());
-    sqlite(db, "UPDATE bidders SET eik_normalized = 'AB12' WHERE id = 'eik:131071587';");
+    sqlite(db, "UPDATE bidders SET eik_normalized = 'AB12' WHERE id = 'eik:999000011';");
     const result = await checkEikValidity(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/eik_valid=1/);
@@ -510,7 +510,7 @@ describe('reconciliation gate — injected violations', () => {
 
   it('eik-validity catches eik_valid<>1 with a non-null eik_normalized', async () => {
     const db = track(freshDb());
-    sqlite(db, "UPDATE bidders SET eik_normalized = '131071587' WHERE id = 'name:NAMED BIDDER';");
+    sqlite(db, "UPDATE bidders SET eik_normalized = '999000011' WHERE id = 'name:NAMED BIDDER';");
     const result = await checkEikValidity(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/eik_valid<>1/);

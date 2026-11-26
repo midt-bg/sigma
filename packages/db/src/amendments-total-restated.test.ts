@@ -84,8 +84,8 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
   }
 }
 
-const AUTH_EIK = '000695114';
-const BIDDER_EIK = '831646048';
+const AUTH_EIK = '999000033';
+const BIDDER_EIK = '999000024';
 
 interface AmendmentStep {
   before: number | null;

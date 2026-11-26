@@ -636,7 +636,7 @@ export interface PersonProfile {
 export interface NetworkCenterOption {
   kind: 'authority' | 'company';
   label: string;
-  value: string; // ?center= token, e.g. 'a:000695089' | 'c:131468980'
+  value: string; // ?center= token, e.g. 'a:999000055' | 'c:999000211'
 }
 
 export interface NetworkData {

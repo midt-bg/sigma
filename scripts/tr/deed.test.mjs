@@ -21,7 +21,7 @@ import {
 import { ROLE_FIELDS as REGISTER_ROLES } from '../../packages/ingest/src/registry-roles.ts';
 
 const deedRow = (over = {}) => ({
-  eik: '201122335',
+  eik: '999000111',
   name: 'АЛФА',
   legal_form: 'OOD',
   seat_settlement: 'гр. Пловдив',

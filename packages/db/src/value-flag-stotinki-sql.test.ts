@@ -79,8 +79,8 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
 
 /** Estimate in BGN; the EUR estimate is this ÷ 1.95583. Contract values below are in BGN too. */
 const ESTIMATE_BGN = 195_583; // exactly 100_000 EUR, so the multiples below are easy to read
-const AUTH_EIK = '000695114';
-const BIDDER_EIK = '831646048';
+const AUTH_EIK = '999000033';
+const BIDDER_EIK = '999000024';
 
 /** One tender + one contract per case, so each case gets its own procedure estimate. */
 function seed(dbPath: string, cases: { unp: string; valueBgn: number }[]): void {

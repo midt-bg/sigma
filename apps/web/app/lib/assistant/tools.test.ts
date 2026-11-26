@@ -432,7 +432,7 @@ describe('eop_fetch', () => {
 
 describe('source_link', () => {
   it('returns official deep links for a tender id', async () => {
-    const out = await runTool('source_link', { eopTenderId: '00123-2024-0007' }, ctx());
+    const out = await runTool('source_link', { eopTenderId: '99923-2024-0007' }, ctx());
     expect(out).toMatch(/https?:\/\//);
   });
 

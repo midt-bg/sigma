@@ -96,9 +96,9 @@ describe('#306 amendment→contract value-anchor resolver', () => {
     sqlite(
       db,
       `INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency) VALUES
-         ('eop:contracts:2026-03-05','2026-03-05','00017-2020-0041','ОП-3-016/03.02.2021г.',5800,'BGN');
+         ('eop:contracts:2026-03-05','2026-03-05','99917-2020-0041','ОП-3-016/03.02.2021г.',5800,'BGN');
        INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, document_number, value_before, value_after, value_delta, currency) VALUES
-         ('eop:annexes:2026-03-05','2026-03-05','00017-2020-0041','11725','2026-03-05','A1',5800,5800,0,'BGN');`,
+         ('eop:annexes:2026-03-05','2026-03-05','99917-2020-0041','11725','2026-03-05','A1',5800,5800,0,'BGN');`,
     );
     runFullDerive(db);
 
@@ -259,18 +259,18 @@ describe('#306 amendment→contract value-anchor resolver', () => {
     sqlite(
       db,
       `INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency) VALUES
-         ('eop:contracts:2026-03-05','2026-03-05','00026-2020-0027','20РП-У50А015-Л01',22569.98,'BGN'),
-         ('eop:contracts:2026-03-05','2026-03-05','00026-2020-0027','20РП-У50А015-Л03',28557.5,'BGN');
+         ('eop:contracts:2026-03-05','2026-03-05','99926-2020-0027','20РП-У50А015-Л01',22569.98,'BGN'),
+         ('eop:contracts:2026-03-05','2026-03-05','99926-2020-0027','20РП-У50А015-Л03',28557.5,'BGN');
        INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
-         ('eop:annexes:2026-03-05','2026-03-05','00026-2020-0027','20РП-У50А015','2026-03-05','A1',22569.98,22000,'BGN'),
-         ('eop:annexes:2026-03-05','2026-03-06','00026-2020-0027','20РП-У50А015','2026-03-06','A2',28557.5,28000,'BGN');`,
+         ('eop:annexes:2026-03-05','2026-03-05','99926-2020-0027','20РП-У50А015','2026-03-05','A1',22569.98,22000,'BGN'),
+         ('eop:annexes:2026-03-05','2026-03-06','99926-2020-0027','20РП-У50А015','2026-03-06','A2',28557.5,28000,'BGN');`,
     );
     runFullDerive(db);
 
     expect(
       sqliteJson<{ document_number: string; contract_number: string }>(
         db,
-        "SELECT document_number, contract_number FROM raw_amendments WHERE unp='00026-2020-0027' ORDER BY document_number",
+        "SELECT document_number, contract_number FROM raw_amendments WHERE unp='99926-2020-0027' ORDER BY document_number",
       ),
     ).toEqual([
       { document_number: 'A1', contract_number: '20РП-У50А015-Л01' },
@@ -279,7 +279,7 @@ describe('#306 amendment→contract value-anchor resolver', () => {
     expect(
       sqliteJson<{ contract_number: string; annex_count: number }>(
         db,
-        "SELECT contract_number, annex_count FROM raw_contracts WHERE unp='00026-2020-0027' ORDER BY contract_number",
+        "SELECT contract_number, annex_count FROM raw_contracts WHERE unp='99926-2020-0027' ORDER BY contract_number",
       ),
     ).toEqual([
       { contract_number: '20РП-У50А015-Л01', annex_count: 1 },
@@ -434,9 +434,9 @@ describe('#306 amendment→contract value-anchor resolver', () => {
     sqlite(
       db,
       `INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency) VALUES
-         ('eop:contracts:2026-03-05','2026-03-05','00207-2020-0171','FILING-1',66820,'EUR');
+         ('eop:contracts:2026-03-05','2026-03-05','99907-2020-0171','FILING-1',66820,'EUR');
        INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
-         ('eop:annexes:2026-03-05','2026-03-05','00207-2020-0171','9001','2026-03-05','A1',66820,66000,'BGN');`,
+         ('eop:annexes:2026-03-05','2026-03-05','99907-2020-0171','9001','2026-03-05','A1',66820,66000,'BGN');`,
     );
     runFullDerive(db);
 
