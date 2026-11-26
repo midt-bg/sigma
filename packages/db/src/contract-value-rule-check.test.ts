@@ -262,6 +262,7 @@ describe('contract-value-rule (build gate)', () => {
     ['flag', 'U-OK', "value_flag = 'review'", { flag: 1 }, 0],
     ['amount_eur', 'U-OK', 'amount_eur = 10001', { amountEur: 1 }, -1],
     ['current value', 'U-TOTAL', 'current_value = 30000', { other: 1 }, 0],
+    ['signing value in euro', 'U-OK', 'signing_value_eur = 10001', { other: 1 }, 0],
     ['currency', 'U-CCY', "current_value_currency = 'BGN'", { currency: 1 }, 0],
     ['conversion marker', 'U-OK', 'fx_converted = 1', { currency: 1 }, 0],
     ['rate', 'U-USD', 'fx_rate = 0.8 * (1 + 1e-6)', { rate: 1 }, 0],
@@ -284,6 +285,44 @@ describe('contract-value-rule (build gate)', () => {
     await expect(checkContractValueRule(runner(db))).resolves.toMatchObject({
       ok: true,
       detail: passing(),
+    });
+  });
+
+  it('holds a rate below 1 to the same relative tolerance', async () => {
+    const db = built();
+    // Off by 1.2e-9 of itself: under 1e-9 in absolute terms, over it relative to the rate.
+    store(db, 'U-USD', 'fx_rate = 0.8 * (1 + 1.2e-9)');
+    await expect(checkContractValueRule(runner(db))).resolves.toMatchObject({
+      ok: false,
+      detail: failing(1, { rate: 1 }, 0),
+    });
+  });
+
+  it('leaves out an admin document, which the rule does not value', async () => {
+    const db = built();
+    db.exec(
+      `INSERT INTO contracts (id, tender_id, bidder_id, contract_number, amount, amount_eur, currency, value_flag)
+        SELECT 'c:TEST-ADMIN', tender_id, bidder_id, 'TEST-ADMIN-1', 1, 1, 'EUR', 'review'
+        FROM contracts WHERE tender_id = 't:U-OK'`,
+    );
+    await expect(checkContractValueRule(runner(db))).resolves.toMatchObject({
+      ok: true,
+      detail: passing(),
+    });
+  });
+
+  it('counts only the differing rows in the amount that would move, never a held one', async () => {
+    const db = built();
+    store(
+      db,
+      'U-OK',
+      "own_estimate_source = NULL, value_flag = 'value_suspect', amount = 100000, amount_eur = 100000, " +
+        'signing_value_eur = NULL, current_value_eur = NULL',
+    );
+    store(db, 'U-USD', 'amount_eur = amount_eur + 1');
+    await expect(checkContractValueRule(runner(db))).resolves.toMatchObject({
+      ok: false,
+      detail: failing(1, { amountEur: 1 }, -1, 1, 0),
     });
   });
 
