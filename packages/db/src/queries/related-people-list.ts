@@ -239,6 +239,15 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
   }));
 }
 
+/** The companies where a person Sigma has tied to the register sits in management or on a governing body —
+ *  the seats `publicStakeEiks` then sorts into held positions. CROSS JOIN reads from the linked people to
+ *  their roles by `idx_registry_roles_subject`; joined freely, the planner walked every role in
+ *  the register by its primary key and looked each one's subject up instead, some twenty-five times the rows. */
+export const GOVERNING_SEAT_EIKS_SQL = `SELECT DISTINCT r.eik FROM person_registry_links pl
+  CROSS JOIN registry_roles r ON r.subject_id = pl.registry_indent
+  WHERE r.subject_kind = 'person'
+    AND r.role IN ('manager','board_of_directors','management_board','governing_body')`;
+
 /** People with declarations whom the register records as an owner — partner, sole owner or sole trader — or
  *  on the GOVERNING BODY of a private procurement winner: the same row shape as the declared list, so the two
  *  read as one. Only the companies the person's declared row does not already hold: a person with no published
@@ -266,15 +275,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   // enterprise: the company is not the person's.
   const seats = await publicStakeEiks(
     db,
-    (
-      await db
-        .prepare(
-          `SELECT DISTINCT r.eik FROM registry_roles r JOIN person_registry_links pl ON pl.registry_indent = r.subject_id
-          WHERE r.subject_kind = 'person'
-            AND r.role IN ('manager','board_of_directors','management_board','governing_body')`,
-        )
-        .all<{ eik: string }>()
-    ).results.map((r) => r.eik),
+    (await db.prepare(GOVERNING_SEAT_EIKS_SQL).all<{ eik: string }>()).results.map((r) => r.eik),
   );
   const result = await db
     .prepare(
