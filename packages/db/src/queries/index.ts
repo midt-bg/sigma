@@ -27,3 +27,4 @@ export * from './registry';
 export * from './public-stakes';
 export * from './declarations';
 export * from './person-activity';
+export * from './refresh-verdict';
