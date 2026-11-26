@@ -26,7 +26,13 @@ import {
 } from '@sigma/ingest';
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
-import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
+import {
+  computeWorkerCatchupPlan,
+  ingestBucketDay,
+  windowDays,
+  type CatchupPlan,
+  type DayIngestResult,
+} from './eop';
 import { incompleteCheck, runServedIntegrityGate } from './integrity';
 import {
   acquireRegistryLease,
@@ -104,7 +110,7 @@ interface RefreshResult {
   leaseHolder?: string;
 }
 
-function stagedRows(results: Awaited<ReturnType<typeof ingestBucketWindow>>): number {
+function stagedRows(results: DayIngestResult[]): number {
   return results.reduce(
     (n, r) =>
       n +
@@ -214,7 +220,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         ? null
         : `refresh lease lost before ${name}: now held by ${held.holder ?? 'nobody'}`;
     });
-    let results: Awaited<ReturnType<typeof ingestBucketWindow>> = [];
+    const results: DayIngestResult[] = [];
     let staged = 0;
     let derived = 0;
     // The runtime logs an error ("...your Worker's code had hung...") on every *successful* instance
@@ -300,12 +306,20 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       await fenced('create-transient-staging', async () =>
         createTransientStaging(this.env.DB, workStagingSchemaSql),
       );
-      results = await fenced('ingest-storage-eop-bucket', async () =>
-        ingestBucketWindow(this.env.DB, plan, {
-          baseUrl: this.env.EOP_OPEN_DATA_BASE_URL,
-          fetchedAt,
-        }),
-      );
+      // One step per bucket day, oldest first: a failure late in the window repeats that day, not
+      // the window. Each day replaces only its own staged sources. The days share nothing but
+      // `fetchedAt`, which lands only in the transient staging rows and in no served one, so a day
+      // staged after the runtime restarted run() (with a newer `fetchedAt`) derives the same rows.
+      for (const day of windowDays(plan)) {
+        results.push(
+          await fenced(`ingest-storage-eop-bucket:${day}`, async () =>
+            ingestBucketDay(this.env.DB, day, {
+              baseUrl: this.env.EOP_OPEN_DATA_BASE_URL,
+              fetchedAt,
+            }),
+          ),
+        );
+      }
       staged = stagedRows(results);
 
       // Work an earlier run left behind: the touched sets survive an abort (refresh-slice.sql keeps

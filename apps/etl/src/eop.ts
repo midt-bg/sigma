@@ -296,33 +296,35 @@ export async function stageBaseFromBucket(
   return counts;
 }
 
-export async function ingestBucketWindow(
-  db: D1Database,
-  plan: Pick<CatchupPlan, 'from' | 'to'>,
-  opts: { baseUrl?: string; fetchedAt?: string } = {},
-): Promise<DayIngestResult[]> {
-  const fetchedAt = opts.fetchedAt ?? new Date().toISOString();
-  const out: DayIngestResult[] = [];
-  for (const day of enumerateDays(plan.from, plan.to)) {
-    const listing = await listBucketForDay(day, { baseUrl: opts.baseUrl });
-    if (!listing) {
-      out.push({
-        day,
-        found: false,
-        baseContracts: 0,
-        baseTenders: 0,
-        baseAmendments: 0,
-        ocdsContracts: 0,
-        ocdsAmendments: 0,
-        parties: 0,
-        lots: 0,
-      });
-      continue;
-    }
+/** The bucket days of a window, oldest first — the order the refresh stages them in, one step each. */
+export function windowDays(plan: Pick<CatchupPlan, 'from' | 'to'>): string[] {
+  return enumerateDays(plan.from, plan.to);
+}
 
-    const baseCounts = await stageBaseFromBucket(db, listing, fetchedAt);
-    const ocdsCounts = await stageOcdsFromBucket(db, listing, fetchedAt);
-    out.push({ day, found: true, ...baseCounts, ...ocdsCounts });
+// One bucket day, staged whole. Each staged source is the day's own (`eop:<kind>:<day>`,
+// `ocds:<day>`) and is replaced, not appended to (upsertStagingRows deletes the source before it
+// inserts), so a day staged again — a retried step — ends with the same rows as a day staged once,
+// and no other day's rows are touched.
+export async function ingestBucketDay(
+  db: D1Database,
+  day: string,
+  opts: { baseUrl?: string; fetchedAt: string },
+): Promise<DayIngestResult> {
+  const listing = await listBucketForDay(day, { baseUrl: opts.baseUrl });
+  if (!listing) {
+    return {
+      day,
+      found: false,
+      baseContracts: 0,
+      baseTenders: 0,
+      baseAmendments: 0,
+      ocdsContracts: 0,
+      ocdsAmendments: 0,
+      parties: 0,
+      lots: 0,
+    };
   }
-  return out;
+  const baseCounts = await stageBaseFromBucket(db, listing, opts.fetchedAt);
+  const ocdsCounts = await stageOcdsFromBucket(db, listing, opts.fetchedAt);
+  return { day, found: true, ...baseCounts, ...ocdsCounts };
 }

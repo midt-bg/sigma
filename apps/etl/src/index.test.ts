@@ -723,7 +723,7 @@ describe('RefreshWorkflow — promises only shrink across interrupted replays', 
     expect(spans(db)).toEqual(['A:2026-07-07..2026-07-10']);
     // C on 08-16: capped to 07-27..08-16, records it, dies at ingest.
     await expect(
-      workflow.run(eventFor('2026-08-16', 'C'), dyingAt('ingest-storage-eop-bucket')),
+      workflow.run(eventFor('2026-08-16', 'C'), dyingAt('ingest-storage-eop-bucket:2026-07-27')),
     ).rejects.toThrow(/boom/);
     expect(spans(db)).toEqual(['A:2026-07-07..2026-07-10', 'C:2026-07-27..2026-08-16']);
     // D on 08-17: capped to 07-28..08-17, succeeds — but every day answered "no bucket", so D has

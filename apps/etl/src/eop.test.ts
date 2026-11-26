@@ -32,12 +32,13 @@ vi.mock('@sigma/ingest', async (importOriginal) => {
 
 import {
   computeWorkerCatchupPlan,
-  ingestBucketWindow,
+  ingestBucketDay,
   listBucketForDay,
   parseBucketKeys,
   stageBaseFromBucket,
   stageOcdsFromBucket,
   type BucketListing,
+  windowDays,
 } from './eop';
 
 /**
@@ -350,8 +351,20 @@ describe('stageBaseFromBucket', () => {
   });
 });
 
-describe('ingestBucketWindow', () => {
-  it('walks each day, recording a not-found day and staging a found day', async () => {
+describe('windowDays', () => {
+  it('lists every bucket day of the window, oldest first, both ends included', () => {
+    expect(windowDays({ from: '2026-06-01', to: '2026-06-01' })).toEqual(['2026-06-01']);
+    expect(windowDays({ from: '2026-02-27', to: '2026-03-02' })).toEqual([
+      '2026-02-27',
+      '2026-02-28',
+      '2026-03-01',
+      '2026-03-02',
+    ]);
+  });
+});
+
+describe('ingestBucketDay', () => {
+  it('records a not-found day and stages a found day', async () => {
     // Day 1 (2026-06-01) → 404 (missing). Day 2 (2026-06-02) → a bucket with an OCDS + contracts key.
     stubFetch((url) => {
       if (url.includes('open-data-2026-06-01')) return { status: 404 };
@@ -364,25 +377,24 @@ describe('ingestBucketWindow', () => {
       }
       return { body: '[]' };
     });
-    const results = await ingestBucketWindow(
-      fakeDb,
-      { from: '2026-06-01', to: '2026-06-02' },
-      { fetchedAt: '2026-06-02T00:00:00Z' },
-    );
-    expect(results).toHaveLength(2);
-    expect(results[0]).toMatchObject({ day: '2026-06-01', found: false, baseContracts: 0 });
-    expect(results[1]).toMatchObject({
+    const fetchedAt = '2026-06-02T00:00:00Z';
+    expect(await ingestBucketDay(fakeDb, '2026-06-01', { fetchedAt })).toEqual({
+      day: '2026-06-01',
+      found: false,
+      baseContracts: 0,
+      baseTenders: 0,
+      baseAmendments: 0,
+      ocdsContracts: 0,
+      ocdsAmendments: 0,
+      parties: 0,
+      lots: 0,
+    });
+    expect(await ingestBucketDay(fakeDb, '2026-06-02', { fetchedAt })).toMatchObject({
       day: '2026-06-02',
       found: true,
       baseContracts: 1,
       ocdsContracts: 1,
     });
-  });
-
-  it('defaults fetchedAt to now when the caller omits it', async () => {
-    stubFetch(() => ({ status: 404 })); // single missing day → no staging, just the default fetchedAt
-    const results = await ingestBucketWindow(fakeDb, { from: '2026-06-01', to: '2026-06-01' });
-    expect(results).toEqual([expect.objectContaining({ day: '2026-06-01', found: false })]);
   });
 });
 
