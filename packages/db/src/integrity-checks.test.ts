@@ -439,7 +439,7 @@ describe('reconciliation gate — injected violations', () => {
        VALUES ('t:UNP-7','UNP-7','Tender Seven','auth:1','открита процедура');
        INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur,
          contract_number)
-       VALUES ('c:e:9','t:UNP-7','eik:131071587',10,'EUR','2026-01-01','ok',10,'C-1');
+       VALUES ('c:e:9','t:UNP-7','eik:900000001',10,'EUR','2026-01-01','ok',10,'C-1');
        INSERT INTO amendments (id, natural_key, contract_number, contract_number_raw, link_method, unp,
          published_at, document_number, source)
        VALUES
@@ -471,7 +471,7 @@ describe('reconciliation gate — injected violations', () => {
        VALUES ('t:UNP-7','UNP-7','Tender Seven','auth:1','открита процедура');
        INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur,
          contract_number)
-       VALUES ('c:e:9','t:UNP-7','eik:131071587',10,'EUR','2026-01-01','ok',10,'N-2');
+       VALUES ('c:e:9','t:UNP-7','eik:900000001',10,'EUR','2026-01-01','ok',10,'N-2');
        INSERT INTO amendments (id, natural_key, contract_number, contract_number_raw, link_method, unp,
          published_at, document_number, source)
        VALUES
