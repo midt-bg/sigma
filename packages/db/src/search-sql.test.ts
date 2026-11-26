@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { SEARCH_HITS_SQL, SEARCH_HITS_SQL_NO_CONFLICT } from './queries/search';
+import { SEARCH_RANKED_SQL, SEARCH_RANKED_SQL_NO_CONFLICT } from './queries/search';
 import {
   declarationYearDisputed,
   declaredOfficeYear,
@@ -15,7 +15,7 @@ import {
 import { BOARD_SEAT, registryPeriodSums } from './queries/related-people-list';
 
 // Integration test for the search-side свързани-лица SQL. The queries/search unit tests use a fake D1 and
-// never run the real FTS + joins; this runs the EXACT exported SEARCH_HITS_SQL (which is used for EVERY kind,
+// never run the real FTS + joins; this runs the EXACT exported SEARCH_RANKED_SQL (which is used for EVERY kind,
 // so a syntax slip would break all search) and the officials-index INSERT against a real SQLite built from
 // the production migrations. Asserts: the query executes, officials dedupe to one row per person, only
 // PUBLISHED links index/flag, and the company badge join keys correctly on the winner's ЕИК.
@@ -41,6 +41,10 @@ function lit(sql: string, ...vals: (string | number)[]): string {
 function rows(dbPath: string, sql: string): Record<string, string | number | null>[] {
   const out = execFileSync('sqlite3', ['-json', dbPath], { input: sql, encoding: 'utf8' }).trim();
   return out ? JSON.parse(out) : [];
+}
+// One kind's rows of the ranked read, in rank order — what search() takes for that group.
+function hits(dbPath: string, sql: string, kind: string, match: string) {
+  return rows(dbPath, lit(sql, match)).filter((r) => r.kind === kind);
 }
 
 // АЛФА + ГАМА both linked to one official (Иван) → dedupes to a single official row; БЕТА has no PUBLISHED
@@ -166,23 +170,23 @@ describe('search свързани-лица SQL', () => {
     withDb((dbPath) => {
       // Иван has two published links (АЛФА + ГАМА) → ONE official row, amount = their sum. Георги's only
       // link is 'held' → not indexed at all (the surface never published him).
-      const officials = rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'иван*', 10));
+      const officials = hits(dbPath, SEARCH_RANKED_SQL, 'official', 'иван*');
       expect(officials).toHaveLength(1);
       expect(officials[0]!.ref).toBe('person:ИВАН МИНЕВ');
       expect(officials[0]!.title).toBe('Иван Минев');
       expect(officials[0]!.subtitle).toBe('ОБЩИНА РУСЕ'); // latest institution disambiguates homonyms
       expect(officials[0]!.amount).toBe(1200000); // 1_000_000 + 200_000
-      expect(rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'георги*', 10))).toHaveLength(0);
+      expect(hits(dbPath, SEARCH_RANKED_SQL, 'official', 'георги*')).toHaveLength(0);
     });
   });
 
   it('flags a company with a PUBLISHED link and not one without (badge join keys on ЕИК)', () => {
     withDb((dbPath) => {
-      const alfa = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'алфа*', 10));
+      const alfa = hits(dbPath, SEARCH_RANKED_SQL, 'company', 'алфа*');
       expect(alfa).toHaveLength(1);
       expect(alfa[0]!.has_conflict).toBe(1); // АЛФА is Иван's declared stake
       // БЕТА's only link is 'held' → the published-only join must NOT flag it.
-      const beta = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'бета*', 10));
+      const beta = hits(dbPath, SEARCH_RANKED_SQL, 'company', 'бета*');
       expect(beta).toHaveLength(1);
       expect(beta[0]!.has_conflict).toBe(0);
     });
@@ -195,17 +199,17 @@ describe('search свързани-лица SQL', () => {
     // surface of the two: it is what a reader sees before deciding to look.
     withDb((dbPath) => {
       // NO seal at all — the legacy/partial-run/loader-bug shape.
-      const iota = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'йота*', 10));
+      const iota = hits(dbPath, SEARCH_RANKED_SQL, 'company', 'йота*');
       expect(iota).toHaveLength(1);
       expect(iota[0]!.has_conflict).toBe(0);
       // Sealed, but with a rung that WITHHOLDS. A seal existing is not a seal permitting.
-      const kapa = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'капа*', 10));
+      const kapa = hits(dbPath, SEARCH_RANKED_SQL, 'company', 'капа*');
       expect(kapa).toHaveLength(1);
       expect(kapa[0]!.has_conflict).toBe(0);
       // POSITIVE CONTROL — a properly sealed link still badges, on both publishing rungs. Without this a
       // gate that rejected everything would satisfy the two assertions above.
-      expect(rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'алфа*', 10))[0]!.has_conflict).toBe(1);
-      expect(rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'гама*', 10))[0]!.has_conflict).toBe(1);
+      expect(hits(dbPath, SEARCH_RANKED_SQL, 'company', 'алфа*')[0]!.has_conflict).toBe(1);
+      expect(hits(dbPath, SEARCH_RANKED_SQL, 'company', 'гама*')[0]!.has_conflict).toBe(1);
     });
   });
 
@@ -214,16 +218,16 @@ describe('search свързани-лица SQL', () => {
       // family_ownership now reaches the index identically to self (ADR-0032): Дана (a relative's stake) IS
       // searchable by her own name, and ДЕЛТА IS flagged — the /conflicts page already publishes that link, so
       // the badge discloses nothing the surface doesn't. The relative is never named.
-      expect(rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'дана*', 10))).toHaveLength(1);
-      const delta = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'делта*', 10));
+      expect(hits(dbPath, SEARCH_RANKED_SQL, 'official', 'дана*')).toHaveLength(1);
+      const delta = hits(dbPath, SEARCH_RANKED_SQL, 'company', 'делта*');
       expect(delta).toHaveLength(1);
       expect(delta[0]!.has_conflict).toBe(1);
 
       // management_role marked published → the interest_class gate must still exclude it, both from the
       // officials index (no name in search) and from the company badge join. A statutory board/management
       // role is never surfaced as a "conflict" — the libel-critical distinction that ADR-0032 does NOT relax.
-      expect(rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'борис*', 10))).toHaveLength(0);
-      const epsilon = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'епсилон*', 10));
+      expect(hits(dbPath, SEARCH_RANKED_SQL, 'official', 'борис*')).toHaveLength(0);
+      const epsilon = hits(dbPath, SEARCH_RANKED_SQL, 'company', 'епсилон*');
       expect(epsilon).toHaveLength(1);
       expect(epsilon[0]!.has_conflict).toBe(0);
     });
@@ -233,19 +237,19 @@ describe('search свързани-лица SQL', () => {
     // search() falls back to this variant when the свързани-лица migration (0003) is absent. It must not
     // reference interest_links at all (so a missing table can never 500 the search) and reports
     // has_conflict=0 for every company — even АЛФА, which has a real published own-stake conflict.
-    expect(SEARCH_HITS_SQL_NO_CONFLICT).not.toContain('interest_links');
+    expect(SEARCH_RANKED_SQL_NO_CONFLICT).not.toContain('interest_links');
     withDb((dbPath) => {
-      const alfa = rows(dbPath, lit(SEARCH_HITS_SQL_NO_CONFLICT, 'company', 'алфа*', 10));
+      const alfa = hits(dbPath, SEARCH_RANKED_SQL_NO_CONFLICT, 'company', 'алфа*');
       expect(alfa).toHaveLength(1);
       expect(alfa[0]!.has_conflict).toBe(0);
     });
   });
 
-  it('runs SEARCH_HITS_SQL for every kind without error and returns the FTS rank', () => {
+  it('runs SEARCH_RANKED_SQL for every kind without error and returns the FTS rank', () => {
     withDb((dbPath) => {
       // The query is shared across kinds — a rank/join slip would break company/contract search too. Prove
       // it executes and yields a numeric rank (the value the relevance gate reads).
-      const hit = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'гама*', 10));
+      const hit = hits(dbPath, SEARCH_RANKED_SQL, 'company', 'гама*');
       expect(hit).toHaveLength(1);
       expect(typeof hit[0]!.rank).toBe('number');
       expect(hit[0]!.has_conflict).toBe(1); // ГАМА is Иван's second stake
@@ -260,7 +264,7 @@ describe('search свързани-лица SQL', () => {
          DELETE FROM search_index;
          ${POPULATE_INDEX}`,
       );
-      const [ivan] = rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'иван*', 10));
+      const [ivan] = hits(dbPath, SEARCH_RANKED_SQL, 'official', 'иван*');
       expect(ivan!.subtitle).toBe('Кмет · ОБЩИНА РУСЕ');
     });
   });
@@ -270,7 +274,7 @@ describe('search свързани-лица SQL', () => {
       // Двоен has a self AND a family link to ЗЕТА (eik 666), €50k each. The self stake names him, so the
       // redundant-family collapse (ADR-0032) drops the family link — the figure is €50k, not the €100k a
       // naive per-link SUM would report. One official row still (the two links share the person).
-      const dvoen = rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'двоен*', 10));
+      const dvoen = hits(dbPath, SEARCH_RANKED_SQL, 'official', 'двоен*');
       expect(dvoen).toHaveLength(1);
       expect(dvoen[0]!.ref).toBe('person:ДВОЕН ТЕСТ');
       expect(dvoen[0]!.amount).toBe(50000); // NOT 100000 — the redundant family link collapsed, winner's € counts once

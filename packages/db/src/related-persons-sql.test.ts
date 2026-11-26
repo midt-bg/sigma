@@ -18,7 +18,7 @@ import {
   SURFACED_OWNERSHIP,
 } from './queries/related-persons';
 import { declarationYearDisputed } from './queries/declaration-source';
-import { SEARCH_HITS_SQL } from './queries/search';
+import { SEARCH_RANKED_SQL } from './queries/search';
 
 // Integration test for the свързани-лица SQL. The query layer's unit tests (queries/related-persons.test)
 // use a fake D1 and never run the aggregation; this runs the EXACT exported SQL against a real SQLite
@@ -854,7 +854,7 @@ describe('the read-time contract join matches the writer that stored the aggrega
 describe('the evidence-seal gate is identical in all four places it is written', () => {
   const sources: [string, string][] = [
     ['related-persons.ts (SURFACED_OWNERSHIP)', SURFACED_OWNERSHIP],
-    ['search.ts (company badge)', SEARCH_HITS_SQL],
+    ['search.ts (company badge)', SEARCH_RANKED_SQL],
     ['precompute.sql', readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8')],
     ['refresh-slice.sql', readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')],
   ];
