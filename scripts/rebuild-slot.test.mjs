@@ -1575,3 +1575,25 @@ test('a slot with no register at all needs no baseline', async (t) => {
   );
   assert.deepEqual(asked.stamp(), []);
 });
+
+test('the runbook picks a registry-only person with a page from the built slot', async (t) => {
+  const s = builtSlot(t);
+  await runRebuild(
+    {},
+    slotRun(s, { runId: 'run-a', register: registerOnePerson, catchUp: acceptBaseline }).ops,
+  );
+  const query = readFileSync('docs/runbooks/production-cutover.md', 'utf8').match(
+    /--command "(SELECT lower\(p\.indent\) AS slug FROM registry_persons[^"]+)"/,
+  )[1];
+  // The person's company has a page only with contracts: the test corpus gives it none.
+  assert.equal(s.slot.prepare(query).get(), undefined);
+  s.slot.exec(`PRAGMA foreign_keys = OFF;
+    INSERT INTO company_totals (bidder_id, name, kind, won_eur, contracts, authorities)
+      VALUES ('eik:${TEST_EIK}', 'ТЕСТ ГРУП ЕООД', 'company', 1, 1, 1)`);
+  assert.equal(s.slot.prepare(query).get()?.slug, TEST_INDENT);
+  // A declarant the register identifies is not registry-only.
+  s.slot.exec(
+    `INSERT INTO person_registry_links VALUES ('p:1', '${TEST_INDENT}', 'k', 'e', '2026-11-20')`,
+  );
+  assert.equal(s.slot.prepare(query).get(), undefined);
+});

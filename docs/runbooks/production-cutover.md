@@ -151,6 +151,17 @@ wrangler workflows trigger sigma-rebuild-cutover '{"targetName":"<празен �
    node scripts/post-deploy-check.mjs https://sigma.midt.bg --commit <sha на тага> --strict --built-at <built_at>
    ```
 
+   Лице, което познава само регистърът (без декларация), има страница само ако слотът носи името му в
+   `registry_persons`. Изберете едно от изградения слот и проверете страницата му:
+
+   ```bash
+   wrangler d1 execute <изграден слот> --remote --json --command "SELECT lower(p.indent) AS slug FROM registry_persons p WHERE p.indent NOT IN (SELECT registry_indent FROM person_registry_links) AND EXISTS (SELECT 1 FROM registry_roles r JOIN registry_deeds d ON d.eik = r.eik JOIN company_totals ct ON ct.bidder_id = 'eik:' || r.eik AND ct.contracts > 0 WHERE r.subject_id = p.indent AND r.subject_kind = 'person' AND r.role IN ('manager', 'representative', 'sole_owner', 'partner')) LIMIT 1"
+   node scripts/post-deploy-check.mjs https://sigma.midt.bg --commit <sha на тага> --strict --built-at <built_at> \
+     --path /persons/<slug> --path /persons/<slug>.data
+   ```
+
+   Празен отговор при слот с регистър е дефект на изграждането: не превключвайте, а изградете слота отново.
+
    После проверете на ръка договор, фирма, лице, търсенето и методологията. Web build-ът сменя ключовете
    на кеша, а проверката отхвърля копие от друг build и предупреждава за копие с по-стара генерация; само
    ако съобщи такова, изчистете кеша на зоната и я пуснете отново.
