@@ -498,14 +498,23 @@ export function slotReader(
     beat = () => {},
   } = {},
 ) {
-  return (sql) => {
-    const { results, meta } = retryD1(() => answer(name, sql), {
-      label: `verify ${name}`,
-      attempts,
-      waitMs,
-      sleep,
-      log,
-    });
+  return (sql, complete) => {
+    const { results, meta } = retryD1(
+      () => {
+        const got = answer(name, sql);
+        // An answer that lacks what was asked is a read that failed, not a verdict on the slot.
+        if (complete && !complete(got.results ?? []))
+          throw new Error(`Incomplete answer from ${name}: ${JSON.stringify(got.results ?? null)}`);
+        return got;
+      },
+      {
+        label: `verify ${name}`,
+        attempts,
+        waitMs,
+        sleep,
+        log,
+      },
+    );
     beat();
     if (Number(meta?.rows_read ?? 0) >= HEAVY_ROWS) sleep(BREATHER_MS);
     return results ?? [];
@@ -535,6 +544,9 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
       served,
       read(
         `SELECT ${chunk.map((t) => `(SELECT COUNT(*) FROM ${sqlIdent(t)}) AS ${sqlIdent(t)}`).join(', ')}`,
+        // Every count asked for, as a count: a row or a key that is missing is a failed read and is
+        // read again (as readShippedCounts does); only a complete answer can differ from the receipt.
+        ([row]) => chunk.every((t) => Number.isInteger(row?.[t]) && row[t] >= 0),
       )[0],
     );
   }

@@ -306,6 +306,7 @@ function builtSlot(t) {
   const sent = [];
   const retried = [];
   let failures = 0;
+  let gaps = 0;
   const reads = { count: 0 };
   return {
     dir,
@@ -316,6 +317,8 @@ function builtSlot(t) {
     reads,
     /** The next `n` reads fail as an overloaded D1 does. */
     overload: (n) => (failures = n),
+    /** The next `n` counts come back without a row, or with a count missing, as wrangler can answer. */
+    truncate: (n) => (gaps = n),
     apply: (label, sql) => {
       sent.push(label);
       slot.exec(sql);
@@ -329,7 +332,13 @@ function builtSlot(t) {
             failures--;
             throw new Error(OVERLOADED);
           }
-          return { results: slot.prepare(sql).all(), meta: { rows_read: 1 } };
+          const results = slot.prepare(sql).all();
+          if (gaps > 0 && sql.startsWith('SELECT (SELECT COUNT(*)')) {
+            const [row] = results;
+            delete row[Object.keys(row)[gaps-- % 2 ? 0 : 1]];
+            return { results: gaps % 2 ? [] : [row], meta: { rows_read: 1 } };
+          }
+          return { results, meta: { rows_read: 1 } };
         },
         sleep: () => {},
         log: (line) => retried.push(JSON.parse(line)),
@@ -373,6 +382,22 @@ test('a verification D1 refuses for a while still finishes the build and stamps 
   assert.equal(s.sent.indexOf('state-ship'), s.sent.indexOf('data-version') - 1);
   assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: 'run-build' }]);
   assert.deepEqual(s.receipts(), { ship: 'run-build', verify: 'run-build' });
+});
+
+test('an incomplete count is a failed read and is read again, not a difference', async (t) => {
+  const s = builtSlot(t);
+  s.truncate(2);
+  const result = await build(s);
+  assert.equal(result.version, 7);
+  assert.equal(s.retried.length, 2);
+  assert.ok(s.retried.every((e) => e.error.startsWith('Incomplete answer from sigma-test')));
+  assert.deepEqual(s.stamp(), [{ version: 7, source_commit: 'c0ffee1', run_id: 'run-build' }]);
+
+  // Past the bound it is still no verdict on the slot: the build fails on the read, and leaves no stamp.
+  const short = builtSlot(t);
+  short.truncate(VERIFY_ATTEMPTS);
+  await assert.rejects(build(short), /Incomplete answer/);
+  assert.deepEqual(short.stamp(), []);
 });
 
 test('a verification D1 refuses past the bound leaves no stamp, and a verification on its own stamps it', async (t) => {
