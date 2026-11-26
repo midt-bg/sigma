@@ -194,7 +194,10 @@ Two boundaries are deliberate, documented so the gate is not mistaken for more t
   It logs `etl_integrity_violation` at error level and the result carries `integrity: 'violation'`. A D1
   error during the check is retried by the step; if the retries run out, the run logs
   `etl_integrity_unverified` and carries `integrity: 'unverified'`. In both cases the window stays
-  recorded, so the next run replays it and checks again.
+  recorded, so the next run replays it and checks again. Neither holds back the as-of date or the data
+  generation: they describe the contracts that are served, and those are served already (see
+  [`etl.md`](etl.md#датата-данни-към-и-поколението-на-данните)). Whether the numbers are verified is said
+  by the stored verdict below, not by the date.
 
 ## The stored verdict
 
