@@ -57,8 +57,8 @@ if (ci !== -1) {
     process.exit(1);
   }
   if (/data_freshness/.test(sql)) {
-    // CU_NO_FRESHNESS models an INTERRUPTED derive: refresh-slice.sql NULLed as_of in its first batch
-    // and never reached the last one that rewrites it. The column is there; the date is not.
+    // CU_NO_FRESHNESS models an INTERRUPTED derive: one cut between data_freshness's DELETE and its
+    // INSERT. The table is there; the date is not.
     const date = process.env.CU_NO_FRESHNESS ? null : '2026-07-27';
     process.stdout.write(JSON.stringify([{ results: [{ max_loaded_date: date }], success: true }]));
     process.exit(0);
@@ -145,9 +145,9 @@ test('an error that is NOT a missing table still propagates', () => {
 });
 
 // ── an INTERRUPTED derive must not be mistaken for a first run ──────────────────────────────────────
-// Both watermark witnesses are transient and can be empty at once: raw_contracts is torn down after
-// every load, and refresh-slice.sql NULLs data_freshness.as_of in its first batch and rewrites it only
-// in its last few. Over a POPULATED surface that is not "nothing is loaded", it is "the last derive was
+// Both watermark witnesses can be empty at once: raw_contracts is torn down after every load, and
+// data_freshness is rewritten by DELETE + INSERT, so a derive cut between the two leaves it empty. Over a
+// POPULATED surface that is not "nothing is loaded", it is "the last derive was
 // interrupted" — and planning from the default start would re-derive the whole feed over live data.
 
 test('an interrupted derive over a populated surface refuses instead of re-deriving everything', () => {

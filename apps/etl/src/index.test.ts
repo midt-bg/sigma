@@ -11,6 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FRANKFURTER_API } from '../../../packages/ingest/src/fx';
+import { splitSqlStatements } from '../../../packages/ingest/src/refresh';
 import { d1FromSqlite } from '@sigma/test-support';
 import { RefreshWorkflow, type Env } from './index';
 
@@ -623,8 +624,8 @@ describe('RefreshWorkflow — window replay repairs what the touched sets cannot
     const db = freshServedDb();
     stubFetchRoutes();
     // A served corpus exists (a clean run), then an earlier run promised 07-12 … 07-14 (no buckets
-    // exist for those days) and died right after recording it — e.g. in `setup`, with freshness
-    // nulled and no touched ids at all.
+    // exist for those days) and died right after recording it — e.g. in `setup`, with no touched
+    // ids at all.
     await makeWorkflow(db).run(eventFor(TODAY), fakeStep);
     db.exec(
       `CREATE TABLE IF NOT EXISTS refresh_pending_window (holder TEXT NOT NULL, window_from TEXT NOT NULL, window_to TEXT NOT NULL, started_at TEXT NOT NULL, PRIMARY KEY (holder, window_from));
@@ -870,5 +871,352 @@ describe('RefreshWorkflow — lease fence', () => {
     ).toEqual({ holder: 'usurper' });
     // And what the stalled run DID commit is recorded for whoever finishes it.
     expect(count('refresh_touched_contracts')).toBe(2);
+  });
+});
+
+// What the site says about its own data moves WITH the data, in the same D1 batch, and is never NULL:
+// „последен договор" (home_totals.as_of) is written in the `contracts` batch, together with the contract
+// rows it describes; the data generation (home_totals.refreshed_at: /health, X-Sigma-Generation, „данни
+// обновени") moves before the first served row of a run changes and again after the last. Whether the
+// numbers are verified is the stored verdict's business, not the date's. Every ending of a run is held to
+// one invariant: the date equals what scripts/precompute.sql would write for the rows being served.
+describe('RefreshWorkflow — the as-of date and the generation move with the served data', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // A second, later bucket on top of the base one: a run on NEXT_TODAY stages one contract, signed on
+  // NEXT_CONTRACT_DATE, after the CONTRACT_DATE the first run serves.
+  const NEXT_TODAY = '2026-07-13';
+  const NEXT_BUCKET_DAY = '2026-07-12';
+  const NEXT_CONTRACT_DATE = '2026-07-11';
+  const NEXT_KEY = `договори-${NEXT_BUCKET_DAY}.json`;
+  const nextContract = {
+    ...bucketContracts[1]!,
+    noticeId: 'DOC-NEXT',
+    publicationDate: NEXT_BUCKET_DAY,
+    uniqueProcurementNumber: 'UNP-NEXT-1',
+    tenderId: 'TENDER-NEXT-1',
+    tenderName: 'Next tender',
+    buyerName: 'Община Тест',
+    contractNumber: 'CONTRACT-NEXT',
+    contractDate: NEXT_CONTRACT_DATE,
+    contractSubject: 'A later contract',
+    supplierName: 'ТЕСТ ГРУП ЕООД',
+  };
+  function stubTwoBuckets(): void {
+    stubFetchRoutes();
+    const base = globalThis.fetch;
+    vi.stubGlobal('fetch', (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const bucketUrl = `https://storage.eop.bg/open-data-${NEXT_BUCKET_DAY}/`;
+      if (url === bucketUrl) {
+        return new Response(
+          `<ListBucketResult><Contents><Key>${NEXT_KEY}</Key></Contents></ListBucketResult>`,
+          { status: 200 },
+        );
+      }
+      if (url === `${bucketUrl}${encodeURIComponent(NEXT_KEY)}`) {
+        return new Response(JSON.stringify([nextContract]), { status: 200 });
+      }
+      return base(input);
+    }) as unknown as typeof fetch);
+  }
+
+  const eventFor = (today: string, instanceId = `test-${today}`) =>
+    ({
+      payload: { today },
+      timestamp: new Date(`${today}T00:00:00Z`),
+      instanceId,
+    }) as WorkflowEvent<{ today: string }>;
+
+  // Every step runs for real, except: `dieAt` throws before its body (the batch never starts, as when a
+  // D1 error rolls the whole group back); `after[name]` runs once the step's body has committed.
+  const runner = (
+    opts: { dieAt?: string; after?: Record<string, () => Promise<void> | void> } = {},
+  ): WorkflowStep =>
+    ({
+      async do<T>(
+        name: string,
+        configOrCallback: Record<string, unknown> | (() => Promise<T>),
+        maybeCallback?: () => Promise<T>,
+      ): Promise<T> {
+        if (name === opts.dieAt) throw new Error('D1_ERROR: out of memory: SQLITE_NOMEM');
+        const callback =
+          typeof configOrCallback === 'function'
+            ? configOrCallback
+            : (maybeCallback as () => Promise<T>);
+        const result = await callback();
+        await opts.after?.[name]?.();
+        return result;
+      },
+    }) as WorkflowStep;
+
+  // What the site reads, and the truth it must match.
+  const served = (db: DatabaseSync) =>
+    db
+      .prepare(
+        `SELECT as_of AS asOf, refreshed_at AS generation,
+           (SELECT MAX(signed_at) FROM contracts) AS newestContract,
+           (SELECT COUNT(*) FROM contracts) AS contracts
+         FROM home_totals WHERE id = 1`,
+      )
+      .get() as {
+      asOf: string | null;
+      generation: string;
+      newestContract: string;
+      contracts: number;
+    };
+
+  // The as_of expression of the full build, read out of scripts/precompute.sql rather than restated, and
+  // evaluated over the rows the slot serves right now: what a rebuild of this slot would write.
+  const PRECOMPUTE_AS_OF = (() => {
+    const insert = splitSqlStatements(
+      readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8'),
+    ).find((s) => /^INSERT INTO home_totals\b/.test(s))!;
+    const [, columns, select] = insert.match(
+      /^INSERT INTO home_totals \(([^)]*)\)\s*SELECT\s+([\s\S]*)$/,
+    )!;
+    const items: string[] = [];
+    let depth = 0;
+    let current = '';
+    for (const ch of select!) {
+      if (ch === ',' && depth === 0) {
+        items.push(current.trim());
+        current = '';
+        continue;
+      }
+      if (ch === '(') depth += 1;
+      if (ch === ')') depth -= 1;
+      current += ch;
+    }
+    items.push(current.trim());
+    const at = columns!
+      .split(',')
+      .map((c) => c.trim())
+      .indexOf('as_of');
+    return items[at]!;
+  })();
+  const expectDateMatchesServedContracts = (db: DatabaseSync) => {
+    const rebuilt = (db.prepare(`SELECT ${PRECOMPUTE_AS_OF} AS v`).get() as { v: string | null }).v;
+    expect(rebuilt).not.toBeNull();
+    expect(served(db).asOf).toBe(rebuilt);
+  };
+
+  // datetime('now') does not move between two runs inside one second, so the generation is pinned to an
+  // earlier instant between runs: a later write is then visible.
+  const STAMP = '2026-07-10 00:31:00';
+  const pinGeneration = (db: DatabaseSync, at = STAMP) =>
+    db.exec(`UPDATE home_totals SET refreshed_at = '${at}' WHERE id = 1`);
+  async function firstRun(db: DatabaseSync) {
+    const first = await makeWorkflow(db).run(eventFor(TODAY), fakeStep);
+    expect(first.integrity).toBe('ok');
+    pinGeneration(db);
+    expect(served(db)).toMatchObject({ asOf: CONTRACT_DATE, generation: STAMP, contracts: 2 });
+    expectDateMatchesServedContracts(db);
+  }
+  const pending = (db: DatabaseSync) =>
+    (db.prepare('SELECT COUNT(*) AS n FROM refresh_pending_window').get() as { n: number }).n;
+  const verdict = (db: DatabaseSync) =>
+    db
+      .prepare('SELECT verdict, checks FROM refresh_verdict ORDER BY decided_at DESC LIMIT 1')
+      .get() as { verdict: string; checks: string } | undefined;
+  const plannerAsOf = (db: DatabaseSync) =>
+    (db.prepare("SELECT as_of FROM data_freshness WHERE source = 'eop'").get() as { as_of: string })
+      .as_of;
+
+  it('a run that dies before any served row changes moves neither the date nor the generation', async () => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+
+    await expect(
+      makeWorkflow(db).run(eventFor(NEXT_TODAY), runner({ dieAt: 'derive-slice:setup' })),
+    ).rejects.toThrow(/SQLITE_NOMEM/);
+    expect(served(db)).toMatchObject({ asOf: CONTRACT_DATE, generation: STAMP, contracts: 2 });
+    expectDateMatchesServedContracts(db);
+  });
+
+  it('a run that dies right before `contracts` keeps the previous date, never NULL, and moves the generation', async () => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+
+    await expect(
+      makeWorkflow(db).run(eventFor(NEXT_TODAY), runner({ dieAt: 'derive-slice:contracts' })),
+    ).rejects.toThrow(/SQLITE_NOMEM/);
+    const after = served(db);
+    // Served rows have changed (tenders, parties) but no contract has: the date stays where it was.
+    expect(after).toMatchObject({ asOf: CONTRACT_DATE, contracts: 2 });
+    expect(after.generation > STAMP).toBe(true);
+    expectDateMatchesServedContracts(db);
+    expect(pending(db)).toBe(1);
+  });
+
+  it.each([
+    // Right after `contracts`: the new contract is served, and its date with it.
+    ['derive-slice:amendments'],
+    // After `globals`, and in the last batch: the same.
+    ['derive-slice:contract-rollup'],
+    ['derive-slice:cleanup'],
+  ])('a run that dies at %s serves the new contract under its date', async (step) => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+
+    await expect(
+      makeWorkflow(db).run(eventFor(NEXT_TODAY), runner({ dieAt: step })),
+    ).rejects.toThrow(/SQLITE_NOMEM/);
+    const after = served(db);
+    expect(after).toMatchObject({
+      asOf: NEXT_CONTRACT_DATE,
+      newestContract: NEXT_CONTRACT_DATE,
+      contracts: 3,
+    });
+    expect(after.generation > STAMP).toBe(true);
+    expectDateMatchesServedContracts(db);
+    // The window stays owed, so the next run derives it again.
+    expect(pending(db)).toBe(1);
+  });
+
+  it('the planner watermark is not what the site shows: it may lag after a death, and the window is replayed anyway', async () => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+
+    await expect(
+      makeWorkflow(db).run(eventFor(NEXT_TODAY), runner({ dieAt: 'derive-slice:amendments' })),
+    ).rejects.toThrow(/SQLITE_NOMEM/);
+    // data_freshness is rewritten in `globals`; before it, the planner still reads the previous day.
+    expect(plannerAsOf(db)).toBe(CONTRACT_DATE);
+    expect(served(db).asOf).toBe(NEXT_CONTRACT_DATE);
+
+    pinGeneration(db);
+    const replay = await makeWorkflow(db).run(eventFor(NEXT_TODAY, 'replay'), fakeStep);
+    expect(replay).toMatchObject({ integrity: 'ok', uncoveredWindows: 0 });
+    expect(plannerAsOf(db)).toBe(NEXT_CONTRACT_DATE);
+    const after = served(db);
+    expect(after).toMatchObject({ asOf: NEXT_CONTRACT_DATE, contracts: 3 });
+    expect(after.generation > STAMP).toBe(true);
+    expectDateMatchesServedContracts(db);
+    expect(pending(db)).toBe(0);
+  });
+
+  it('a gate violation keeps the date and the generation with the served contracts; the window stays owed and the verdict says so', async () => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+
+    // A real violation from the real gate: the home total no longer reconciles with the contracts.
+    const result = await makeWorkflow(db).run(
+      eventFor(NEXT_TODAY),
+      runner({
+        after: {
+          'derive-slice:cleanup': () =>
+            db.exec('UPDATE home_totals SET value_eur = value_eur + 1000 WHERE id = 1'),
+        },
+      }),
+    );
+    expect(result.integrity).toBe('violation');
+    expect(result.uncoveredWindows).toBeNull();
+    const after = served(db);
+    expect(after).toMatchObject({ asOf: NEXT_CONTRACT_DATE, contracts: 3 });
+    expect(after.generation > STAMP).toBe(true);
+    expectDateMatchesServedContracts(db);
+    expect(pending(db)).toBe(1);
+    expect(verdict(db)?.verdict).toBe('violation');
+    expect(JSON.parse(verdict(db)!.checks)).toContain('rollup-reconciliation');
+  });
+
+  it('an unverified gate keeps the date and the generation with the served contracts; the window stays owed and the verdict says so', async () => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+
+    const result = await makeWorkflow(db).run(
+      eventFor(NEXT_TODAY),
+      runner({ dieAt: 'integrity-gate' }),
+    );
+    expect(result.integrity).toBe('unverified');
+    expect(result.uncoveredWindows).toBeNull();
+    const after = served(db);
+    expect(after).toMatchObject({ asOf: NEXT_CONTRACT_DATE, contracts: 3 });
+    expect(after.generation > STAMP).toBe(true);
+    expectDateMatchesServedContracts(db);
+    expect(pending(db)).toBe(1);
+    expect(verdict(db)?.verdict).toBe('unverified');
+  });
+
+  it('a replayed `contracts` batch moves nothing a second time', async () => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+
+    // The batch commits, its step result is lost, and the step runs again: the second pass must find
+    // nothing to move — not the date, not the generation, not the rows.
+    const LATER = '2026-07-13 00:31:00';
+    let once: ReturnType<typeof served> | undefined;
+    let again: ReturnType<typeof served> | undefined;
+    const replaying: WorkflowStep = {
+      async do<T>(
+        name: string,
+        configOrCallback: Record<string, unknown> | (() => Promise<T>),
+        maybeCallback?: () => Promise<T>,
+      ): Promise<T> {
+        const callback =
+          typeof configOrCallback === 'function'
+            ? configOrCallback
+            : (maybeCallback as () => Promise<T>);
+        if (name !== 'derive-slice:contracts') return callback();
+        await callback();
+        pinGeneration(db, LATER);
+        once = served(db);
+        const result = await callback();
+        again = served(db);
+        return result;
+      },
+    } as WorkflowStep;
+    const result = await makeWorkflow(db).run(eventFor(NEXT_TODAY), replaying);
+    expect(result.integrity).toBe('ok');
+    expect(once).toEqual({
+      asOf: NEXT_CONTRACT_DATE,
+      generation: LATER,
+      newestContract: NEXT_CONTRACT_DATE,
+      contracts: 3,
+    });
+    expect(again).toEqual(once);
+    // The run went on and moved the generation after its last batch.
+    expect(served(db).generation > LATER).toBe(true);
+    expectDateMatchesServedContracts(db);
+  });
+
+  it('moves the generation again after the batches that still write served rows past `globals`', async () => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+
+    // A page rendered right after `globals` would carry this generation; `contract-rollup` and
+    // `cohort-stats` still change what it shows, so the finished run must not leave it current.
+    const AFTER_GLOBALS = '2026-07-13 00:31:00';
+    const result = await makeWorkflow(db).run(
+      eventFor(NEXT_TODAY),
+      runner({ after: { 'derive-slice:globals': () => pinGeneration(db, AFTER_GLOBALS) } }),
+    );
+    expect(result.integrity).toBe('ok');
+    expect(served(db).generation > AFTER_GLOBALS).toBe(true);
+  });
+
+  it('a run with nothing to do moves neither the date nor the generation', async () => {
+    const db = freshServedDb();
+    stubTwoBuckets();
+    await firstRun(db);
+    const next = await makeWorkflow(db).run(eventFor(NEXT_TODAY), fakeStep);
+    expect(next.integrity).toBe('ok');
+    pinGeneration(db);
+
+    const quiet = await makeWorkflow(db).run(eventFor('2026-08-15'), fakeStep);
+    expect(quiet).toMatchObject({ staged: 0, derived: 0, uncoveredWindows: 0 });
+    expect(served(db)).toMatchObject({ asOf: NEXT_CONTRACT_DATE, generation: STAMP, contracts: 3 });
+    expectDateMatchesServedContracts(db);
   });
 });
