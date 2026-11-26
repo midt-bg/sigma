@@ -107,7 +107,15 @@ it('shows one company for multiple source identities, sequential sections and hi
       ],
     },
     activity: emptyActivity,
-    totals: { companies: 1, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 1,
+      contracts: 0,
+      valueEur: null,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
@@ -325,7 +333,15 @@ it('puts offices and public enterprises under „Заемани длъжност
     declarations: [],
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
-    totals: { companies: 2, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 2,
+      contracts: 0,
+      valueEur: null,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
@@ -395,7 +411,15 @@ it('draws a held seat in outline and without the overlap band', () => {
       contracts: [],
     },
     activity: emptyActivity,
-    totals: { companies: 2, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 2,
+      contracts: 0,
+      valueEur: null,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     // The intervals carry a band for both: the seat's overlaps the office years as any role would.
     timelineIntervals: {
       ...emptyIntervals,
@@ -469,7 +493,15 @@ it('shows a seat in an organization’s bodies under the organization, with the 
     ],
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
-    totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 0,
+      contracts: 0,
+      valueEur: null,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
@@ -535,7 +567,15 @@ it('names the public stake under a company the person holds a seat in', () => {
     declarations: [],
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
-    totals: { companies: 3, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 3,
+      contracts: 0,
+      valueEur: null,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     timelineIntervals: emptyIntervals,
     publicStakes: {
       '111111111': {
@@ -587,7 +627,15 @@ it('renders nothing when there are no dated facts or companies', () => {
     declarations: [],
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
-    totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 0,
+      contracts: 0,
+      valueEur: null,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
@@ -618,7 +666,15 @@ function overflowFixture() {
     declarations: [],
     timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
     activity: emptyActivity,
-    totals: { companies: 1, contracts: 3, valueEur: 100, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 1,
+      contracts: 3,
+      valueEur: 100,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     timelineIntervals: emptyIntervals,
     tieLayout: null,
     aliases: [],
@@ -920,7 +976,15 @@ it('draws the overlap band, the office and each procurement from announcement to
       ],
     },
     activity: emptyActivity,
-    totals: { companies: 1, contracts: 3, valueEur: 300, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 1,
+      contracts: 3,
+      valueEur: 300,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -968,11 +1032,11 @@ it('draws the overlap band, the office and each procurement from announcement to
     expect(marks[0]!.querySelector('svg')).not.toBeNull();
     expect(marks[0]!.classList.contains('period-overlap')).toBe(true);
     expect(marks[0]!.getAttribute('aria-label')).toContain(
-      'Същата институция · в съвпадение: Община Тест · договор от 2022\u00a0г. · периоди на длъжността по декларациите: 2021–2022\u00a0г. (встъпителна 20.04.2021)',
+      'Договор от институцията в периода на длъжността и участието: Община Тест · договор от 2022\u00a0г. · периоди на длъжността по декларациите: 2021–2022\u00a0г. (встъпителна 20.04.2021)',
     );
     expect(marks[1]!.classList.contains('own')).toBe(false);
     expect(tip.querySelector('.time-tip-own')!.textContent).toContain(
-      'Същата институция · в съвпадение',
+      'Договор от институцията в периода на длъжността и участието',
     );
     expect(tip.textContent).toContain('Обявена 01.03.2022 → подписан 01.05.2022 · 61 дни');
     expect(tip.textContent).toContain('Една оферта');
@@ -1175,7 +1239,15 @@ it("keeps every contract with the person's own institution and says, in words, h
       ],
     },
     activity: emptyActivity,
-    totals: { companies: 1, contracts: 4, valueEur: 420, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 1,
+      contracts: 4,
+      valueEur: 420,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     tieLayout: null,
     aliases: [],
     relatives: [],
@@ -1214,12 +1286,24 @@ it("keeps every contract with the person's own institution and says, in words, h
     // contract's year and the declared periods.
     expect(byId('c18a').classList.contains('period-overlap')).toBe(true);
     expect(byId('c18a').getAttribute('aria-label')).toContain(
-      `Същата институция · в съвпадение: Община Тест · договор от 2018\u00a0г. · периоди на длъжността по декларациите: ${periods}`,
+      `Договор от институцията в периода на длъжността и участието: Община Тест · договор от 2018\u00a0г. · периоди на длъжността по декларациите: ${periods}`,
     );
-    expect(byId('c18b').classList.contains('period-in-office')).toBe(true);
+    // Signed inside the office, on a day the tie to the company is not established for: told as a period
+    // that is not established — three cases, not four — and its note says which side is missing.
+    expect(byId('c18b').classList.contains('period-unknown')).toBe(true);
     expect(byId('c18b').getAttribute('aria-label')).toContain(
-      'Същата институция · в периода на длъжността: Община Тест · договор от 2018',
+      'Същата институция · периодът не е установен: Община Тест · договор от 2018',
     );
+    act(() => {
+      byId('c18b').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
+    expect(el.querySelector('.time-tip')!.textContent).toContain(
+      'връзката с дружеството към датата не е установена',
+    );
+    act(() => {
+      byId('c18b').dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      vi.advanceTimersByTime(300);
+    });
     expect(byId('c16').classList.contains('period-outside')).toBe(true);
     expect(byId('c16').getAttribute('aria-label')).toContain(
       `Същата институция · извън периода: Община Тест · договор от 2016\u00a0г. · периоди на длъжността по декларациите: ${periods}`,
@@ -1248,8 +1332,7 @@ it("keeps every contract with the person's own institution and says, in words, h
       i.parentElement!.textContent!.trim(),
     ]);
     expect(legend).toEqual([
-      ['period-overlap', 'Същата институция · в съвпадение'],
-      ['period-in-office', 'Същата институция · в периода на длъжността'],
+      ['period-overlap', 'Договор от институцията в периода на длъжността и участието'],
       ['period-outside', 'Същата институция · извън периода'],
       ['period-unknown', 'Същата институция · периодът не е установен'],
     ]);
@@ -1259,11 +1342,13 @@ it("keeps every contract with the person's own institution and says, in words, h
     );
     expect(triggers).toEqual([
       '2016: възложител от институциите в декларациите · ТЕСТ ГРУП ЕООД · 1 извън периода',
-      '2018: възложител от институциите в декларациите · ТЕСТ ГРУП ЕООД · 1 в съвпадение · 1 в периода на длъжността',
+      '2018: възложител от институциите в декларациите · ТЕСТ ГРУП ЕООД · 1 в периода на длъжността и участието · 1 периодът не е установен',
       '2020: възложител от институциите в декларациите · ТЕСТ ГРУП ЕООД · 1 периодът не е установен',
     ]);
     const popover = el.querySelectorAll('.time-buyers-list')[1]!.textContent;
-    expect(popover).toContain('Същата институция · 1 в съвпадение · 1 в периода на длъжността');
+    expect(popover).toContain(
+      'Същата институция · 1 в периода на длъжността и участието · 1 периодът не е установен',
+    );
     expect(popover).toContain(
       `Община Тест · договор от 2018\u00a0г. · периоди на длъжността по декларациите: ${periods}`,
     );

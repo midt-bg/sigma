@@ -5,6 +5,7 @@ import { OFFICE_ORGANIZATIONS } from '@sigma/shared';
 import {
   BY_AUTHORITY_SHOWN,
   getPersonActivity,
+  getPersonPeriodTotals,
   getRegistryIdentity,
   getRegistryOfficials,
 } from './person-activity';
@@ -569,6 +570,40 @@ it('marks only what falls inside both the tie to THIS company and the office', a
   expect(await ids('untied')).toEqual(['b', 'c', 'd']);
   expect(await ids('role')).toEqual(['a', 'c']);
   expect(await ids('matched')).toEqual(['a', 'b']); // office years alone, the old question
+});
+
+// The profile opens with two figures over all contracts. They are the same flags as the contracts table's
+// „Период“ filter, so the figure above the table and the rows the filter leaves cannot disagree.
+it('gives the profile’s opening figures by the same flags as the contracts filter', async () => {
+  const d1 = fixture();
+  const filtered = async (basis: string) => {
+    const a = await getPersonActivity(
+      d1,
+      'person',
+      ['official'],
+      new URLSearchParams(`basis=${basis}`),
+    );
+    return { count: a.total, eur: a.valueEur };
+  };
+  const totals = await getPersonPeriodTotals(d1, 'person', ['official']);
+  const office = await filtered('tied');
+  const declared = await filtered('declaration');
+  expect(office.count).toBeGreaterThan(0);
+  expect(declared.count).toBeGreaterThan(0);
+  expect(totals).toEqual({
+    officeCount: office.count,
+    officeEur: office.eur,
+    declaredCount: declared.count,
+    declaredEur: declared.eur,
+  });
+  // A person with no contract in either period: counts of zero and no sum — never a made-up 0 €.
+  db.exec('DELETE FROM contracts;');
+  expect(await getPersonPeriodTotals(d1, 'person', ['official'])).toEqual({
+    officeCount: 0,
+    officeEur: null,
+    declaredCount: 0,
+    declaredEur: null,
+  });
 });
 
 // A filing date is always LATER than what it reports: the law gives a month to file after taking

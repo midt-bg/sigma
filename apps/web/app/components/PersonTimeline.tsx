@@ -304,7 +304,7 @@ export function PersonTimeline({
     const label = [
       pr.subject || 'Договор',
       pr.authority,
-      own ? `${PERIOD_LABEL[own.period]}: ${periodSentence(own, pr.signedAt)}` : null,
+      own ? `${PERIOD_LABEL[shownPeriod(own.period)]}: ${periodSentence(own, pr.signedAt)}` : null,
       pr.announcedAt ? `обявена ${date(pr.announcedAt)}` : 'без дата на обявяване',
       `подписан ${date(pr.signedAt)}`,
       pr.valueEur != null ? money(pr.valueEur) : null,
@@ -320,7 +320,7 @@ export function PersonTimeline({
       <Link
         key={pr.id}
         to={`/contracts/${contractSlug(pr.id)}`}
-        className={`time-procurement ${kind} ${own ? `own period-${own.period}` : ''} ${pr.announcedAt ? '' : 'time-undated-start'}`}
+        className={`time-procurement ${kind} ${own ? `own period-${shownPeriod(own.period)}` : ''} ${pr.announcedAt ? '' : 'time-undated-start'}`}
         style={between(pr.announcedAt ?? pr.signedAt, pr.signedAt)}
         aria-label={label}
         {...tipProps(() => procurementTip(pr, kind, own))}
@@ -331,7 +331,7 @@ export function PersonTimeline({
   };
   const ownPeriodsShown = PERIODS.filter((period) =>
     (intervals?.procurements ?? []).some(
-      (pr) => ownIds.has(pr.authorityId) && ownPeriod(pr).period === period,
+      (pr) => ownIds.has(pr.authorityId) && shownPeriod(ownPeriod(pr).period) === period,
     ),
   );
   const bandMismatch = intervals
@@ -404,7 +404,7 @@ export function PersonTimeline({
         {(p.timeline.buyers ?? []).some((b) => ownIds.has(b.id)) && (
           <span>
             <InstitutionSymbol /> възложител от институциите в декларациите{' '}
-            <Explanation text="Договорът е с институция, за която лицето е подавало декларации. Индикацията остава и за договорите извън периода на длъжността; текстът казва кое от трите е: в съвпадение, извън периода или периодът не е установен. Периодът е по годините с декларации, а не точни дати на мандата." />
+            <Explanation text="Договорът е с институция, за която лицето е подавало декларации. Индикацията остава и за договорите извън периода на длъжността; текстът казва кое от трите е: в периода на длъжността и участието, извън периода или периодът не е установен. Периодът е по годините с декларации, а не точни дати на мандата." />
           </span>
         )}
         {ownPeriodsShown.map((period) => (
@@ -883,17 +883,21 @@ interface OwnOffice {
 }
 type OwnPeriod = OwnOffice & { period: InstitutionPeriod };
 
-const PERIODS: InstitutionPeriod[] = ['overlap', 'in-office', 'outside', 'unknown'];
+/** The three cases the page states. A contract signed inside the office at the institution on a day for which
+ *  the tie to the company is not established (`in-office`) is, for the reader, a period that is not
+ *  established: the office side is known, the tie's is not, and the contract's own note says which. */
+export type ShownPeriod = Exclude<InstitutionPeriod, 'in-office'>;
+export const shownPeriod = (period: InstitutionPeriod): ShownPeriod =>
+  period === 'in-office' ? 'unknown' : period;
+const PERIODS: ShownPeriod[] = ['overlap', 'outside', 'unknown'];
 /** Read without colour: each case says itself in words, beside its own line pattern. */
-export const PERIOD_LABEL: Record<InstitutionPeriod, string> = {
-  overlap: 'Същата институция · в съвпадение',
-  'in-office': 'Същата институция · в периода на длъжността',
+export const PERIOD_LABEL: Record<ShownPeriod, string> = {
+  overlap: 'Договор от институцията в периода на длъжността и участието',
   outside: 'Същата институция · извън периода',
   unknown: 'Същата институция · периодът не е установен',
 };
-const PERIOD_SHORT: Record<InstitutionPeriod, string> = {
-  overlap: 'в съвпадение',
-  'in-office': 'в периода на длъжността',
+const PERIOD_SHORT: Record<ShownPeriod, string> = {
+  overlap: 'в периода на длъжността и участието',
   outside: 'извън периода',
   unknown: 'периодът не е установен',
 };
@@ -901,7 +905,7 @@ const PERIOD_NOTE: Record<InstitutionPeriod, string> = {
   overlap:
     'Подписан в година с декларация за длъжността в тази институция, докато лицето е свързано с дружеството.',
   'in-office':
-    'Подписан в година с декларация за длъжността в тази институция, но връзката с дружеството към датата не е установена — затова не е съвпадение.',
+    'Подписан в година с декларация за длъжността в тази институция, но връзката с дружеството към датата не е установена — затова периодът на участието не е установен.',
   outside:
     'Декларациите ограничават длъжността в тази институция от страната на договора: след финалната декларация или повече от месец преди встъпителната.',
   unknown:
@@ -952,10 +956,14 @@ function periodCounts(periods: InstitutionPeriod[]): Partial<Record<InstitutionP
   return out;
 }
 
-const periodSummary = (counts: Partial<Record<InstitutionPeriod, number>> | null) =>
-  PERIODS.filter((period) => counts?.[period])
-    .map((period) => `${count(counts![period]!)} ${PERIOD_SHORT[period]}`)
+const periodSummary = (counts: Partial<Record<InstitutionPeriod, number>> | null) => {
+  const shown: Partial<Record<ShownPeriod, number>> = {};
+  for (const [period, n] of Object.entries(counts ?? {}) as [InstitutionPeriod, number][])
+    shown[shownPeriod(period)] = (shown[shownPeriod(period)] ?? 0) + n;
+  return PERIODS.filter((period) => shown[period])
+    .map((period) => `${count(shown[period]!)} ${PERIOD_SHORT[period]}`)
     .join(' · ');
+};
 
 /** The declared offices as years, with the filing days that bound them. */
 function officeYearsSentence(office: OwnOffice, year: string) {
@@ -1131,13 +1139,14 @@ function procurementTip(pr: TimelineProcurement, kind: ProcurementKind, own: Own
       {own && (
         <>
           <span className="time-tip-own">
-            <InstitutionSymbol /> {PERIOD_LABEL[own.period]}
+            <InstitutionSymbol /> {PERIOD_LABEL[shownPeriod(own.period)]}
           </span>
           <span>{periodSentence(own, pr.signedAt)}</span>
           <small className="muted">{PERIOD_NOTE[own.period]}</small>
           {pr.tied && own.period !== 'overlap' && (
             <small className="muted">
-              Съвпадението е по друга длъжност от декларациите, не по тази институция.
+              Договорът е в периода на друга длъжност от декларациите, не на длъжността в тази
+              институция.
             </small>
           )}
         </>

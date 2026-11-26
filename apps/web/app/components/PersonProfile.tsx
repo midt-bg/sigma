@@ -18,6 +18,10 @@ import { tieColumns, tieRows } from '../lib/entity-tables';
 import { personName } from '../lib/person-name';
 import { ROLE_LABEL } from '../lib/registry-roles';
 
+/** „14 · 11,1 млн. €“ — how many contracts and what they are worth; „няма“ when none falls in the period. */
+const contractsFigure = (n: number, eur: number | null): string =>
+  n > 0 ? `${count(n)} · ${money(eur)}` : 'няма';
+
 export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) {
   // Declared stakes make the person a related-persons case; any declaration makes them an official.
   const official = p.links.length > 0;
@@ -60,7 +64,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           {p.aliases.length > 0 && (
             <p className="muted small">Среща се и като {p.aliases.map(personName).join(', ')}</p>
           )}
-          {filed && <PublicOffices filings={p.declarations} />}
+          {filed && <PublicOffices filings={p.declarations} filingDays />}
         </PageHeader>
         <nav className="profile-nav" aria-label="В профила">
           {official && <a href="#declared-overview">Декларирани интереси</a>}
@@ -87,10 +91,25 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
                   term: 'Свързани дружества',
                   value: count(new Set(p.links.map((l) => l.eik)).size),
                 },
-                { term: 'Договори в декларирания период', value: count(p.totals.declaredCount) },
-                { term: 'Стойност на тези договори', value: money(p.totals.declaredEur) },
+                {
+                  term: 'Договори в периода на длъжността и участието',
+                  value: contractsFigure(p.totals.officeCount, p.totals.officeEur),
+                },
+                {
+                  term: 'Договори в декларирания период',
+                  value: contractsFigure(p.totals.declaredCount, p.totals.declaredEur),
+                },
               ]}
             />
+            <p className="small muted">
+              „В периода на длъжността и участието“ са договорите, подписани в година с декларация
+              за длъжността, докато участието в дружеството е декларирано или вписано в Търговския
+              регистър, включително като член на колективен орган. Сумата в списъка и в търсенето
+              може да е по-малка: за декларирано дружество там се броят само декларираните години, а
+              местата в колективни органи се добавят при поискване. „В декларирания период“ са
+              всички договори в годините на декларираното участие, и когато лицето не е било на
+              длъжност.
+            </p>
             <p className="small muted">
               Сумите са към дружествата, а не личен доход. Близък с деклариран дял се назовава само
               когато Търговският регистър го вписва в декларираното дружество.{' '}

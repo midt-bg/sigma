@@ -120,6 +120,8 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
         companies: new Set(d.links.map((l) => l.eik)).size,
         contracts: 0,
         valueEur: null,
+        officeCount: 0,
+        officeEur: null,
         declaredCount: 0,
         declaredEur: null,
       },

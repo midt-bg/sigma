@@ -9,6 +9,7 @@ const q = vi.hoisted(() => ({
   getOfficialConflicts: vi.fn(),
   getPersonDeclarations: vi.fn(),
   getPersonActivity: vi.fn(),
+  getPersonPeriodTotals: vi.fn(),
   getPersonTimeline: vi.fn(),
   getTimelineIntervals: vi.fn(async () => ({ bands: {}, declared: [], procurements: [] })),
   getPublicStakes: vi.fn(async () => ({})),
@@ -95,6 +96,35 @@ it('limits company mentions to eligible profiles while retaining every source an
     interests: [],
   });
   expect(declarations[0]!.interests).toHaveLength(3); // source objects remain intact
+});
+
+// The figures the profile opens with are over all contracts: a filter on the page narrows the table below,
+// not what the page says about the person.
+it('opens with the period figures over all contracts, whatever the page filters', async () => {
+  q.getPersonScope.mockResolvedValue({ indent: null, officialIds: ['p'] });
+  q.getOfficialConflicts.mockResolvedValue({ official: 'Тестово лице', links: [] });
+  q.getPersonDeclarations.mockResolvedValue([]);
+  q.getPersonActivity.mockClear().mockResolvedValue(emptyActivity);
+  q.getPersonTimeline.mockResolvedValue({ contracts: [], reads: [], observations: [] });
+  q.getPersonPeriodTotals.mockResolvedValue({
+    officeCount: 2,
+    officeEur: 5000,
+    declaredCount: 3,
+    declaredEur: 9000,
+  });
+  const p = (await loadPersonProfile(fakeD1([]).db, {
+    officialId: 'p',
+    search: new URLSearchParams('year=1900'),
+  }))!;
+  expect(p.totals).toMatchObject({
+    officeCount: 2,
+    officeEur: 5000,
+    declaredCount: 3,
+    declaredEur: 9000,
+  });
+  expect(q.getPersonPeriodTotals).toHaveBeenCalledWith(expect.anything(), null, ['p'], []);
+  // One read of the contracts for the table; the figures no longer cost a second one.
+  expect(q.getPersonActivity).toHaveBeenCalledTimes(1);
 });
 
 it('lists the other names the declarations were filed under, never the shown name itself', async () => {

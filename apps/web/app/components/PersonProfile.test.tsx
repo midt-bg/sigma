@@ -123,7 +123,15 @@ function profile(over: Partial<LoadedPersonProfile> = {}): LoadedPersonProfile {
     timeline: { contracts: [], observations: [], reads: [], buyers: [], institutionProfiles: [] },
     declarations: [],
     activity,
-    totals: { companies: 1, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    totals: {
+      companies: 1,
+      contracts: 0,
+      valueEur: null,
+      officeCount: 0,
+      officeEur: null,
+      declaredCount: 0,
+      declaredEur: null,
+    },
     timelineIntervals: emptyIntervals,
     tieLayout: layoutTies(person.network),
     aliases: [],
@@ -288,8 +296,11 @@ describe('PersonProfile', () => {
     const header = c.querySelector('header, .page-header') ?? c;
     const offices = header.querySelector('.person-institutions')!.textContent;
     // One plain line per office: the status is a word in front of the position, not a second line.
-    expect(offices).toContain('Член · Съвет за тестове · декларация за 2023');
-    expect(offices).toContain('Бивш член · Агенция за тестове · 2018–2019');
+    expect(offices).toContain('Член · Съвет за тестове · последна декларация за 2023');
+    // The profile has room for the day of the exit declaration, named as a declaration.
+    expect(offices).toContain(
+      'Бивш член · Агенция за тестове · 2018–2019 (финална декларация от 01.06.2019)',
+    );
     expect(offices).not.toMatch(/настоящ/i);
     // One office has no end on record, so the heading keeps the plain word.
     expect(c.querySelector('.kicker')!.textContent).toBe('Длъжностно лице · декларации');
@@ -361,8 +372,8 @@ describe('PersonProfile', () => {
       [...c.querySelectorAll('tbody tr')]
         .find((r) => r.textContent?.includes(`Договор ${id}`))!
         .querySelector('td[data-label="Основание за връзката"]')!.textContent;
-    expect(basis('a')).toContain('Същата институция · в съвпадение');
-    expect(basis('b')).toContain('Същата институция · в периода на длъжността');
+    expect(basis('a')).toContain('Договор от институцията в периода на длъжността и участието');
+    expect(basis('b')).toContain('Същата институция · периодът не е установен');
     expect(basis('c')).not.toContain('Същата институция');
   });
 
@@ -381,6 +392,8 @@ describe('PersonProfile', () => {
           companies: 1,
           contracts: 3,
           valueEur: 90_000,
+          officeCount: 1,
+          officeEur: 12_000,
           declaredCount: 2,
           declaredEur: 30_000,
         },
@@ -399,9 +412,17 @@ describe('PersonProfile', () => {
     ]);
     expect(facts).toEqual([
       ['Свързани дружества', '1'],
-      ['Договори в декларирания период', '2'],
-      ['Стойност на тези договори', money(30_000)],
+      // The row carries the name of the contracts filter and the timeline's marks, whose figure it is; the
+      // list and the search count less for a declared company, and the page says so.
+      ['Договори в периода на длъжността и участието', `1 · ${money(12_000)}`],
+      ['Договори в декларирания период', `2 · ${money(30_000)}`],
     ]);
+    expect(section('declared-overview')!.textContent).toContain(
+      'Сумата в списъка и в търсенето може да е по-малка: за декларирано дружество там се броят само декларираните години, а местата в колективни органи се добавят при поискване.',
+    );
+    expect(section('declared-overview')!.textContent).toContain(
+      '„В декларирания период“ са всички договори в годините на декларираното участие, и когато лицето не е било на длъжност.',
+    );
     expect(section('declarations')!.textContent).toContain(
       'Няма налични документи в заредения набор.',
     );

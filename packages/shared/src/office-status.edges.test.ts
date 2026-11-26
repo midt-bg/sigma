@@ -32,9 +32,9 @@ describe('the edges of the rule', () => {
       ],
       2026,
     );
-    expect(offices.map((o) => o.status)).toEqual([
-      { kind: 'former', year: '2021' },
-      { kind: 'former', year: '2021' },
+    expect(offices.map((o) => [o.status, o.exitOn])).toEqual([
+      [{ kind: 'former', year: '2021' }, '2021-06-01'],
+      [{ kind: 'former', year: '2021' }, '2021-06-01'],
     ]);
   });
 
@@ -53,7 +53,7 @@ describe('the edges of the rule', () => {
   it('an office with no position on record has no title unless it is former', () => {
     const [office] = describeOffices([f('2020', 'Annualy', null, 'Община Тестово', '')], 2026);
     expect(officeTitle(office!)).toBeNull();
-    expect(officeLine(office!)).toBe('Община Тестово · декларация за 2020');
+    expect(officeLine(office!)).toBe('Община Тестово · последна декларация за 2020');
   });
 
   it('lists an office known only by name after the dated ones', () => {
@@ -71,7 +71,7 @@ describe('the edges of the rule', () => {
       ['Агенция Пробна', 'undated'],
     ]);
     expect(officesLine(offices)).toBe(
-      'Кмет · Община Тестово · декларация за 2020 · още 2 длъжности',
+      'Кмет · Община Тестово · последна декларация за 2020 · още 2 длъжности',
     );
   });
 

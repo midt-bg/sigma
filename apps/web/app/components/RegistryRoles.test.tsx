@@ -125,7 +125,7 @@ describe('CompanyRolesTables', () => {
     expect(anna).toContain('Ролята е вписана и в години с декларация за длъжността: 2018, 2020.');
     expect(cells(ended!, 'До')).toEqual(['10.01.2022']);
     const vera = cells(standing!, 'Лице')[0]!;
-    expect(vera).toContain('Директор · Агенция за тестове · декларация за 2012');
+    expect(vera).toContain('Директор · Агенция за тестове · последна декларация за 2012');
     expect(vera).not.toContain('Ролята е вписана');
     expect(vera).not.toMatch(/настоящ/i);
     // The general word follows the office line: former only where every office has an exit on record.
