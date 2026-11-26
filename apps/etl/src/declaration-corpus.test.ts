@@ -99,6 +99,24 @@ it('streams checksummed objects through the private R2 binding and confines ever
   );
   expect((await call(part, { method: 'DELETE' })).status).toBe(405);
   expect((await call('?prefix=checkpoints/')).status).toBe(400);
+  // So is a parse-cache entry: the bucket's lifecycle rule is the only thing that removes one.
+  const entry = `parse-cache/${'0123456789abcdef'}/2025/${'b'.repeat(64)}.jsonl.gz`;
+  expect(
+    (
+      await call(entry, {
+        method: 'PUT',
+        body: 'gz',
+        headers: { 'x-corpus-sha256': 'a'.repeat(64) },
+      })
+    ).status,
+  ).toBe(204);
+  expect(put).toHaveBeenLastCalledWith(
+    'declarations/corpus-v2/' + entry,
+    expect.anything(),
+    expect.objectContaining({ httpMetadata: { contentType: 'application/gzip' } }),
+  );
+  expect((await call(entry, { method: 'DELETE' })).status).toBe(405);
+  expect((await call('?prefix=parse-cache/')).status).toBe(400);
   expect(remove).not.toHaveBeenCalled();
   expect((await call('.corpus-complete.json', { method: 'DELETE' })).status).toBe(204);
   expect(remove).toHaveBeenCalledWith('declarations/corpus-v2/.corpus-complete.json');

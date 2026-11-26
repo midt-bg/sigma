@@ -44,20 +44,22 @@ esac
   return { ...result, adds };
 }
 
-test('adds both rules to a bucket that has neither', () => {
+test('adds every rule to a bucket that has none', () => {
   const r = run();
   assert.equal(r.status, 0);
   assert.deepEqual(r.adds, [
     '--filter @sigma/etl exec wrangler r2 bucket lifecycle add sigma-declarations-test --name checkpoints --prefix declarations/corpus-v2/checkpoints/ --expire-days 7 -y',
     '--filter @sigma/etl exec wrangler r2 bucket lifecycle add sigma-declarations-test --name fetch-events --prefix declarations/corpus-v2/fetch-events/ --expire-days 30 -y',
+    '--filter @sigma/etl exec wrangler r2 bucket lifecycle add sigma-declarations-test --name parse-cache --prefix declarations/corpus-v2/parse-cache/ --expire-days 30 -y',
   ]);
 });
 
 test('leaves a rule that is already there alone', () => {
   const r = run({ listing: LISTED + CHECKPOINTS });
   assert.equal(r.status, 0);
-  assert.equal(r.adds.length, 1);
+  assert.equal(r.adds.length, 2);
   assert.match(r.adds[0], /--name fetch-events/);
+  assert.match(r.adds[1], /--name parse-cache/);
   assert.match(r.stdout, /rule checkpoints already present/);
 });
 

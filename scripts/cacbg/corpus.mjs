@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { safeFolder, safeXmlFile } from './guard.mjs';
 
 export const CORPUS_STAMP = '.corpus-complete.json';
@@ -33,10 +35,14 @@ export async function* corpusFiles(store, folder, files, width = 16) {
 export const CHECKPOINT_KEY =
   /^checkpoints\/[0-9a-f-]{36}\/(?:head\.json|[0-9a-f]{16}\/20\d{2}[A-Za-z0-9_]{0,8}\/(?:holdings|related|filings|source-groups|registry-requests|source-quarantine)\.jsonl\.gz)$/;
 
+// The parse cache (parse-cache.mjs): one entry per parser version, folder and inputs, outside any run.
+export const PARSE_CACHE_KEY =
+  /^parse-cache\/[0-9a-f]{16}\/20\d{2}[A-Za-z0-9_]{0,8}\/[0-9a-f]{64}\.jsonl\.gz$/;
+
 export function safeKey(key) {
   if ([CORPUS_STAMP, 'accepted.json'].includes(key)) return key;
   if (/^fetch-events\/[0-9a-f-]{36}\/[1-9]\d*\.json$/.test(key)) return key;
-  if (CHECKPOINT_KEY.test(key)) return key;
+  if (CHECKPOINT_KEY.test(key) || PARSE_CACHE_KEY.test(key)) return key;
   const parts = key.split('/');
   if (parts.length !== 2) throw Error('Invalid corpus key');
   safeFolder(parts[0]);
@@ -56,6 +62,12 @@ export function corpusStore(
       async get(key) {
         const p = path.join(rawDir, safeKey(key));
         return fs.existsSync(p) ? fs.readFileSync(p) : null;
+      },
+      async download(key, file) {
+        const p = path.join(rawDir, safeKey(key));
+        if (!fs.existsSync(p)) return false;
+        fs.copyFileSync(p, file);
+        return true;
       },
       async put(key, body) {
         const p = path.join(rawDir, safeKey(key));
@@ -116,6 +128,27 @@ export function corpusStore(
         if (res.headers.get('x-corpus-sha256') !== digest(body))
           throw Error(`Corpus checksum mismatch: ${key}`);
         return body;
+      });
+    },
+    // The same read as `get`, streamed to a file: an object the size of a parsed folder never has to sit
+    // in memory. The checksum is taken on the way and a mismatch is read again, like a cut body.
+    async download(key, file) {
+      return request(encodeURI(safeKey(key)), {}, async (res) => {
+        if (res.status === 404) return false;
+        const hash = createHash('sha256');
+        await pipeline(
+          Readable.fromWeb(res.body),
+          new Transform({
+            transform(chunk, _encoding, done) {
+              hash.update(chunk);
+              done(null, chunk);
+            },
+          }),
+          fs.createWriteStream(file),
+        );
+        if (res.headers.get('x-corpus-sha256') !== hash.digest('hex'))
+          throw Error(`Corpus checksum mismatch: ${key}`);
+        return true;
       });
     },
     async put(key, body) {

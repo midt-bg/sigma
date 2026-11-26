@@ -10,11 +10,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { finished } from 'node:stream/promises';
-import { parseList, parseDeclaration } from './parse.mjs';
 import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mjs';
-import { corpusStore, corpusFiles, CORPUS_STAMP, CORPUS_VERSION, digest } from './corpus.mjs';
+import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './corpus.mjs';
+import { folderFiles, parseFolder, readRecords } from './extract-parse.mjs';
+import { entryKey, parserVersion, restoreEntry, saveEntry } from './parse-cache.mjs';
 import { progress } from './progress.mjs';
-import { safeFolder, safeXmlFile } from './guard.mjs';
+import { safeFolder } from './guard.mjs';
 import { documentFingerprint, declarationAttribution } from './source-identity.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { declaredEiks } from './extract-companies.mjs';
@@ -85,6 +86,198 @@ async function assertCorpusComplete(store) {
       `notice. Re-run the crawl to completion (it resumes — declarations on disk are skipped), or ` +
       `pass --allow-partial-corpus to state that a smaller surface is intended.`,
   );
+}
+
+/**
+ * Decide over one folder's parse records (extract-parse.mjs) and write its six parts. This is where the
+ * register and the identity rules meet the parsed documents (`identify`), where a document republished
+ * from an earlier folder is recognised (`seenHash`, carried across folders in order), and where every
+ * counter of the run is kept (`stats`). Returns the number of declarations written.
+ */
+export async function resolveFolder(records, { identify, seenHash, stats, out }) {
+  const { holdingsOut, relatedOut, filingsOut, groupsOut, requestsOut, quarantineOut } = out;
+  let folder;
+  let listHash;
+  // xmlFile → context (first listing wins; a person with multiple positions shares one filing)
+  const ctx = new Map();
+  const listedNames = new Map();
+  const groups = new Map();
+  const publications = new Map();
+  let ended = false;
+  let n = 0;
+  for await (const record of records) {
+    if (record.head) {
+      ({ folder, listHash } = record.head);
+      continue;
+    }
+    if (record.list) {
+      const r = record.list;
+      if (!groups.has(r.personLocator))
+        groups.set(r.personLocator, { name: r.person, files: new Set() });
+      groups.get(r.personLocator).files.add(r.xmlFile);
+      if (!ctx.has(r.xmlFile)) ctx.set(r.xmlFile, r);
+      const names = listedNames.get(r.xmlFile) ?? [];
+      names.push(r.person);
+      listedNames.set(r.xmlFile, names);
+      continue;
+    }
+    if (record.end) {
+      ended = true;
+      continue;
+    }
+    // A single malformed/truncated XML must not abort the whole corpus crawl — it was skipped and is
+    // counted here, so a rise in skips is visible.
+    if (record.error) {
+      const { file, message } = record.error;
+      stats.parseErrors = (stats.parseErrors ?? 0) + 1;
+      console.warn(`  ! skipped ${folder}/${file}: ${message}`);
+      continue;
+    }
+    const { file, sourceFolder, fingerprint, d } = record.doc;
+    const identity = identify?.(d, listedNames.get(file) ?? []);
+    const attribution =
+      identity?.attribution ?? declarationAttribution(d.declarant, listedNames.get(file) ?? []);
+    // `name_variant` is an accepted attribution (the register's own spelling slip), counted below
+    // so its rate stays visible; everything else is quarantined for review.
+    if (!['matched', 'registry_alias', 'name_variant'].includes(attribution)) {
+      stats[attribution] = (stats[attribution] ?? 0) + 1;
+      quarantineOut.write(JSON.stringify({ folder, xmlFile: file, reason: attribution }) + '\n');
+      continue;
+    }
+    if (attribution === 'registry_alias') stats.registryAliases = (stats.registryAliases ?? 0) + 1;
+    if (attribution === 'name_variant') stats.nameVariants = (stats.nameVariants ?? 0) + 1;
+    {
+      const member = seenHash.get(fingerprint) ?? {
+        sourceId: `cacbg:${folder}:${file}`,
+        sourceHash: fingerprint,
+      };
+      publications.set(file, member);
+      if (seenHash.has(fingerprint)) {
+        stats.dupSkipped++;
+        continue;
+      } // republished declaration
+      seenHash.set(fingerprint, member);
+    }
+    stats.decls++;
+    stats[d.templateType] = (stats[d.templateType] ?? 0) + 1;
+    if (d.egnPresent) stats.egnHits++;
+    const c = ctx.get(file) ?? {};
+    const person = d.declarant;
+    // Emit the filing record UNCONDITIONALLY — before the interests loop — so a declaration with zero
+    // material holdings (a divest-to-zero, an empty filing) still advances the person's horizon (B1).
+    filingsOut.write(
+      JSON.stringify({
+        folder,
+        sourceFolder,
+        xmlFile: file,
+        year: d.year,
+        template: d.templateType, // the divest horizon is compared PER declaration type (B1/#226)
+        person,
+        institution: c.institution ?? '',
+        category: c.category ?? '',
+        // The declarant's own „Месторабота" — the institution where the listing only names the declaration
+        // type (ADR-0040). Carried on every record so load.mjs keys all three the same way.
+        work: d.work ?? '',
+        position: c.position || d.position || '',
+        declaredPosition: d.position ?? '',
+        appointmentNumber: d.appointmentNumber ?? null,
+        appointmentDate: d.appointmentDate ?? null,
+        companyEvidence: identity?.companies ?? [],
+        controlHash: d.controlHash,
+        sourceHash: fingerprint,
+        identityReason: identity?.reason ?? 'registry_not_read',
+        declarationType: d.declarationType,
+        assetInventoryComparable: d.assetInventoryComparable ?? false,
+        declaredOn: d.declaredOn ?? null,
+        submittedOn: d.submittedOn ?? null,
+        identityEvidence: identity?.evidence ?? [],
+      }) + '\n',
+    );
+    stats.filings++;
+    for (const it of d.interests) {
+      for (const eik of declaredEiks(it.entity))
+        if (eik.length === 9)
+          requestsOut.write(
+            JSON.stringify({
+              eik,
+              declarationId: `decl:${folder}:${file}`,
+              declaredName: it.entity,
+            }) + '\n',
+          );
+      holdingsOut.write(
+        JSON.stringify({
+          folder,
+          sourceFolder,
+          xmlFile: file,
+          year: d.year,
+          template: d.templateType,
+          category: c.category ?? '',
+          institution: c.institution ?? '',
+          work: d.work ?? '',
+          person,
+          position: c.position ?? d.position ?? '',
+          entity: it.entity,
+          kind: it.kind,
+          detail: it.detail,
+          timing: it.timing,
+          seat: it.seat ?? '',
+          holderRelation: it.holderRelation ?? 'self',
+          ...(it.holderFirstName ? { holderFirstName: true } : {}),
+          controlHash: d.controlHash,
+        }) + '\n',
+      );
+      stats.holdings++;
+      stats.byKind[it.kind] = (stats.byKind[it.kind] ?? 0) + 1;
+    }
+    // A family stake's holder: internal only, so the register can confirm the relative (ADR-0044).
+    const stakeHolders = d.interests
+      .filter((it) => it.holderRelation === 'related' && it.holder)
+      .map((it) => ({
+        name: it.holder,
+        kind: 'stake_holder',
+        info: it.entity,
+        timing: it.timing,
+      }));
+    for (const rp of [...d.relatedPersons, ...stakeHolders]) {
+      relatedOut.write(
+        JSON.stringify({
+          folder,
+          sourceFolder,
+          xmlFile: file,
+          year: d.year,
+          person,
+          institution: c.institution ?? '',
+          category: c.category ?? '',
+          work: d.work ?? '',
+          related_name: rp.name,
+          related_kind: rp.kind,
+          info: rp.info,
+          timing: rp.timing,
+        }) + '\n',
+      );
+      stats.related++;
+    }
+    n++;
+  }
+  // The records end with their own `end` line; records cut short are never decided over.
+  if (!ended) throw Error(`Parse records of ${folder ?? 'a folder'} are incomplete`);
+  for (const [personLocator, group] of groups) {
+    if ([...group.files].some((file) => !publications.has(file))) continue;
+    const members = [
+      ...new Map(
+        [...group.files].map((file) => {
+          const member = publications.get(file);
+          return [member.sourceId, { ...member, xmlFile: file }];
+        }),
+      ).values(),
+    ].sort((a, b) => a.sourceId.localeCompare(b.sourceId));
+    if (members.length < 2) continue;
+    groupsOut.write(
+      JSON.stringify({ folder, listHash, personLocator, name: group.name, members }) + '\n',
+    );
+    stats.sourceGroups = (stats.sourceGroups ?? 0) + 1;
+  }
+  return n;
 }
 
 // The platform asks a container to stop with SIGTERM and then waits. The answer is to accept the
@@ -231,6 +424,33 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
       );
     }
   }
+  // CACBG_PARSE_CACHE: unset reads and writes the cache; `refresh` parses every folder and writes its
+  // entry anew; `off` neither reads nor writes (a read-only corpus).
+  const parseCache = process.env.CACBG_PARSE_CACHE || 'on';
+  if (!['on', 'refresh', 'off'].includes(parseCache))
+    throw Error(`CACBG_PARSE_CACHE takes refresh or off, not ${parseCache}`);
+  const cacheReport = {
+    event: 'declarations_parse_cache',
+    mode: parseCache,
+    parser: parseCache === 'off' ? null : parserVersion(),
+    restored: 0,
+    parsed: 0,
+    unusable: 0,
+    writeFailed: 0,
+  };
+  // The cache only saves a later run a parse: an entry that cannot be written is reported and the run
+  // goes on with the records it has; the next run parses that folder again.
+  const onWriteFailed = (folder, key) => (error) => {
+    cacheReport.writeFailed++;
+    console.log(
+      JSON.stringify({
+        event: 'declarations_parse_cache_write_failed',
+        folder,
+        key,
+        reason: error instanceof Error ? error.message : `${error}`,
+      }),
+    );
+  };
   const done = new Set(head.folders);
   const order = [...head.folders];
   let folderCount = 0;
@@ -245,214 +465,61 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
           throw Error(`Corpus inventory changed: ${folder}`);
       }
       if (indexBytes) index = JSON.parse(indexBytes.toString('utf8'));
-      const list = await store.get(`${folder}/list.xml`);
-      if (!list) {
-        if (store.remote) throw Error(`Missing corpus list: ${folder}`);
-        console.log(`  ${folder}: no list.xml, skip`);
-        continue;
+      // Parsing reads the folder's files and nothing else (extract-parse.mjs), so its records are kept
+      // in the parse cache under the folder's inputs and the parser's version (parse-cache.mjs) and a
+      // folder whose key is unchanged is restored instead of read. What the register, the identity rules
+      // and the earlier folders decide is applied to the records below, on every run.
+      const records = path.join(partsDir, `${folder}.parsed.jsonl`);
+      const key =
+        parseCache === 'off'
+          ? null
+          : await entryKey(store, folder, index, await folderFiles(store, folder, index));
+      let parsed =
+        key && parseCache === 'on'
+          ? await restoreEntry(store, {
+              key,
+              folder,
+              out: records,
+              onUnusable: (error) => {
+                cacheReport.unusable++;
+                console.log(
+                  JSON.stringify({
+                    event: 'declarations_parse_cache_unusable',
+                    folder,
+                    key,
+                    reason: error.message,
+                  }),
+                );
+              },
+              onWriteFailed: onWriteFailed(folder, key),
+            })
+          : null;
+      const restored = Boolean(parsed);
+      if (restored) {
+        cacheReport.restored++;
+        processed += parsed.files;
+        progress('extract', processed, undefined, true);
+      } else {
+        parsed = await parseFolder(store, {
+          folder,
+          index,
+          out: records,
+          onFile: () => progress('extract', ++processed),
+        });
+        if (!parsed) continue;
+        cacheReport.parsed++;
+        if (key)
+          await saveEntry(store, { key, records, onWriteFailed: onWriteFailed(folder, key) });
       }
-      if (index && digest(list) !== index.listHash) throw Error(`Corpus list changed: ${folder}`);
       openParts(folder);
-      // xmlFile → context (first listing wins; a person with multiple positions shares one filing)
-      const ctx = new Map();
-      const listedNames = new Map();
-      const listXml = list.toString('utf8');
-      const listHash = documentFingerprint(listXml);
-      const groups = new Map();
-      const publications = new Map();
-      for (const r of parseList(listXml)) {
-        if (!groups.has(r.personLocator))
-          groups.set(r.personLocator, { name: r.person, files: new Set() });
-        groups.get(r.personLocator).files.add(r.xmlFile);
-        if (!ctx.has(r.xmlFile)) ctx.set(r.xmlFile, r);
-        const names = listedNames.get(r.xmlFile) ?? [];
-        names.push(r.person);
-        listedNames.set(r.xmlFile, names);
-      }
-      let n = 0;
-      const files = index
-        ? index.files
-        : [...(await store.files(folder)).keys()].sort().map((file) => ({ file }));
-      if (index) {
-        const covered = [...files.map((f) => f.file), ...index.missing, ...(index.failed ?? [])];
-        if (
-          new Set(covered).size !== covered.length ||
-          covered.length !== ctx.size ||
-          covered.some((f) => !ctx.has(f))
-        )
-          throw Error(`Corpus inventory does not match list: ${folder}`);
-      }
-      for await (const { file, sha256, bytes, sourceFolder } of corpusFiles(
-        store,
-        folder,
-        files.filter(({ file }) => file !== 'list.xml' && file.endsWith('.xml')),
-      )) {
-        if (safeXmlFile(file) !== file) throw Error('Invalid corpus filename');
-        if (file === 'list.xml' || !file.endsWith('.xml')) continue;
-        // A single malformed/truncated XML must not abort the whole corpus crawl — skip it and keep going,
-        // counting the skip so a rise in skips is visible. (The crawl is a long polite fetch; losing it to
-        // one bad file mid-run wastes hours.)
-        let d;
-        // Storage failures are fatal; only malformed source XML may be quarantined below.
-        if (!bytes || (store.remote && digest(bytes) !== sha256))
-          throw Error(`Corpus file missing or changed: ${folder}/${file}`);
-        progress('extract', ++processed);
-        const xml = bytes.toString('utf8');
-        try {
-          d = parseDeclaration(xml);
-        } catch (err) {
-          stats.parseErrors = (stats.parseErrors ?? 0) + 1;
-          console.warn(
-            `  ! skipped ${folder}/${file}: ${err instanceof Error ? err.message : err}`,
-          );
-          continue;
-        }
-        const identity = identify?.(d, listedNames.get(file) ?? []);
-        const attribution =
-          identity?.attribution ?? declarationAttribution(d.declarant, listedNames.get(file) ?? []);
-        // `name_variant` is an accepted attribution (the register's own spelling slip), counted below
-        // so its rate stays visible; everything else is quarantined for review.
-        if (!['matched', 'registry_alias', 'name_variant'].includes(attribution)) {
-          stats[attribution] = (stats[attribution] ?? 0) + 1;
-          quarantineOut.write(
-            JSON.stringify({ folder, xmlFile: file, reason: attribution }) + '\n',
-          );
-          continue;
-        }
-        if (attribution === 'registry_alias')
-          stats.registryAliases = (stats.registryAliases ?? 0) + 1;
-        if (attribution === 'name_variant') stats.nameVariants = (stats.nameVariants ?? 0) + 1;
-        const fingerprint = documentFingerprint(xml);
-        {
-          const member = seenHash.get(fingerprint) ?? {
-            sourceId: `cacbg:${folder}:${file}`,
-            sourceHash: fingerprint,
-          };
-          publications.set(file, member);
-          if (seenHash.has(fingerprint)) {
-            stats.dupSkipped++;
-            continue;
-          } // republished declaration
-          seenHash.set(fingerprint, member);
-        }
-        stats.decls++;
-        stats[d.templateType] = (stats[d.templateType] ?? 0) + 1;
-        if (d.egnPresent) stats.egnHits++;
-        const c = ctx.get(file) ?? {};
-        const person = d.declarant;
-        // Emit the filing record UNCONDITIONALLY — before the interests loop — so a declaration with zero
-        // material holdings (a divest-to-zero, an empty filing) still advances the person's horizon (B1).
-        filingsOut.write(
-          JSON.stringify({
-            folder,
-            sourceFolder,
-            xmlFile: file,
-            year: d.year,
-            template: d.templateType, // the divest horizon is compared PER declaration type (B1/#226)
-            person,
-            institution: c.institution ?? '',
-            category: c.category ?? '',
-            // The declarant's own „Месторабота" — the institution where the listing only names the declaration
-            // type (ADR-0040). Carried on every record so load.mjs keys all three the same way.
-            work: d.work ?? '',
-            position: c.position || d.position || '',
-            declaredPosition: d.position ?? '',
-            appointmentNumber: d.appointmentNumber ?? null,
-            appointmentDate: d.appointmentDate ?? null,
-            companyEvidence: identity?.companies ?? [],
-            controlHash: d.controlHash,
-            sourceHash: fingerprint,
-            identityReason: identity?.reason ?? 'registry_not_read',
-            declarationType: d.declarationType,
-            assetInventoryComparable: d.assetInventoryComparable ?? false,
-            declaredOn: d.declaredOn ?? null,
-            submittedOn: d.submittedOn ?? null,
-            identityEvidence: identity?.evidence ?? [],
-          }) + '\n',
-        );
-        stats.filings++;
-        for (const it of d.interests) {
-          for (const eik of declaredEiks(it.entity))
-            if (eik.length === 9)
-              requestsOut.write(
-                JSON.stringify({
-                  eik,
-                  declarationId: `decl:${folder}:${file}`,
-                  declaredName: it.entity,
-                }) + '\n',
-              );
-          holdingsOut.write(
-            JSON.stringify({
-              folder,
-              sourceFolder,
-              xmlFile: file,
-              year: d.year,
-              template: d.templateType,
-              category: c.category ?? '',
-              institution: c.institution ?? '',
-              work: d.work ?? '',
-              person,
-              position: c.position ?? d.position ?? '',
-              entity: it.entity,
-              kind: it.kind,
-              detail: it.detail,
-              timing: it.timing,
-              seat: it.seat ?? '',
-              holderRelation: it.holderRelation ?? 'self',
-              ...(it.holderFirstName ? { holderFirstName: true } : {}),
-              controlHash: d.controlHash,
-            }) + '\n',
-          );
-          stats.holdings++;
-          stats.byKind[it.kind] = (stats.byKind[it.kind] ?? 0) + 1;
-        }
-        // A family stake's holder: internal only, so the register can confirm the relative (ADR-0044).
-        const stakeHolders = d.interests
-          .filter((it) => it.holderRelation === 'related' && it.holder)
-          .map((it) => ({
-            name: it.holder,
-            kind: 'stake_holder',
-            info: it.entity,
-            timing: it.timing,
-          }));
-        for (const rp of [...d.relatedPersons, ...stakeHolders]) {
-          relatedOut.write(
-            JSON.stringify({
-              folder,
-              sourceFolder,
-              xmlFile: file,
-              year: d.year,
-              person,
-              institution: c.institution ?? '',
-              category: c.category ?? '',
-              work: d.work ?? '',
-              related_name: rp.name,
-              related_kind: rp.kind,
-              info: rp.info,
-              timing: rp.timing,
-            }) + '\n',
-          );
-          stats.related++;
-        }
-        n++;
-      }
-      for (const [personLocator, group] of groups) {
-        if ([...group.files].some((file) => !publications.has(file))) continue;
-        const members = [
-          ...new Map(
-            [...group.files].map((file) => {
-              const member = publications.get(file);
-              return [member.sourceId, { ...member, xmlFile: file }];
-            }),
-          ).values(),
-        ].sort((a, b) => a.sourceId.localeCompare(b.sourceId));
-        if (members.length < 2) continue;
-        groupsOut.write(
-          JSON.stringify({ folder, listHash, personLocator, name: group.name, members }) + '\n',
-        );
-        stats.sourceGroups = (stats.sourceGroups ?? 0) + 1;
-      }
-      console.log(`  ${folder}: ${n} declarations parsed`);
+      const n = await resolveFolder(readRecords(records), {
+        identify,
+        seenHash,
+        stats,
+        out: { holdingsOut, relatedOut, filingsOut, groupsOut, requestsOut, quarantineOut },
+      });
+      fs.rmSync(records, { force: true });
+      console.log(`  ${folder}: ${n} declarations ${restored ? 'from the parse cache' : 'parsed'}`);
       // The folder boundary is the only clean cut: its groups are written, and its input was pinned by
       // the stamped index. Accept it, then stop if the platform asked us to.
       await closeParts();
@@ -468,6 +535,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
           processed,
         });
       if (++folderCount >= yieldAfterFolders || yielding) {
+        console.log(JSON.stringify(cacheReport));
         console.log(`yielding after ${folder}: ${processed} declarations read`);
         return 75;
       }
@@ -475,6 +543,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
   } finally {
     await closeParts();
   }
+  console.log(JSON.stringify(cacheReport));
   concatParts(partsDir, order, (stream) => path.join(STAGING, `${stream}.jsonl`));
   fs.rmSync(partsDir, { recursive: true, force: true });
   fs.writeFileSync(
