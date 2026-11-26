@@ -1,0 +1,77 @@
+name: Release readiness (read only)
+
+# Days before a release: is the environment ready? (scripts/release-readiness.mjs, docs/deploy.md „Готовност
+# преди пускането“). The same settings deploy.yml hands its steps reach one step here, which reports present or
+# missing and a shape verdict for each, checks that the takedown salt is not blank or short, and probes every
+# Cloudflare permission the release path uses with a read-only call. It writes nothing and prints no value:
+# the log carries verdicts only. Started by hand; the job waits for the environment's reviewers and gets its
+# secrets as a deploy does, but GitHub records no deployment, so the environment's history keeps showing what
+# was released. It runs the code of the chosen ref with those secrets: approve it only from main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to check
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      component:
+        # `all` for a release that rebuilds the idle slot first (docs/runbooks/production-cutover.md).
+        description: What the release deploys
+        type: choice
+        options:
+          - site
+          - rebuild-runner
+          - all
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # No deployment record. GitHub fails such a job when the environment has custom (GitHub App) protection
+    # rules; required reviewers, the wait timer and the branch policy still apply.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: false
+    # Only names and the inputs live here; the secrets reach the one step that checks them. No dependency is
+    # installed: the check runs on Node's own modules.
+    env:
+      READINESS_ENVIRONMENT: ${{ inputs.environment }}
+      READINESS_COMPONENT: ${{ inputs.component }}
+      SIGMA_WEB_NAME: ${{ vars.SIGMA_WEB_NAME }}
+      SIGMA_ETL_NAME: ${{ vars.SIGMA_ETL_NAME }}
+      SIGMA_WORKFLOW_NAME: ${{ vars.SIGMA_WORKFLOW_NAME }}
+      SIGMA_REGISTRY_WORKFLOW_NAME: ${{ vars.SIGMA_REGISTRY_WORKFLOW_NAME }}
+      SIGMA_DECLARATIONS_WORKFLOW_NAME: ${{ vars.SIGMA_DECLARATIONS_WORKFLOW_NAME }}
+      SIGMA_REBUILD_WORKFLOW_NAME: ${{ vars.SIGMA_REBUILD_WORKFLOW_NAME }}
+      SIGMA_DECLARATIONS_BUCKET: ${{ vars.SIGMA_DECLARATIONS_BUCKET }}
+      # As set, without deploy.yml's fallback to 1: the report says when the fallback is what applies.
+      SUPPRESSION_KEY_VERSION: ${{ vars.SUPPRESSION_KEY_VERSION }}
+      SIGMA_D1_NAME: ${{ vars.SIGMA_D1_NAME }}
+      SIGMA_CSV_CACHE_NAME: ${{ vars.SIGMA_CSV_CACHE_NAME }}
+      SIGMA_REPORTS_NAME: ${{ vars.SIGMA_REPORTS_NAME }}
+      SIGMA_VECTORIZE_NAME: ${{ vars.SIGMA_VECTORIZE_NAME }}
+      SIGMA_REBUILD_RUNNER_NAME: ${{ vars.SIGMA_REBUILD_RUNNER_NAME }}
+      SIGMA_REBUILD_CUTOVER_WORKFLOW_NAME: ${{ vars.SIGMA_REBUILD_CUTOVER_WORKFLOW_NAME }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Readiness — settings, takedown salt, token permissions
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SIGMA_D1_ID: ${{ secrets.SIGMA_D1_ID }}
+          SUPPRESSION_SALT: ${{ secrets.SUPPRESSION_SALT }}
+        run: node scripts/release-readiness.mjs "$READINESS_ENVIRONMENT" --component "$READINESS_COMPONENT"
