@@ -41,7 +41,7 @@ describe('searchTokens', () => {
   it('drops a leading ЕИК/УНП/БУЛСТАТ label in front of a number', () => {
     expect(searchTokens('ЕИК 204918123')).toEqual(['204918123']);
     expect(searchTokens('ЕИК: 204918123')).toEqual(['204918123']);
-    expect(searchTokens('унп 00044-2023-0018')).toEqual(['00044', '2023', '0018']);
+    expect(searchTokens('унп 99944-2023-0018')).toEqual(['99944', '2023', '0018']);
     expect(searchTokens('Булстат 204918123')).toEqual(['204918123']);
     // A label alone, before a word, or later in the query is an ordinary term.
     expect(searchTokens('еик')).toEqual(['еик']);

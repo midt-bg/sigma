@@ -9,7 +9,7 @@ export const MAX_QUERY_TOKENS = 8;
 // the postings list; shorter tokens are dropped, and a query with nothing left reads as empty.
 export const MIN_QUERY_TOKEN_CHARS = 2;
 
-// The label a registry extract prints before the number („ЕИК 175405647", „УНП 00044-2023-0018").
+// The label a registry extract prints before the number („ЕИК 999000222", „УНП 99944-2023-0018").
 // Every term is AND-ed, so a label left in the query would have to occur in the record itself.
 const ID_LABELS = new Set(['еик', 'унп', 'булстат']);
 
