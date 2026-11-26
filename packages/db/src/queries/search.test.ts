@@ -21,7 +21,7 @@ function searchDb(
       ref: 'person:ИВАН МИНЕВ',
       title: 'Иван Минев',
       ident: null,
-      subtitle: 'Община Русе',
+      subtitle: 'Община Тестово',
       amount: 500000,
       entity_kind: null,
       ownership_kind: null,
@@ -122,6 +122,19 @@ function searchDb(
     // the fixture reports the real count, not a truthy stand-in, or it would silently exercise the
     // un-migrated fallback while claiming to cover the badge path.
     { when: 'sqlite_master', first: hasConflictTable ? { n: 2 } : null },
+    // The people's own filings, for the office line: one official left an office with an exit declaration.
+    {
+      when: 'FROM declarations d',
+      all: [
+        { year: '2018', type: 'Annualy', declaredOn: null },
+        { year: '2019', type: 'Vacate', declaredOn: '2019-11-04' },
+      ].map((f) => ({
+        person_id: 'person:ИВАН МИНЕВ',
+        institution: 'Община Тестово',
+        position: 'Кмет',
+        ...f,
+      })),
+    },
     // Per-kind counts, before the hits route below: both read search_index, and only GROUP BY kind
     // tells them apart.
     {
@@ -251,17 +264,21 @@ describe('search', () => {
     ]);
   });
 
-  it('surfaces свързани лица as officials that link to the conflict profile', async () => {
+  it('surfaces officials in „Лица", each with their office, its years and status by the one rule', async () => {
     const results = await search(searchDb(), 'иван');
     const official = results.groups.find((g) => g.kind === 'official');
-    expect(official?.label).toBe('Свързани лица');
+    expect(official?.label).toBe('Лица');
     expect(official?.hits[0]).toMatchObject({
       kind: 'official',
       title: 'Иван Минев',
-      subtitle: 'Община Русе',
+      subtitle: 'Бивш кмет · Община Тестово · 2018–2019',
+      formerOfficial: true,
       amountLabel: 'по договори',
       href: `/persons/${personSlug('person:ИВАН МИНЕВ')}`,
     });
+    // No filing on record: the index's own line stays, and nothing says the person left office.
+    expect(official?.hits[1]?.subtitle).toBe('Министерство Х');
+    expect(official?.hits[1]?.formerOfficial).toBeUndefined();
   });
 
   it('lets свързани лица LEAD when it is the strongest match', async () => {
@@ -278,23 +295,25 @@ describe('search', () => {
     expect(nonEmpty.at(-1)?.kind).toBe('official');
   });
 
-  it('finds every other person with a page, after the officials, without a listing link', async () => {
+  it('shows every other person with a page in the same „Лица" group, after the officials', async () => {
     const results = await search(searchDb(-6, true, -5.5), 'мария');
     const kinds = results.groups.filter((g) => g.total > 0).map((g) => g.kind);
-    expect(kinds.slice(0, 2)).toEqual(['official', 'person']);
-    const people = results.groups.find((g) => g.kind === 'person')!;
-    expect(people).toMatchObject({
-      label: 'Лица без публикувана връзка',
-      total: 9,
-      moreHref: null,
-    });
-    expect(people.hits.map((h) => [h.href, h.ident, h.subtitle])).toEqual([
-      [`/persons/${'a'.repeat(64)}`, null, 'АЛФА ООД'],
-      [`/persons/${personSlug('person:МАРИЯ ПЕТРОВА|ОБЩИНА')}`, null, 'Кмет · Община'],
+    expect(kinds[0]).toBe('official');
+    expect(kinds).not.toContain('person');
+    const people = results.groups.find((g) => g.kind === 'official')!;
+    // The officials' list does not hold the other people, so there is no „виж всички" for the group.
+    expect(people).toMatchObject({ label: 'Лица', total: 11, moreHref: null });
+    expect(people.hits.map((h) => [h.kind, h.href, h.ident])).toEqual([
+      ['official', `/persons/${personSlug('person:ИВАН МИНЕВ')}`, null],
+      ['official', `/persons/${personSlug('person:ГЕОРГИ ПЕТРОВ')}`, null],
+      ['person', `/persons/${'a'.repeat(64)}`, null],
+      ['person', `/persons/${personSlug('person:МАРИЯ ПЕТРОВА|ОБЩИНА')}`, null],
     ]);
-    // A weaker person match trails the other groups.
-    const weak = await search(searchDb(-6, true, -1), 'мария');
-    expect(weak.groups.filter((g) => g.total > 0).at(-1)?.kind).toBe('person');
+    // A registry-only person keeps the index's line (their companies); a declarant without filings too.
+    expect(people.hits.slice(2).map((h) => h.subtitle)).toEqual(['АЛФА ООД', 'Кмет · Община']);
+    // A weak match in both people kinds trails the other groups.
+    const weak = await search(searchDb(-1, true, -1), 'мария');
+    expect(weak.groups.filter((g) => g.total > 0).at(-1)?.kind).toBe('official');
   });
 
   it('flags the company that appears in the свързани-лица surface, and only that one', async () => {

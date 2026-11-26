@@ -25,3 +25,18 @@ it('calls every declarant an office holder and only registry people plain лиц
   expect(kindLabel(hit('authority', '/authorities/1'))).toBe('институция');
   expect(kindLabel(hit('contract', '/contracts/c1'))).toBe('договор');
 });
+
+// Beside „Бивш кмет · … · 2018–2019“ the plain word would contradict the line under the name.
+it('calls a declarant whose every office is former a former office holder, in either group', () => {
+  const former = (kind: SearchHit['kind']) => ({
+    ...hit(kind, '/persons/SVBDSDE'),
+    formerOfficial: true,
+  });
+  expect(kindLabel(former('official'))).toBe('бивше длъжностно лице');
+  expect(kindLabel(former('person'))).toBe('бивше длъжностно лице');
+  // The flag says nothing about a registry person or another kind of hit.
+  expect(kindLabel({ ...hit('person', `/persons/${'a'.repeat(64)}`), formerOfficial: true })).toBe(
+    'лице',
+  );
+  expect(kindLabel({ ...hit('company', '/companies/123'), formerOfficial: true })).toBe('компания');
+});

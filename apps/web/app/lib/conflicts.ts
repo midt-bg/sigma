@@ -1,5 +1,5 @@
 import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
-import { identityInstitution } from '@sigma/shared';
+import { identityInstitution, type OfficeFiling } from '@sigma/shared';
 import { getMulti } from './filters';
 
 // Pure presentation logic for the свързани-лица (conflict-of-interest) surface. Everything the conflict
@@ -190,6 +190,12 @@ export interface ConflictPersonRow {
     held?: string[];
     prior?: string[];
     disposed?: string[];
+    /** 1 when the company has a contract inside the period of the office and of the tie; absent on a payload
+     *  cached before the flag existed. */
+    inPeriod?: number;
+    /** 0 when that period cannot be told: the declared link has no year of its own, the register gives the
+     *  role no start date, or the person has no office year. */
+    periodKnown?: number;
   }[];
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
@@ -212,6 +218,9 @@ export interface ConflictPersonRow {
   /** ≥1 contract is signed in an observed year with institution and position data for the person. */
   hasContemporaneous: boolean;
   declaredInstitutions?: DeclaredInstitution[];
+  /** The filings behind the offices, with their types — `describeOffices` turns them into position, period
+   *  and status. */
+  officeFilings?: OfficeFiling[];
   /** The row's figures without the seats on collegial bodies — registered, or declared and confirmed only as
    *  such a seat; null when the person has nothing else. Absent on a row with no such seat. */
   direct?: {
@@ -364,6 +373,11 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
               ? l.declaredOffices
               : [{ institution: l.institution ?? '', position: l.position, year: null }],
           ),
+        ),
+        officeFilings: groupLinks.flatMap((l) =>
+          l.declaredOffices?.length
+            ? l.declaredOffices
+            : [{ institution: l.institution ?? '', position: l.position, year: null }],
         ),
       },
     });
@@ -598,6 +612,7 @@ export function mergePersonParts<T extends ConflictPersonRow>(rows: T[]): T[] {
         ...offices(lead.declaredInstitutions),
         ...offices(rest.declaredInstitutions),
       ]),
+      officeFilings: [...(lead.officeFilings ?? []), ...(rest.officeFilings ?? [])],
       // A part without seats on a collegial body is whole in either view.
       ...(lead.direct === undefined && rest.direct === undefined
         ? {}
@@ -691,15 +706,22 @@ export function conflictFacets(everyone: ConflictPersonRow[], f: ConflictListFil
   };
 }
 
-/** One sentence over the table: what the current scope lists. */
+/** The marker beside a company whose period of the office cannot be told, in words — never colour alone.
+ *  Nothing otherwise: a contract in the period is said once, as the person's own mark in „Признаци“, and
+ *  its absence is not a label. Nothing either when the flags are absent (a payload cached before them). */
+export function companyPeriodLabel(c: { inPeriod?: number; periodKnown?: number }): string | null {
+  return c.inPeriod === 0 && c.periodKnown === 0 ? 'периодът не е установен' : null;
+}
+
+/** One short line over the table: what the current scope lists. It follows „Обхват:“, hence the small letter. */
 export function conflictScopeLine(f: Pick<ConflictListFilters, 'role' | 'period'>): string {
   const roles =
     f.role === 'all'
-      ? 'Собственост, управление или членство в управителен орган'
-      : 'Собственост или управление';
+      ? 'собственост, управление или членство в управителен орган'
+      : 'собственост или управление';
   return f.period === 'overlap'
-    ? `${roles} с договори в периода на длъжността, в който връзката е декларирана или вписана.`
-    : `${roles} — със или без договори в периода на длъжността, включително когато периодът не може да се установи от декларациите.`;
+    ? `${roles}, с договори в периода на длъжността.`
+    : `${roles}, с договори в периода на длъжността или извън него.`;
 }
 
 /** Each named sort is monotonic by its displayed figure; unknown amounts come last. */

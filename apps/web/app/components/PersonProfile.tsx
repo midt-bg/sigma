@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, money } from '@sigma/shared';
+import { count, describeOffices, money, officialWord } from '@sigma/shared';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { Breadcrumbs } from './Breadcrumbs';
 import { PageHeader } from './PageHeader';
@@ -9,7 +9,8 @@ import { TieGraph } from './TieGraph';
 import { DataTable } from './DataTable';
 import { PersonRolesTables, RegistrySource } from './RegistryRoles';
 import { Declarations } from './Declarations';
-import { PersonTimeline } from './PersonTimeline';
+import { PublicOffices } from './PublicOffices';
+import { PersonTimeline, ownContractPeriod } from './PersonTimeline';
 import { timelineCompanies } from '../lib/person-timeline';
 import { PersonActivity } from './PersonActivity';
 import { declaredStakeNoun } from '../lib/conflicts';
@@ -21,6 +22,9 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
   // Declared stakes make the person a related-persons case; any declaration makes them an official.
   const official = p.links.length > 0;
   const filed = official || p.declarations.length > 0;
+  // The heading follows the office lines under the name: „Бивше“ only when every office there is former.
+  const word = officialWord(describeOffices(p.declarations));
+  const officialKicker = word.charAt(0).toUpperCase() + word.slice(1);
   // A declarant with no company at all gets no contracts section: it would be a heading over filters
   // that count nothing, which reads as a broken panel rather than as „there is nothing here".
   const hasCompanies = p.totals.companies > 0;
@@ -31,7 +35,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
       <Breadcrumbs
         items={[
           { label: 'Начало', to: '/' },
-          ...(filed ? [{ label: 'Свързани лица', to: '/conflicts' }] : []),
+          ...(filed ? [{ label: 'Длъжностни лица', to: '/conflicts' }] : []),
           { label: name },
         ]}
       />
@@ -40,9 +44,9 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           title={name}
           kicker={
             official
-              ? 'Длъжностно лице · декларирани интереси'
+              ? `${officialKicker} · декларирани интереси`
               : filed
-                ? 'Длъжностно лице · декларации'
+                ? `${officialKicker} · декларации`
                 : p.person
                   ? 'Лице · Търговски регистър'
                   : 'Длъжностно лице'
@@ -56,6 +60,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           {p.aliases.length > 0 && (
             <p className="muted small">Среща се и като {p.aliases.map(personName).join(', ')}</p>
           )}
+          {filed && <PublicOffices filings={p.declarations} />}
         </PageHeader>
         <nav className="profile-nav" aria-label="В профила">
           {official && <a href="#declared-overview">Декларирани интереси</a>}
@@ -203,7 +208,13 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
             <Link to="/conflicts/methodology">Методология →</Link>
           </p>
         )}
-        {hasCompanies && <PersonActivity activity={p.activity} hasDeclarations={filed} />}
+        {hasCompanies && (
+          <PersonActivity
+            activity={p.activity}
+            hasDeclarations={filed}
+            ownPeriod={ownContractPeriod(p)}
+          />
+        )}
       </main>
     </>
   );

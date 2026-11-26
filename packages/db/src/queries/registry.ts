@@ -15,7 +15,13 @@ import type {
   RegistryRoleKind,
   RoleHolder,
 } from '@sigma/api-contract';
-import { cleanName, officeOrganizationSql, OWNER_ROLES, registryCompanyName } from '@sigma/shared';
+import {
+  cleanName,
+  officeOrganizationSql,
+  OWNER_ROLES,
+  registryCompanyName,
+  type OfficeFiling,
+} from '@sigma/shared';
 import { publicStakeEiks } from './public-stakes';
 import { companySlug, registryPersonSlug } from './identity';
 import { companyNode, personNode } from './tie-node';
@@ -138,6 +144,7 @@ interface CompanyRoleRow {
   removed_on: string | null;
   uncertain_after: string | null;
   official: number;
+  offices: string | null;
 }
 
 const COMPANY_DEED_SQL = `SELECT fetched_at FROM registry_deeds WHERE eik = ?1 AND outcome = 'ok'`;
@@ -172,13 +179,26 @@ const COMPANY_ROLES_SQL = `
   SELECT r.role, r.subject_kind, r.subject_id, r.subject_name, p.name AS person_name,
          b.id AS entity_bidder, r.share, ${sharePct('r')} AS share_pct,
          r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after,
-         EXISTS (SELECT 1 FROM person_registry_links pl WHERE pl.registry_indent = r.subject_id) AS official
+         EXISTS (SELECT 1 FROM person_registry_links pl WHERE pl.registry_indent = r.subject_id) AS official,
+         -- The holder's public offices, from their own filings: position, year and type, for describeOffices.
+         CASE WHEN r.subject_kind = 'person' THEN (
+           SELECT json_group_array(json_object('institution', d.institution, 'position', d.position,
+             'year', d.declared_year, 'type', m.declaration_type, 'declaredOn', m.declared_on))
+           FROM person_registry_links pl JOIN declarations d ON d.person_id = pl.person_id
+           LEFT JOIN declaration_metadata m ON m.declaration_id = d.id
+           WHERE pl.registry_indent = r.subject_id) END AS offices
   FROM registry_roles r
   LEFT JOIN registry_persons p ON r.subject_kind = 'person' AND p.indent = r.subject_id
   LEFT JOIN bidders b ON r.subject_kind = 'entity' AND b.id = 'eik:' || r.subject_id
   WHERE r.eik = ?1 AND ${publicRole('r')}`;
 
 const EIK = /^\d{9}(\d{4})?$/;
+
+/** A declarant's filings, only when there are any — a person with none carries no empty list. */
+function officesOf(r: CompanyRoleRow): { offices?: OfficeFiling[] } {
+  const offices = r.official && r.offices ? (JSON.parse(r.offices) as OfficeFiling[]) : [];
+  return offices.length ? { offices } : {};
+}
 
 function holderOf(r: CompanyRoleRow): RoleHolder {
   if (r.subject_kind === 'person') {
@@ -190,6 +210,7 @@ function holderOf(r: CompanyRoleRow): RoleHolder {
       eik: null,
       country: null,
       ...(r.official ? { official: true } : {}),
+      ...officesOf(r),
     };
   }
   return {

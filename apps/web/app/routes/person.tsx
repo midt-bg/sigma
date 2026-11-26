@@ -85,7 +85,7 @@ export default function Person({ loaderData }: Route.ComponentProps) {
         <Breadcrumbs
           items={[
             { label: 'Начало', to: '/' },
-            { label: 'Свързани лица', to: '/conflicts' },
+            { label: 'Длъжностни лица', to: '/conflicts' },
             { label: 'Източникови записи' },
           ]}
         />
@@ -129,7 +129,7 @@ export default function Person({ loaderData }: Route.ComponentProps) {
         <Breadcrumbs
           items={[
             { label: 'Начало', to: '/' },
-            { label: 'Свързани лица', to: '/conflicts' },
+            { label: 'Длъжностни лица', to: '/conflicts' },
             { label: personName(loaderData.source.name) },
           ]}
         />
@@ -164,7 +164,7 @@ export default function Person({ loaderData }: Route.ComponentProps) {
         <Breadcrumbs
           items={[
             { label: 'Начало', to: '/' },
-            { label: 'Свързани лица', to: '/conflicts' },
+            { label: 'Длъжностни лица', to: '/conflicts' },
             { label: 'Профили и декларации' },
           ]}
         />

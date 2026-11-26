@@ -160,7 +160,16 @@ describe('/conflicts route — render', () => {
       link({
         officialSlug: 'a',
         registryPersonId: 'identity',
-        declaredOffices: [{ institution: 'Община Русе', position: 'Съветник', year: '2019' }],
+        declaredOffices: [
+          { institution: 'Община Тестово', position: 'Съветник', year: '2018', type: 'Annualy' },
+          {
+            institution: 'Община Тестово',
+            position: 'Съветник',
+            year: '2019',
+            type: 'Vacate',
+            declaredOn: '2019-11-05',
+          },
+        ],
       }),
       link({
         officialSlug: 'b',
@@ -171,8 +180,15 @@ describe('/conflicts route — render', () => {
       }),
     ]);
     expect(bodyRows()).toHaveLength(1);
-    expect(bodyRows()[0].textContent).toContain('Институции в декларациите');
-    expect(bodyRows()[0].textContent).toContain('Община Русе');
+    expect(bodyRows()[0].textContent).toContain('Длъжности според декларациите');
+    // The office left with an exit declaration is former; the other one only has its last year on record.
+    expect(bodyRows()[0].textContent).toContain('2018–2019');
+    expect(bodyRows()[0].textContent).toContain('Бивш съветник · Община Тестово · 2018–2019');
+    expect(bodyRows()[0].textContent).toContain(
+      'Народен представител · Народно събрание · декларация за 2025',
+    );
+    expect(bodyRows()[0].textContent).not.toMatch(/настоящ/i);
+    expect(bodyRows()[0].textContent).toContain('Община Тестово');
     expect(bodyRows()[0].textContent).toContain('2019');
     expect(bodyRows()[0].textContent).toContain('Народно събрание');
     expect(bodyRows()[0].textContent).toContain('2025');
@@ -181,7 +197,12 @@ describe('/conflicts route — render', () => {
   it('meta() marks the page noindex and titles it', () => {
     const tags = meta({ matches: [] } as never);
     expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
-    expect(JSON.stringify(tags)).toContain('Свързани лица');
+    expect(JSON.stringify(tags)).toContain('Длъжностни лица');
+    // The section's name and scope: officials present and former, not a register of all of them.
+    expect(JSON.stringify(tags)).toContain('Длъжностни лица — СИГМА');
+    expect(JSON.stringify(tags)).toContain(
+      'Списъкът не е регистър на всички длъжностни лица в България и включва исторически данни.',
+    );
   });
 
   it('headers() carries the loader Cache-Control through', () => {
@@ -204,7 +225,7 @@ describe('/conflicts route — render', () => {
     await renderConflicts([familyLink, link()], null, '/conflicts?sort=total');
     expect(container.querySelector('.filter-rail')).not.toBeNull();
     for (const label of [
-      'Обхват на списъка',
+      'Разшири списъка',
       'Източник на връзката',
       'Възложител на договорите',
       'Институция на лицето',
@@ -215,12 +236,12 @@ describe('/conflicts route — render', () => {
       expect(container.querySelector(`details[aria-label="${label}"]`)).toBeNull();
     const names = bodyRows().map((r) => r.querySelector('a')?.textContent);
     expect(names).toEqual(['Иван Петров', 'Кмет Тестов']); // €88M before €250k
-    for (const label of [
-      'стойност в периода на длъжността',
-      'стойност за всички години',
-      'брой договори за всички години',
-    ])
+    for (const label of ['стойност в периода', 'стойност за всички години', 'брой договори'])
       expect(text()).toContain(label);
+    // The sort names are short enough to stand on one line beside the count.
+    expect(container.querySelector('.list-controls')!.textContent).toContain(
+      'Подреди: стойност в периода · стойност за всички години · брой договори',
+    );
     const sorts = [...container.querySelectorAll('.list-controls p.small a')];
     expect(
       sorts.map((a) =>
@@ -257,12 +278,9 @@ describe('/conflicts route — render', () => {
       '/conflicts?include=boards&include=outside&source=registry',
       [seat],
     );
-    const group = container.querySelector('details[aria-label="Обхват на списъка"]')!;
+    const group = container.querySelector('details[aria-label="Разшири списъка"]')!;
     const labels = [...group.querySelectorAll('label')].map((l) => l.textContent!.trim());
-    expect(labels).toEqual([
-      'Включи и връзки без договори в периода на длъжността1',
-      'Включи и членство в управителни органи1',
-    ]);
+    expect(labels).toEqual(['с договори извън периода1', 'с членове на управителни органи1']);
     expect(group.querySelector<HTMLInputElement>('input[value="boards"]')!.checked).toBe(true);
     expect(group.querySelector<HTMLInputElement>('input[value="outside"]')!.checked).toBe(true);
     expect(text()).toContain('членство в съвет по Търговския регистър');
@@ -443,7 +461,28 @@ describe('/conflicts route — render', () => {
         .querySelector('td[data-label="Признаци"]')!;
     expect(cell('Тихомир Тестов').textContent).toBe('—');
     expect(cell('Тихомир Тестов').querySelectorAll('.chip').length).toBe(0);
-    expect(cell('Периодин Тестов').textContent).toContain('в декларирания период');
+    // The rows with a contract in the period carry the chip; the rows without one carry nothing about it.
+    expect(cell('Периодин Тестов').textContent).toContain('с договори в периода на длъжността');
+  });
+
+  it('the default list marks a row with contracts in the period in the positive, as the widened one does', async () => {
+    const inPeriod = link({
+      officialSlug: 'period',
+      official: 'Периодин Тестов',
+      linkKey: 'p-2',
+      eik: '602',
+      ownInstitution: false,
+      contemporaneousContractCount: 2,
+      contemporaneousValueEur: 5_000,
+    });
+    await renderConflicts([inPeriod], null, '/conflicts');
+    const cell = bodyRows()
+      .find((r) => r.textContent?.includes('Периодин Тестов'))!
+      .querySelector('td[data-label="Признаци"]')!;
+    expect([...cell.querySelectorAll('.chip')].map((c) => c.textContent)).toEqual([
+      'с договори в периода на длъжността',
+    ]);
+    expect(text()).not.toContain('без договори');
   });
 
   it('признаци stay visible and a flag sourced from a SECOND link still renders', async () => {
@@ -486,9 +525,9 @@ describe('/conflicts route — render', () => {
   it('a zero-contract / null-value person renders 0 договори and no NaN', async () => {
     await renderConflicts([zeroContractLink], null, '/conflicts?include=outside');
     const row = bodyRows()[0];
-    expect(
-      row.querySelector('td[data-label="Брой договори за всички години"]')!.textContent,
-    ).toContain('0');
+    expect(row.querySelector('td[data-label="Договори за всички години"]')!.textContent).toContain(
+      '0',
+    );
     expect(text()).not.toContain('NaN');
     expect(
       row.querySelector('td[data-label="Стойност в периода на длъжността"]')!.textContent,
@@ -573,6 +612,12 @@ it('titles the list by what every row holds, and narrows the headings with the s
       'Длъжностни лица и дружества изпълнители: деклариран дял, декларирано управление или вписана роля в регистъра',
   });
   expect(text()).not.toContain('декларирали дял — свой или на свързано лице — в дружество');
+  // The subtitle names the section's scope: officials present and former, and not all of them.
+  expect(container.querySelector('.kicker')?.textContent).toBe('Длъжностни лица');
+  expect(text()).toContain(
+    'Настоящи и бивши длъжностни лица с декларирани или вписани участия в дружества с обществени поръчки.',
+  );
+  expect(text()).toContain('Списъкът не е регистър на всички длъжностни лица в България');
   expect(text()).toContain(
     'Сумите са стойности на договорите на дружествата, не пари, получени от лицата.',
   );

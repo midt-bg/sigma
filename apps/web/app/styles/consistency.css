@@ -230,6 +230,11 @@ td .chip {
 .person-institutions li + li {
   margin-top: var(--s-1);
 }
+/* The position — with „Бивш" in front of it when the office has ended — is what the line says; the
+   institution and the years qualify it. */
+.person-institutions .office-title {
+  font-weight: 600;
+}
 
 .person-time-legend {
   display: flex;
@@ -1055,4 +1060,9 @@ html.accessibility-dark .flow-svg .link {
   .callout {
     break-inside: avoid;
   }
+}
+
+/* The officials list: one quiet line under the count and the sorting says what the list holds. */
+.conflicts-scope {
+  margin: calc(-1 * var(--s-2)) 0 var(--s-4);
 }

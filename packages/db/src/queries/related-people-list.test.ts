@@ -137,6 +137,27 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
     expect(
       (await getRelatedPersonRows(d1)).find((r) => r.personIdentity === 'canonical'),
     ).toMatchObject({ contemporaneousValueEur: 300 });
+    // Each company says whether it has a contract inside the period, and whether the period can be told:
+    // an office year and a declared year of the link's own are both needed for that.
+    db.exec(`INSERT INTO declarations VALUES('rs','person:rest-small','Институция','Съветник','2020');
+      UPDATE interest_links SET first_declared_year=NULL,last_declared_year=NULL WHERE person_id='person:window-big';`);
+    const byName = new Map((await getRelatedPersonRows(d1)).map((r) => [r.official, r]));
+    expect(byName.get('Съвпадение малка')!.companies[0]).toMatchObject({
+      inPeriod: 1,
+      periodKnown: 1,
+    });
+    expect(byName.get('Останала малка')!.companies[0]).toMatchObject({
+      inPeriod: 0,
+      periodKnown: 1,
+    });
+    expect(byName.get('Останала голяма')!.companies[0]).toMatchObject({
+      inPeriod: 0,
+      periodKnown: 0,
+    });
+    expect(byName.get('Съвпадение голяма')!.companies[0]).toMatchObject({
+      inPeriod: 0,
+      periodKnown: 0,
+    });
   } finally {
     db.close();
   }
@@ -225,6 +246,8 @@ it('lists people the register records as owners of a winner without a declared s
           registry: 1,
           registryRole: 'owner',
           missingYears: ['2019'],
+          inPeriod: 1,
+          periodKnown: 1,
         },
         {
           eik: '333333333',
@@ -234,9 +257,19 @@ it('lists people the register records as owners of a winner without a declared s
           registry: 1,
           registryRole: 'manager',
           missingYears: [],
+          inPeriod: 0,
+          periodKnown: 1,
         },
       ],
     });
+    // A role the register gives no start date for leaves the period unknown.
+    db.exec(`UPDATE registry_roles SET added_on='' WHERE eik='333333333'`);
+    expect(
+      (await getRegistryRolePersonRows(d1FromSqlite(db)))[0]!.companies.find(
+        (c) => c.eik === '333333333',
+      ),
+    ).toMatchObject({ inPeriod: 0, periodKnown: 0 });
+    db.exec(`UPDATE registry_roles SET added_on='2019-01-01' WHERE eik='333333333'`);
     expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'other')).toHaveLength(2);
     expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'nobody')).toEqual([]);
   } finally {

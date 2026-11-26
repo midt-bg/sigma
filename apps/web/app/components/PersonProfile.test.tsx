@@ -257,6 +257,115 @@ describe('PersonProfile', () => {
     expect(table.querySelector('a[href="/companies/333333333"]')).not.toBeNull();
   });
 
+  it('names each declared office under the name, with its years and only the status the filings support', () => {
+    const declaration = (
+      year: string,
+      type: string,
+      declaredOn: string | null,
+      institution: string,
+    ) => ({
+      id: `d-${year}-${type}-${institution}`,
+      year,
+      template: 'x',
+      type,
+      declaredOn,
+      submittedOn: null,
+      institution,
+      position: 'член',
+      url: 'https://example.test/d',
+      companyEiks: [],
+    });
+    const c = render(
+      profile({
+        person: null,
+        declarations: [
+          declaration('2018', 'Annualy', null, 'Агенция за тестове'),
+          declaration('2019', 'Vacate', '2019-06-01', 'Агенция за тестове'),
+          declaration('2023', 'Annualy', null, 'Съвет за тестове'),
+        ],
+      }),
+    );
+    const header = c.querySelector('header, .page-header') ?? c;
+    const offices = header.querySelector('.person-institutions')!.textContent;
+    // One plain line per office: the status is a word in front of the position, not a second line.
+    expect(offices).toContain('Член · Съвет за тестове · декларация за 2023');
+    expect(offices).toContain('Бивш член · Агенция за тестове · 2018–2019');
+    expect(offices).not.toMatch(/настоящ/i);
+    // One office has no end on record, so the heading keeps the plain word.
+    expect(c.querySelector('.kicker')!.textContent).toBe('Длъжностно лице · декларации');
+
+    // Every office with an exit declaration nothing reopens: the heading says former, as the line does.
+    const gone = render(
+      profile({
+        person: null,
+        declarations: [
+          declaration('2018', 'Annualy', null, 'Агенция за тестове'),
+          declaration('2019', 'Vacate', '2019-06-01', 'Агенция за тестове'),
+        ],
+      }),
+    );
+    expect(gone.querySelector('.kicker')!.textContent).toBe('Бивше длъжностно лице · декларации');
+  });
+
+  it('labels a contract from the person’s own institution in the contracts table as the timeline does', () => {
+    const contract = (id: string, authorityId: string, signedAt: string, tied: boolean) => ({
+      id,
+      subject: `Договор ${id}`,
+      company: 'ТЕСТ ГРУП ЕООД',
+      eik: '111111111',
+      authority: authorityId === 'auth:own' ? 'Община Тест' : 'Агенция Тест',
+      authorityId,
+      signedAt,
+      valueEur: 1000,
+      duringRole: tied,
+      duringDeclaration: false,
+      duringOfficeYear: signedAt.startsWith('2021'),
+      declarationBasis: 0,
+      tied,
+    });
+    const c = render(
+      profile({
+        declarations: [
+          {
+            id: 'd-2021',
+            year: '2021',
+            template: 'x',
+            type: 'Annualy',
+            declaredOn: null,
+            submittedOn: null,
+            institution: 'Община Тест',
+            position: 'съветник',
+            url: 'https://example.test/d',
+            companyEiks: [],
+          },
+        ],
+        timeline: {
+          contracts: [],
+          observations: [],
+          reads: [],
+          buyers: [],
+          institutionProfiles: [{ institution: 'Община Тест', authorityId: 'auth:own' }],
+        },
+        activity: {
+          ...activity,
+          total: 3,
+          contracts: [
+            contract('a', 'auth:own', '2021-05-01', true),
+            contract('b', 'auth:own', '2021-06-01', false),
+            contract('c', 'auth:other', '2021-07-01', true),
+          ],
+        },
+      }),
+    );
+    const basis = (id: string) =>
+      [...c.querySelectorAll('tbody tr')]
+        .find((r) => r.textContent?.includes(`Договор ${id}`))!
+        .querySelector('td[data-label="Основание за връзката"]')!.textContent;
+    expect(basis('a')).toContain('Същата институция · в съвпадение');
+    expect(basis('b')).toContain('Същата институция · в периода на длъжността');
+    expect(basis('c')).not.toContain('Същата институция');
+  });
+
   it('presents an office-holder with no register match by the declarations alone, and says so', () => {
     const c = render(
       profile({
@@ -280,7 +389,7 @@ describe('PersonProfile', () => {
     expect(c.querySelector('.kicker')!.textContent).toBe('Длъжностно лице · декларирани интереси');
     expect(crumbs()).toEqual([
       ['Начало', '/'],
-      ['Свързани лица', '/conflicts'],
+      ['Длъжностни лица', '/conflicts'],
       ['Иван Петров', null],
     ]);
     expect(nav()).toEqual(['#declared-overview', '#timeline', '#declarations', '#contracts']);

@@ -76,7 +76,7 @@ function renderName(hit: SearchHit, re: RegExp | null): ReactNode {
   // A company that appears in the свързани-лица surface carries a trailing flag; the card links to the
   // company page, which lists the declared people (a nested <a> here would be invalid).
   const conflictBadge =
-    hit.kind === 'company' && hit.hasConflict ? <Chip>свързани лица</Chip> : null;
+    hit.kind === 'company' && hit.hasConflict ? <Chip>длъжностни лица</Chip> : null;
   return (
     <>
       {badge}

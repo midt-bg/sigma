@@ -323,6 +323,7 @@ it('uses office years for matched contracts while preserving independent role an
   expect(union.contracts.find((r) => r.id === 'a')).toMatchObject({
     duringRole: true,
     declarationBasis: 1,
+    tied: true,
   });
   db.exec("UPDATE interest_links SET interest_class='family_ownership'");
   const family = await getPersonActivity(
@@ -494,6 +495,8 @@ it('highlights observed office years even after a company role ends, without fil
     duringOfficeYear: true,
     duringRole: false,
     duringDeclaration: false,
+    // An office year without a tie to the company: the table reads it as the timeline does, no overlap.
+    tied: false,
   });
   expect(matched.total).toBe(2);
   expect(matched.valueEur).toBe(400);

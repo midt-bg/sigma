@@ -15,6 +15,7 @@ import { DataTable, type Column } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
 import { FilterRail, type FilterGroup } from '../components/FilterRail';
 import { ListControls } from '../components/ListControls';
+import { PublicOffices } from '../components/PublicOffices';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { personName } from '../lib/person-name';
@@ -22,6 +23,7 @@ import { seoMeta } from '../lib/meta';
 import {
   conflictFacets,
   conflictListFilters,
+  companyPeriodLabel,
   conflictScopeLine,
   groupDeclaredInstitutions,
   legacyConflictSearch,
@@ -33,7 +35,7 @@ import {
 } from '../lib/conflicts';
 import { withParams, leaderboardRankOffset, type PageNav } from '../lib/filters';
 
-// Свързани лица — office-holders who declared a material ownership stake, their OWN or a close relative's, in
+// Длъжностни лица (the route stays /conflicts) — office-holders who declared a material ownership stake, their OWN or a close relative's, in
 // a procurement winner. Every row is a PUBLISHED, certainty-1.0 link from the official's own asset declaration
 // exact-matched to a winner. Family stakes surface identically to self stakes (ADR-0032, superseding ADR-0030)
 // — but the relative is never named and the relationship type is never asserted (relation 'related' only).
@@ -41,9 +43,8 @@ export function meta({ matches }: Route.MetaArgs) {
   const tags = seoMeta({
     matches,
     path: '/conflicts',
-    title: 'Свързани лица — СИГМА',
-    description:
-      'Декларирани участия в дружества с обществени поръчки, включително доказани исторически връзки.',
+    title: 'Длъжностни лица — СИГМА',
+    description: `${SUBTITLE} ${SCOPE}`,
   });
   // Names individuals: keep out of search indices until legal sign-off on going public (prod is live).
   tags.push({ name: 'robots', content: 'noindex' });
@@ -94,6 +95,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .map(({ declaredOffices, ...row }) => ({
       ...row,
       declaredInstitutions: groupDeclaredInstitutions(declaredOffices),
+      officeFilings: declaredOffices,
     }));
   // By default: ownership or management, with a contract inside the overlap of the office and the tie. The
   // seats on collegial bodies (`?include=boards`) and the ties without such a contract (`?include=outside`)
@@ -119,6 +121,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 const HISTORY =
   'Показваме и доказани исторически връзки, с декларираните години и проверими източници.';
+const SUBTITLE =
+  'Настоящи и бивши длъжностни лица с декларирани или вписани участия в дружества с обществени поръчки.';
+const SCOPE =
+  'Списъкът не е регистър на всички длъжностни лица в България и включва исторически данни.';
 
 /** The headings of the list, each true of every row the stake filter keeps: a declared stake, a declared
  *  management, or a role only the Trade Register records. */
@@ -131,7 +137,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица, вписани в <em>Търговския регистър</em> при изпълнител
           </>
         ),
-        lede: `Длъжностни лица, които Търговският регистър вписва като собственик или управител${boards ? ' — или като член на съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка. СИГМА не е потвърдила декларирана връзка на лицето с това дружество; когато декларацията го посочва, това е отбелязано при него.`,
+        lede: `Длъжностни лица, които Търговският регистър вписва като собственик или управител${boards ? ' — или като член на съвет на директорите, управителен съвет или друг орган на управление —' : ''} на дружество, спечелило обществена поръчка. СИГМА не е потвърдила декларирана връзка на лицето с това дружество; когато декларацията го посочва, това е отбелязано при него. ${SCOPE}`,
         caption: 'Длъжностни лица с вписана роля в регистъра при дружества изпълнители',
       };
     case 'self':
@@ -141,7 +147,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица с деклариран <em>дял или управление</em> в компании изпълнители
           </>
         ),
-        lede: `Длъжностни лица, декларирали собствен дял в дружество, спечелило обществена поръчка, или че го управляват. ${HISTORY}`,
+        lede: `Длъжностни лица, декларирали собствен дял в дружество, спечелило обществена поръчка, или че го управляват. ${SCOPE} ${HISTORY}`,
         caption:
           'Длъжностни лица с деклариран дял или декларирано управление в дружества изпълнители',
       };
@@ -152,7 +158,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица с <em>дял на свързано лице</em> в компании изпълнители
           </>
         ),
-        lede: `Длъжностни лица, декларирали дял на свързано лице в дружество, спечелило обществена поръчка. ${HISTORY}`,
+        lede: `Длъжностни лица, декларирали дял на свързано лице в дружество, спечелило обществена поръчка. ${SCOPE} ${HISTORY}`,
         caption: 'Длъжностни лица с деклариран дял на свързано лице в дружества изпълнители',
       };
     default:
@@ -162,7 +168,7 @@ function conflictListing(stake: ConflictStakeFilter | null, boards: boolean) {
             Длъжностни лица и <em>дружества</em> изпълнители
           </>
         ),
-        lede: `Длъжностни лица, декларирали дял — свой или на свързано лице — или управление на дружество, спечелило обществена поръчка, и длъжностни лица, които Търговският регистър вписва в такова дружество. ${HISTORY}`,
+        lede: `${SUBTITLE} ${SCOPE} ${HISTORY}`,
         caption:
           'Длъжностни лица и дружества изпълнители: деклариран дял, декларирано управление или вписана роля в регистъра',
       };
@@ -182,20 +188,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
         <>
           <Link to={officialHref(r.officialSlug)}>{personName(r.official)}</Link>
           {(r.declaredInstitutions?.length ?? 0) > 0 ? (
-            <div className="person-institutions">
-              <span className="small muted">Институции в декларациите</span>
-              <ul>
-                {r.declaredInstitutions!.map((i) => (
-                  <li key={i.institution}>
-                    {i.institution}
-                    {i.positions.length > 0 && (
-                      <span className="muted"> · {i.positions.join('; ')}</span>
-                    )}
-                    {i.years.length > 0 && <span className="muted"> · {i.years.join(', ')}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <PublicOffices filings={r.officeFilings} />
           ) : (
             officialRole(r) && (
               <>
@@ -264,6 +257,11 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
                   ) : null}
                 </div>
               )}
+              {companyPeriodLabel(c) && (
+                <div>
+                  <Chip>{companyPeriodLabel(c)}</Chip>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -283,7 +281,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
     },
     {
       key: 'contracts',
-      header: 'Брой договори за всички години',
+      header: 'Договори за всички години',
       align: 'money',
       cell: (r) => count(r.contractCount),
     },
@@ -292,7 +290,8 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       header: 'Признаци',
       // The column states the facts the reader has no other column for, and says „—“ when there are
       // none. Carrying the own-institution chip alone left it blank on 98% of the rows, which reads as
-      // a broken column rather than as „nothing to note here“.
+      // a broken column rather than as „nothing to note here“. A contract in the period is said here, as a
+      // fact about the person's row, and only ever in the positive: its absence is not a label.
       cell: (r) => {
         const disputed = r.companies?.some((c) => c.missingYears?.length);
         const chips = [
@@ -303,7 +302,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
           ),
           r.hasContemporaneous && (
             <Chip key="window" tone="window">
-              в декларирания период
+              с договори в периода на длъжността
             </Chip>
           ),
           r.stakeKind === 'registry' && !r.companies?.some((c) => c.declared) && (
@@ -331,7 +330,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
     {
       // Both off by default; each widens the list on its own, so all four combinations are a choice.
       key: 'include',
-      label: 'Обхват на списъка',
+      label: 'Разшири списъка',
       type: 'checkbox',
       selected: [
         ...(filters.period === 'any' ? ['outside'] : []),
@@ -340,38 +339,37 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       options: [
         {
           value: 'outside',
-          label: 'Включи и връзки без договори в периода на длъжността',
+          label: 'с договори извън периода',
           count: f.include?.outside,
         },
         {
           value: 'boards',
-          label: 'Включи и членство в управителни органи',
+          label: 'с членове на управителни органи',
           count: f.include?.boards,
         },
       ],
-      hint: 'Периодът обхваща годините с налични декларации за съответната публична длъжност.',
     },
     {
       key: 'source',
       label: 'Източник на връзката',
       type: 'radio',
-      allLabel: 'всички източници',
+      allLabel: 'всички',
       allCount: f.source?.all,
       selected: filters.stake ? [filters.stake] : [],
       options: [
         {
           value: 'self',
-          label: 'декларация за собствено участие',
+          label: 'собствено участие',
           count: f.source?.self,
         },
         {
           value: 'family',
-          label: 'декларация за дял на свързано лице',
+          label: 'дял на свързано лице',
           count: f.source?.family,
         },
         {
           value: 'registry',
-          label: 'само вписване в Търговския регистър',
+          label: 'само Търговски регистър',
           count: f.source?.registry,
         },
       ],
@@ -380,13 +378,13 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       key: 'buyer',
       label: 'Възложител на договорите',
       type: 'radio',
-      allLabel: 'всички институции',
+      allLabel: 'всички',
       allCount: f.buyer?.all,
       selected: filters.ownBuyer ? ['own'] : [],
       options: [
         {
           value: 'own',
-          label: 'собствената институция на лицето',
+          label: 'собствената институция',
           count: f.buyer?.own,
         },
       ],
@@ -411,12 +409,12 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   const steps = [
     filters.period === 'overlap' && {
       add: ['outside'],
-      label: 'Включи и връзки без договори в периода на длъжността',
+      label: 'Добави лицата с договори извън периода на длъжността',
       count: f.include?.outside ?? 0,
     },
     filters.role === 'direct' && {
       add: ['boards'],
-      label: 'Включи и членство в управителни органи',
+      label: 'Добави членовете на управителни органи',
       count: f.include?.boards ?? 0,
     },
   ].filter((w): w is { add: string[]; label: string; count: number } => !!w);
@@ -425,7 +423,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   if (both > Math.max(...steps.map((w) => w.count)))
     steps.push({
       add: ['outside', 'boards'],
-      label: 'Включи и двете: връзки без договори в периода и членство в управителни органи',
+      label: 'Добави и двете групи',
       count: both,
     });
   const widen = steps
@@ -443,9 +441,9 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Свързани лица' }]} />
+      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Длъжностни лица' }]} />
       <main id="main">
-        <PageHeader kicker="Свързани лица" title={listing.title} lede={listing.lede} />
+        <PageHeader kicker="Длъжностни лица" title={listing.title} lede={listing.lede} />
 
         <Callout titleAs="h2" title="Как се извежда връзката — и какво не твърди">
           <p className="m-0">
@@ -470,7 +468,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         {authority && (
           <p>
             Само изпълнители на <Link to={`/authorities/${authority.slug}`}>{authority.name}</Link>.{' '}
-            <Link to="/conflicts">Всички свързани лица →</Link>
+            <Link to="/conflicts">Всички длъжностни лица →</Link>
           </p>
         )}
 
@@ -485,7 +483,14 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
             <Section
               id="list"
               title="Длъжностни лица и дружества изпълнители"
-              hint="„Стойност в периода на длъжността“ включва договорите от годините с налична декларация за институция и длъжност на лицето, в които връзката с дружеството е декларирана или вписана. Това не установява точните дати на мандата. Липсващи години не се запълват. Стойността и броят на договорите „за всички години“ обхващат всички налични договори на показаните дружества, включително извън периода и при предходно участие."
+              hint={
+                <>
+                  Сумите са стойности на договорите на дружествата, не пари, получени от лицата.
+                  Периодът на длъжността са годините с декларация за нея, в които връзката с
+                  дружеството е декларирана или вписана — не точните дати на мандата.{' '}
+                  <Link to="/conflicts/methodology#office-period">Как се смята</Link>
+                </>
+              }
             >
               <div className="split">
                 <FilterRail groups={groups} sort={filters.sort} clearHref={clearHref} />
@@ -495,9 +500,9 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     activeSort={filters.sort}
                     searchLabel="Търсене сред лицата"
                     sorts={[
-                      { value: 'period', label: 'стойност в периода на длъжността' },
+                      { value: 'period', label: 'стойност в периода' },
                       { value: 'total', label: 'стойност за всички години' },
-                      { value: 'contracts', label: 'брой договори за всички години' },
+                      { value: 'contracts', label: 'брой договори' },
                     ]}
                     count={
                       <>
@@ -507,7 +512,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     }
                   />
                   <p className="small muted conflicts-scope">
-                    <strong>Обхват:</strong> {conflictScopeLine(filters)}
+                    Обхват: {conflictScopeLine(filters)}
                   </p>
                   {total === 0 ? (
                     <div className="conflicts-empty">
@@ -530,10 +535,6 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     </div>
                   ) : (
                     <>
-                      <p className="small muted conflicts-amounts-note">
-                        Сумите са стойности на договорите на дружествата, не пари, получени от
-                        лицата.
-                      </p>
                       <DataTable
                         className="conflicts-people-table"
                         columns={columns}

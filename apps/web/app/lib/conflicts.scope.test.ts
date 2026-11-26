@@ -119,11 +119,15 @@ describe('/conflicts scope', () => {
 
   it('describes the current scope in one sentence', () => {
     const line = (qs: string) => conflictScopeLine(conflictListFilters(new URLSearchParams(qs)));
-    expect(line('')).toMatch(/^Собственост или управление с договори в периода на длъжността/);
-    expect(line('include=boards')).toMatch(/управителен орган с договори в периода/);
-    expect(line('include=outside')).toMatch(
-      /със или без договори.*периодът не може да се установи/,
+    expect(line('')).toBe('собственост или управление, с договори в периода на длъжността.');
+    expect(line('include=boards')).toMatch(
+      /управителен орган, с договори в периода на длъжността\.$/,
     );
+    // The wider scope is said in the positive too: where the contracts are, not that they are missing.
+    expect(line('include=outside')).toBe(
+      'собственост или управление, с договори в периода на длъжността или извън него.',
+    );
+    expect(line('include=outside')).not.toContain('без договори');
   });
 });
 

@@ -3,6 +3,7 @@ import type { ConflictLink } from '@sigma/api-contract';
 import { groupByPerson, officialHref, ownStakeLabels } from '../lib/conflicts';
 import { personName } from '../lib/person-name';
 import { DataTable } from './DataTable';
+import { PublicOffices } from './PublicOffices';
 import { Chip, Section } from './ui';
 
 export function CompanyDeclarants({ links }: { links: ConflictLink[] }) {
@@ -23,21 +24,7 @@ export function CompanyDeclarants({ links }: { links: ConflictLink[] }) {
           {
             key: 'office',
             header: 'Институция и длъжност',
-            cell: (person) => (
-              <ul className="entity-list">
-                {person.declaredInstitutions?.map((office) => (
-                  <li key={office.institution}>
-                    {office.institution}
-                    {office.positions.length > 0 && (
-                      <div className="small muted">{office.positions.join('; ')}</div>
-                    )}
-                    {office.years.length > 0 && (
-                      <div className="small muted">{office.years.join(', ')}</div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ),
+            cell: (person) => <PublicOffices filings={person.officeFilings} label={null} />,
           },
           {
             key: 'basis',

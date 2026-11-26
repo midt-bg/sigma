@@ -7,9 +7,13 @@ import type { EntityKind, OwnershipKind, SearchHit, SearchResults } from '@sigma
 import {
   cleanName,
   companyNameStem,
+  describeOffices,
   entityName,
+  officesLine,
+  allOfficesFormer,
   parseConsortiumMembers,
   searchTokens,
+  type OfficeFiling,
 } from '@sigma/shared';
 import { hrefForEntity } from './identity';
 
@@ -26,22 +30,19 @@ const GROUPS: {
   limit: number;
   path: string;
 }[] = [
-  // Свързани лица (declared conflict-of-interest officials). Placed first here, but only actually LEADS the
-  // results when it's the strongest match — see the relevance gate in search(). The minister's ask: a name
-  // search must surface the person's declared-conflict profile.
+  // Officials with a published stake. Searched apart from the other people (its own index kind and its own
+  // „виж всички" list), then shown with them as ONE group, „Лица" — see peopleGroup() in search().
   {
     kind: 'official',
-    label: 'Свързани лица',
+    label: 'Лица',
     amountLabel: 'по договори',
     limit: 6,
     path: '/conflicts',
   },
   // Everyone else with a page: declarants without a published stake and people the Trade Register records.
-  // No listing page, so no „виж всички". The label names what separates this group from the one above —
-  // the EVIDENCE, not the office. Plain „Лица" read as a different sort of person and denied the office of
-  // declarants whose own subtitle said „главен секретар · Агенция по заетостта"; the row labels keep
-  // calling each of them a длъжностно лице (kindLabel, apps/web/app/components/SmartSearch.tsx).
-  { kind: 'person', label: 'Лица без публикувана връзка', amountLabel: '', limit: 6, path: '' },
+  // No listing page, so no „виж всички". Shown inside „Лица" with the officials; each row's gutter label still
+  // says whether the person is a длъжностно лице (kindLabel, apps/web/app/lib/search-labels.ts).
+  { kind: 'person', label: 'Лица', amountLabel: '', limit: 6, path: '' },
   {
     kind: 'authority',
     label: 'Институции',
@@ -226,6 +227,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
             moreHref: null,
           },
           bestRank: Infinity,
+          refs: [] as string[],
         };
       }
       const isCompanyGroup = g.kind === 'company';
@@ -263,6 +265,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
         };
       });
       return {
+        refs: results.map((r) => r.ref),
         group: {
           kind: g.kind,
           label: g.label,
@@ -276,22 +279,76 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
     }),
   );
 
-  // Placement (the minister's ask): „Свързани лица" LEADS — but only when it is genuinely the strongest
-  // match, never on an incidental prefix hit. When its best rank ties or beats every other non-empty group
-  // it goes first; otherwise it sinks to last (still shown, just not hijacking the top over a stronger
+  const people = await peopleGroup(
+    db,
+    built.find((x) => x.group.kind === 'official')!,
+    built.find((x) => x.group.kind === 'person')!,
+  );
+  // Placement (the minister's ask): the people LEAD — but only when they are genuinely the strongest match,
+  // never on an incidental prefix hit. When their best rank ties or beats every other non-empty group they go
+  // first; otherwise they sink to last (still shown, just not hijacking the top over a stronger
   // company/contract match). Empty groups are hidden downstream, so „first when matched, absent otherwise"
   // falls out for free.
-  // The people groups lead the same way, officials first.
-  const people: SearchKind[] = ['official', 'person'];
-  const rest = built.filter((b) => !people.includes(b.group.kind));
+  const rest = built.filter((b) => b.group.kind !== 'official' && b.group.kind !== 'person');
   const bestOther = Math.min(Infinity, ...rest.map((b) => b.bestRank));
-  const lead: typeof built = [];
-  const trail: typeof built = [];
-  for (const kind of people) {
-    const b = built.find((x) => x.group.kind === kind)!;
-    (b.group.total > 0 && b.bestRank <= bestOther ? lead : trail).push(b);
-  }
-  const groups = [...lead, ...rest, ...trail].map((b) => b.group);
+  const leads = people.group.total > 0 && people.bestRank <= bestOther;
+  const groups = (leads ? [people, ...rest] : [...rest, people]).map((b) => b.group);
 
   return { query, groups, empty: groups.every((g) => g.total === 0) };
+}
+
+type BuiltGroup = { group: SearchResults['groups'][number]; bestRank: number; refs: string[] };
+
+// A registry person's ref is the 64-hex indent; everyone else in the people kinds is a declarant.
+const REGISTRY_REF = /^[0-9a-f]{64}$/;
+
+/**
+ * The two people kinds as ONE group, „Лица": officials with a published stake first, then everyone else with
+ * a page. Each declarant's line is their offices by the one rule (`describeOffices`): position, institution,
+ * the years with filings and „бивш" only with an exit declaration nothing reopens. A registry-only person
+ * keeps the index's line (their companies). „Виж всички" leads to the officials' list only while every match
+ * is in it.
+ */
+async function peopleGroup(
+  db: D1Database,
+  official: BuiltGroup,
+  person: BuiltGroup,
+): Promise<BuiltGroup> {
+  const hits = [...official.group.hits, ...person.group.hits];
+  const refs = [...official.refs, ...person.refs];
+  const declarants = [...new Set(refs.filter((r) => !REGISTRY_REF.test(r)))];
+  if (declarants.length) {
+    try {
+      const { results } = await db
+        .prepare(
+          `SELECT d.person_id, d.institution, d.position, d.declared_year AS year,
+             m.declaration_type AS type, m.declared_on AS declaredOn
+           FROM declarations d LEFT JOIN declaration_metadata m ON m.declaration_id = d.id
+           WHERE d.person_id IN (SELECT value FROM json_each(?))`,
+        )
+        .bind(JSON.stringify(declarants))
+        .all<OfficeFiling & { person_id: string }>();
+      const byPerson = new Map<string, OfficeFiling[]>();
+      for (const r of results) byPerson.set(r.person_id, [...(byPerson.get(r.person_id) ?? []), r]);
+      hits.forEach((hit, i) => {
+        const offices = describeOffices(byPerson.get(refs[i]!) ?? []);
+        const line = officesLine(offices);
+        if (line) hit.subtitle = line;
+        if (allOfficesFormer(offices)) hit.formerOfficial = true;
+      });
+    } catch {
+      // An env without the declarations tables keeps the index's own line.
+    }
+  }
+  return {
+    refs,
+    group: {
+      kind: 'official',
+      label: 'Лица',
+      total: official.group.total + person.group.total,
+      hits,
+      moreHref: person.group.total === 0 ? official.group.moreHref : null,
+    },
+    bestRank: Math.min(official.bestRank, person.bestRank),
+  };
 }

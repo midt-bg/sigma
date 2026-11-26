@@ -24,7 +24,10 @@ const REGISTRY_SEGMENT = /^[0-9a-f]{64}$/;
  * holder by construction (чл. 75 ЗСП), in either group; only the people we know solely from the Trade
  * Register are plain лица. */
 export function kindLabel(hit: SearchHit): string {
-  if (hit.kind !== 'person') return KIND_LABEL[hit.kind];
+  if (hit.kind !== 'person' && hit.kind !== 'official') return KIND_LABEL[hit.kind];
   const segment = hit.href.slice(hit.href.lastIndexOf('/') + 1);
-  return REGISTRY_SEGMENT.test(segment) ? 'лице' : 'длъжностно лице';
+  if (hit.kind === 'person' && REGISTRY_SEGMENT.test(segment)) return 'лице';
+  // Beside „Бивш общински съветник · … · 2023–2024“ the plain word would say the opposite of the line under
+  // the name: a person whose every office has an exit on record is called former here too.
+  return hit.formerOfficial ? 'бивше длъжностно лице' : 'длъжностно лице';
 }

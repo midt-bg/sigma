@@ -50,22 +50,27 @@ thead th {
     width: 4%;
   }
   .conflicts-people-table th:nth-child(2) {
-    width: 31%;
+    width: 26%;
   }
   .conflicts-people-table th:nth-child(3) {
-    width: 23%;
+    width: 20%;
   }
   .conflicts-people-table th:nth-child(4) {
-    width: 10%;
+    width: 11%;
   }
   .conflicts-people-table th:nth-child(5) {
-    width: 9%;
+    width: 10%;
   }
   .conflicts-people-table th:nth-child(6) {
-    width: 8%;
+    width: 9%;
   }
   .conflicts-people-table th:nth-child(7) {
-    width: 15%;
+    width: 20%;
+  }
+  /* The marks column is kept narrow so the figures have room; the chips here are set a little tighter so the
+     longest one still stands on two lines. */
+  .conflicts-people-table .chip {
+    letter-spacing: 0.02em;
   }
 }
 thead th:first-child {
@@ -338,6 +343,8 @@ td.rank {
     content: attr(data-label);
     flex: 0 0 auto;
     max-width: 52%;
+    /* A number cell keeps its value on one line; its label must still wrap inside its share. */
+    white-space: normal;
     text-align: left;
     font: 500 0.75rem/1.5 var(--font-mono);
     letter-spacing: 0.1em;

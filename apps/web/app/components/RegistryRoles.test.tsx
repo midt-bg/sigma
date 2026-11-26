@@ -79,6 +79,61 @@ describe('CompanyRolesTables', () => {
     expect(cells(standing!, 'Вписване №')).toEqual(['20190312101010']);
   });
 
+  it("puts an official's office, its years and status under the name — apart from the company role's dates", () => {
+    const c = render(
+      <CompanyRolesTables
+        roles={[
+          role({
+            holder: {
+              ...role().holder,
+              official: true,
+              offices: [
+                { institution: 'Община Тестово', position: 'кмет', year: '2017', type: 'Entry' },
+                { institution: 'Община Тестово', position: 'кмет', year: '2018', type: 'Annualy' },
+                {
+                  institution: 'Община Тестово',
+                  position: 'кмет',
+                  year: '2020',
+                  type: 'Vacate',
+                  declaredOn: '2020-10-01',
+                },
+              ],
+            },
+            addedOn: '2018-05-01',
+            removedOn: '2022-01-10',
+          }),
+          role({
+            holder: {
+              kind: 'person',
+              name: 'ВЕРА ГЕОРГИЕВА',
+              href: null,
+              eik: null,
+              country: null,
+              official: true,
+              offices: [{ institution: 'Агенция за тестове', position: 'директор', year: '2012' }],
+            },
+            addedOn: '2019-01-01',
+          }),
+        ]}
+      />,
+    );
+    const [standing, ended] = [...c.querySelectorAll('table')];
+    const anna = cells(ended!, 'Лице')[0]!;
+    // The office's own years and the word „бивш" from its exit declaration; the role keeps its dates.
+    expect(anna).toContain('Бивш кмет · Община Тестово · 2017–2018, 2020');
+    // Shared years only where both are on record — never a claim of the same day.
+    expect(anna).toContain('Ролята е вписана и в години с декларация за длъжността: 2018, 2020.');
+    expect(cells(ended!, 'До')).toEqual(['10.01.2022']);
+    const vera = cells(standing!, 'Лице')[0]!;
+    expect(vera).toContain('Директор · Агенция за тестове · декларация за 2012');
+    expect(vera).not.toContain('Ролята е вписана');
+    expect(vera).not.toMatch(/настоящ/i);
+    // The general word follows the office line: former only where every office has an exit on record.
+    expect(anna).toContain('бивше длъжностно лице');
+    expect(vera).toContain('длъжностно лице');
+    expect(vera).not.toContain('бивше длъжностно лице');
+  });
+
   // aria-label on a role-less <span> is not read, so the „no share" dash says it in hidden text.
   it('says in words that a share is unknown, behind a hidden dash', () => {
     const c = render(<CompanyRolesTables roles={[role()]} />);

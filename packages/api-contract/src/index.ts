@@ -562,6 +562,14 @@ export interface RoleHolder {
   country: string | null;
   /** A person who has filed a declaration of interests published here. */
   official?: boolean;
+  /** That person's filings, for the public office and its years (`describeOffices`). */
+  offices?: {
+    institution: string | null;
+    position: string | null;
+    year: string | null;
+    type?: string | null;
+    declaredOn?: string | null;
+  }[];
 }
 
 /** One registered role at a company: who holds it, since when, until when, and the entry it rests on. */
@@ -816,6 +824,8 @@ export interface SearchHit {
   memberCount?: number | null;
   hasConflict?: boolean; // company: has ≥1 PUBLISHED свързани-лица link → badge linking on to /conflicts/company/:eik
   subtitle: string | null;
+  /** person kinds: every office in the person's declarations is former (an exit declaration nothing reopens). */
+  formerOfficial?: boolean;
   amountEur: number | null;
   amountLabel: string; // „общо похарчено" / „общо спечелено" / „стойност" / „по договори"
 }
@@ -877,7 +887,14 @@ export interface ConflictLink {
   registryPersonId?: string | null;
   /** Union of this person's declared windows in this company; each contract once. */
   personCompanyValueEur?: number | null;
-  declaredOffices?: { institution: string; position: string | null; year: string | null }[];
+  declaredOffices?: {
+    institution: string;
+    position: string | null;
+    year: string | null;
+    /** The declaration's type and date — what tells an exit from an entry (see `describeOffices`). */
+    type?: string | null;
+    declaredOn?: string | null;
+  }[];
   contractCount: number;
   contractValueEur: number | null;
   // Contemporaneous split: the subset of the winner's contracts SIGNED while the declared stake was held

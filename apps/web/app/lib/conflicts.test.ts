@@ -381,6 +381,7 @@ describe('groupByPerson', () => {
         'contractValueEur',
         'hasContemporaneous',
         'declaredInstitutions',
+        'officeFilings',
         'personIdentity',
         'institution',
         'official',

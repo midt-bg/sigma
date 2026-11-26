@@ -137,7 +137,7 @@ describe('/search', () => {
           hit({ kind: 'contract', slug: 'k1', ident: '00001-2024-0001', subtitle: 'Тест' }),
           hit({ kind: 'contract', slug: 'k2' }),
         ]),
-        group('official', 'Свързани лица', [
+        group('official', 'Лица', [
           hit({ kind: 'person', slug: 'p1', title: 'ИВАН ПЕТРОВ ТЕСТОВ' }),
         ]),
         group('authority', 'Институции', []),
@@ -151,7 +151,7 @@ describe('/search', () => {
     expect(cards[1]!.textContent).toContain('съвместни изпълнители');
     expect(cards[1]!.querySelector('.meta')!.textContent).toBe('2 участника');
     expect(cards[2]!.textContent).toContain('без ЕИК');
-    expect(cards[2]!.textContent).toContain('свързани лица');
+    expect(cards[2]!.textContent).toContain('длъжностни лица');
     expect(cards[3]!.querySelector('.meta')!.textContent).toBe('УНП 00001-2024-0001 · Тест');
     expect(cards[4]!.querySelector('.meta')!.textContent).toBe('');
     expect(cards[4]!.querySelector('.amt .num')!.textContent).toBe('—');

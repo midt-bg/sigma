@@ -21,6 +21,9 @@ export interface PersonContractRow {
   duringDeclaration: boolean;
   duringOfficeYear: boolean;
   declarationBasis: number; // 1 = own stake, 2 = related person's stake, 3 = both
+  /** The red-number test — a tie to the company and the office at once — as the timeline's marks read it.
+   *  Absent on a payload cached before it existed. */
+  tied?: boolean;
 }
 export const BY_AUTHORITY_SHOWN = 20;
 
@@ -273,6 +276,7 @@ export async function getPersonActivity(
     during_declaration: number;
     during_office_year: number;
     declaration_basis: number;
+    during_overlap: number;
   }>(
     `SELECT * FROM activity${where} ORDER BY signed_at DESC, id LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
   );
@@ -290,6 +294,7 @@ export async function getPersonActivity(
       duringDeclaration: !!r.during_declaration,
       duringOfficeYear: !!r.during_office_year,
       declarationBasis: r.declaration_basis,
+      tied: !!r.during_overlap,
     })),
     page,
     pageSize,
