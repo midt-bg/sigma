@@ -53,13 +53,17 @@ export async function commitFolder(
   return next;
 }
 
-/** Bring the accepted folders' parts back to disk. A missing part refuses the whole checkpoint. */
+/** Bring the accepted folders' parts back to disk. A missing part refuses the whole checkpoint, with
+ *  `code: 'CHECKPOINT_PART_MISSING'`. */
 export async function restoreParts(store, { runId, fingerprint, dir, head, onFolder }) {
   fs.mkdirSync(dir, { recursive: true });
   for (const folder of head.folders) {
     for (const stream of STREAMS) {
       const body = await store.get(partKey(runId, fingerprint, folder, stream));
-      if (!body) throw Error(`Checkpoint part missing: ${folder}/${stream}`);
+      if (!body)
+        throw Object.assign(Error(`Checkpoint part missing: ${folder}/${stream}`), {
+          code: 'CHECKPOINT_PART_MISSING',
+        });
       fs.writeFileSync(partPath(dir, folder, stream), gunzipSync(body));
     }
     onFolder?.(folder);

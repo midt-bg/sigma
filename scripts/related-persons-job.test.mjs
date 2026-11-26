@@ -109,3 +109,43 @@ test('the job stops after the candidates and finishes from decide, carrying no r
     rmSync(paths.dir, { recursive: true, force: true });
   }
 });
+
+// Between the halves the rebuild's catch-up pass reads the requested companies into the work database and
+// accepts the register's baseline there. The second half goes on in that database: copying the source in
+// again would drop the partidas it read and leave the baseline open.
+test('the second half keeps what was written between the halves, and needs the first half', async () => {
+  const paths = fixture();
+  try {
+    runJob(paths, ['--until', 'candidates']);
+    const built = join(paths.work, 'backfill.sqlite');
+    const between = new DatabaseSync(built);
+    between.exec(`INSERT INTO registry_deeds (eik, name, outcome, fetched_at)
+        VALUES ('000000019', 'ТЕСТ ГРУП ЕООД', 'ok', '2026-11-20T00:00:00Z');
+      INSERT INTO registry_entry_state (id, seeded_through, baseline_status)
+        VALUES (1, '2026-11-20', 'ready');`);
+    between.close();
+
+    runJob(paths, ['--from', 'decide']);
+    const done = new DatabaseSync(built, { readOnly: true });
+    try {
+      assert.equal(done.prepare('SELECT COUNT(*) n FROM registry_deeds').get().n, 1);
+      assert.equal(
+        done.prepare('SELECT baseline_status FROM registry_entry_state').get()?.baseline_status,
+        'ready',
+      );
+    } finally {
+      done.close();
+    }
+
+    rmSync(paths.work, { recursive: true, force: true });
+    assert.throws(
+      () => runJob(paths, ['--from', 'decide']),
+      (error) => /work database of the first half/.test(String(error.stderr)),
+    );
+  } catch (error) {
+    if (error.stderr) console.error(String(error.stderr));
+    throw error;
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true });
+  }
+});

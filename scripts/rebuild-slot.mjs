@@ -42,20 +42,88 @@ export function dataVersionSql({ version, commit, runId, builtAt }) {
   );
 }
 
-/** Tables a served slot never takes from the snapshot: SQLite's and Cloudflare's own, the migration ledger,
- *  the full-text index's shadow tables, the work staging, the ship's generations, and the slot's own record
- *  of the rules that built it — written by the verification alone, never carried in with the rows. */
-export function shippedTables(tables, stagingSql) {
+/**
+ * Tables the build leaves in its snapshot that no migration makes, and the slot takes all the same — each
+ * with what reads it there. A resumed build brings them back from the slot with the slot's own DDL
+ * (`rehydrate`), so its ship counts them as a whole build's does.
+ */
+export const SHIPPED_UNMIGRATED = new Map([
+  [
+    'state_owned_eik',
+    'the public-enterprise list: public stakes (packages/db queries/public-stakes.ts)',
+  ],
+  [
+    'public_owned_eik',
+    'companies in public hands: public stakes, the register (apps/etl/src/registry.ts)',
+  ],
+  ['pipeline_stats', 'the import’s counts: the integrity gate reconciles the slot against them'],
+  // normalize-raw's canonical names; the refresh rebuilds them before it reads them.
+  ['authority_canonical_name', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+  ['authority_canonical_type', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+  ['bidder_canonical_name', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+]);
+
+/**
+ * Tables a served slot never takes from the snapshot, and why. The work staging
+ * (scripts/work-staging-schema.sql) is left out with them: the import's raw tables, read by nothing served.
+ */
+export const NOT_SHIPPED = [
+  [/^sqlite_/, 'SQLite’s own'],
+  [/^_cf_/, 'Cloudflare’s own'],
+  [/^d1_migrations$/, 'the migration ledger: the slot keeps its own'],
+  [/^search_index_/, 'the full-text index’s shadow tables: SQLite fills them from search_index'],
+  [/^rp_(next|prev)_/, 'the declarations ship’s generations: the served database’s alone'],
+  [/^contractor_identity$/, 'the import’s working table: nothing served reads it'],
+  [/^data_version$/, 'written by the verification alone, never carried in with the rows'],
+  [/^rebuild_state$/, 'the stages’ receipts: each stage writes its own'],
+];
+
+let migrated = null;
+/** The tables the migrations make — the served schema. */
+export function migratedTables() {
+  if (!migrated) {
+    const db = new DatabaseSync(':memory:');
+    try {
+      const dir = resolve(root, 'packages/db/migrations');
+      for (const file of readdirSync(dir)
+        .filter((n) => /^\d+.*\.sql$/.test(n))
+        .sort())
+        db.exec(readFileSync(join(dir, file), 'utf8'));
+      migrated = new Set(
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+          .all()
+          .map((r) => r.name),
+      );
+    } finally {
+      db.close();
+    }
+  }
+  return migrated;
+}
+
+/**
+ * The tables of a snapshot the slot takes: every table the migrations make and every one in
+ * SHIPPED_UNMIGRATED, none in NOT_SHIPPED or the work staging. A table in neither list stops the build
+ * with its name: the slot would otherwise take it, or lose it, without anyone having said which.
+ */
+export function shippedTables(tables, stagingSql, served = migratedTables()) {
   const staging = new Set(
     [...stagingSql.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)/g)].map((m) => m[1]),
   );
-  return tables.filter(
-    (t) =>
-      !/^(sqlite_|_cf_|rp_next_|rp_prev_|d1_migrations$|search_index_)/.test(t) &&
-      t !== 'contractor_identity' &&
-      t !== 'data_version' &&
-      !staging.has(t),
-  );
+  const unknown = [];
+  const shipped = tables.filter((t) => {
+    if (staging.has(t) || NOT_SHIPPED.some(([pattern]) => pattern.test(t))) return false;
+    if (served.has(t) || SHIPPED_UNMIGRATED.has(t)) return true;
+    unknown.push(t);
+    return false;
+  });
+  if (unknown.length)
+    throw new Error(
+      `The build left ${unknown.join(', ')} in its snapshot, and nothing says whether the slot takes it: ` +
+        'make it in a migration, or name it in SHIPPED_UNMIGRATED or NOT_SHIPPED (scripts/rebuild-slot.mjs).',
+    );
+  return shipped;
 }
 
 /** Parents before children, by the snapshot's own foreign keys. */
@@ -189,7 +257,17 @@ export const UNVERIFY_SQL =
   `${REBUILD_STATE_DDL}\nDELETE FROM rebuild_state WHERE stage IN ('ship','verify');\n` +
   'DELETE FROM data_version;\n';
 
-/** What this run has already put in the slot. A slot without the table has nothing to offer. */
+/**
+ * Sent before the ship's first write. The ship empties every table and fills it again, so from its first
+ * file on the slot no longer holds what `import` and `registry` left: a ship stopped half-way leaves tables
+ * emptied or half filled, and a resume that trusted their receipts would rebuild on a partial corpus, ship
+ * it and pass its own verification, since the counts would match. So every receipt goes, with the stamp: a
+ * stopped ship is built again from the start, and only its own receipt, in its last file, says it finished.
+ */
+export const SHIP_START_SQL = `${REBUILD_STATE_DDL}\nDELETE FROM rebuild_state;\nDELETE FROM data_version;\n`;
+
+/** What this run has already put in the slot: each finished stage, with the run that finished it and its
+ *  detail. A slot without the table has nothing to offer. */
 export function slotState(name, runId, read = d1Json, anyRun = false) {
   if (!read(name, "SELECT 1 AS found FROM sqlite_master WHERE name='rebuild_state'").length)
     return new Map();
@@ -197,17 +275,37 @@ export function slotState(name, runId, read = d1Json, anyRun = false) {
   // An operator who asks to resume adopts what an earlier run of the same rebuild left behind.
   const where = anyRun ? '' : ` WHERE run_id=${sqlLiteral(runId)}`;
   return new Map(
-    read(name, `SELECT stage, detail FROM rebuild_state${where}`).map((r) => [r.stage, r.detail]),
+    read(name, `SELECT stage, run_id, detail FROM rebuild_state${where}`).map((r) => [
+      r.stage,
+      { runId: r.run_id, detail: r.detail },
+    ]),
   );
+}
+
+/**
+ * Under which run the declarations stage keeps its checkpoints (scripts/cacbg/extract-checkpoint.mjs). The
+ * local stages leave nothing in the slot, so a resumed build reads the declarations again — but the reading
+ * already accepted by an earlier run of the same build is still in R2, keyed by the run that prepared the
+ * slot. It is adopted only when that run was the same code: the checkpoint's fingerprint guards the inputs
+ * (corpus, identity rules, registry), not the extractor, and a fix deployed between the runs must not be
+ * resumed past. Otherwise, and for a fresh build, the run keeps its own.
+ */
+export function checkpointRun(done, runId, commit) {
+  const prepared = done.get('prepare');
+  if (!prepared || prepared.runId === runId || !commit) return runId;
+  let recorded = null;
+  try {
+    recorded = JSON.parse(prepared.detail ?? 'null')?.commit ?? null;
+  } catch {
+    // a receipt without a commit adopts nothing
+  }
+  return recorded === commit ? prepared.runId : runId;
 }
 
 /** A batch of partidas, straight into the slot: its rows, the queue entries it cleared or added, and
  * the registry's own cursors. The rebuild then resumes at the batch, not at the first partida. */
 export function slotFlusher(name, snapshot, apply) {
-  const tables = registryTables(snapshot);
-  const cursors = ['registry_sync', 'registry_entry_state', 'registry_entry_passes'].filter((t) =>
-    snapshot.prepare(`SELECT 1 FROM sqlite_master WHERE name=${sqlLiteral(t)}`).get(),
-  );
+  const carry = registryTables(snapshot);
   let since = null;
   const send =
     apply ??
@@ -217,10 +315,15 @@ export function slotFlusher(name, snapshot, apply) {
       dir: resolve(root, 'data/work/rebuild'),
       cwd: webDir,
     });
-  return async (eiks) => {
-    send('registry-batch', registryBatchSql(snapshot, eiks, tables, cursors, since));
+  const flush = (eiks, seal) => {
+    send('registry-batch', registryBatchSql(snapshot, eiks, carry, since) + seal);
     since = new Date().toISOString();
   };
+  // A batch takes its companies alone: the import also hands it how many partidas it has read so far.
+  const batch = async (eiks) => flush(eiks, '');
+  // The registry's receipt rides with its last cursors, after the last batch.
+  batch.seal = async (sql) => flush([], sql);
+  return batch;
 }
 
 /**
@@ -275,8 +378,17 @@ export function clearFiles(label, tables, rows, keys = {}) {
 
 /** Put a whole local snapshot into the slot: the snapshot's own DDL where the migrations left a gap,
  * then every table emptied children-first and filled parents-first, in chunks of twenty thousand rows.
- * Used twice — once after a long stage, so its hours are durable, and once for the finished build. */
-export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json }) {
+ * Used twice — once after a long stage, so its hours are durable, and once for the finished build.
+ *
+ * `seal(counts)` is the stage's receipt. It travels in the LAST file, in the same transaction as the last
+ * rows: a slot holds the receipt exactly when it holds every row, and a stop between the two cannot leave
+ * a filled slot that looks unfilled, or the reverse. */
+export function fillSlot(
+  name,
+  snapshotPath,
+  work,
+  { label, apply, read = d1Json, seal, served = migratedTables() },
+) {
   const snap = new DatabaseSync(snapshotPath, { readOnly: true });
   try {
     const master = snap
@@ -285,6 +397,7 @@ export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json
     const tables = shippedTables(
       master.filter((m) => m.type === 'table').map((m) => m.name),
       readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'),
+      served,
     );
     apply(
       `${label}-schema`,
@@ -335,29 +448,34 @@ export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json
         ]),
     );
     for (const [file, sql] of clearFiles(label, withRows, held, keys)) apply(file, sql);
-    const counts = {};
+    const counts = Object.fromEntries(
+      withRows.map((t) => [t, snap.prepare(`SELECT COUNT(*) n FROM ${sqlIdent(t)}`).get().n]),
+    );
+    const last = withRows.findLast((t) => counts[t] > 0);
     let shipped = 0;
     for (const table of withRows) {
       const cols = snap
         .prepare(`PRAGMA table_info(${sqlIdent(table)})`)
         .all()
         .map((c) => c.name);
-      const n = snap.prepare(`SELECT COUNT(*) n FROM ${sqlIdent(table)}`).get().n;
-      counts[table] = n;
+      const n = counts[table];
       for (let offset = 0, part = 0; offset < n; offset += 20_000, part++) {
         const rows = snap
           .prepare(
             `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} LIMIT 20000 OFFSET ${offset}`,
           )
           .all();
+        const sealed = seal && table === last && offset + 20_000 >= n ? seal(counts) : '';
         apply(
           `ship-${table}-${String(part).padStart(3, '0')}`,
-          `PRAGMA defer_foreign_keys=ON;\n${insertStatements(table, cols, rows).join('')}`,
+          `PRAGMA defer_foreign_keys=ON;\n${insertStatements(table, cols, rows).join('')}${sealed}`,
         );
         shipped += rows.length;
         progress(label === 'ship' ? 'ship' : label, shipped);
       }
     }
+    // A snapshot without a single row still finishes the stage.
+    if (seal && !last) apply(`${label}-seal`, seal(counts));
     return { counts, withRows, shipped };
   } finally {
     snap.close();
@@ -377,6 +495,14 @@ export async function rehydrate(db, name, work, deps = {}) {
     .sort())
     await apply('import', db, readFileSync(join(migrationsDir, file), 'utf8'));
   await apply('import', db, readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'));
+  // The tables the slot takes that no migration makes come back with the slot's own DDL.
+  const unmigrated = read(
+    name,
+    `SELECT name, sql FROM sqlite_master WHERE type='table'
+       AND name IN (${[...SHIPPED_UNMIGRATED.keys()].map(sqlLiteral).join(',')}) ORDER BY name`,
+  );
+  if (unmigrated.length)
+    await apply('import', db, unmigrated.map((t) => `${ifNotExists(t.sql)};`).join('\n'));
   // Only tables the local schema knows: the slot also carries this rebuild's own bookkeeping, and the
   // search index is a virtual table D1 refuses to export at all.
   const local = new DatabaseSync(db, { readOnly: true });
@@ -412,24 +538,47 @@ export async function rehydrate(db, name, work, deps = {}) {
   return tables;
 }
 
-/** The registry tables keyed by company, as the local build holds them. */
+/** The register's cursors: a batch carries them whole, as the local build holds them after it. */
+export const REGISTRY_CURSORS = ['registry_sync', 'registry_entry_state', 'registry_entry_passes'];
+
+/**
+ * How a registry batch carries each registry table of the local build. A build resumed after the register
+ * takes the register from the slot alone (`rehydrate`), so whatever a batch leaves out is gone from it:
+ *
+ *   byCompany  every table with an `eik` column — the batch's companies' rows replace the slot's
+ *   persons    registry_persons — one row per person the batch's partidas name (their observations), as
+ *              the read left it; a person is keyed by the register's identifier, not by a company
+ *   cursors    REGISTRY_CURSORS — whole
+ *
+ * A registry table that is none of these stops the build with its name, before any batch is sent.
+ */
 export function registryTables(snapshot) {
-  return snapshot
+  const carry = { byCompany: [], persons: [], cursors: [] };
+  const unknown = [];
+  for (const { name } of snapshot
     .prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'registry_%' ORDER BY name",
     )
-    .all()
-    .map((r) => r.name)
-    .filter((name) =>
-      snapshot
-        .prepare(`PRAGMA table_info(${sqlIdent(name)})`)
-        .all()
-        .some((c) => c.name === 'eik'),
+    .all()) {
+    const columns = snapshot
+      .prepare(`PRAGMA table_info(${sqlIdent(name)})`)
+      .all()
+      .map((c) => c.name);
+    if (columns.includes('eik')) carry.byCompany.push(name);
+    else if (name === 'registry_persons') carry.persons.push(name);
+    else if (REGISTRY_CURSORS.includes(name)) carry.cursors.push(name);
+    else unknown.push(name);
+  }
+  if (unknown.length)
+    throw new Error(
+      `A registry batch does not know how to carry ${unknown.join(', ')}: a build resumed after the ` +
+        'register would lose it. Say how in registryTables (scripts/rebuild-slot.mjs).',
     );
+  return carry;
 }
 
 /** Rows for one batch of companies, as statements that replace whatever the slot holds for them. */
-export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) {
+export function registryBatchSql(snapshot, eiks, { byCompany, persons, cursors }, since = null) {
   const list = eiks.map(sqlLiteral).join(',');
   // No batch: the cursors alone, for the accepted baseline written after the last one.
   const out = eiks.length ? [`DELETE FROM registry_queue WHERE eik IN (${list});`] : [];
@@ -450,21 +599,22 @@ export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) 
       ),
     );
   }
-  for (const table of [...tables, ...cursors]) {
+  // The people the batch's partidas name: reading a partida rewrote each one's row.
+  const named = `SELECT registry_indent FROM registry_identity_observations
+    WHERE eik IN (${list}) AND subject_kind = 'person' AND registry_indent IS NOT NULL`;
+  for (const table of [...byCompany, ...persons, ...cursors]) {
     const cols = snapshot
       .prepare(`PRAGMA table_info(${sqlIdent(table)})`)
       .all()
       .map((c) => c.name);
-    if (!cols.length) continue;
+    const select = `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)}`;
     const rows = cursors.includes(table)
-      ? snapshot.prepare(`SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)}`).all()
-      : eiks.length
-        ? snapshot
-            .prepare(
-              `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} WHERE eik IN (${list})`,
-            )
-            .all()
-        : [];
+      ? snapshot.prepare(select).all()
+      : !eiks.length
+        ? []
+        : persons.includes(table)
+          ? snapshot.prepare(`${select} WHERE indent IN (${named})`).all()
+          : snapshot.prepare(`${select} WHERE eik IN (${list})`).all();
     if (cursors.includes(table)) out.push(`DELETE FROM ${sqlIdent(table)};`);
     out.push(
       ...insertStatements(table, cols, rows).map((sql) =>
@@ -522,6 +672,26 @@ export function slotReader(
 }
 
 /**
+ * The verification's answer that the slot is not what its ship receipt says: a count that differs, a
+ * broken integrity check, no finished ship at all. The same idle slot gives the same answer to every new
+ * attempt, so the run reports it as final (`verdictEvent`) and the coordinator ends the run at once. A read
+ * that fails is never one.
+ */
+export class SlotVerdict extends Error {}
+
+/** The error event that tells the coordinator a failure is a verdict, or null for any other failure. */
+export const verdictEvent = (error) =>
+  error instanceof SlotVerdict
+    ? {
+        event: 'declarations_error',
+        stage: 'verify',
+        script: 'rebuild-slot',
+        exitCode: 1,
+        verdict: true,
+      }
+    : null;
+
+/**
  * Why counts can differ without a defect: the slot was served and refreshed after its ship — a former live
  * slot still holds the receipt of the build that made it, and the refresh has moved its rows on since.
  * Verifying it again proves nothing; it is rebuilt. Only a hint for the message, so a read that fails is
@@ -543,6 +713,52 @@ function refreshedSince(read, builtAt) {
 }
 
 /**
+ * A slot is ready only with the register's baseline accepted: the catch-up pass after the declarations read
+ * every company they asked for, and the daily run then reads the register's new entries from where the
+ * build left off. With the baseline open the daily run skips those reads until it closes it, and the slot
+ * may lack partidas the declarations' links were decided against. A verdict, never retried, and before the
+ * slot gets its version.
+ *
+ * A slot with no register at all needs no baseline: every registry table but the cursors counts nothing in
+ * the ship's receipt — nothing was asked of the register and nothing read from it (a snapshot with no
+ * winner to read). The counts are the receipt's, which the slot was just counted against.
+ */
+function refuseOpenBaseline(name, read, counts) {
+  const register = Object.entries(counts).filter(
+    ([t]) => t.startsWith('registry_') && !REGISTRY_CURSORS.includes(t),
+  );
+  if (register.every(([, n]) => n === 0)) return;
+  const status = read('SELECT baseline_status FROM registry_entry_state WHERE id = 1')[0]
+    ?.baseline_status;
+  if (status !== 'ready')
+    throw new SlotVerdict(
+      `${name} holds the register with its baseline ${status ?? 'missing'}, not accepted: the register ` +
+        'pass after the declarations did not finish in this build. The slot is not ready — build it ' +
+        'again without resume',
+    );
+}
+
+/**
+ * Every person the register gives a role is served with a name: the batch that carries a company's roles
+ * carries its people (`registryRows`). A role whose person has no row is a slot written, at least in part,
+ * by code that did not carry them — a resume over such a build's `registry` receipt skips the stage, and
+ * nothing later reads those people. Their pages answer 404. A verdict, before the slot gets its version.
+ */
+function refuseNamelessPeople(name, read) {
+  const missing = read(
+    `SELECT COUNT(DISTINCT r.subject_id) AS n FROM registry_roles r
+      WHERE r.subject_kind = 'person' AND r.subject_id NOT LIKE 'local:%'
+        AND NOT EXISTS (SELECT 1 FROM registry_persons p WHERE p.indent = r.subject_id)`,
+    ([row]) => Number.isInteger(row?.n) && row.n >= 0,
+  )[0].n;
+  if (missing)
+    throw new SlotVerdict(
+      `${name} holds ${missing} person(s) with a role in the register and no name: its register was ` +
+        'written by code that did not carry the people. The slot is not ready — build it again without resume',
+    );
+}
+
+/**
  * The verification, a stage of its own: it needs nothing but the slot, so it runs right after the ship and
  * again later on the same slot without building anything (`SIGMA_REBUILD_VERIFY=1`). The ship's receipt says
  * what the slot must hold and which rules built it; the slot is counted against it, the integrity gate runs,
@@ -555,7 +771,9 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
     read("SELECT 1 AS found FROM sqlite_master WHERE name='rebuild_state'").length &&
     read("SELECT run_id, detail FROM rebuild_state WHERE stage='ship'")[0];
   if (!shipped?.detail)
-    throw new Error(`${name} holds no finished ship: there is nothing to verify — build the slot`);
+    throw new SlotVerdict(
+      `${name} holds no finished ship: there is nothing to verify — build the slot`,
+    );
   const { counts, version, commit, builtAt } = JSON.parse(shipped.detail);
   const tables = Object.keys(counts);
   const served = {};
@@ -573,11 +791,21 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
   }
   const mismatched = tables.filter((t) => Number(served[t]) !== counts[t]);
   if (mismatched.length)
-    throw new Error(
+    throw new SlotVerdict(
       `Slot counts differ from the snapshot: ${mismatched.map((t) => `${t} ${served[t]} ≠ ${counts[t]}`).join(', ')}` +
         refreshedSince(read, builtAt),
     );
-  const results = await check(read, { label: `rebuilt slot ${name}`, exit: false });
+  refuseOpenBaseline(name, read, counts);
+  refuseNamelessPeople(name, read);
+  let results;
+  try {
+    results = await check(read, { label: `rebuilt slot ${name}`, exit: false });
+  } catch (error) {
+    // A check that broke is a verdict; a read the reader gave up on is not.
+    if (String(error?.message).startsWith('integrity gate failed'))
+      throw new SlotVerdict(error.message);
+    throw error;
+  }
   const at = (now ?? (() => new Date().toISOString()))();
   const rows = Object.values(counts).reduce((a, n) => a + n, 0);
   apply(
@@ -596,12 +824,15 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
         }),
       ),
   );
-  return { version, commit, tables: tables.length, rows };
+  // Which ship passed: a run that only verifies may find an earlier finished build in the slot (a
+  // resume of a slot whose earlier build was never switched to), and the operator compares these with
+  // the build they started before switching to it.
+  return { version, commit, tables: tables.length, rows, shipRun: shipped.run_id || null, builtAt };
 }
 
 /**
- * The end of a build: the finished snapshot into the slot, the ship's receipt — what the slot now holds and
- * which rules built it — and the verification. A verification that fails leaves the receipt, so it can be
+ * The end of a build: the finished snapshot into the slot, with the ship's receipt in its last file — what
+ * the slot now holds and which rules built it — and the verification. A verification that fails leaves the receipt, so it can be
  * run again on its own.
  */
 export async function finishBuild(
@@ -610,40 +841,291 @@ export async function finishBuild(
   work,
   { apply, read = d1Json, verifyRead, runId, version, commit, check, now },
 ) {
-  const { counts } = fillSlot(name, snapshotPath, work, { label: 'ship', apply, read });
-  const at = (now ?? (() => new Date().toISOString()))();
-  apply(
-    'state-ship',
-    receiptSql('ship', runId, at, JSON.stringify({ version, commit, builtAt: at, counts })),
-  );
+  apply('ship-start', SHIP_START_SQL);
+  fillSlot(name, snapshotPath, work, {
+    label: 'ship',
+    apply,
+    read,
+    seal: (counts) => {
+      const at = (now ?? (() => new Date().toISOString()))();
+      return receiptSql(
+        'ship',
+        runId,
+        at,
+        JSON.stringify({ version, commit, builtAt: at, counts }),
+      );
+    },
+  });
   stage('verify');
   return verifySlot(name, { read: verifyRead, apply, runId, check, now });
 }
 
 /**
  * The order of a run, apart from what each stage does. `ops` are the stages, each of which writes the slot
- * except `state` and `rehydrate`, which only read it:
+ * except `state`, `rehydrate` and `local`:
  *
  *   state(anyRun)  the receipts in the slot (`slotState`)   prepare()  empty and shape the slot
  *   rehydrate()    the slot's rows into the local build      unverify() take the stamp and the ship away
- *   import(), registry(), local(), ship()  the build's stages; ship() ships and verifies
+ *   import(), registry()  stages that leave their rows and their receipt in the slot
+ *   local(done)    precompute, the live links, the declarations and the search index — on the local disk
+ *   ship()         the finished snapshot into the slot, then the verification
  *   verify()       the verification on its own
  *
- * A verification on its own builds and empties nothing. A build run takes the stamp and the ship away
- * before it writes anything a resume keeps — a fresh one by emptying the slot, which takes them along.
+ * A run continues at the first stage the slot holds no receipt for. A slot that holds a finished ship needs
+ * only its verification — after a container stopped in it, after a resume — and neither builds nor
+ * empties anything. A ship that began takes every receipt away (`SHIP_START_SQL`), so one stopped half-way
+ * is built again from the start. The local stages leave nothing durable in the slot, so they always run again (what the
+ * declarations already read is kept in R2, `checkpointRun`). A build run takes the stamp and the ship away
+ * right before its first write — a fresh one by emptying the slot, which takes them along — so a slot
+ * being rewritten never looks verified, and a run that only verifies never erases its own input.
  */
 export async function runRebuild({ verify = false, resume = false }, ops) {
   if (verify) return ops.verify();
   const done = await ops.state(resume);
-  if (done.has('prepare')) await ops.rehydrate(done);
-  else await ops.prepare();
-  // From here on this run writes the slot: whatever an earlier run shipped and verified no longer stands.
-  await ops.unverify();
-  if (!done.has('import')) await ops.import();
-  if (!done.has('registry')) await ops.registry();
-  await ops.local();
-  return ops.ship();
+  if (done.has('ship')) return ops.verify();
+  let unverified = !done.has('prepare');
+  if (unverified) await ops.prepare();
+  else await ops.rehydrate(done);
+  const writing = async (op) => {
+    if (!unverified) await ops.unverify();
+    unverified = true;
+    return op();
+  };
+  if (!done.has('import')) await writing(ops.import);
+  if (!done.has('registry')) await writing(ops.registry);
+  await ops.local(done);
+  return writing(ops.ship);
 }
+
+/**
+ * The stages of a run against one slot (`runRebuild`), wired as `main()` runs them. Everything that reaches
+ * outside the process comes in through `deps`, so a test drives these very stages — their receipts, their
+ * seals, the commit and the checkpoint run they pass on — against a real SQLite slot:
+ *
+ *   target, live        the idle slot (the only one written) and the live one (read for its links)
+ *   runId, commit       this run and the commit it was built from (`SIGMA_SOURCE_COMMIT`, or null)
+ *   work, today         the local work directory and the day the procurement import reads up to
+ *   apply, read         a file into the slot, one read of it (`wranglerFileSender`, `d1Json`)
+ *   verifyRead          the verification's reader (`slotReader`)
+ *   wrangler, step, sqlite, emit   the CLI, a child step, the sqlite3 shell, `emit-refresh-group`
+ *   version             the data version of the code that builds
+ *   check, now          the integrity gate and the clock, for the ship's verification
+ */
+export function slotOps({
+  target,
+  live,
+  runId,
+  commit,
+  work,
+  today,
+  apply,
+  read = d1Json,
+  verifyRead,
+  wrangler: cli = wrangler,
+  step: child = step,
+  sqlite: shell = sqlite,
+  emit = emitRefreshGroup,
+  version = () =>
+    JSON.parse(readFileSync(resolve(root, 'packages/db/data-version.json'), 'utf8')).version,
+  check,
+  now = () => new Date().toISOString(),
+}) {
+  const db = join(work, 'slot.sqlite');
+  const jobDir = join(work, 'declarations');
+  const snapshot = join(jobDir, 'backfill.sqlite');
+  const receipt = (name, detail = null) => receiptSql(name, runId, now(), detail);
+  return {
+    // A verification on its own: the slot was shipped by an earlier run and nothing is built or written
+    // but the stamp. The run's audit is this verification; what it publishes is the slot's version.
+    verify: () => {
+      stage('verify');
+      return verifySlot(target.name, { read: verifyRead, apply, runId, check, now });
+    },
+    // 0. The slot is the durable store of this rebuild. It is emptied and shaped once; from there on
+    // every stage that writes it leaves its rows and its receipt there, so a stopped container resumes
+    // from the slot instead of building for hours again (`runRebuild`).
+    state: (anyRun) => slotState(target.name, runId, read, anyRun),
+    rehydrate: async (done) => {
+      stage('import');
+      // The schema comes from the migrations, the rows from the slot: D1 refuses to export a database
+      // that holds a virtual table, and the search index is one. Named tables, data only.
+      await rehydrate(db, target.name, work, { read, wrangler: cli, sqlite: shell });
+      console.log(`resumed from the slot after: ${[...done.keys()].join(', ')}`);
+    },
+    prepare: () => {
+      stage('import');
+      emptySlot(target.name, apply, read);
+      cli(['d1', 'migrations', 'apply', target.name, '--remote']);
+      // The commit that prepared the slot decides whether a resume may adopt its checkpoints.
+      apply('state-prepare', receipt('prepare', JSON.stringify({ commit })));
+    },
+    unverify: () => apply('unverify', UNVERIFY_SQL),
+
+    // 1. The procurement corpus, from the open data, into a fresh file with every migration.
+    import: async () => {
+      await child('import', [
+        'scripts/import.mjs',
+        `--work-db=${db}`,
+        '--from=2020-01-01',
+        `--to=${today}`,
+        '--no-ship',
+      ]);
+      fillSlot(target.name, db, work, {
+        label: 'import',
+        apply,
+        read,
+        seal: () => receipt('import'),
+      });
+    },
+
+    // 2. The Trade Register: every winner's partida, through the daily ETL's own reader and writer. Each
+    // batch of partidas goes straight into the slot with the queue that names what is left, so a stop
+    // costs the batch and not the hours before it.
+    registry: async () => {
+      // `--defer-baseline`: the winners are only half the register. The rest — the companies the
+      // declarations name — are known after stage 5 reads them, and the catch-up pass there accepts the
+      // baseline for both sets. A baseline accepted here would call the register complete too early.
+      await child('registry', [
+        'scripts/tr/rebuild-registry.mjs',
+        '--db',
+        db,
+        '--slot',
+        target.name,
+        '--defer-baseline',
+      ]);
+      // The registry's receipt travels with its cursors once more, after the last batch.
+      const local = new DatabaseSync(db, { readOnly: true });
+      try {
+        await slotFlusher(target.name, local, apply).seal(receipt('registry'));
+      } finally {
+        local.close();
+      }
+    },
+
+    local: async (done) => {
+      // 3. Public ownership, then the rollups and the entity search index.
+      stage('precompute');
+      const { PUBLIC_OWNERSHIP_SQL } = await import('../apps/etl/src/public-ownership.ts');
+      await shell(
+        'precompute',
+        db,
+        readFileSync(resolve(root, 'scripts/seed-state-owned.sql'), 'utf8'),
+      );
+      await shell('precompute', db, PUBLIC_OWNERSHIP_SQL.map((s) => `${s};`).join('\n'));
+      await shell(
+        'precompute',
+        db,
+        ownershipStatements(readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')),
+      );
+      await shell('precompute', db, readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8'));
+
+      // 4. The published links the live slot serves, so the declarations gate compares against them.
+      try {
+        const prior = join(work, 'live-links.sql');
+        cli([
+          'd1',
+          'export',
+          live.name,
+          '--remote',
+          '--no-schema',
+          '--table',
+          'interest_links',
+          '--table',
+          'interest_link_evidence',
+          '--output',
+          prior,
+        ]);
+        await shell('precompute', db, readFileSync(prior, 'utf8'));
+      } catch (error) {
+        console.warn(
+          JSON.stringify({ event: 'rebuild_no_live_links', reason: String(error).slice(0, 300) }),
+        );
+      }
+
+      // 5. The declarations, in the job's local mode, against this snapshot — in two halves, because the
+      // register was read for the winners and the declarations name companies no winner list contains
+      // (measured on the first full rebuild: 13,121 partidas against the live slot's 14,118, and 33
+      // published links lost). The first half stops once the declarations have said which companies they
+      // mean; the register is read for those; the second half decides against the fuller register.
+      const declarations = (...extra) =>
+        child(
+          'declarations',
+          [
+            'scripts/related-persons-job.mjs',
+            '--source-db',
+            db,
+            '--work-dir',
+            jobDir,
+            '--r2',
+            ...extra,
+          ],
+          { SIGMA_REBUILD: '1', SIGMA_CHECKPOINT_RUN_ID: checkpointRun(done, runId, commit) },
+        );
+      await declarations('--until', 'candidates');
+      // The catch-up pass reads the requested companies and accepts the baseline for winners and
+      // requested together. It writes the snapshot, which stage 7 ships whole, so the new partidas travel
+      // with it.
+      await child('declarations', ['scripts/tr/rebuild-registry.mjs', '--db', snapshot]);
+      await declarations('--from', 'decide');
+
+      // 6. The people in the search index.
+      stage('search');
+      const built = new DatabaseSync(snapshot);
+      const officials = built
+        .prepare(
+          `SELECT DISTINCT person_id id FROM interest_links
+           WHERE status='published' AND interest_class IN ('private_ownership','family_ownership') ORDER BY 1`,
+        )
+        .all()
+        .map((r) => r.id);
+      built.close();
+      if (officials.length) await shell('search', snapshot, emit(officials));
+      await shell(
+        'search',
+        snapshot,
+        readFileSync(resolve(root, 'scripts/person-search-index.sql'), 'utf8'),
+      );
+    },
+
+    // 7. The slot takes the finished snapshot: its own DDL where the migrations left a gap, then every
+    // table emptied and filled parents first. The rows an earlier stage already put there are replaced.
+    // Its receipt says what the slot now holds and which rules built it.
+    // 8. The slot answers for what it holds, and only then says which rules built it: a slot that failed
+    // a check has no version, and a production deploy will not release onto it. A verification that
+    // cannot finish for D1 runs again on its own — the next attempt, a resume or SIGMA_REBUILD_VERIFY=1
+    // — without building anything.
+    ship: () => {
+      stage('ship');
+      return finishBuild(target.name, snapshot, work, {
+        apply,
+        read,
+        verifyRead,
+        runId,
+        version: version(),
+        commit,
+        check,
+        now,
+      });
+    },
+  };
+}
+
+/** The official search index for the given people, as `emit-refresh-group` writes it. */
+const emitRefreshGroup = (officials) =>
+  execFileSync(
+    process.execPath,
+    [
+      '--import',
+      './scripts/cacbg/register-ts.mjs',
+      'scripts/emit-refresh-group.mjs',
+      'official-search-index',
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, SIGMA_OFFICIAL_PERSON_IDS_JSON: JSON.stringify(officials) },
+    },
+  );
 
 async function main() {
   const target = { name: process.env.SIGMA_D1_NAME, id: process.env.SIGMA_D1_ID };
@@ -685,223 +1167,50 @@ async function main() {
   const work = resolve(root, 'data/work/rebuild');
   rmSync(work, { recursive: true, force: true });
   mkdirSync(work, { recursive: true });
-  const db = join(work, 'slot.sqlite');
-  const today = new Date().toISOString().slice(0, 10);
   const runId = process.env.SIGMA_RUN_ID ?? '';
-  // Every file into the slot carries its receipt: the rows of a chunk are not repeatable, and wrangler can
-  // report a failure for a file that landed (scripts/d1-retry.mjs).
-  const apply = wranglerFileSender({ d1Name: target.name, remote: true, dir: work, cwd: webDir });
-  const record = (name, detail = null) =>
-    apply(`state-${name}`, receiptSql(name, runId, new Date().toISOString(), detail));
   let reads = 0;
-  const verifyRead = slotReader(target.name, { beat: () => progress('verify', ++reads) });
-  const complete = ({ version, commit, tables, rows }) =>
-    console.log(
-      JSON.stringify({
-        event: 'declarations_job_complete',
-        runId: process.env.SIGMA_RUN_ID ?? null,
-        audit: true,
-        published: true,
-        slot: target.name,
-        tables,
-        rows,
-        dataVersion: version,
-        sourceCommit: commit,
-      }),
-    );
-
-  const jobDir = join(work, 'declarations');
-  const snapshot = join(jobDir, 'backfill.sqlite');
-  const ops = {
-    // A verification on its own: the slot was shipped by an earlier run and nothing is built or written
-    // but the stamp. The run's audit is this verification; what it publishes is the slot's version.
-    verify: () => {
-      stage('verify');
-      return verifySlot(target.name, { read: verifyRead, apply, runId });
+  const ops = slotOps({
+    target,
+    live,
+    runId,
+    commit: process.env.SIGMA_SOURCE_COMMIT || null,
+    work,
+    today: new Date().toISOString().slice(0, 10),
+    // Every file into the slot carries its receipt: the rows of a chunk are not repeatable, and wrangler
+    // can report a failure for a file that landed (scripts/d1-retry.mjs).
+    apply: wranglerFileSender({ d1Name: target.name, remote: true, dir: work, cwd: webDir }),
+    verifyRead: slotReader(target.name, { beat: () => progress('verify', ++reads) }),
+  });
+  const result = await runRebuild(
+    {
+      verify: process.env.SIGMA_REBUILD_VERIFY === '1',
+      resume: process.env.SIGMA_REBUILD_RESUME === '1',
     },
-    // 0. The slot is the durable store of this rebuild. It is emptied and shaped once; from there on
-    // every finished stage leaves its rows and its receipt in it, so a stopped container resumes from
-    // the slot instead of building for hours again.
-    state: (anyRun) => slotState(target.name, runId, d1Json, anyRun),
-    rehydrate: async (done) => {
-      stage('import');
-      // The schema comes from the migrations, the rows from the slot: D1 refuses to export a database
-      // that holds a virtual table, and the search index is one. Named tables, data only.
-      await rehydrate(db, target.name, work);
-      console.log(`resumed from the slot after: ${[...done.keys()].join(', ')}`);
-    },
-    prepare: () => {
-      stage('import');
-      emptySlot(target.name, apply);
-      wrangler(['d1', 'migrations', 'apply', target.name, '--remote']);
-      record('prepare');
-    },
-    unverify: () => apply('unverify', UNVERIFY_SQL),
-
-    // 1. The procurement corpus, from the open data, into a fresh file with every migration.
-    import: async () => {
-      await step('import', [
-        'scripts/import.mjs',
-        `--work-db=${db}`,
-        '--from=2020-01-01',
-        `--to=${today}`,
-        '--no-ship',
-      ]);
-      fillSlot(target.name, db, work, { label: 'import', apply });
-      record('import');
-    },
-
-    // 2. The Trade Register: every winner's partida, through the daily ETL's own reader and writer. Each
-    // batch of partidas goes straight into the slot with the queue that names what is left, so a stop
-    // costs the batch and not the hours before it.
-    registry: async () => {
-      // `--defer-baseline`: the winners are only half the register. The rest — the companies the
-      // declarations name — are known after stage 5 reads them, and the catch-up pass there accepts the
-      // baseline for both sets. A baseline accepted here would call the register complete too early.
-      await step('registry', [
-        'scripts/tr/rebuild-registry.mjs',
-        '--db',
-        db,
-        '--slot',
-        target.name,
-        '--defer-baseline',
-      ]);
-      // The accepted baseline is written after the last batch, so the cursors travel once more — a
-      // resumed rebuild must not inherit a registry that still calls itself "building".
-      await slotFlusher(target.name, new DatabaseSync(db, { readOnly: true }), apply)([]);
-      record('registry');
-    },
-
-    local: async () => {
-      // 3. Public ownership, then the rollups and the entity search index.
-      stage('precompute');
-      const { PUBLIC_OWNERSHIP_SQL } = await import('../apps/etl/src/public-ownership.ts');
-      await sqlite(
-        'precompute',
-        db,
-        readFileSync(resolve(root, 'scripts/seed-state-owned.sql'), 'utf8'),
-      );
-      await sqlite('precompute', db, PUBLIC_OWNERSHIP_SQL.map((s) => `${s};`).join('\n'));
-      await sqlite(
-        'precompute',
-        db,
-        ownershipStatements(readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')),
-      );
-      await sqlite('precompute', db, readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8'));
-
-      // 4. The published links the live slot serves, so the declarations gate compares against them.
-      try {
-        const prior = join(work, 'live-links.sql');
-        wrangler([
-          'd1',
-          'export',
-          live.name,
-          '--remote',
-          '--no-schema',
-          '--table',
-          'interest_links',
-          '--table',
-          'interest_link_evidence',
-          '--output',
-          prior,
-        ]);
-        await sqlite('precompute', db, readFileSync(prior, 'utf8'));
-      } catch (error) {
-        console.warn(
-          JSON.stringify({ event: 'rebuild_no_live_links', reason: String(error).slice(0, 300) }),
-        );
-      }
-
-      // 5. The declarations, in the job's local mode, against this snapshot — in two halves, because the
-      // register was read for the winners and the declarations name companies no winner list contains
-      // (measured on the first full rebuild: 13,121 partidas against the live slot's 14,118, and 33
-      // published links lost). The first half stops once the declarations have said which companies they
-      // mean; the register is read for those; the second half decides against the fuller register.
-      const declarations = (...extra) =>
-        step(
-          'declarations',
-          [
-            'scripts/related-persons-job.mjs',
-            '--source-db',
-            db,
-            '--work-dir',
-            jobDir,
-            '--r2',
-            ...extra,
-          ],
-          { SIGMA_REBUILD: '1' },
-        );
-      await declarations('--until', 'candidates');
-      // The catch-up pass reads the requested companies and accepts the baseline for winners and
-      // requested together. It writes the snapshot, which stage 7 ships whole, so the new partidas travel
-      // with it.
-      await step('declarations', ['scripts/tr/rebuild-registry.mjs', '--db', snapshot]);
-      await declarations('--from', 'decide');
-
-      // 6. The people in the search index.
-      stage('search');
-      const local = new DatabaseSync(snapshot);
-      const officials = local
-        .prepare(
-          `SELECT DISTINCT person_id id FROM interest_links
-           WHERE status='published' AND interest_class IN ('private_ownership','family_ownership') ORDER BY 1`,
-        )
-        .all()
-        .map((r) => r.id);
-      local.close();
-      if (officials.length) {
-        const sql = execFileSync(
-          process.execPath,
-          [
-            '--import',
-            './scripts/cacbg/register-ts.mjs',
-            'scripts/emit-refresh-group.mjs',
-            'official-search-index',
-          ],
-          {
-            cwd: root,
-            encoding: 'utf8',
-            env: { ...process.env, SIGMA_OFFICIAL_PERSON_IDS_JSON: JSON.stringify(officials) },
-          },
-        );
-        await sqlite('search', snapshot, sql);
-      }
-      await sqlite(
-        'search',
-        snapshot,
-        readFileSync(resolve(root, 'scripts/person-search-index.sql'), 'utf8'),
-      );
-    },
-
-    // 7. The slot takes the finished snapshot: its own DDL where the migrations left a gap, then every
-    // table emptied and filled parents first. The rows an earlier stage already put there are replaced.
-    // Its receipt says what the slot now holds and which rules built it.
-    // 8. The slot answers for what it holds, and only then says which rules built it: a slot that failed
-    // a check has no version, and a production deploy will not release onto it. A verification that
-    // cannot finish for D1 runs again on its own (SIGMA_REBUILD_VERIFY=1), without building anything.
-    ship: () => {
-      stage('ship');
-      const { version } = JSON.parse(
-        readFileSync(resolve(root, 'packages/db/data-version.json'), 'utf8'),
-      );
-      return finishBuild(target.name, snapshot, work, {
-        apply,
-        verifyRead,
-        runId,
-        version,
-        commit: process.env.SIGMA_SOURCE_COMMIT || null,
-      });
-    },
-  };
-  complete(
-    await runRebuild(
-      {
-        verify: process.env.SIGMA_REBUILD_VERIFY === '1',
-        resume: process.env.SIGMA_REBUILD_RESUME === '1',
-      },
-      ops,
-    ),
+    ops,
+  );
+  console.log(
+    JSON.stringify({
+      event: 'declarations_job_complete',
+      runId: process.env.SIGMA_RUN_ID ?? null,
+      audit: true,
+      published: true,
+      slot: target.name,
+      tables: result.tables,
+      rows: result.rows,
+      dataVersion: result.version,
+      sourceCommit: result.commit,
+      // The ship that passed: on a run that only verified, an earlier build's.
+      shipRun: result.shipRun,
+      builtAt: result.builtAt,
+    }),
   );
 }
 
-if (import.meta.main) await main();
+if (import.meta.main)
+  await main().catch((error) => {
+    const verdict = verdictEvent(error);
+    if (!verdict) throw error;
+    console.log(`Error: ${error.message}`);
+    console.log(JSON.stringify(verdict));
+    process.exit(1);
+  });

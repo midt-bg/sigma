@@ -280,7 +280,7 @@ if (doing('snapshot') && remote) {
   }
   local.close();
   rmSync(sql, { force: true });
-} else {
+} else if (doing('snapshot')) {
   const source = value('source-db');
   if (!source) throw Error('Local job requires --source-db');
   if (resolve(source) === db) throw Error('Source and work DB must differ');
@@ -288,6 +288,12 @@ if (doing('snapshot') && remote) {
   const localSource = new DatabaseSync(source, { readOnly: true });
   localSource.prepare('VACUUM INTO ?').run(db);
   localSource.close();
+} else if (!existsSync(db)) {
+  // A later half goes on in the work database the first one left, with whatever was written into it in
+  // between (the rebuild's catch-up register pass); a fresh copy of the source would drop that.
+  throw Error(
+    `--from ${ORDER[first]} goes on in the work database of the first half; none at ${db}`,
+  );
 }
 // Preserve the baseline outside the tables the loader rebuilds, including across resumed stages.
 const personBaseline = join(work, 'person-before.json');

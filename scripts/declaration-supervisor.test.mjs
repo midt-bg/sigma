@@ -58,6 +58,30 @@ test('nested process signal survives the wrapper exit so the coordinator can res
   assert.match(status.reason, /load.mjs.*SIGKILL/);
 });
 
+test('a verdict on the slot reaches the coordinator as one', () => {
+  const { child, status, event } = childStatus();
+  event({
+    event: 'declarations_error',
+    stage: 'verify',
+    script: 'rebuild-slot',
+    exitCode: 1,
+    verdict: true,
+  });
+  child.emit('close', 1, null);
+  assert.equal(status.state, 'failed');
+  assert.equal(status.verdict, true);
+  // Any other error says nothing of the kind.
+  const other = childStatus();
+  other.event({
+    event: 'declarations_error',
+    stage: 'verify',
+    script: 'rebuild-slot',
+    exitCode: 1,
+  });
+  other.child.emit('close', 1, null);
+  assert.equal(other.status.verdict, undefined);
+});
+
 test('a child exit and the machine resources are logged, so a lost attempt leaves a trace', () => {
   const { child, event, lines } = childStatus();
   event({ event: 'declarations_progress', stage: 'extract', completed: 3 });
