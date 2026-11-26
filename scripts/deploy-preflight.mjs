@@ -37,6 +37,59 @@ export function codeDataVersion() {
 }
 
 /**
+ * The shortest takedown salt accepted as a key. The salt keys HMAC-SHA256 fingerprints of the takedown lists
+ * (scripts/cacbg/suppressions.mjs); 32 characters are 128 bits as hex, and the documented way to make one,
+ * `openssl rand -hex 32`, gives 64.
+ */
+export const SALT_MIN_LENGTH = 32;
+
+/**
+ * What the takedown salt looks like, without saying anything about its value: `missing`, `blank` (only
+ * whitespace — a secret written from an empty file or a lone newline), `short` (under SALT_MIN_LENGTH),
+ * `trivial` (fewer than eight distinct characters, a placeholder such as a run of zeros), `padded` (usable,
+ * but starting or ending with whitespace, so a fingerprint computed from a copy without it will not match) or
+ * `ok`.
+ */
+export function saltVerdict(salt) {
+  if (salt === undefined || salt === null || salt === '') return 'missing';
+  const core = salt.trim();
+  if (!core) return 'blank';
+  if (core.length < SALT_MIN_LENGTH) return 'short';
+  if (new Set(core).size < 8) return 'trivial';
+  return core === salt ? 'ok' : 'padded';
+}
+
+/** SIGMA_D1_NAME against the environment's slots: a failure, or null when it names one of them. */
+export function slotNameFailure(environment, name) {
+  const policy = RELEASE_ENVIRONMENTS[environment];
+  if (!name) return `SIGMA_D1_NAME is not set for ${environment}: name the slot the deploy writes`;
+  if (!policy.slots.includes(name))
+    return `SIGMA_D1_NAME ${name} is not a ${environment} slot (${policy.slots.join(', ')})`;
+  return null;
+}
+
+/**
+ * The name and the id are one setting in two places; a pair that disagrees writes somewhere unintended.
+ * `resolved` is what Cloudflare answers for the pair: the id the name resolves to and the name of that id.
+ */
+export function resolutionFailure({ name, id, resolved }) {
+  if (resolved.id !== id)
+    return `SIGMA_D1_NAME ${name} resolves to ${resolved.id || 'no database'}, but SIGMA_D1_ID is another id: set the two together`;
+  if (resolved.name !== name)
+    return `SIGMA_D1_ID ${id} is the database ${resolved.name || 'with no name'}, not ${name}: set the two together`;
+  return null;
+}
+
+/** The slot holds rows of another rules version than the code computes. */
+export function dataVersionMessage(name, held, codeVersion) {
+  return (
+    `${name} holds data version ${held ?? 'none'}, the code computes version ${codeVersion}: ` +
+    'rows built by other rules are not released over in place — build the idle slot and switch ' +
+    '(docs/deploy.md, „Три пътя за пускане“)'
+  );
+}
+
+/**
  * The checks, over injected reads, so every refusal is tested without Cloudflare. `resolveDatabase(name)` answers
  * the id `wrangler d1 info` resolves the name to and the name Cloudflare gives that database (both '' when it
  * resolves to none); `readDataVersion()` the version the slot holds
@@ -65,34 +118,37 @@ export function preflight({
     return { failures, warnings };
   }
   const name = env.SIGMA_D1_NAME ?? '';
-  if (!name)
-    failures.push(`SIGMA_D1_NAME is not set for ${environment}: name the slot the deploy writes`);
-  else if (!policy.slots.includes(name))
-    failures.push(
-      `SIGMA_D1_NAME ${name} is not a ${environment} slot (${policy.slots.join(', ')})`,
-    );
+  const slot = slotNameFailure(environment, name);
+  if (slot) failures.push(slot);
   if (!env.SIGMA_D1_ID) failures.push(`SIGMA_D1_ID is not set for ${environment}`);
   if (failures.length) return { failures, warnings };
 
-  // The name and the id are one setting in two places; a pair that disagrees writes somewhere unintended.
   // `wrangler d1 info <name>` takes the id from the rendered config, which binds the name to SIGMA_D1_ID, so
   // the id it answers is SIGMA_D1_ID whenever a config is there: the check that bites is the NAME Cloudflare
   // gives that id. An environment whose own id is missing falls back to another environment's, and that
   // database answers with its own name.
-  const resolved = resolveDatabase(name);
-  if (resolved.id !== env.SIGMA_D1_ID)
-    failures.push(
-      `SIGMA_D1_NAME ${name} resolves to ${resolved.id || 'no database'}, but SIGMA_D1_ID is another id: set the two together`,
-    );
-  else if (resolved.name !== name)
-    failures.push(
-      `SIGMA_D1_ID ${env.SIGMA_D1_ID} is the database ${resolved.name || 'with no name'}, not ${name}: set the two together`,
-    );
+  const resolution = resolutionFailure({
+    name,
+    id: env.SIGMA_D1_ID,
+    resolved: resolveDatabase(name),
+  });
+  if (resolution) failures.push(resolution);
 
   if (policy.strict) {
-    if (!env.SUPPRESSION_SALT)
+    const salt = saltVerdict(env.SUPPRESSION_SALT);
+    if (salt === 'missing')
       failures.push(
         `SUPPRESSION_SALT is not set for ${environment}: the first takedown would block every build`,
+      );
+    else if (salt === 'blank')
+      failures.push(
+        `SUPPRESSION_SALT is only whitespace for ${environment} (written from an empty file?): the first takedown would block every build`,
+      );
+    else if (salt === 'short' || salt === 'trivial')
+      // A salt already in use keys the fingerprints in the lists; replacing it is a coordinated change
+      // (docs/runbooks/secret-rotation.md), so the deploy only warns and the readiness check refuses.
+      warnings.push(
+        `SUPPRESSION_SALT for ${environment} is ${salt === 'short' ? `shorter than ${SALT_MIN_LENGTH} characters` : 'trivial'}: rotate it (docs/runbooks/secret-rotation.md)`,
       );
     if (!/^\d+$/.test(env.SUPPRESSION_KEY_VERSION ?? ''))
       failures.push(`SUPPRESSION_KEY_VERSION is not a number for ${environment}`);
@@ -103,13 +159,8 @@ export function preflight({
   // hold the previous one, so its deploy does not ask.
   if (component === 'rebuild-runner') return { failures, warnings };
   const held = readDataVersion();
-  if (held !== codeVersion) {
-    const message =
-      `${name} holds data version ${held ?? 'none'}, the code computes version ${codeVersion}: ` +
-      'rows built by other rules are not released over in place — build the idle slot and switch ' +
-      '(docs/deploy.md, „Три пътя за пускане“)';
-    (policy.strict ? failures : warnings).push(message);
-  }
+  if (held !== codeVersion)
+    (policy.strict ? failures : warnings).push(dataVersionMessage(name, held, codeVersion));
   // Last: the slot is the right one and may be written, so only a running refresh still stands in the way.
   // A warning does not skip it: staging deploys over a slot of another data version, and its refresh runs.
   if (!failures.length)
