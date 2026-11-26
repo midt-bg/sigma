@@ -20,7 +20,7 @@ Reconciliation gate от 9 модулни проверки (6 при #97; +curre
 | 4 | **EIK validity** | 🟥 блокираща | `eik_valid=1` ⇒ нормализиран 9/13-цифрен ЕИК; `eik_valid≠1` ⇒ `eik_normalized IS NULL`. Доказва, че normalize гаранцията е удържала. |
 | 5 | **Date sanity** | 🟨 предупредителна | Брои `signed_at` извън `[2007-01-01, днес]`. **Винаги връща ok:true** — upstream data quality, което Sigma не може да коригира (реален пример: `signed_at='2029-05-14'`). |
 | 6 | **Staging → domain** (`staging-reconciliation`) | 🟥 блокираща | От `pipeline_stats`: `inserted ≤ candidates` (без фантомни договори над source кандидатите). Self-skip ако таблицата липсва. |
-| 7 | **Amendment twin dedup** | 🟥 блокираща | Няма EOP/OCDS близнаци на един анекс в `amendments` (#286/#303). |
+| 7 | **Amendment twin dedup** | 🟥 блокираща | Няма EOP/OCDS близнаци на един анекс в `amendments` (#286/#303) — нито под едно `(unp, contract_number)`, нито OCDS ред, останал под OCID до анекса, който дублира (`AMENDMENT_OCID_TWINS_SQL`; `refresh-slice.sql` ги изтрива при всяко обновяване). |
 
 **Толеранс:** само `EPS_EUR = 5.0` за float reassociation. Структурните изключения (orphan редове) се асъртват **точно = 0**. На пълния корпус 2020–2026 (193,902 договора / €51.7 млрд) наблюдаваният остатък е точно 0.00.
 
