@@ -774,8 +774,8 @@ async function main() {
       return verifySlot(target.name, { read: verifyRead, apply, runId });
     },
     // 0. The slot is the durable store of this rebuild. It is emptied and shaped once; from there on
-    // every finished stage leaves its rows and its receipt in it, so a stopped container resumes from
-    // the slot instead of building for hours again.
+    // every stage that writes it leaves its rows and its receipt there, so a stopped container resumes
+    // from the slot instead of building for hours again (`runRebuild`).
     state: (anyRun) => slotState(target.name, runId, d1Json, anyRun),
     rehydrate: async (done) => {
       stage('import');
@@ -935,7 +935,8 @@ async function main() {
     // Its receipt says what the slot now holds and which rules built it.
     // 8. The slot answers for what it holds, and only then says which rules built it: a slot that failed
     // a check has no version, and a production deploy will not release onto it. A verification that
-    // cannot finish for D1 runs again on its own (SIGMA_REBUILD_VERIFY=1), without building anything.
+    // cannot finish for D1 runs again on its own — the next attempt, a resume or SIGMA_REBUILD_VERIFY=1
+    // — without building anything.
     ship: () => {
       stage('ship');
       const { version } = JSON.parse(
