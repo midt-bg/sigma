@@ -333,6 +333,18 @@ it('hands a rebuild the commit the deploy shipped, and leaves an empty one out',
   expect(await startEnv('')).not.toHaveProperty('SIGMA_SOURCE_COMMIT');
 });
 
+it('passes the parse-cache setting of the operator to the container only when it is set', async () => {
+  const startEnv = async (setting?: string) => {
+    const f = fixture();
+    if (setting !== undefined) f.env.CACBG_PARSE_CACHE = setting as never;
+    await f.job().startRun();
+    await f.job().alarm();
+    return (f.container.start.mock.calls[0] as unknown as [{ env: Record<string, string> }])[0].env;
+  };
+  expect((await startEnv('refresh')).CACBG_PARSE_CACHE).toBe('refresh');
+  expect(await startEnv()).not.toHaveProperty('CACBG_PARSE_CACHE');
+});
+
 it('rebuilds only an idle slot, passes both slots to the container and follows the rebuild stages', async () => {
   const f = fixture();
   const idle = { name: 'sigma-idle', id: '11111111-2222-3333-4444-555555555555' };

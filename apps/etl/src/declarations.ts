@@ -15,6 +15,8 @@ export interface DeclarationEnv {
   SUPPRESSION_KEY_VERSION?: string;
   /** The commit the deploy shipped; a rebuild records it beside the data version it writes. */
   SIGMA_SOURCE_COMMIT?: string;
+  /** `refresh` makes every run parse the whole corpus again and rewrite its parse cache (docs/deploy.md). */
+  CACBG_PARSE_CACHE?: string;
 }
 /** The idle blue/green slot a rebuild writes (ADR-0048); absent for the weekly declarations run.
  * `resume` continues whatever the slot already holds from an earlier rebuild instead of emptying it.
@@ -151,6 +153,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       'SUPPRESSION_SALT',
       'SUPPRESSION_KEY_VERSION',
       'SIGMA_SOURCE_COMMIT',
+      'CACBG_PARSE_CACHE',
     ] as const)
       if (this.env[key]) env[key] = this.env[key];
     if (target) {

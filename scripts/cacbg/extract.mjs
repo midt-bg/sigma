@@ -12,7 +12,8 @@ import { pathToFileURL } from 'node:url';
 import { finished } from 'node:stream/promises';
 import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mjs';
 import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './corpus.mjs';
-import { parseFolder, readRecords } from './extract-parse.mjs';
+import { folderFiles, parseFolder, readRecords } from './extract-parse.mjs';
+import { entryKey, parserVersion, restoreEntry, saveEntry } from './parse-cache.mjs';
 import { progress } from './progress.mjs';
 import { safeFolder } from './guard.mjs';
 import { documentFingerprint, declarationAttribution } from './source-identity.mjs';
@@ -423,6 +424,19 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
       );
     }
   }
+  // CACBG_PARSE_CACHE: unset reads and writes the cache; `refresh` parses every folder and writes its
+  // entry anew; `off` neither reads nor writes (a read-only corpus).
+  const parseCache = process.env.CACBG_PARSE_CACHE || 'on';
+  if (!['on', 'refresh', 'off'].includes(parseCache))
+    throw Error(`CACBG_PARSE_CACHE takes refresh or off, not ${parseCache}`);
+  const cacheReport = {
+    event: 'declarations_parse_cache',
+    mode: parseCache,
+    parser: parseCache === 'off' ? null : parserVersion(),
+    restored: 0,
+    parsed: 0,
+    unusable: 0,
+  };
   const done = new Set(head.folders);
   const order = [...head.folders];
   let folderCount = 0;
@@ -437,16 +451,50 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
           throw Error(`Corpus inventory changed: ${folder}`);
       }
       if (indexBytes) index = JSON.parse(indexBytes.toString('utf8'));
-      // Parsing reads the folder's files and nothing else (extract-parse.mjs); what the register,
-      // the identity rules and the earlier folders decide is applied to its records below.
+      // Parsing reads the folder's files and nothing else (extract-parse.mjs), so its records are kept
+      // in the parse cache under the folder's inputs and the parser's version (parse-cache.mjs) and a
+      // folder whose key is unchanged is restored instead of read. What the register, the identity rules
+      // and the earlier folders decide is applied to the records below, on every run.
       const records = path.join(partsDir, `${folder}.parsed.jsonl`);
-      const parsed = await parseFolder(store, {
-        folder,
-        index,
-        out: records,
-        onFile: () => progress('extract', ++processed),
-      });
-      if (!parsed) continue;
+      const key =
+        parseCache === 'off'
+          ? null
+          : await entryKey(store, folder, index, await folderFiles(store, folder, index));
+      let parsed =
+        key && parseCache === 'on'
+          ? await restoreEntry(store, {
+              key,
+              folder,
+              out: records,
+              onUnusable: (error) => {
+                cacheReport.unusable++;
+                console.log(
+                  JSON.stringify({
+                    event: 'declarations_parse_cache_unusable',
+                    folder,
+                    key,
+                    reason: error.message,
+                  }),
+                );
+              },
+            })
+          : null;
+      const restored = Boolean(parsed);
+      if (restored) {
+        cacheReport.restored++;
+        processed += parsed.files;
+        progress('extract', processed, undefined, true);
+      } else {
+        parsed = await parseFolder(store, {
+          folder,
+          index,
+          out: records,
+          onFile: () => progress('extract', ++processed),
+        });
+        if (!parsed) continue;
+        cacheReport.parsed++;
+        if (key) await saveEntry(store, { key, records });
+      }
       openParts(folder);
       const n = await resolveFolder(readRecords(records), {
         identify,
@@ -455,7 +503,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
         out: { holdingsOut, relatedOut, filingsOut, groupsOut, requestsOut, quarantineOut },
       });
       fs.rmSync(records, { force: true });
-      console.log(`  ${folder}: ${n} declarations parsed`);
+      console.log(`  ${folder}: ${n} declarations ${restored ? 'from the parse cache' : 'parsed'}`);
       // The folder boundary is the only clean cut: its groups are written, and its input was pinned by
       // the stamped index. Accept it, then stop if the platform asked us to.
       await closeParts();
@@ -471,6 +519,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
           processed,
         });
       if (++folderCount >= yieldAfterFolders || yielding) {
+        console.log(JSON.stringify(cacheReport));
         console.log(`yielding after ${folder}: ${processed} declarations read`);
         return 75;
       }
@@ -478,6 +527,7 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
   } finally {
     await closeParts();
   }
+  console.log(JSON.stringify(cacheReport));
   concatParts(partsDir, order, (stream) => path.join(STAGING, `${stream}.jsonl`));
   fs.rmSync(partsDir, { recursive: true, force: true });
   fs.writeFileSync(

@@ -175,7 +175,10 @@ test('an adopted checkpoint that lost a part is no checkpoint: the resume reads 
     delete process.env.SIGMA_RUN_ID;
   }
   assert.deepEqual(outputs(), golden, 'nothing of the broken checkpoint is used');
-  assert.ok(reads.includes('2024/list.xml'), 'the corpus is read from the start');
+  assert.ok(
+    reads.some((key) => key.startsWith('parse-cache/') && key.includes('/2024/')),
+    'the first folder is decided again, from its parse records',
+  );
   const head = JSON.parse(shared.objects.get(headKey(resumed)).toString('utf8'));
   assert.deepEqual(head.folders, FOLDERS, 'it reads under its own run');
 });

@@ -3,6 +3,7 @@
 // place both are asserted from, so the two cannot drift apart.
 const RUN = '00000000-0000-4000-8000-000000000000';
 const FP = '0123456789abcdef';
+const INPUTS = 'a'.repeat(64);
 export const ACCEPTED_KEYS = [
   '.corpus-complete.json',
   'accepted.json',
@@ -12,6 +13,8 @@ export const ACCEPTED_KEYS = [
   `checkpoints/${RUN}/head.json`,
   `checkpoints/${RUN}/${FP}/2025/filings.jsonl.gz`,
   `checkpoints/${RUN}/${FP}/2025y/source-groups.jsonl.gz`,
+  `parse-cache/${FP}/2025/${INPUTS}.jsonl.gz`,
+  `parse-cache/${FP}/2021_nc/${INPUTS}.jsonl.gz`,
 ];
 export const REJECTED_KEYS = [
   'secret',
@@ -21,10 +24,15 @@ export const REJECTED_KEYS = [
   `checkpoints/${RUN}/2025/filings.jsonl.gz`, // no input fingerprint
   `checkpoints/${RUN}/${FP}/2025/backfill.sqlite.gz`, // not one of the six streams
   `checkpoints/${RUN}/${FP}/2025/filings.jsonl`, // must be the compressed part
+  `parse-cache/${FP}/2025/${INPUTS}.jsonl`, // must be the compressed entry
+  `parse-cache/${FP}/${INPUTS}.jsonl.gz`, // no folder
+  `parse-cache/${RUN}/2025/${INPUTS}.jsonl.gz`, // a run id is not a parser version
+  `parse-cache/${FP}/2025/${FP}.jsonl.gz`, // inputs are a full sha256
 ];
 // Traversal is asserted on the client only: a request URL has it normalized away before the Worker
 // sees a path, so the proxy never receives these strings as keys.
 export const REJECTED_TRAVERSAL_KEYS = [
   '../2025/a.xml',
   `checkpoints/${RUN}/${FP}/../filings.jsonl.gz`,
+  `parse-cache/${FP}/../${INPUTS}.jsonl.gz`,
 ];

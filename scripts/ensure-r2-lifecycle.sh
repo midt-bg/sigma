@@ -5,8 +5,11 @@
 #
 # The resumable declarations run writes checkpoints (60–70 MB a run) and its crawl writes fetch events;
 # nothing reads either once the run is over, and the corpus proxy deliberately deletes nothing but the
-# corpus stamp (ADR-0049). Without these two rules both stay in the bucket for good. A rule already there
-# is left alone. Housekeeping: a token without the R2 permission gets a warning, never a failed deploy.
+# corpus stamp (ADR-0049). Without these rules both stay in the bucket for good. The parse cache
+# (scripts/cacbg/parse-cache.mjs) outlives runs on purpose: every run that uses an entry writes it again,
+# so 30 days without a write means no run used it in that time — an entry of an older parser, or of a
+# folder whose files have since changed. A rule already there is left alone. Housekeeping: a token
+# without the R2 permission gets a warning, never a failed deploy.
 set -uo pipefail
 bucket="${1:?usage: ensure-r2-lifecycle.sh <bucket>}"
 if ! rules="$(pnpm --filter @sigma/etl exec wrangler r2 bucket lifecycle list "$bucket" 2>&1)"; then
@@ -27,3 +30,4 @@ ensure_rule() {
 }
 ensure_rule checkpoints declarations/corpus-v2/checkpoints/ 7
 ensure_rule fetch-events declarations/corpus-v2/fetch-events/ 30
+ensure_rule parse-cache declarations/corpus-v2/parse-cache/ 30

@@ -206,6 +206,9 @@ test('R2 crawl resumes per object, extracts the same records without a disk corp
     );
     await assert.rejects(() => extract({ store: remote }), /Invalid R2 corpus stamp/);
     objects.set(CORPUS_STAMP, currentStamp);
+    // A folder restored from the parse cache is not read again: its index is the receipt for its files.
+    // A folder that IS read is checked file by file against that index.
+    for (const key of [...objects.keys()]) if (key.startsWith('parse-cache/')) objects.delete(key);
     objects.set('2025/a.xml', Buffer.from(xml('changed')));
     await assert.rejects(() => extract({ store: remote }), /file missing or changed/);
     assert(!existsSync(join(dir, 'staging', 'manifest.json')));
@@ -294,6 +297,47 @@ test('a corpus body that ends short without an error is read again; one that nev
     /Corpus checksum mismatch: 2025\/a\.xml/,
   );
   assert.equal(never.calls(), 5);
+});
+
+test('a parse-cache entry streams to a file, read again when cut or short, absent on 404', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-download-'));
+  const key = `parse-cache/${'0123456789abcdef'}/2025/${'a'.repeat(64)}.jsonl.gz`;
+  const file = join(dir, 'entry.gz');
+  try {
+    const cut = remoteWith((n) => (n === 1 ? cutResponse(declaration) : whole(declaration)));
+    assert.equal(await cut.store.download(key, file), true);
+    assert.deepEqual(readFileSync(file), declaration);
+    assert.equal(cut.calls(), 2);
+    const short = new Response(declaration.subarray(0, 10), {
+      headers: { 'x-corpus-sha256': digest(declaration) },
+    });
+    const once = remoteWith((n) => (n === 1 ? short : whole(declaration)));
+    assert.equal(await once.store.download(key, file), true);
+    assert.deepEqual(readFileSync(file), declaration);
+    const never = remoteWith(
+      () =>
+        new Response(declaration.subarray(0, 10), {
+          headers: { 'x-corpus-sha256': digest(declaration) },
+        }),
+    );
+    await assert.rejects(() => never.store.download(key, file), /Corpus checksum mismatch/);
+    assert.equal(never.calls(), 5);
+    const absent = remoteWith(() => new Response(null, { status: 404 }));
+    assert.equal(await absent.store.download(key, join(dir, 'none.gz')), false);
+    assert.equal(existsSync(join(dir, 'none.gz')), false);
+    // The disk store copies the file it holds, and refuses a key outside the allowlist.
+    const local = corpusStore(join(dir, 'raw'), null);
+    assert.equal(await local.download(key, file), false);
+    await local.put(key, declaration);
+    assert.equal(await local.download(key, join(dir, 'copy.gz')), true);
+    assert.deepEqual(readFileSync(join(dir, 'copy.gz')), declaration);
+    await assert.rejects(
+      () => local.download('parse-cache/x.gz', file),
+      /Invalid corpus key|unsafe/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the client accepts exactly the shared corpus key list', () => {

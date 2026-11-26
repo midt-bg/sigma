@@ -9,20 +9,32 @@ export const declaration = (name, { hash = 'HASH1', company = '„Алфа“ О
   `<Row><Cell Num="4" Description="Наименование на дружеството">${company}</Cell>` +
   `<Cell Num="7" Description="Име собствено бащино фамилно">${holder}</Cell></Row></Table></Tables></PublicPerson>`;
 
-/** A list.xml announcing `rows` ([file, listed name]); one person per row. */
-export const listing = (rows) =>
-  `<root><MainCategory><Category Name="Годишни"><Institution Name="Община Тест">${rows
+/** A list.xml announcing `rows` ([file, listed name, person]); rows with the same person (a number) are
+ *  one <Person> with several declarations, every other row a person of its own. */
+export const listing = (rows) => {
+  const people = new Map();
+  rows.forEach(([file, name, person = `row${people.size}`]) => {
+    const entry = people.get(person) ?? { name, files: [] };
+    entry.files.push(file);
+    people.set(person, entry);
+  });
+  return `<root><MainCategory><Category Name="Годишни"><Institution Name="Община Тест">${[
+    ...people.values(),
+  ]
     .map(
-      ([file, name]) =>
-        `<Person><Name>${name}</Name><Position><Name>Директор</Name><Declaration><xmlFile>${file}</xmlFile></Declaration></Position></Person>`,
+      ({ name, files }) =>
+        `<Person><Name>${name}</Name><Position><Name>Директор</Name>${files
+          .map((file) => `<Declaration><xmlFile>${file}</xmlFile></Declaration>`)
+          .join('')}</Position></Person>`,
     )
     .join('')}</Institution></Category></MainCategory></root>`;
+};
 
 /**
- * `folders`: { [folder]: [{ file, name, body?, sourceFolder? }] } — `name` is the listed name, `body`
- * the file's text (a declaration of `name` when absent), `sourceFolder` a sibling folder the file lives
- * in. Returns the objects map and a remote store over it; `stamp()` re-seals the inventory after a test
- * edits a folder through `setFolder`.
+ * `folders`: { [folder]: [{ file, name, body?, sourceFolder?, person? }] } — `name` is the listed name,
+ * `body` the file's text (a declaration of `name` when absent), `sourceFolder` a sibling folder the file
+ * lives in, `person` the listing's person when several files share one. Returns the objects map and a
+ * remote store over it; `setFolder` and `removeFolder` edit a folder and re-seal the inventory.
  */
 export function memoryCorpus(folders) {
   const objects = new Map();
@@ -36,7 +48,7 @@ export function memoryCorpus(folders) {
         return { file, sha256: digest(bytes), ...(sourceFolder ? { sourceFolder } : {}) };
       });
       files.sort((a, b) => a.file.localeCompare(b.file));
-      const list = Buffer.from(listing(docs.map(({ file, name }) => [file, name])));
+      const list = Buffer.from(listing(docs.map(({ file, name, person }) => [file, name, person])));
       objects.set(`${folder}/list.xml`, list);
       objects.set(
         `${folder}/.index.json`,
