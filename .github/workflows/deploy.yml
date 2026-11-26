@@ -73,9 +73,10 @@ jobs:
     # I/O, wedged wrangler) rather than burn a 6-hour slot. Raised from 10 for the declarations
     # container (ADR-0045): its image is built here — base image, a full install inside it, a push to
     # Cloudflare's registry — on top of the schema steps and both Workers, which alone ran in
-    # single-digit minutes. The required-reviewers wait on `production` does NOT count against this;
-    # the timer starts only once the job hits a runner.
-    timeout-minutes: 30
+    # single-digit minutes. Raised again by the ten minutes the preflight may wait for a running refresh.
+    # The required-reviewers wait on `production` does NOT count against this; the timer starts only once
+    # the job hits a runner.
+    timeout-minutes: 40
     environment: ${{ needs.detect.outputs.env }}
     concurrency:
       group: deploy-${{ needs.detect.outputs.env }}
@@ -173,7 +174,9 @@ jobs:
       # docs/deploy.md „Проверка преди запис“). The database name and id must resolve to each other and name
       # one of the environment's slots; production also needs the takedown salt and a slot whose rows were
       # built by this code's rules (packages/db/data-version.json) — rows built by other rules are rebuilt
-      # in the idle slot and switched to, never released over in place. Read only.
+      # in the idle slot and switched to, never released over in place. Last, for the site: no refresh may be
+      # writing to the slot (its lease) — the step waits up to ten minutes for a running one, then refuses.
+      # Read only.
       - name: Preflight — environment settings and target slot
         if: steps.guard.outputs.ok == 'true'
         # The same credentials plus the takedown salt, for the steps that check or hand it on.

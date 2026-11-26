@@ -6,7 +6,8 @@
 //     environment: production | staging | dev2
 //
 // Reads SIGMA_D1_NAME, SIGMA_D1_ID, SUPPRESSION_SALT and SUPPRESSION_KEY_VERSION from the environment and
-// asks Cloudflare, read only, which database the name resolves to and which data version it holds.
+// asks Cloudflare, read only, which database the name resolves to, which data version it holds and whether
+// a refresh is writing to it (awaitIdleRefresh).
 //
 // A release once went out with an environment still configured for the previous version: no database name
 // (so the declarations never published), no takedown salt (so the first takedown would block every build),
@@ -14,6 +15,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { sleepSync } from './d1-retry.mjs';
 import { parseJsonObject } from './release-schema.mjs';
 import { parseWranglerJson } from './ship-related-persons.mjs';
 
@@ -38,15 +40,20 @@ export function codeDataVersion() {
  * The checks, over injected reads, so every refusal is tested without Cloudflare. `resolveDatabase(name)` answers
  * the id `wrangler d1 info` resolves the name to and the name Cloudflare gives that database (both '' when it
  * resolves to none); `readDataVersion()` the version the slot holds
- * (null when it holds none). Returns the failures, which stop the deploy, and the warnings, which do not.
+ * (null when it holds none); `readRefreshLease()` the refresh's lease row (awaitIdleRefresh, which `now`
+ * and `sleep` are handed to). Returns the failures, which stop the deploy, and the warnings, which do not.
  */
 export function preflight({
   environment,
   env,
   resolveDatabase,
   readDataVersion,
+  readRefreshLease,
   codeVersion,
   component = 'site',
+  now,
+  sleep,
+  log,
 }) {
   const failures = [];
   const warnings = [];
@@ -103,21 +110,87 @@ export function preflight({
       '(docs/deploy.md, „Три пътя за пускане“)';
     (policy.strict ? failures : warnings).push(message);
   }
+  // Last: the slot is the right one and may be written, so only a running refresh still stands in the way.
+  // A warning does not skip it: staging deploys over a slot of another data version, and its refresh runs.
+  if (!failures.length)
+    failures.push(...awaitIdleRefresh({ readLease: readRefreshLease, now, sleep, log }));
   return { failures, warnings };
 }
 
-/** Cloudflare, read only, through the wrangler CLI as deploy.yml runs it. */
-function wranglerReads(name, config) {
-  const wrangler = (args) =>
-    execFileSync(
-      'pnpm',
-      ['--filter', '@sigma/web', 'exec', 'wrangler', ...args, '--config', config],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
+/** How long a deploy waits for a refresh. One takes one to three minutes; a refresh still writing after ten
+ *  is stuck or crawling through an overloaded D1, and the deploy says so instead of hanging. */
+export const IDLE_WAIT_MS = 10 * 60_000;
+export const IDLE_POLL_MS = 30_000;
+
+/**
+ * Whether a refresh is writing to the slot: its lease (refresh_lease) is live. The refresh derives a window
+ * in batches, and a deploy between two of them could resume the run on the new code — the run then stops
+ * before its next write (apps/etl/src/index.ts), leaving the window half-derived until the next run replays
+ * it. The deploy also writes the schema and the curated lists into the slot before it replaces the Worker.
+ * So a site deploy goes ahead only on an idle slot.
+ *
+ * Every environment waits up to IDLE_WAIT_MS, reading the lease every IDLE_POLL_MS, and then refuses.
+ * The register and the declarations are not waited for: their writes are per partida / per published
+ * generation, survive a replaced Worker (docs/deploy.md), and the register paces itself for hours.
+ *
+ * `readLease()` answers the row (holder, acquired_at, expires_at) or null. Returns the failures.
+ */
+export function awaitIdleRefresh({
+  readLease,
+  now = () => new Date(),
+  sleep = sleepSync,
+  log = (line) => console.log(line),
+}) {
+  const deadline = now().getTime() + IDLE_WAIT_MS;
+  for (;;) {
+    const lease = readLease();
+    const at = now();
+    // ISO-8601 UTC strings compare as text, as the lease itself compares them. An expired row is what a
+    // killed instance leaves behind: the next run takes it over, nothing is writing.
+    if (!(lease?.expires_at > at.toISOString())) return [];
+    const running =
+      `a refresh has been writing to the served database since ${lease.acquired_at} ` +
+      `(instance ${lease.holder}, lease renewed until ${lease.expires_at})`;
+    if (at.getTime() >= deadline)
+      return [
+        `${running}, still running after ${IDLE_WAIT_MS / 60_000} minutes: look at the instance ` +
+          '(wrangler workflows instances describe) and re-run the deploy once it has ended',
+      ];
+    log(`preflight: ${running} — waiting for it to finish`);
+    sleep(IDLE_POLL_MS);
+  }
+}
+
+/** wrangler as deploy.yml runs it: answers stdout, throws on a non-zero exit. */
+const wranglerCli = (config) => (args) =>
+  execFileSync(
+    'pnpm',
+    ['--filter', '@sigma/web', 'exec', 'wrangler', ...args, '--config', config],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+/**
+ * Cloudflare, read only, over `wrangler(args)`. A read that fails for any reason but a table not created
+ * yet throws: the deploy stops before it writes, it does not take an unreadable slot for an idle one.
+ */
+export function wranglerReads(name, wrangler) {
+  // One row of the slot, or null when the table is not there yet (the run creates it on first use).
+  const readRow = (sql, table) => {
+    let out;
+    try {
+      out = wrangler(['d1', 'execute', name, '--remote', '--json', '--command', sql]);
+    } catch (error) {
+      // wrangler --json reports an SQL error on stdout.
+      if (`${error?.message}${error?.stdout}${error?.stderr}`.includes(`no such table: ${table}`))
+        return null;
+      throw error;
+    }
+    return parseWranglerJson(out)[0]?.results?.[0] ?? null;
+  };
   return {
     resolveDatabase: (db) => {
       try {
@@ -128,26 +201,14 @@ function wranglerReads(name, config) {
       }
     },
     readDataVersion: () => {
-      let out;
-      try {
-        out = wrangler([
-          'd1',
-          'execute',
-          name,
-          '--remote',
-          '--json',
-          '--command',
-          'SELECT version FROM data_version WHERE id = 1',
-        ]);
-      } catch (error) {
-        // wrangler --json reports an SQL error on stdout.
-        if (/no such table: data_version/.test(`${error?.message}${error?.stdout}${error?.stderr}`))
-          return null;
-        throw error;
-      }
-      const row = parseWranglerJson(out)[0]?.results?.[0];
+      const row = readRow('SELECT version FROM data_version WHERE id = 1', 'data_version');
       return typeof row?.version === 'number' ? row.version : null;
     },
+    readRefreshLease: () =>
+      readRow(
+        'SELECT holder, acquired_at, expires_at FROM refresh_lease WHERE id = 1',
+        'refresh_lease',
+      ),
   };
 }
 
@@ -161,12 +222,13 @@ function main() {
   const component = flag('--component', 'site');
   if (!['site', 'rebuild-runner'].includes(component))
     throw new Error(`--component must be site or rebuild-runner, got ${component}`);
-  const reads = wranglerReads(process.env.SIGMA_D1_NAME ?? '', config);
+  const reads = wranglerReads(process.env.SIGMA_D1_NAME ?? '', wranglerCli(config));
   const { failures, warnings } = preflight({
     environment,
     env: process.env,
     resolveDatabase: reads.resolveDatabase,
     readDataVersion: reads.readDataVersion,
+    readRefreshLease: reads.readRefreshLease,
     codeVersion: codeDataVersion(),
     component,
   });

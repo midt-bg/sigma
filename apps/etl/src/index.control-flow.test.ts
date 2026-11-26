@@ -408,6 +408,75 @@ describe('RefreshWorkflow.run — control flow', () => {
   });
 });
 
+// A deploy that lands between two steps may resume the run on the new code: its step results come from the
+// cache, its next step runs the new Worker. The run stops before that step writes, so no window is derived
+// by two versions; the window stays recorded and the next run replays it on one.
+describe('RefreshWorkflow.run — code that changes mid-run', () => {
+  /** A step double that swaps the Worker's code once the named step has run. */
+  const deployAfter = (after: string, env: { SIGMA_SOURCE_COMMIT?: string }, names: string[]) => ({
+    sleep: async () => {},
+    do: async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+      names.push(name);
+      const result = await fn();
+      if (name === after) env.SIGMA_SOURCE_COMMIT = 'new0000';
+      return result;
+    },
+  });
+
+  it('stops before the next write, leaving the window to the replay', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
+    const env = { DB, REFRESH: {} as Workflow, SIGMA_SOURCE_COMMIT: 'old0000' };
+    const names: string[] = [];
+
+    await expect(
+      new RefreshWorkflow({} as never, env).run(
+        { payload: {}, instanceId: 'wf-70' } as never,
+        deployAfter('load-fx', env, names) as never,
+      ),
+    ).rejects.toThrow(/refresh code changed before derive-slice:g1: "old0000" → "new0000"/);
+
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledOnce(); // resolve-annexes only
+    expect(ingest.recordPendingWindow).toHaveBeenCalledOnce();
+    expect(ingest.settlePendingWindows).not.toHaveBeenCalled();
+    expect(names.at(-1)).toBe('release-refresh-lease');
+  });
+
+  it('ends the run at the check instead of calling the numbers unverified', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
+    const env = { DB, REFRESH: {} as Workflow, SIGMA_SOURCE_COMMIT: 'old0000' };
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(
+      new RefreshWorkflow({} as never, env).run(
+        { payload: {}, instanceId: 'wf-71' } as never,
+        deployAfter('derive-slice:count', env, []) as never,
+      ),
+    ).rejects.toThrow(/refresh code changed before integrity-gate/);
+
+    expect(integrity.runServedIntegrityGate).not.toHaveBeenCalled();
+    expect(error.mock.calls.some((c) => String(c[0]).includes('etl_integrity_unverified'))).toBe(
+      false,
+    );
+  });
+
+  it('a redeploy of the same commit is not a change', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
+    const env = { DB, REFRESH: {} as Workflow, SIGMA_SOURCE_COMMIT: 'new0000' };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await new RefreshWorkflow({} as never, env).run(
+      { payload: {}, instanceId: 'wf-72' } as never,
+      deployAfter('load-fx', env, []) as never,
+    );
+
+    expect(result.integrity).toBe('ok');
+  });
+});
+
 describe('RefreshWorkflow.run — one step per bucket day', () => {
   it('stages each day of the window in its own fenced step, oldest first, and sums them', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
@@ -1133,6 +1202,111 @@ describe('scheduled handler', () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  // The operator's hold (scripts/scheduled-pause.mjs): a held tick starts nothing and says what it held.
+  const held = (body: object | string) =>
+    ({
+      get: async () => ({
+        text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+      }),
+    }) as unknown as R2Bucket;
+  const HOLD = { until: new Date(Date.now() + 3_600_000).toISOString(), reason: 'slot switch' };
+
+  it('starts nothing on a held tick, and names what it held and why', async () => {
+    const create = vi.fn(async () => ({ id: 'wf-1' }));
+    const startRun = vi.fn(async () => ({ runId: 'run-1', state: 'running' }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const env = {
+      DB: fakeD1([]).db,
+      REFRESH: { create } as unknown as Workflow,
+      REGISTRY: { create } as unknown as Workflow,
+      REGISTRY_API_BASE_URL: 'https://registry.test',
+      DECLARATIONS_ENABLED: 'true',
+      DECLARATIONS: { getByName: () => ({ getRun: async () => undefined, startRun }) } as never,
+      DECLARATIONS_CORPUS: held(HOLD),
+    };
+
+    await worker.scheduled?.({ cron: '0 */6 * * *' } as never, env);
+    await worker.scheduled?.({ cron: '0 3 * * *' } as never, env);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(startRun).not.toHaveBeenCalled();
+    expect(warn.mock.calls.map((c) => JSON.parse(String(c[0])))).toEqual([
+      {
+        level: 'warn',
+        event: 'etl_scheduled',
+        skipped: 'paused',
+        jobs: ['refresh', 'registry'],
+        ...HOLD,
+      },
+      { level: 'warn', event: 'etl_scheduled', skipped: 'paused', jobs: ['declarations'], ...HOLD },
+    ]);
+  });
+
+  it('starts as usual once the hold has expired', async () => {
+    const create = vi.fn(async () => ({ id: 'wf-1' }));
+    const env = {
+      DB: fakeD1([]).db,
+      REFRESH: { create } as unknown as Workflow,
+      DECLARATIONS_CORPUS: held({ ...HOLD, until: new Date(Date.now() - 1).toISOString() }),
+    };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await worker.scheduled?.({} as never, env);
+
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it('starts as usual, loudly, when the hold cannot be read as one', async () => {
+    const create = vi.fn(async () => ({ id: 'wf-1' }));
+    const env = {
+      DB: fakeD1([]).db,
+      REFRESH: { create } as unknown as Workflow,
+      DECLARATIONS_CORPUS: held({ reason: 'no expiry' }),
+    };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await worker.scheduled?.({} as never, env);
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(error.mock.calls[0]![0]))).toMatchObject({
+      level: 'error',
+      event: 'etl_scheduled_pause_ignored',
+      problem: expect.stringContaining('"until"'),
+    });
+  });
+
+  it('holds only the cron: a refresh an operator triggers by hand runs through a hold', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketDay.mockResolvedValue(dayResult({ baseContracts: 1 }));
+    const get = vi.fn();
+    const wf = new RefreshWorkflow({} as never, {
+      DB,
+      REFRESH: {} as Workflow,
+      DECLARATIONS_CORPUS: { get } as unknown as R2Bucket,
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await wf.run({ payload: {} } as never, fakeStep([]) as never);
+
+    expect(result.integrity).toBe('ok');
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('does not ask for the hold on a tick that starts nothing anyway', async () => {
+    const get = vi.fn();
+    const env = {
+      DB: fakeD1([]).db,
+      REFRESH: { create: vi.fn() } as unknown as Workflow,
+      DECLARATIONS_ENABLED: 'false',
+      DECLARATIONS_CORPUS: { get } as unknown as R2Bucket,
+    };
+
+    await worker.scheduled?.({ cron: '0 3 * * *' } as never, env);
+
+    expect(get).not.toHaveBeenCalled();
   });
 
   it('stands aside longer when the setting says so, for a first cold run', async () => {
