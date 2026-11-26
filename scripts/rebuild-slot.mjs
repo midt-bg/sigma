@@ -257,13 +257,20 @@ function captureLiveLinks(db, live, cli, sleep) {
     sleep(BREATHER_MS);
     return rows;
   };
-  // An indexed upper bound lets us distinguish a real empty table from a short or empty page
-  // before the end. The only cursor values sent to Wrangler are checked integers.
+  // Counts and indexed upper bounds also detect a truncated final page retaining its last row.
+  // The only cursor values sent to Wrangler are checked integers.
   const [ends] = read(
     'table bounds',
-    `SELECT ${tables.map((t) => `(SELECT MAX(rowid) FROM ${t}) AS ${t}`).join(', ')}`,
+    `SELECT ${tables.map((t) => `(SELECT MAX(rowid) FROM ${t}) AS ${t}, (SELECT COUNT(*) FROM ${t}) AS ${t}_count`).join(', ')}`,
     ([row, extra]) =>
-      row && !extra && tables.every((t) => row[t] === null || Number.isSafeInteger(row[t])),
+      row &&
+      !extra &&
+      tables.every(
+        (t) =>
+          Number.isSafeInteger(row[`${t}_count`]) &&
+          row[`${t}_count`] >= 0 &&
+          (row[`${t}_count`] === 0 ? row[t] === null : Number.isSafeInteger(row[t])),
+      ),
   );
   // The prior links can reference people or bidders absent from the new corpus. The loader will
   // rebuild them after reading the baseline. Check the evidence-to-link FK separately.
@@ -273,6 +280,7 @@ function captureLiveLinks(db, live, cli, sleep) {
     let pages = 0;
     for (const table of tables) {
       const end = ends[table];
+      let remaining = ends[`${table}_count`];
       const quotedTable = sqlIdent(table);
       const columns = local
         .prepare(`PRAGMA table_info(${quotedTable})`)
@@ -283,16 +291,15 @@ function captureLiveLinks(db, live, cli, sleep) {
         `INSERT INTO ${quotedTable} (${projection}) VALUES (${columns.map(() => '?').join(', ')})`,
       );
       let cursor = null;
-      while (cursor !== end) {
+      while (remaining > 0) {
         const lower = cursor === null ? '' : ` AND rowid > ${cursor}`;
         const rows = read(
           table,
           `SELECT rowid AS rebuild_rowid, ${projection} FROM ${quotedTable}
             WHERE rowid <= ${end}${lower} ORDER BY rowid LIMIT ${LIVE_LINK_PAGE_SIZE}`,
           (rows) =>
-            rows.length > 0 &&
-            rows.length <= LIVE_LINK_PAGE_SIZE &&
-            (rows.length === LIVE_LINK_PAGE_SIZE || rows.at(-1)?.rebuild_rowid === end) &&
+            rows.length === Math.min(LIVE_LINK_PAGE_SIZE, remaining) &&
+            (rows.at(-1)?.rebuild_rowid === end) === (rows.length === remaining) &&
             rows.every((row, i) => {
               const previous = i === 0 ? cursor : rows[i - 1].rebuild_rowid;
               return (
@@ -305,6 +312,7 @@ function captureLiveLinks(db, live, cli, sleep) {
         );
         for (const row of rows) insert.run(...columns.map((column) => row[column]));
         cursor = rows.at(-1).rebuild_rowid;
+        remaining -= rows.length;
         progress('precompute', ++pages);
       }
     }

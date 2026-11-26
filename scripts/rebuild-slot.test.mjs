@@ -1158,31 +1158,34 @@ test('the rebuild captures live links and their evidence in paced queries', asyn
   }
 });
 
-test('an incomplete live evidence page rolls back the capture and stops the rebuild', async (t) => {
-  const s = builtSlot(t);
-  const live = liveLinkFixture(t, s);
-  const run = slotRun(s, {
-    runId: 'partial',
-    readLive: (sql) => {
-      if (sql.includes('FROM "interest_link_evidence"') && sql.includes('rowid >')) return [];
-      return live.prepare(sql).all();
-    },
+for (const partial of ['empty', 'missing seal with maximum retained'])
+  test(`an incomplete live evidence page (${partial}) rolls back the capture and stops the rebuild`, async (t) => {
+    const s = builtSlot(t);
+    const live = liveLinkFixture(t, s);
+    const run = slotRun(s, {
+      runId: 'partial',
+      readLive: (sql) => {
+        const rows = live.prepare(sql).all();
+        if (sql.includes('FROM "interest_link_evidence"') && sql.includes('rowid >'))
+          return partial === 'empty' ? [] : rows.slice(1);
+        return rows;
+      },
+    });
+    await assert.rejects(
+      runRebuild({}, run.ops),
+      /Incomplete live-link read.*interest_link_evidence/,
+    );
+    assert.deepEqual(run.ran, ['prepare', 'import', 'registry', 'local']);
+    assert.ok(run.steps.every((step) => step.name !== 'declarations'));
+    assert.deepEqual(s.stamp(), []);
+    const local = new DatabaseSync(join(run.work, 'slot.sqlite'), { readOnly: true });
+    try {
+      for (const table of ['interest_links', 'interest_link_evidence'])
+        assert.equal(local.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n, 0);
+    } finally {
+      local.close();
+    }
   });
-  await assert.rejects(
-    runRebuild({}, run.ops),
-    /Incomplete live-link read.*interest_link_evidence/,
-  );
-  assert.deepEqual(run.ran, ['prepare', 'import', 'registry', 'local']);
-  assert.ok(run.steps.every((step) => step.name !== 'declarations'));
-  assert.deepEqual(s.stamp(), []);
-  const local = new DatabaseSync(join(run.work, 'slot.sqlite'), { readOnly: true });
-  try {
-    for (const table of ['interest_links', 'interest_link_evidence'])
-      assert.equal(local.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n, 0);
-  } finally {
-    local.close();
-  }
-});
 
 test('a build stopped after any stage continues at the next one and does not redo the finished ones', async (t) => {
   const order = ['prepare', 'import', 'registry', 'local', 'ship'];
