@@ -42,20 +42,88 @@ export function dataVersionSql({ version, commit, runId, builtAt }) {
   );
 }
 
-/** Tables a served slot never takes from the snapshot: SQLite's and Cloudflare's own, the migration ledger,
- *  the full-text index's shadow tables, the work staging, the ship's generations, and the slot's own record
- *  of the rules that built it — written by the verification alone, never carried in with the rows. */
-export function shippedTables(tables, stagingSql) {
+/**
+ * Tables the build leaves in its snapshot that no migration makes, and the slot takes all the same — each
+ * with what reads it there. A resumed build brings them back from the slot with the slot's own DDL
+ * (`rehydrate`), so its ship counts them as a whole build's does.
+ */
+export const SHIPPED_UNMIGRATED = new Map([
+  [
+    'state_owned_eik',
+    'the public-enterprise list: public stakes (packages/db queries/public-stakes.ts)',
+  ],
+  [
+    'public_owned_eik',
+    'companies in public hands: public stakes, the register (apps/etl/src/registry.ts)',
+  ],
+  ['pipeline_stats', 'the import’s counts: the integrity gate reconciles the slot against them'],
+  // normalize-raw's canonical names; the refresh rebuilds them before it reads them.
+  ['authority_canonical_name', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+  ['authority_canonical_type', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+  ['bidder_canonical_name', 'the refresh (scripts/refresh-slice.sql), which rebuilds it first'],
+]);
+
+/**
+ * Tables a served slot never takes from the snapshot, and why. The work staging
+ * (scripts/work-staging-schema.sql) is left out with them: the import's raw tables, read by nothing served.
+ */
+export const NOT_SHIPPED = [
+  [/^sqlite_/, 'SQLite’s own'],
+  [/^_cf_/, 'Cloudflare’s own'],
+  [/^d1_migrations$/, 'the migration ledger: the slot keeps its own'],
+  [/^search_index_/, 'the full-text index’s shadow tables: SQLite fills them from search_index'],
+  [/^rp_(next|prev)_/, 'the declarations ship’s generations: the served database’s alone'],
+  [/^contractor_identity$/, 'the import’s working table: nothing served reads it'],
+  [/^data_version$/, 'written by the verification alone, never carried in with the rows'],
+  [/^rebuild_state$/, 'the stages’ receipts: each stage writes its own'],
+];
+
+let migrated = null;
+/** The tables the migrations make — the served schema. */
+export function migratedTables() {
+  if (!migrated) {
+    const db = new DatabaseSync(':memory:');
+    try {
+      const dir = resolve(root, 'packages/db/migrations');
+      for (const file of readdirSync(dir)
+        .filter((n) => /^\d+.*\.sql$/.test(n))
+        .sort())
+        db.exec(readFileSync(join(dir, file), 'utf8'));
+      migrated = new Set(
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+          .all()
+          .map((r) => r.name),
+      );
+    } finally {
+      db.close();
+    }
+  }
+  return migrated;
+}
+
+/**
+ * The tables of a snapshot the slot takes: every table the migrations make and every one in
+ * SHIPPED_UNMIGRATED, none in NOT_SHIPPED or the work staging. A table in neither list stops the build
+ * with its name: the slot would otherwise take it, or lose it, without anyone having said which.
+ */
+export function shippedTables(tables, stagingSql, served = migratedTables()) {
   const staging = new Set(
     [...stagingSql.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)/g)].map((m) => m[1]),
   );
-  return tables.filter(
-    (t) =>
-      !/^(sqlite_|_cf_|rp_next_|rp_prev_|d1_migrations$|search_index_)/.test(t) &&
-      t !== 'contractor_identity' &&
-      t !== 'data_version' &&
-      !staging.has(t),
-  );
+  const unknown = [];
+  const shipped = tables.filter((t) => {
+    if (staging.has(t) || NOT_SHIPPED.some(([pattern]) => pattern.test(t))) return false;
+    if (served.has(t) || SHIPPED_UNMIGRATED.has(t)) return true;
+    unknown.push(t);
+    return false;
+  });
+  if (unknown.length)
+    throw new Error(
+      `The build left ${unknown.join(', ')} in its snapshot, and nothing says whether the slot takes it: ` +
+        'make it in a migration, or name it in SHIPPED_UNMIGRATED or NOT_SHIPPED (scripts/rebuild-slot.mjs).',
+    );
+  return shipped;
 }
 
 /** Parents before children, by the snapshot's own foreign keys. */
@@ -237,10 +305,7 @@ export function checkpointRun(done, runId, commit) {
 /** A batch of partidas, straight into the slot: its rows, the queue entries it cleared or added, and
  * the registry's own cursors. The rebuild then resumes at the batch, not at the first partida. */
 export function slotFlusher(name, snapshot, apply) {
-  const tables = registryTables(snapshot);
-  const cursors = ['registry_sync', 'registry_entry_state', 'registry_entry_passes'].filter((t) =>
-    snapshot.prepare(`SELECT 1 FROM sqlite_master WHERE name=${sqlLiteral(t)}`).get(),
-  );
+  const carry = registryTables(snapshot);
   let since = null;
   const send =
     apply ??
@@ -251,7 +316,7 @@ export function slotFlusher(name, snapshot, apply) {
       cwd: webDir,
     });
   const flush = (eiks, seal) => {
-    send('registry-batch', registryBatchSql(snapshot, eiks, tables, cursors, since) + seal);
+    send('registry-batch', registryBatchSql(snapshot, eiks, carry, since) + seal);
     since = new Date().toISOString();
   };
   // A batch takes its companies alone: the import also hands it how many partidas it has read so far.
@@ -318,7 +383,12 @@ export function clearFiles(label, tables, rows, keys = {}) {
  * `seal(counts)` is the stage's receipt. It travels in the LAST file, in the same transaction as the last
  * rows: a slot holds the receipt exactly when it holds every row, and a stop between the two cannot leave
  * a filled slot that looks unfilled, or the reverse. */
-export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json, seal }) {
+export function fillSlot(
+  name,
+  snapshotPath,
+  work,
+  { label, apply, read = d1Json, seal, served = migratedTables() },
+) {
   const snap = new DatabaseSync(snapshotPath, { readOnly: true });
   try {
     const master = snap
@@ -327,6 +397,7 @@ export function fillSlot(name, snapshotPath, work, { label, apply, read = d1Json
     const tables = shippedTables(
       master.filter((m) => m.type === 'table').map((m) => m.name),
       readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'),
+      served,
     );
     apply(
       `${label}-schema`,
@@ -424,6 +495,14 @@ export async function rehydrate(db, name, work, deps = {}) {
     .sort())
     await apply('import', db, readFileSync(join(migrationsDir, file), 'utf8'));
   await apply('import', db, readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'));
+  // The tables the slot takes that no migration makes come back with the slot's own DDL.
+  const unmigrated = read(
+    name,
+    `SELECT name, sql FROM sqlite_master WHERE type='table'
+       AND name IN (${[...SHIPPED_UNMIGRATED.keys()].map(sqlLiteral).join(',')}) ORDER BY name`,
+  );
+  if (unmigrated.length)
+    await apply('import', db, unmigrated.map((t) => `${ifNotExists(t.sql)};`).join('\n'));
   // Only tables the local schema knows: the slot also carries this rebuild's own bookkeeping, and the
   // search index is a virtual table D1 refuses to export at all.
   const local = new DatabaseSync(db, { readOnly: true });
@@ -459,24 +538,47 @@ export async function rehydrate(db, name, work, deps = {}) {
   return tables;
 }
 
-/** The registry tables keyed by company, as the local build holds them. */
+/** The register's cursors: a batch carries them whole, as the local build holds them after it. */
+export const REGISTRY_CURSORS = ['registry_sync', 'registry_entry_state', 'registry_entry_passes'];
+
+/**
+ * How a registry batch carries each registry table of the local build. A build resumed after the register
+ * takes the register from the slot alone (`rehydrate`), so whatever a batch leaves out is gone from it:
+ *
+ *   byCompany  every table with an `eik` column — the batch's companies' rows replace the slot's
+ *   persons    registry_persons — one row per person the batch's partidas name (their observations), as
+ *              the read left it; a person is keyed by the register's identifier, not by a company
+ *   cursors    REGISTRY_CURSORS — whole
+ *
+ * A registry table that is none of these stops the build with its name, before any batch is sent.
+ */
 export function registryTables(snapshot) {
-  return snapshot
+  const carry = { byCompany: [], persons: [], cursors: [] };
+  const unknown = [];
+  for (const { name } of snapshot
     .prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'registry_%' ORDER BY name",
     )
-    .all()
-    .map((r) => r.name)
-    .filter((name) =>
-      snapshot
-        .prepare(`PRAGMA table_info(${sqlIdent(name)})`)
-        .all()
-        .some((c) => c.name === 'eik'),
+    .all()) {
+    const columns = snapshot
+      .prepare(`PRAGMA table_info(${sqlIdent(name)})`)
+      .all()
+      .map((c) => c.name);
+    if (columns.includes('eik')) carry.byCompany.push(name);
+    else if (name === 'registry_persons') carry.persons.push(name);
+    else if (REGISTRY_CURSORS.includes(name)) carry.cursors.push(name);
+    else unknown.push(name);
+  }
+  if (unknown.length)
+    throw new Error(
+      `A registry batch does not know how to carry ${unknown.join(', ')}: a build resumed after the ` +
+        'register would lose it. Say how in registryTables (scripts/rebuild-slot.mjs).',
     );
+  return carry;
 }
 
 /** Rows for one batch of companies, as statements that replace whatever the slot holds for them. */
-export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) {
+export function registryBatchSql(snapshot, eiks, { byCompany, persons, cursors }, since = null) {
   const list = eiks.map(sqlLiteral).join(',');
   // No batch: the cursors alone, for the accepted baseline written after the last one.
   const out = eiks.length ? [`DELETE FROM registry_queue WHERE eik IN (${list});`] : [];
@@ -497,21 +599,22 @@ export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) 
       ),
     );
   }
-  for (const table of [...tables, ...cursors]) {
+  // The people the batch's partidas name: reading a partida rewrote each one's row.
+  const named = `SELECT registry_indent FROM registry_identity_observations
+    WHERE eik IN (${list}) AND subject_kind = 'person' AND registry_indent IS NOT NULL`;
+  for (const table of [...byCompany, ...persons, ...cursors]) {
     const cols = snapshot
       .prepare(`PRAGMA table_info(${sqlIdent(table)})`)
       .all()
       .map((c) => c.name);
-    if (!cols.length) continue;
+    const select = `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)}`;
     const rows = cursors.includes(table)
-      ? snapshot.prepare(`SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)}`).all()
-      : eiks.length
-        ? snapshot
-            .prepare(
-              `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} WHERE eik IN (${list})`,
-            )
-            .all()
-        : [];
+      ? snapshot.prepare(select).all()
+      : !eiks.length
+        ? []
+        : persons.includes(table)
+          ? snapshot.prepare(`${select} WHERE indent IN (${named})`).all()
+          : snapshot.prepare(`${select} WHERE eik IN (${list})`).all();
     if (cursors.includes(table)) out.push(`DELETE FROM ${sqlIdent(table)};`);
     out.push(
       ...insertStatements(table, cols, rows).map((sql) =>
@@ -610,6 +713,52 @@ function refreshedSince(read, builtAt) {
 }
 
 /**
+ * A slot is ready only with the register's baseline accepted: the catch-up pass after the declarations read
+ * every company they asked for, and the daily run then reads the register's new entries from where the
+ * build left off. With the baseline open the daily run skips those reads until it closes it, and the slot
+ * may lack partidas the declarations' links were decided against. A verdict, never retried, and before the
+ * slot gets its version.
+ *
+ * A slot with no register at all needs no baseline: every registry table but the cursors counts nothing in
+ * the ship's receipt — nothing was asked of the register and nothing read from it (a snapshot with no
+ * winner to read). The counts are the receipt's, which the slot was just counted against.
+ */
+function refuseOpenBaseline(name, read, counts) {
+  const register = Object.entries(counts).filter(
+    ([t]) => t.startsWith('registry_') && !REGISTRY_CURSORS.includes(t),
+  );
+  if (register.every(([, n]) => n === 0)) return;
+  const status = read('SELECT baseline_status FROM registry_entry_state WHERE id = 1')[0]
+    ?.baseline_status;
+  if (status !== 'ready')
+    throw new SlotVerdict(
+      `${name} holds the register with its baseline ${status ?? 'missing'}, not accepted: the register ` +
+        'pass after the declarations did not finish in this build. The slot is not ready — build it ' +
+        'again without resume',
+    );
+}
+
+/**
+ * Every person the register gives a role is served with a name: the batch that carries a company's roles
+ * carries its people (`registryRows`). A role whose person has no row is a slot written, at least in part,
+ * by code that did not carry them — a resume over such a build's `registry` receipt skips the stage, and
+ * nothing later reads those people. Their pages answer 404. A verdict, before the slot gets its version.
+ */
+function refuseNamelessPeople(name, read) {
+  const missing = read(
+    `SELECT COUNT(DISTINCT r.subject_id) AS n FROM registry_roles r
+      WHERE r.subject_kind = 'person' AND r.subject_id NOT LIKE 'local:%'
+        AND NOT EXISTS (SELECT 1 FROM registry_persons p WHERE p.indent = r.subject_id)`,
+    ([row]) => Number.isInteger(row?.n) && row.n >= 0,
+  )[0].n;
+  if (missing)
+    throw new SlotVerdict(
+      `${name} holds ${missing} person(s) with a role in the register and no name: its register was ` +
+        'written by code that did not carry the people. The slot is not ready — build it again without resume',
+    );
+}
+
+/**
  * The verification, a stage of its own: it needs nothing but the slot, so it runs right after the ship and
  * again later on the same slot without building anything (`SIGMA_REBUILD_VERIFY=1`). The ship's receipt says
  * what the slot must hold and which rules built it; the slot is counted against it, the integrity gate runs,
@@ -646,6 +795,8 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
       `Slot counts differ from the snapshot: ${mismatched.map((t) => `${t} ${served[t]} ≠ ${counts[t]}`).join(', ')}` +
         refreshedSince(read, builtAt),
     );
+  refuseOpenBaseline(name, read, counts);
+  refuseNamelessPeople(name, read);
   let results;
   try {
     results = await check(read, { label: `rebuilt slot ${name}`, exit: false });
