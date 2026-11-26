@@ -47,6 +47,8 @@ export function supervise(
         } else if (event.event === 'declarations_error') {
           status.reason ??= `${event.stage}: ${event.script} exited with ${event.signal ?? `code ${event.exitCode}`}`;
           status.signal = event.signal;
+          // A verdict on the slot repeats on every attempt: the coordinator ends the run at once.
+          if (event.verdict === true) status.verdict = true;
         } else if (event.event === 'declarations_job_complete' && event.runId === status.runId) {
           status.audit = event.audit;
           status.published = event.published;

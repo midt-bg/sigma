@@ -386,6 +386,45 @@ it('verifies a shipped slot on its own: the container hears it and the run start
   expect(f.run()).toMatchObject({ state: 'complete', target: idle });
 });
 
+it('retries a verification D1 did not let finish, and ends one that refuses every time', async () => {
+  const f = fixture();
+  const idle = { name: 'sigma-idle', id: '11111111-2222-3333-4444-555555555555' };
+  await f.job().startRun('r', idle);
+  await f.job().alarm();
+  f.answer({ state: 'running', stage: 'ship', completed: 100 });
+  await f.job().alarm();
+  // The next attempt only verifies the shipped slot again, so the stage is worth repeating.
+  const overloaded = 'D1 DB is overloaded. [code: 7429]';
+  f.answer({ state: 'failed', stage: 'verify', completed: 6, reason: overloaded });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running', reason: overloaded });
+  await f.resume();
+  f.answer({ state: 'complete', stage: 'verify', audit: true, published: true });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'complete' });
+
+  // A count that differs is the same answer each time: three of them end the run.
+  const g = fixture();
+  await g.job().startRun('r2', idle);
+  await g.job().alarm();
+  const differs = 'Slot counts differ from the snapshot: bidders 0 ≠ 1';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    g.answer({ state: 'failed', stage: 'verify', completed: 1, reason: differs });
+    await g.job().alarm();
+    if (attempt < 3) await g.resume();
+  }
+  expect(g.run()).toMatchObject({ state: 'failed' });
+  expect(g.run().reason).toContain('verify failed 3 times without getting further');
+
+  // Said to be a verdict, it ends the run on the first answer: the same slot answers the same way.
+  const h = fixture();
+  await h.job().startRun('r3', idle);
+  await h.job().alarm();
+  h.answer({ state: 'failed', stage: 'verify', completed: 1, reason: differs, verdict: true });
+  await h.job().alarm();
+  expect(h.run()).toMatchObject({ state: 'failed', reason: differs });
+});
+
 it('stops the container when the workflow instance that started the run is gone', async () => {
   const f = fixture();
   await f.job().startRun('workflow-1');
