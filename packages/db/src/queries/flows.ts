@@ -12,6 +12,7 @@ import type {
 } from '@sigma/api-contract';
 import { cleanName, count, entityName, money, plural } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
+import { prefixIn } from './prefix-in';
 import { sectorOptions } from './sectors';
 
 export interface FlowsParams {
@@ -45,13 +46,17 @@ async function topPairs(db: D1Database, p: FlowsParams, top: number): Promise<Pa
   }
   const where = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
+  // Ranges on the columns themselves (prefix-in.ts): a sector or a year reads its own contracts through
+  // idx_tenders_cpv / idx_contracts_signed instead of the whole table, which substr() made it scan.
   if (p.sector) {
-    where.push('substr(t.cpv_code, 1, 2) = ?');
-    params.push(p.sector);
+    const sector = prefixIn('t.cpv_code', 2, [p.sector]);
+    where.push(sector.sql);
+    params.push(...sector.params);
   }
   if (p.year) {
-    where.push('substr(c.signed_at, 1, 4) = ?');
-    params.push(p.year);
+    const year = prefixIn('c.signed_at', 4, [p.year]);
+    where.push(year.sql);
+    params.push(...year.params);
   }
   if (p.funding === 'eu') where.push('c.eu_funded = 1');
   else if (p.funding === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
