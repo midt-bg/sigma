@@ -44,6 +44,9 @@ export function checkAmendmentTwins(runner: IntegrityRunner): Promise<IntegrityR
 /** The ids of served OCDS amendments still keyed by their OCID that duplicate an annex served under the
  *  resolved УНП. Shared with the removal in scripts/refresh-slice.sql (lockstep-tested). */
 export const AMENDMENT_OCID_TWINS_SQL: string;
+/** The ids of served OCDS amendments kept under the annex-side number of an EOP annex the value resolver
+ *  moved onto its contract. Shared with the removal in scripts/refresh-slice.sql (lockstep-tested). */
+export const AMENDMENT_RAW_NUMBER_TWINS_SQL: string;
 
 export const CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
 /** Each check's stable id, in CHECKS order (the `name` its result carries). */
