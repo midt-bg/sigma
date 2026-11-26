@@ -621,19 +621,19 @@ describe('derivePublicOwnership', () => {
       CREATE TABLE IF NOT EXISTS state_owned_eik (eik TEXT PRIMARY KEY, ownership_kind TEXT, canonical_name TEXT);
       INSERT INTO state_owned_eik VALUES ('900000009','state','ХОЛДИНГ ЕАД');
       INSERT INTO authorities (id, name, type, type_group) VALUES
-        ('auth:121082521', 'НАЦИОНАЛЕН ОСИГУРИТЕЛЕН ИНСТИТУТ', 'Публичноправна организация', 'друго'),
+        ('auth:999000200', 'НАЦИОНАЛЕН ТЕСТОВ ИНСТИТУТ', 'Публичноправна организация', 'друго'),
         ('auth:130000000', 'ВОДА ЧАСТНА АД', 'Комунални услуги', 'държавна компания');
       INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id, subject_name, share, entry_number, added_on) VALUES
         ${[
-          role('100000001', 'sole_owner', '000696327', 'Столична община', null),
+          role('100000001', 'sole_owner', '000999011', 'Столична община', null),
           role('100000002', 'sole_owner', '100000001', 'ОБЩИНСКО ЕАД', null),
-          role('100000003', 'partner', '000695317', 'Министерство на здравеопазването', '600'),
+          role('100000003', 'partner', '000999022', 'Министерство на тестовете', '600'),
           role('100000003', 'partner', 'x', 'ЧАСТНИК ООД', '400'),
-          role('100000004', 'partner', '000093442', 'ОБЩИНА ВАРНА', '100'),
+          role('100000004', 'partner', '000999033', 'ОБЩИНА ТЕСТ', '100'),
           role('100000004', 'partner', 'y', 'ЧАСТНИК ООД', '900'),
           role('100000005', 'sole_owner', '900000009', 'ХОЛДИНГ ЕАД', null),
           role('100000006', 'sole_owner', 'z', 'ЧАСТНИК ООД', null),
-          role('100000007', 'sole_owner', '121082521', 'НАЦИОНАЛЕН ОСИГУРИТЕЛЕН ИНСТИТУТ', null),
+          role('100000007', 'sole_owner', '999000200', 'НАЦИОНАЛЕН ТЕСТОВ ИНСТИТУТ', null),
           role('100000008', 'sole_owner', '130000000', 'ВОДА ЧАСТНА АД', null),
         ].join(',')};
     `);
