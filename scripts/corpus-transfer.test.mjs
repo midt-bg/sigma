@@ -425,24 +425,29 @@ test('verify catches a copy that lost the sha256 the corpus reader checks', asyn
   assert.ok(deep.lines.includes(`  metadata-differs ${C('2025y/list.xml')}`));
 });
 
-test('objects written in parts are compared by their stored sha256, not the ETag', async () => {
-  const parts = (body, etag) => object(body, { etag });
+test('an object whose ETag is not an MD5 cannot be compared, and verify says so', async () => {
   const src = new Map([
-    [C('2024/a.xml'), parts('<d>same</d>', 'aaaa-2')],
-    [C('2024/b.xml'), parts('<d>one</d>', 'bbbb-2')],
+    [C('2024/a.xml'), object('<d>same</d>', { etag: 'aaaa-2' })],
+    [C('2024/b.xml'), object('<d>one</d>')],
   ]);
   const dst = new Map([
-    [C('2024/a.xml'), parts('<d>same</d>', 'cccc-3')],
-    [C('2024/b.xml'), parts('<d>two</d>', 'dddd-3')],
+    [C('2024/a.xml'), object('<d>same</d>', { etag: 'aaaa-2' })],
+    [C('2024/b.xml'), object('<d>one</d>')],
   ]);
   const r2 = fakeR2({ [FROM]: src, [TO]: dst });
-  const { code, lines } = await run(['verify', '--from', FROM, '--to', TO, '--sample', '0'], r2);
-  assert.equal(code, 1);
-  assert.deepEqual(
-    lines.filter((l) => l.startsWith('  ')),
-    [`  different ${C('2024/b.xml')}`],
+  const verify = await run(['verify', '--from', FROM, '--to', TO, '--deep'], r2);
+  assert.equal(verify.code, 1, verify.out);
+  assert.ok(verify.lines.some((l) => l.startsWith('DIFFERS 2024: count 2/2')));
+  assert.ok(verify.lines.includes(`  cannot-compare ${C('2024/a.xml')}`));
+  assert.ok(verify.lines.includes('metadata: 1 of 1 matched objects read head to head, 0 differ'));
+  const plan = await run(['plan', '--from', FROM, '--to', TO], r2);
+  assert.equal(plan.code, 0);
+  assert.ok(
+    plan.lines.includes(
+      '2024: source 2 (0.0 KiB), target 2; missing 0 (0 B), different 0, only in target 0, cannot compare 1',
+    ),
+    plan.out,
   );
-  assert.ok(lines.includes('2 objects written in parts were compared by their stored sha256'));
 });
 
 test('passing API failures are tried again with growing pauses', async () => {
@@ -563,57 +568,61 @@ test('a refusal is not tried again and never prints the credentials', async () =
   assert.ok(!out.includes(SECRET) && !out.includes('key-id') && !out.includes('AWS4'));
 });
 
-test('a missing bucket, a broken listing and a source that changed all stop the run', async () => {
-  const missing = await run(
-    ['plan', '--from', FROM, '--to', 'sigma-declarations-none'],
-    fakeR2({ [FROM]: sourceBucket() }),
-  );
-  assert.equal(missing.code, 1);
-  assert.match(missing.out, /list sigma-declarations-none: HTTP 404 NoSuchBucket/);
-
-  for (const body of [
-    '<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>',
-    '<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken></NextContinuationToken></ListBucketResult>',
-    '<html>not s3</html>',
-  ]) {
-    const r2 = fakeR2(
-      { [FROM]: sourceBucket(), [TO]: sourceBucket() },
-      { fault: (r) => (r.method === 'GET' ? new Response(body) : undefined) },
+test(
+  'a missing bucket, a broken listing and a source that changed all stop the run',
+  { timeout: 10_000 },
+  async () => {
+    const missing = await run(
+      ['plan', '--from', FROM, '--to', 'sigma-declarations-none'],
+      fakeR2({ [FROM]: sourceBucket() }),
     );
-    const { code, out } = await run(['plan', '--from', FROM, '--to', TO], r2);
-    assert.equal(code, 1, body);
-    assert.match(out, /the listing did not advance|not a listing/);
-  }
-  let pages = 0;
-  const looping = fakeR2(
-    { [FROM]: sourceBucket(), [TO]: sourceBucket() },
-    {
-      fault: (r) =>
-        r.method === 'GET' && ++pages
-          ? new Response(
-              '<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>same</NextContinuationToken></ListBucketResult>',
-            )
-          : undefined,
-    },
-  );
-  assert.match(
-    (await run(['plan', '--from', FROM, '--to', TO, '--folders', '2024'], looping)).out,
-    /did not advance/,
-  );
+    assert.equal(missing.code, 1);
+    assert.match(missing.out, /list sigma-declarations-none: HTTP 404 NoSuchBucket/);
 
-  const src = sourceBucket();
-  const changed = fakeR2(
-    { [FROM]: src, [TO]: new Map() },
-    {
-      fault: (r) => {
-        if (r.method === 'PUT') src.set(C('2024/a-001.xml'), object('<d>rewritten</d>'));
+    for (const body of [
+      '<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>',
+      '<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken></NextContinuationToken></ListBucketResult>',
+      '<html>not s3</html>',
+    ]) {
+      const r2 = fakeR2(
+        { [FROM]: sourceBucket(), [TO]: sourceBucket() },
+        { fault: (r) => (r.method === 'GET' ? new Response(body) : undefined) },
+      );
+      const { code, out } = await run(['plan', '--from', FROM, '--to', TO], r2);
+      assert.equal(code, 1, body);
+      assert.match(out, /the listing did not advance|not a listing/);
+    }
+    let pages = 0;
+    const looping = fakeR2(
+      { [FROM]: sourceBucket(), [TO]: sourceBucket() },
+      {
+        fault: (r) =>
+          r.method === 'GET' && ++pages
+            ? new Response(
+                '<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>same</NextContinuationToken></ListBucketResult>',
+              )
+            : undefined,
       },
-    },
-  );
-  const copy = await run(['copy', '--from', FROM, '--to', TO, '--concurrency', '1'], changed);
-  assert.equal(copy.code, 1);
-  assert.match(copy.out, /HTTP 412 PreconditionFailed/);
-});
+    );
+    assert.match(
+      (await run(['plan', '--from', FROM, '--to', TO, '--folders', '2024'], looping)).out,
+      /did not advance/,
+    );
+
+    const src = sourceBucket();
+    const changed = fakeR2(
+      { [FROM]: src, [TO]: new Map() },
+      {
+        fault: (r) => {
+          if (r.method === 'PUT') src.set(C('2024/a-001.xml'), object('<d>rewritten</d>'));
+        },
+      },
+    );
+    const copy = await run(['copy', '--from', FROM, '--to', TO, '--concurrency', '1'], changed);
+    assert.equal(copy.code, 1);
+    assert.match(copy.out, /HTTP 412 PreconditionFailed/);
+  },
+);
 
 test('a copy whose checksum differs from the source stops the run', async () => {
   const r2 = fakeR2({ [FROM]: sourceBucket(), [TO]: new Map() }, { copyEtag: 'ffff' });
@@ -781,14 +790,6 @@ test('verify counts an object that vanished between listing and reading as diffe
   assert.ok(lines.includes('metadata: 7 of 7 matched objects read head to head, 7 differ'));
 });
 
-test('a copy of an object written in parts is not held to the source ETag', async () => {
-  const src = new Map([[C('2024/a.xml'), object('<d>a</d>', { etag: 'abcd-2' })]]);
-  const dst = new Map();
-  const r2 = fakeR2({ [FROM]: src, [TO]: dst }, { copyEtag: 'ef01' });
-  assert.equal((await run(['copy', '--from', FROM, '--to', TO], r2)).code, 0);
-  assert.ok(dst.has(C('2024/a.xml')));
-});
-
 test('a folder only the target holds is reported, and fails verify', async () => {
   const dst = sourceBucket();
   dst.set(C('2026/c-001.xml'), object('<d>c1</d>'));
@@ -902,29 +903,6 @@ test('with --overwrite-different a receipt is replaced only after the files of e
   assert.equal(dst.get(C('2024/.index.json')), stale, 'the receipt waits for its folder');
 });
 
-test('a failed copy starts no new copies, with many in flight, and the run fails', async () => {
-  const src = new Map(
-    Array.from({ length: 40 }, (_, i) => [
-      C(`2024/a-${String(i).padStart(3, '0')}.xml`),
-      object(`<d>${i}</d>`),
-    ]),
-  );
-  let puts = 0;
-  const r2 = fakeR2(
-    { [FROM]: src, [TO]: new Map() },
-    {
-      fault: (r) =>
-        r.method === 'PUT' && ++puts === 1
-          ? new Response('<Error><Code>AccessDenied</Code></Error>', { status: 403 })
-          : undefined,
-    },
-  );
-  const { code, out } = await run(['copy', '--from', FROM, '--to', TO, '--concurrency', '4'], r2);
-  assert.equal(code, 1);
-  assert.match(out, /stopped after [0-3] of 40: copy into sigma-declarations-dst: HTTP 403/);
-  assert.ok(writes(r2.requests).length <= 4, `${writes(r2.requests).length} copies were started`);
-});
-
 test('a source without corpus is not a match: verify, plan and copy all say so', async () => {
   const empty = new Map([[C('accepted.json'), object('{"runId":"x"}')]]);
   for (const argv of [
@@ -978,4 +956,54 @@ test('verify fails on objects the target lacks, with no other difference', async
     [`  missing ${C('2025y/b-002.xml')}`],
   );
   assert.equal(lines.at(-1), 'verify: DIFFERENCES — see above');
+});
+
+test('a failed copy starts no new copies, with many in flight, and the run fails', async () => {
+  const src = new Map(
+    Array.from({ length: 40 }, (_, i) => [
+      C(`2024/a-${String(i).padStart(3, '0')}.xml`),
+      object(`<d>${i}</d>`),
+    ]),
+  );
+  let puts = 0;
+  const r2 = fakeR2(
+    { [FROM]: src, [TO]: new Map() },
+    {
+      fault: (r) =>
+        r.method === 'PUT' && ++puts === 1
+          ? new Response('<Error><Code>AccessDenied</Code></Error>', { status: 403 })
+          : undefined,
+    },
+  );
+  const { code, out } = await run(['copy', '--from', FROM, '--to', TO, '--concurrency', '4'], r2);
+  assert.equal(code, 1);
+  assert.match(out, /stopped after [0-3] of 40: copy into sigma-declarations-dst: HTTP 403/);
+  assert.ok(writes(r2.requests).length <= 4, `${writes(r2.requests).length} copies were started`);
+});
+
+test('keys under the folders that are not corpus keys are counted, and named up to five', async () => {
+  const src = sourceBucket();
+  for (let i = 0; i < 7; i++) src.set(C(`2024/sub/x-${i}.xml`), object('<d/>'));
+  const dst = sourceBucket();
+  dst.set(C('2024/a.txt'), object('x'));
+  const r2 = fakeR2({ [FROM]: src, [TO]: dst });
+  const plan = await run(['plan', '--from', FROM, '--to', TO], r2);
+  assert.ok(
+    plan.lines.includes(
+      `ignored: 7 keys in ${FROM} and 1 in ${TO} under the folders are not shaped like corpus keys`,
+    ),
+    plan.out,
+  );
+  assert.equal(plan.lines.filter((l) => l.startsWith('  ignored ')).length, 6);
+  assert.ok(plan.lines.includes('  … and 2 more ignored'));
+  const verify = await run(['verify', '--from', FROM, '--to', TO], r2);
+  assert.equal(verify.code, 0, 'the count is a report, not a difference');
+  assert.ok(verify.lines.some((l) => l.startsWith('ignored: 7 keys')));
+  const clean = await run(
+    ['plan', '--from', FROM, '--to', TO],
+    fakeR2({ [FROM]: sourceBucket(), [TO]: sourceBucket() }),
+  );
+  assert.ok(
+    clean.lines.some((l) => l.startsWith('ignored: 0 keys in ') && l.includes(' and 0 in ')),
+  );
 });

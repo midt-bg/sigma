@@ -26,6 +26,8 @@ export const CORPUS_PREFIX = 'declarations/corpus-v2/';
 export const PRODUCTION_BUCKET = 'sigma-declarations';
 const FOLDER = /^20\d{2}[A-Za-z0-9_]{0,8}$/;
 const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
+/** The ETag of an object written in one part — the only kind the corpus proxy writes — is its MD5. */
+const MD5 = /^[0-9a-f]{32}$/;
 const ATTEMPTS = 7;
 const RECEIPT = '.index.json';
 
@@ -104,7 +106,7 @@ const tag = (xml, name) => {
   const m = xml.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
   return m ? unescapeXml(m[1]) : undefined;
 };
-const etagOf = (value) => (value ?? '').replace(/^(W\/)?"|"$/g, '');
+const etagOf = (value) => (value ?? '').replace(/^"|"$/g, '');
 
 /**
  * Worth another attempt: a request timeout, 429 and the server errors — except 501, which says the call
@@ -230,7 +232,6 @@ export function r2Client({
       return {
         sha256: res.headers.get('x-amz-meta-sha256') ?? '',
         contentType: res.headers.get('content-type') ?? '',
-        etag: etagOf(res.headers.get('etag')),
       };
     },
     /**
@@ -247,8 +248,7 @@ export function r2Client({
         },
         what: `copy into ${to}`,
       });
-      const copied = etagOf(tag(body, 'ETag'));
-      if (!etag.includes('-') && copied !== etag)
+      if (etagOf(tag(body, 'ETag')) !== etag)
         throw new Fatal(`copy into ${to}: the copy's checksum differs from the source`);
     },
   };
@@ -285,20 +285,27 @@ export async function resolveCredentials(env, http = fetch) {
 
 // ── The transfer ──────────────────────────────────────────────────────────────────────────────────────
 
-/** Corpus objects of a bucket, by folder and file name; other keys are not kept. */
+/**
+ * Corpus objects of a bucket, by folder and file name. A key the listing returns that is not shaped like a
+ * corpus key is not kept, but counted (`ignored`), so that „nothing was left out" can be read off the run.
+ */
 async function inventory(client, bucket, folders) {
   const byFolder = new Map();
+  const ignored = [];
   for (const prefix of folders
     ? folders.map((f) => `${CORPUS_PREFIX}${f}/`)
     : [`${CORPUS_PREFIX}20`]) {
     for await (const object of client.list(bucket, prefix)) {
       const part = corpusKey(object.key);
-      if (!part) continue;
+      if (!part) {
+        ignored.push(object.key);
+        continue;
+      }
       if (!byFolder.has(part.folder)) byFolder.set(part.folder, new Map());
       byFolder.get(part.folder).set(part.name, object);
     }
   }
-  return byFolder;
+  return { byFolder, ignored };
 }
 
 const emptyRow = () => ({ count: 0, bytes: 0 });
@@ -317,11 +324,12 @@ const sizeText = (bytes) =>
 
 /**
  * The difference between the two inventories, per folder: what the target lacks, what it holds with other
- * contents (by size or by the ETag, which is the MD5 of an object written in one part), and what it holds
- * that the source does not. Objects written in parts carry an ETag that is not a checksum of the contents;
- * `sameContent` settles those by the sha256 the corpus proxy stores beside every object.
+ * contents (by size, or by the ETag, which is the MD5 of an object written in one part), and what it holds
+ * that the source does not. An object of the same size whose ETag is not an MD5 on either side cannot be
+ * compared from the listing at all (`unknown`): the corpus proxy never writes such an object, so it is
+ * reported, never taken for a match.
  */
-async function compare(src, dst, sameContent) {
+function compare(src, dst) {
   const folders = [...new Set([...src.keys(), ...dst.keys()])].sort();
   const rows = [];
   for (const folder of folders) {
@@ -333,6 +341,7 @@ async function compare(src, dst, sameContent) {
       target: emptyRow(),
       missing: [],
       different: [],
+      unknown: [],
       extra: [],
     };
     for (const object of a.values()) add(row.source, object);
@@ -340,7 +349,9 @@ async function compare(src, dst, sameContent) {
     for (const [name, object] of [...a].sort(([x], [y]) => (x < y ? -1 : 1))) {
       const there = b.get(name);
       if (!there) row.missing.push(object);
-      else if (!(await sameContent(object, there))) row.different.push(object);
+      else if (object.size !== there.size) row.different.push(object);
+      else if (!MD5.test(object.etag) || !MD5.test(there.etag)) row.unknown.push(object);
+      else if (object.etag !== there.etag) row.different.push(object);
     }
     for (const [name, object] of b) if (!a.has(name)) row.extra.push(object);
     rows.push(row);
@@ -447,10 +458,12 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
     log(
       `${action}: ${from} → ${to}, corpus only (${CORPUS_PREFIX}<folder>/…)${folders ? `, folders ${folders.join(', ')}` : ''}`,
     );
-    const [src, dst] = await Promise.all([
+    const [source, target] = await Promise.all([
       inventory(client, from, folders),
       inventory(client, to, folders),
     ]);
+    const src = source.byFolder;
+    const dst = target.byFolder;
     // Nothing to compare is not a match: a mistyped --from (an empty bucket that exists), swapped buckets
     // or a mistyped folder would otherwise read as „the target holds the source corpus exactly".
     const absent = (folders ?? []).filter((f) => !src.has(f));
@@ -461,39 +474,42 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
     if (!src.size)
       throw new Fatal(`${from} holds no corpus objects: nothing to ${action}; check --from`);
 
-    // Content settled by the stored sha256 only where the ETag cannot say (objects written in parts).
-    const checked = [];
-    const sameContent = async (a, b) => {
-      if (a.size !== b.size) return false;
-      if (!a.etag.includes('-') && !b.etag.includes('-')) return a.etag === b.etag;
-      const [x, y] = await Promise.all([client.head(from, a.key), client.head(to, b.key)]);
-      checked.push(a.key);
-      return Boolean(x?.sha256 && x.sha256 === y?.sha256);
-    };
-    const rows = await compare(src, dst, sameContent);
+    const rows = compare(src, dst);
     const total = (pick) => rows.reduce((n, r) => n + pick(r), 0);
-    const listed = (label, objects) => {
-      const shown = objects.slice(0, maxLines);
-      for (const o of shown) log(`  ${label} ${o.key}`);
+    const listed = (label, objects, cap = maxLines) => {
+      const shown = objects.slice(0, cap);
+      for (const o of shown) log(`  ${label} ${o.key ?? o}`);
       if (objects.length > shown.length)
         log(`  … and ${objects.length - shown.length} more ${label}`);
     };
+    const unknown = rows.flatMap((r) => r.unknown);
+    const ignored = () => {
+      log(
+        `ignored: ${source.ignored.length} keys in ${from} and ${target.ignored.length} in ${to} ` +
+          'under the folders are not shaped like corpus keys',
+      );
+      listed('ignored', source.ignored, Math.min(5, maxLines));
+      listed('ignored', target.ignored, Math.min(5, maxLines));
+    };
+    const unknownNote = (n) => (n ? `, cannot compare ${n}` : '');
 
     if (action === 'plan' || action === 'copy') {
       for (const r of rows)
         log(
           `${r.folder}: source ${r.source.count} (${sizeText(r.source.bytes)}), target ${r.target.count}; ` +
             `missing ${r.missing.length} (${sizeText(bytesOf(r.missing))}), different ${r.different.length}, ` +
-            `only in target ${r.extra.length}`,
+            `only in target ${r.extra.length}${unknownNote(r.unknown.length)}`,
         );
+      ignored();
       const missing = rows.flatMap((r) => r.missing);
       const different = rows.flatMap((r) => r.different);
       log(
         `total: source ${total((r) => r.source.count)} objects (${sizeText(total((r) => r.source.bytes))}); ` +
           `to copy ${missing.length} (${sizeText(bytesOf(missing))}); different ${different.length}; ` +
-          `only in target ${total((r) => r.extra.length)} (never deleted)`,
+          `only in target ${total((r) => r.extra.length)} (never deleted)${unknownNote(unknown.length)}`,
       );
       listed('different', different);
+      listed('cannot-compare', unknown);
       if (action === 'plan') return 0;
 
       const work = [...missing];
@@ -555,7 +571,7 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
       const a = src.get(r.folder) ?? new Map();
       const b = dst.get(r.folder) ?? new Map();
       const extra = options['allow-extra'] ? [] : r.extra;
-      const same = !r.missing.length && !r.different.length && !extra.length;
+      const same = !r.missing.length && !r.different.length && !r.unknown.length && !extra.length;
       clean &&= same;
       log(
         `${same ? 'ok      ' : 'DIFFERS '}${r.folder}: count ${r.source.count}/${r.target.count}, ` +
@@ -563,6 +579,7 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
           (same ? (r.extra.length ? ` (${r.extra.length} only in target, allowed)` : '') : ''),
       );
     }
+    ignored();
     listed(
       'missing',
       rows.flatMap((r) => r.missing),
@@ -571,6 +588,12 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
       'different',
       rows.flatMap((r) => r.different),
     );
+    if (unknown.length) {
+      log(
+        `${unknown.length} objects of the same size carry an ETag that is not an MD5: the listing cannot compare them`,
+      );
+      listed('cannot-compare', unknown);
+    }
     if (!options['allow-extra'])
       listed(
         'only-in-target',
@@ -579,12 +602,12 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
 
     // The listing cannot show the metadata: a sample (or all, --deep) of the matched objects is read
     // head to head for the sha256 the corpus reader checks every body against, and the content type.
-    // Objects already named as different are not read again.
+    // Objects already named as different or not comparable are not read again.
     const matched = rows.flatMap((r) => {
       const b = dst.get(r.folder) ?? new Map();
-      const differs = new Set(r.different);
+      const settled = new Set([...r.different, ...r.unknown]);
       return [...(src.get(r.folder) ?? new Map())]
-        .filter(([name, o]) => b.has(name) && !differs.has(o))
+        .filter(([name, o]) => b.has(name) && !settled.has(o))
         .map(([, o]) => o);
     });
     for (let i = matched.length - 1; i > 0; i--) {
@@ -611,8 +634,6 @@ export async function runTransfer(argv, { client, log = console.log, random = Ma
       `metadata: ${heads.length} of ${matched.length} matched objects read head to head, ${metaDiffers.length} differ`,
     );
     listed('metadata-differs', metaDiffers);
-    if (checked.length)
-      log(`${checked.length} objects written in parts were compared by their stored sha256`);
     clean &&= metaDiffers.length === 0;
     log(
       clean
