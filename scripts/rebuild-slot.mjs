@@ -739,6 +739,26 @@ function refuseOpenBaseline(name, read, counts) {
 }
 
 /**
+ * Every person the register gives a role is served with a name: the batch that carries a company's roles
+ * carries its people (`registryRows`). A role whose person has no row is a slot written, at least in part,
+ * by code that did not carry them — a resume over such a build's `registry` receipt skips the stage, and
+ * nothing later reads those people. Their pages answer 404. A verdict, before the slot gets its version.
+ */
+function refuseNamelessPeople(name, read) {
+  const missing = read(
+    `SELECT COUNT(DISTINCT r.subject_id) AS n FROM registry_roles r
+      WHERE r.subject_kind = 'person' AND r.subject_id NOT LIKE 'local:%'
+        AND NOT EXISTS (SELECT 1 FROM registry_persons p WHERE p.indent = r.subject_id)`,
+    ([row]) => Number.isInteger(row?.n) && row.n >= 0,
+  )[0].n;
+  if (missing)
+    throw new SlotVerdict(
+      `${name} holds ${missing} person(s) with a role in the register and no name: its register was ` +
+        'written by code that did not carry the people. The slot is not ready — build it again without resume',
+    );
+}
+
+/**
  * The verification, a stage of its own: it needs nothing but the slot, so it runs right after the ship and
  * again later on the same slot without building anything (`SIGMA_REBUILD_VERIFY=1`). The ship's receipt says
  * what the slot must hold and which rules built it; the slot is counted against it, the integrity gate runs,
@@ -776,6 +796,7 @@ export async function verifySlot(name, { read, apply, runId, check = assertInteg
         refreshedSince(read, builtAt),
     );
   refuseOpenBaseline(name, read, counts);
+  refuseNamelessPeople(name, read);
   let results;
   try {
     results = await check(read, { label: `rebuilt slot ${name}`, exit: false });

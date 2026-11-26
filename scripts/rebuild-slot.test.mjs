@@ -1546,6 +1546,29 @@ test('a slot whose register baseline was never accepted is refused, once, before
   assert.deepEqual(s.stamp(), []);
 });
 
+test('a resume over a register written without its people is refused before it gets a version', async (t) => {
+  // The build stopped after the registry stage, and its batches carried the roles without the people (a
+  // build by earlier code). The resume skips the stage on its receipt; nothing later reads those people.
+  const s = builtSlot(t);
+  const run = (id, extra) =>
+    slotRun(s, { runId: id, register: registerOnePerson, catchUp: acceptBaseline, ...extra });
+  await assert.rejects(
+    runRebuild({}, run('run-a', { stopAfter: 'registry' }).ops),
+    /stopped after/,
+  );
+  s.slot.exec('DELETE FROM registry_persons');
+  const resumed = run('run-b');
+  const refused = await runRebuild({ resume: true }, resumed.ops).catch((error) => error);
+  assert.match(
+    refused.message,
+    /holds 1 person\(s\) with a role in the register and no name.*build it again without resume/,
+  );
+  assert.ok(verdictEvent(refused), 'a verdict: no new attempt verifies it again');
+  assert.ok(!resumed.ran.includes('registry'), 'the stage was skipped on its receipt');
+  assert.deepEqual(s.stamp(), [], 'no version');
+  assert.ok(!('verify' in s.receipts()), 'no verification receipt');
+});
+
 test('a slot with no register at all needs no baseline', async (t) => {
   // Nothing asked of the register, nothing read: the cursors alone, the baseline still open. The local
   // build carries them into the snapshot the ship takes whole.

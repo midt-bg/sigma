@@ -931,7 +931,9 @@ in-place отдалеченият път не е приложим за пъле�
    `true` или `false`; всичко друго се отказва, вместо да тръгне пълно изграждане.
 
    Слот, изграден от код отпреди пренасянето на `registry_persons`, може да е без имената на лицата от
-   регистъра (страниците им връщат 404) и с неприета отправна точка. Познава се така:
+   регистъра (страниците им връщат 404) и с неприета отправна точка. Проверката отказва и двете и такъв
+   слот не получава версия — включително когато `"resume"` продължи изграждане, чийто регистър е писан от
+   стария код. Слот, който вече носи версия от по-стара проверка, се познава така:
 
    ```bash
    wrangler d1 execute <слот> --remote --command "SELECT (SELECT COUNT(DISTINCT r.subject_id) FROM registry_roles r WHERE r.subject_kind = 'person' AND r.subject_id NOT LIKE 'local:%' AND NOT EXISTS (SELECT 1 FROM registry_persons p WHERE p.indent = r.subject_id)) AS without_name, (SELECT baseline_status FROM registry_entry_state) AS baseline"
