@@ -584,8 +584,9 @@ export async function checkFrameworkCeilingsUnsummed(runner) {
 //     raw_contract_annex_evidence / raw_contract_values (scripts/work-staging-schema.sql); the full build
 //     applies it to the raw publications, `@refresh-batch amendments` to the served rows a window reaches.
 //     This proves a BUILD against it before the build ships: each c:e:/c:o: contract is staged through
-//     raw_served_contract_value_base, the projection the amendments batch re-values from, and evaluated by
-//     the same views; any row whose verdict, money, currency, rate or annex count differs FAILS the build.
+//     raw_served_contract_value_base, which reads a served row as the amendments batch reads it (a test
+//     holds the two readings equal), and evaluated by the same views; any row whose verdict, money,
+//     currency, rate or annex count differs FAILS the build.
 //     It writes and empties transient staging and evaluates every contract at once, so it runs only on a
 //     local work database (BUILD_CHECKS, assertIntegrity `build: true`) and never in a served gate.
 //     Two kinds of legacy row are held as stored, because their stored inputs cannot settle them: a row

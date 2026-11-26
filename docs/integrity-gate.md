@@ -133,9 +133,9 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    key, not a twin. The definition is one query, `AMENDMENT_OCID_TWINS_SQL`: the gate counts it and
    `refresh-slice.sql` deletes it on every refresh, so the gate is the post-condition of that removal.
 8. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
-   contract of the work database is staged through `raw_served_contract_value_base`, the projection the
-   daily `amendments` batch re-values from, and evaluated by the rule itself (`raw_contract_annex_evidence`
-   / `raw_contract_values`). Any row whose `value_flag`, `amount_eur`, other amounts (`amount`,
+   contract of the work database is staged through `raw_served_contract_value_base`, which reads a served
+   row as the daily `amendments` batch does (a test holds the two equal), and evaluated by the rule itself
+   (`raw_contract_annex_evidence` / `raw_contract_values`). Any row whose `value_flag`, `amount_eur`, other amounts (`amount`,
    `current_value`, `signing_value_eur`, `current_value_eur`; money to half a cent), current-value currency
    or conversion marker, signing rate (relative 1e-9) or annex count differs **fails the build**. The detail
    gives the count, the count per kind and the `amount_eur` that would move, never a row. It proves that the

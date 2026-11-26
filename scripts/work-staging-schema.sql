@@ -828,8 +828,10 @@ WHERE win_rn = 1;
 
 -- A served contract as the value rule reads it: the stored signing value and own estimate, the leading
 -- annex of raw_contract_value_annexes, the procedure estimate, and the stored signing rate as the fallback
--- when no rate is loaded. `@refresh-batch amendments` (scripts/refresh-slice.sql) re-values from it, and
--- the build gate's contract-value-rule check (scripts/integrity-checks.mjs) proves every stored row against it.
+-- when no rate is loaded. The build gate's contract-value-rule check (scripts/integrity-checks.mjs) proves
+-- every stored row against it. `@refresh-batch amendments` (scripts/refresh-slice.sql) makes the same
+-- reading over the winners it has already materialised (amend_contract_base); a test holds the two equal,
+-- so a change to either must be made in both.
 -- A legacy row (own_estimate_source NULL) published as value_low keeps that verdict (keep_symbolic): its own
 -- estimate was never stored, so the symbolic test cannot be repeated. Callers filter it by id or by
 -- (tender_id, contract_number); the view is a plain join, so the filter reaches the contracts index.

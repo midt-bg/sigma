@@ -360,7 +360,44 @@ describe('contract-value-rule (build gate)', () => {
     });
   });
 
-  it('agrees with the daily annex path, which re-values from the same projection', async () => {
+  it('reads a contract exactly as the daily annex path reads it', () => {
+    // The daily path keeps its own projection of a served contract, built from the winners it has
+    // already materialised; the check reads the staging view. The two must give the same inputs.
+    const db = built();
+    store(
+      db,
+      'U-LOW',
+      'own_estimate_source = NULL, own_estimate_value = NULL, own_estimate_currency = NULL',
+    );
+    staging(db);
+    annex(db, 'U-OK', 1, 10_000, 13_000);
+    annex(db, 'U-CCY', 2, 12_000, 30_000, 'EUR');
+    annex(db, 'U-LOW', 2, 50_000, 60_000);
+    const slice = read('scripts/refresh-slice.sql');
+    const base = /CREATE TABLE amend_contract_base AS[^;]+;/.exec(slice);
+    if (!base) throw new Error('refresh-slice.sql no longer builds amend_contract_base');
+    db.exec(slice.slice(0, base.index + base[0].length));
+    const columns = `id, signed_at, currency, signing_value, prior_signing_rate, framework, current_value,
+      current_value_currency, proc_est_native, proc_est_currency, own_estimate_value,
+      own_estimate_currency, own_estimate_source, annex_count, natural_key`;
+    const daily = db
+      .prepare(
+        `SELECT ${columns}, own_estimate_source = 'legacy:value_low' AS keep_symbolic
+        FROM amend_contract_base ORDER BY id`,
+      )
+      .all();
+    const view = db
+      .prepare(
+        `SELECT ${columns}, keep_symbolic FROM raw_served_contract_value_base
+        WHERE id IN (SELECT id FROM amend_contract_base) ORDER BY id`,
+      )
+      .all();
+    expect(daily.length).toBeGreaterThanOrEqual(3);
+    expect(daily.some((row) => row.keep_symbolic === 1)).toBe(true);
+    expect(view).toEqual(daily);
+  });
+
+  it('agrees with the daily annex path after it has re-valued a contract', async () => {
     const db = built();
     store(
       db,
