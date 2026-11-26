@@ -780,6 +780,34 @@ describe('contract value evidence across full and daily imports', () => {
       amount: 10_000,
       flag: 'annex_total_suspect',
     },
+    {
+      label: 'a doubled total carried forward by an unchanged annex',
+      first: [10_000, 20_000],
+      second: [20_000, 20_000],
+      amount: 10_000,
+      flag: 'annex_total_suspect',
+    },
+    {
+      label: 'a doubled total carried forward unchanged in lev at the peg',
+      first: [10_000, 20_000],
+      second: [39_116.6, 39_116.6, null, undefined, undefined, 'BGN'],
+      amount: 10_000,
+      flag: 'annex_total_suspect',
+    },
+    {
+      label: 'a doubled total that a later annex corrects',
+      first: [10_000, 20_000],
+      second: [20_000, 11_000],
+      amount: 11_000,
+      flag: 'ok',
+    },
+    {
+      label: 'a real increase followed by an unchanged annex',
+      first: [10_000, 12_000],
+      second: [12_000, 12_000],
+      amount: 12_000,
+      flag: 'ok',
+    },
   ])('keeps $label consistent through replay and catch-up', ({ first, second, amount, flag }) => {
     const rebuilt = freshDb();
     const caughtUp = freshDb();
@@ -928,6 +956,32 @@ describe('contract value evidence across full and daily imports', () => {
       raw_value_delta: 15_000,
     });
     expect(snapshot(db).contract).toMatchObject({ value_flag: 'ok', amount_eur: 17_000 });
+  });
+
+  it('reads a later annex on the exact double of a legacy unchanged restatement as inherited', () => {
+    const db = freshDb(true);
+    db.exec(`INSERT INTO amendments (id, natural_key, unp, contract_number, document_number, published_at, source,
+      value_before, value_after, value_delta, value_restated, value_treatment, currency)
+      VALUES ('am:TEST-UNP:TEST-CONTRACT:ANNEX-1', 'am:TEST-UNP:TEST-CONTRACT:ANNEX-1', 'TEST-UNP', 'TEST-CONTRACT',
+        'ANNEX-1', '2026-06-03', 'eop:annexes:2026-06-03', 10000, 10000, 0, 1, 'unchanged_restated', 'EUR')`);
+    db.exec(read(`${migrationDir}/0029_contract_value_evidence.sql`));
+    staging(db);
+    signing(db);
+    amendment(db, 2, [20_000, 20_000]);
+    daily(db);
+    expect(snapshot(db).contract).toMatchObject({
+      value_flag: 'annex_total_suspect',
+      amount_eur: 10_000,
+    });
+
+    // The replayed source publication confirms it through the raw total.
+    staging(db);
+    amendment(db, 1, [10_000, 20_000, 10_000, 10_000, 'unchanged_restated']);
+    daily(db);
+    expect(snapshot(db).contract).toMatchObject({
+      value_flag: 'annex_total_suspect',
+      amount_eur: 10_000,
+    });
   });
 
   it('carries only the established symbolic verdict for an older contract without its estimate', () => {
