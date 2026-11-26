@@ -205,29 +205,42 @@ test('a registry batch carries its rows, the queue it cleared and what it queued
     CREATE TABLE registry_roles(eik TEXT, subject_id TEXT);
     CREATE TABLE registry_queue(eik TEXT PRIMARY KEY, reason TEXT, queued_at TEXT);
     CREATE TABLE registry_sync(id INTEGER PRIMARY KEY, changes_through TEXT);
+    CREATE TABLE registry_persons(indent TEXT PRIMARY KEY, name TEXT);
+    CREATE TABLE registry_identity_observations(eik TEXT, registry_indent TEXT, subject_kind TEXT);
     INSERT INTO registry_deeds VALUES('111111111','А ООД'),('222222222','Б ООД');
     INSERT INTO registry_roles VALUES('111111111','hash-1');
     INSERT INTO registry_queue VALUES('333333333','new','2026-09-17T10:00:00Z');
-    INSERT INTO registry_sync VALUES(1,'2026-09-17');`);
-  assert.deepEqual(registryTables(db), ['registry_deeds', 'registry_queue', 'registry_roles']);
-  const sql = registryBatchSql(
-    db,
-    ['111111111'],
-    ['registry_deeds', 'registry_roles'],
-    ['registry_sync'],
-    '2026-09-17T09:00:00Z',
-  );
+    INSERT INTO registry_sync VALUES(1,'2026-09-17');
+    INSERT INTO registry_persons VALUES('hash-1','Петър Иванов Тестов'),('hash-2','Иван Петров Тестов');
+    INSERT INTO registry_identity_observations VALUES('111111111','hash-1','person'),
+      ('222222222','hash-2','person'),('111111111',NULL,'person'),('111111111','hash-3','collective');`);
+  const carry = registryTables(db);
+  assert.deepEqual(carry, {
+    byCompany: [
+      'registry_deeds',
+      'registry_identity_observations',
+      'registry_queue',
+      'registry_roles',
+    ],
+    persons: ['registry_persons'],
+    cursors: ['registry_sync'],
+  });
+  const sql = registryBatchSql(db, ['111111111'], carry, '2026-09-17T09:00:00Z');
   assert.match(sql, /DELETE FROM registry_queue WHERE eik IN \('111111111'\);/);
   assert.match(sql, /INSERT OR REPLACE INTO "registry_deeds"[\s\S]*'111111111'/);
   assert.ok(!sql.includes('222222222'), 'only the batch travels');
   assert.match(sql, /INSERT OR REPLACE INTO "registry_queue"[\s\S]*'333333333'/);
+  // The person the batch's partida names travels with it; the other company's does not.
+  assert.match(sql, /INSERT OR REPLACE INTO "registry_persons"[\s\S]*'hash-1'/);
+  assert.ok(!sql.includes('hash-2'), 'only the batch’s people travel');
   assert.match(sql, /DELETE FROM "registry_sync";/);
   assert.match(sql, /INSERT OR REPLACE INTO "registry_sync"/);
 
   // The accepted baseline is written after the last batch, so an empty batch carries the cursors alone.
-  const cursorsOnly = registryBatchSql(db, [], ['registry_deeds'], ['registry_sync'], null);
+  const cursorsOnly = registryBatchSql(db, [], carry, null);
   assert.ok(!cursorsOnly.includes('registry_queue'), 'no batch, no queue statement');
   assert.ok(!cursorsOnly.includes('registry_deeds'), 'no batch, no company rows');
+  assert.ok(!cursorsOnly.includes('registry_persons'), 'no batch, no people');
   assert.match(cursorsOnly, /DELETE FROM "registry_sync";/);
   assert.match(cursorsOnly, /INSERT OR REPLACE INTO "registry_sync"/);
 
@@ -250,6 +263,12 @@ test('a registry batch carries its rows, the queue it cleared and what it queued
         // The registry's receipt rides with its last cursors.
         assert.equal(sent.length, 3);
         assert.match(sent[2][1], /INSERT OR REPLACE INTO "registry_sync"[\s\S]*SEAL;\n$/);
+        // A registry table no rule carries stops the build before a batch is sent, with its name.
+        db.exec('CREATE TABLE registry_new_facts(indent TEXT, fact TEXT)');
+        assert.throws(
+          () => slotFlusher('slot', db, () => assert.fail('nothing is sent')),
+          /does not know how to carry registry_new_facts/,
+        );
         db.close();
       })
   );
@@ -1303,4 +1322,93 @@ test('a ship receipt that does not describe the slot is refused, not passed', as
     /no such table: state_owned_eik|counts differ from the snapshot/,
   );
   assert.deepEqual(s.stamp(), []);
+});
+
+// The register as its two passes leave it in the local files: the first (`--defer-baseline`) reads a
+// winner's partida — the deed, the person in a role there, the observation that names them — and leaves
+// the baseline open; the catch-up pass accepts it. The person is registry-only: no declaration names them.
+const TEST_EIK = '000000019';
+const TEST_INDENT = 'f'.repeat(64);
+const TEST_PERSON = 'Петър Иванов Тестов';
+function registerOnePerson(db) {
+  db.exec(`INSERT INTO registry_deeds (eik, name, outcome, fetched_at)
+      VALUES ('${TEST_EIK}', 'ТЕСТ ГРУП ЕООД', 'ok', '2026-11-20T00:00:00Z');
+    INSERT INTO registry_identity_observations VALUES ('${TEST_EIK}', '${TEST_EIK}', '00070',
+      '20261120000001', '2026-11-20', 0, '${TEST_INDENT}', 'EGN', '${TEST_PERSON}',
+      'ПЕТЪР ИВАНОВ ТЕСТОВ', 'person', 'h', '2026-11-20T00:00:00Z');
+    INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id, subject_name,
+      entry_number, added_on)
+      VALUES ('${TEST_EIK}', '${TEST_EIK}', '00070', 'manager', 'person', '${TEST_INDENT}',
+        '${TEST_PERSON}', '20261120000001', '2026-11-20');
+    INSERT INTO registry_persons VALUES ('${TEST_INDENT}', '${TEST_PERSON}', 'EGN');
+    INSERT OR REPLACE INTO registry_entry_state (id, seeded_through, baseline_status)
+      VALUES (1, '2026-11-20', 'building');`);
+  return [TEST_EIK];
+}
+const acceptBaseline = (path) => {
+  const db = new DatabaseSync(path);
+  try {
+    db.exec(`UPDATE registry_entry_state SET baseline_status = 'ready',
+      baseline_completed_at = '2026-11-20T01:00:00Z'`);
+  } finally {
+    db.close();
+  }
+};
+// The person page's own lookup of the name (packages/db/src/queries/registry.ts): without it the page is
+// not found, whatever roles the slot holds.
+const PERSON_SQL = readFileSync('packages/db/src/queries/registry.ts', 'utf8')
+  .match(/const PERSON_SQL = `([^`]+)`/)[1]
+  .replace('?1', '?');
+// Every row the slot serves, table by table — what a build leaves for the site to read.
+const served = (s) =>
+  Object.fromEntries(
+    s.slot
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'
+           AND name NOT LIKE 'search_index_%' AND name NOT IN ('rebuild_state', 'data_version')
+         ORDER BY name`,
+      )
+      .all()
+      .map(({ name }) => [
+        name,
+        s.slot
+          .prepare(`SELECT * FROM "${name}"`)
+          .all()
+          // When a row was made or refreshed is the clock's, not the build's.
+          .map(({ created_at, refreshed_at, ...r }) => JSON.stringify(r))
+          .sort(),
+      ]),
+  );
+
+test('a registry-only person reaches the slot, and the person page finds them', async (t) => {
+  const s = builtSlot(t);
+  await runRebuild(
+    {},
+    slotRun(s, { runId: 'run-a', register: registerOnePerson, catchUp: acceptBaseline }).ops,
+  );
+  assert.equal(s.slot.prepare(PERSON_SQL).get(TEST_INDENT)?.name, TEST_PERSON);
+  assert.equal(s.stamp().length, 1);
+});
+
+test('a build stopped after any stage serves the same rows as one that never stopped', async (t) => {
+  const whole = builtSlot(t);
+  await runRebuild(
+    {},
+    slotRun(whole, { runId: 'run-a', register: registerOnePerson, catchUp: acceptBaseline }).ops,
+  );
+  const expected = served(whole);
+  assert.ok(expected.registry_persons.length, 'the whole build serves the person');
+  for (const stopAfter of ['prepare', 'import', 'registry', 'local'])
+    for (const [label, flags, runId] of [
+      ['retry', {}, 'run-a'],
+      ['resume', { resume: true }, 'run-b'],
+    ]) {
+      const s = builtSlot(t);
+      const run = (id, extra) =>
+        slotRun(s, { runId: id, register: registerOnePerson, catchUp: acceptBaseline, ...extra });
+      await assert.rejects(runRebuild({}, run('run-a', { stopAfter }).ops), /stopped after/);
+      await runRebuild(flags, run(runId).ops);
+      assert.deepEqual(served(s), expected, `a ${label} after ${stopAfter}`);
+      assert.equal(s.slot.prepare(PERSON_SQL).get(TEST_INDENT)?.name, TEST_PERSON);
+    }
 });

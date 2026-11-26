@@ -72,8 +72,8 @@ test('a deferred baseline is accepted only after the declarations name their com
 
 // The rebuild sends each batch of partidas into the slot as it is read (scripts/rebuild-slot.mjs), and a
 // build resumed after the register takes the register from the slot alone: the import's own batches must
-// reach the slot as they are.
-test('the import’s batches reach the slot as the local build holds them', async () => {
+// reach the slot as they are, the person a partida names included.
+test('the import’s batches reach the slot as the local build holds them, the people included', async () => {
   const { slotFlusher } = await import('../rebuild-slot.mjs');
   const migrated = () => {
     const db = new DatabaseSync(':memory:');
@@ -137,15 +137,17 @@ test('the import’s batches reach the slot as the local build holds them', asyn
       .all()
       .map((r) => JSON.stringify(r))
       .sort();
-  const carried = db
-    .prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'registry_%'
-         AND name <> 'registry_persons'`,
-    )
+  const registry = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'registry_%'")
     .all()
     .map((r) => r.name);
-  for (const table of carried) assert.deepEqual(rows(slot, table), rows(db, table), table);
+  for (const table of registry) assert.deepEqual(rows(slot, table), rows(db, table), table);
   assert.equal(slot.prepare('SELECT COUNT(*) n FROM registry_roles').get().n, 1);
+  // The name the person page looks the person up by.
+  assert.equal(
+    slot.prepare('SELECT name FROM registry_persons WHERE indent = ?').get(indent)?.name,
+    'Петър Иванов Тестов',
+  );
   db.close();
   slot.close();
 });

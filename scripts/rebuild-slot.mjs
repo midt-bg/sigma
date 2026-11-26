@@ -237,10 +237,7 @@ export function checkpointRun(done, runId, commit) {
 /** A batch of partidas, straight into the slot: its rows, the queue entries it cleared or added, and
  * the registry's own cursors. The rebuild then resumes at the batch, not at the first partida. */
 export function slotFlusher(name, snapshot, apply) {
-  const tables = registryTables(snapshot);
-  const cursors = ['registry_sync', 'registry_entry_state', 'registry_entry_passes'].filter((t) =>
-    snapshot.prepare(`SELECT 1 FROM sqlite_master WHERE name=${sqlLiteral(t)}`).get(),
-  );
+  const carry = registryTables(snapshot);
   let since = null;
   const send =
     apply ??
@@ -251,7 +248,7 @@ export function slotFlusher(name, snapshot, apply) {
       cwd: webDir,
     });
   const flush = (eiks, seal) => {
-    send('registry-batch', registryBatchSql(snapshot, eiks, tables, cursors, since) + seal);
+    send('registry-batch', registryBatchSql(snapshot, eiks, carry, since) + seal);
     since = new Date().toISOString();
   };
   // A batch takes its companies alone: the import also hands it how many partidas it has read so far.
@@ -459,24 +456,47 @@ export async function rehydrate(db, name, work, deps = {}) {
   return tables;
 }
 
-/** The registry tables keyed by company, as the local build holds them. */
+/** The register's cursors: a batch carries them whole, as the local build holds them after it. */
+export const REGISTRY_CURSORS = ['registry_sync', 'registry_entry_state', 'registry_entry_passes'];
+
+/**
+ * How a registry batch carries each registry table of the local build. A build resumed after the register
+ * takes the register from the slot alone (`rehydrate`), so whatever a batch leaves out is gone from it:
+ *
+ *   byCompany  every table with an `eik` column — the batch's companies' rows replace the slot's
+ *   persons    registry_persons — one row per person the batch's partidas name (their observations), as
+ *              the read left it; a person is keyed by the register's identifier, not by a company
+ *   cursors    REGISTRY_CURSORS — whole
+ *
+ * A registry table that is none of these stops the build with its name, before any batch is sent.
+ */
 export function registryTables(snapshot) {
-  return snapshot
+  const carry = { byCompany: [], persons: [], cursors: [] };
+  const unknown = [];
+  for (const { name } of snapshot
     .prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'registry_%' ORDER BY name",
     )
-    .all()
-    .map((r) => r.name)
-    .filter((name) =>
-      snapshot
-        .prepare(`PRAGMA table_info(${sqlIdent(name)})`)
-        .all()
-        .some((c) => c.name === 'eik'),
+    .all()) {
+    const columns = snapshot
+      .prepare(`PRAGMA table_info(${sqlIdent(name)})`)
+      .all()
+      .map((c) => c.name);
+    if (columns.includes('eik')) carry.byCompany.push(name);
+    else if (name === 'registry_persons') carry.persons.push(name);
+    else if (REGISTRY_CURSORS.includes(name)) carry.cursors.push(name);
+    else unknown.push(name);
+  }
+  if (unknown.length)
+    throw new Error(
+      `A registry batch does not know how to carry ${unknown.join(', ')}: a build resumed after the ` +
+        'register would lose it. Say how in registryTables (scripts/rebuild-slot.mjs).',
     );
+  return carry;
 }
 
 /** Rows for one batch of companies, as statements that replace whatever the slot holds for them. */
-export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) {
+export function registryBatchSql(snapshot, eiks, { byCompany, persons, cursors }, since = null) {
   const list = eiks.map(sqlLiteral).join(',');
   // No batch: the cursors alone, for the accepted baseline written after the last one.
   const out = eiks.length ? [`DELETE FROM registry_queue WHERE eik IN (${list});`] : [];
@@ -497,21 +517,22 @@ export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) 
       ),
     );
   }
-  for (const table of [...tables, ...cursors]) {
+  // The people the batch's partidas name: reading a partida rewrote each one's row.
+  const named = `SELECT registry_indent FROM registry_identity_observations
+    WHERE eik IN (${list}) AND subject_kind = 'person' AND registry_indent IS NOT NULL`;
+  for (const table of [...byCompany, ...persons, ...cursors]) {
     const cols = snapshot
       .prepare(`PRAGMA table_info(${sqlIdent(table)})`)
       .all()
       .map((c) => c.name);
-    if (!cols.length) continue;
+    const select = `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)}`;
     const rows = cursors.includes(table)
-      ? snapshot.prepare(`SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)}`).all()
-      : eiks.length
-        ? snapshot
-            .prepare(
-              `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} WHERE eik IN (${list})`,
-            )
-            .all()
-        : [];
+      ? snapshot.prepare(select).all()
+      : !eiks.length
+        ? []
+        : persons.includes(table)
+          ? snapshot.prepare(`${select} WHERE indent IN (${named})`).all()
+          : snapshot.prepare(`${select} WHERE eik IN (${list})`).all();
     if (cursors.includes(table)) out.push(`DELETE FROM ${sqlIdent(table)};`);
     out.push(
       ...insertStatements(table, cols, rows).map((sql) =>
