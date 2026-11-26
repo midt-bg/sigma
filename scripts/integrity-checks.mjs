@@ -545,13 +545,15 @@ export const OCDS_SOURCE_VALUE_DECISION_SQL = `ranked AS (
   FROM ocds o
 ), signings AS (
   SELECT k.unp, k.contract_number, MIN(c.signing_value) AS signing_value,
-    MIN(COALESCE(NULLIF(c.currency, ''), 'BGN')) AS currency
+    MIN(c.signing_currency_raw) AS currency
   FROM keys k
   CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
   WHERE c.id GLOB 'c:[eo]:*'
   GROUP BY k.unp, k.contract_number
-  HAVING COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
-    AND COUNT(DISTINCT COALESCE(NULLIF(c.currency, ''), 'BGN')) = 1
+  HAVING MAX(c.ocds_signing_incomplete) = 0
+    AND COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
+    AND COUNT(NULLIF(TRIM(c.signing_currency_raw), '')) = COUNT(*)
+    AND COUNT(DISTINCT c.signing_currency_raw) = 1
 ), decided AS (
   SELECT r.natural_key, r.unp, r.contract_number, r.rn, r.release_only, r.release_value, s.signing_value,
     r.rn = 1 AND r.release_only AND s.signing_value IS NOT NULL

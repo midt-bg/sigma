@@ -130,7 +130,7 @@ WHERE source LIKE 'ocds:%'
 -- the leading annex: before = the signing value, after = the release value. Every other OCDS row keeps the
 -- #286 shape (release value as value_before, no after-value), so annex_count and the timeline do not change
 -- and the existing annex guards (the x100 ratio, the x10 step, the doubled total) judge the new value. Not
--- applied: a contract whose publications disagree on the signing value or currency (no single "before"), a
+-- applied: a contract whose publications have missing or different signing values or currencies, a
 -- release in another currency, a non-positive release value, and a release without a document number (its
 -- publication key would then depend on the values rewritten here). The latest release is picked as the
 -- leading annex is (published_at, then natural_key). The daily path makes the same decision over the window
@@ -148,12 +148,12 @@ WITH ocds AS (
   WHERE a.source LIKE 'ocds:%' AND a.unp IS NOT NULL AND a.contract_number IS NOT NULL
 ), signings AS (
   SELECT unp, contract_number, MIN(signing_value) AS signing_value,
-    MIN(COALESCE(NULLIF(currency, ''), 'BGN')) AS currency
+    MIN(currency) AS currency
   FROM raw_contract_publications
   WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND unp IS NOT NULL AND contract_number IS NOT NULL
   GROUP BY unp, contract_number
   HAVING COUNT(signing_value) = COUNT(*) AND COUNT(DISTINCT signing_value) = 1
-    AND COUNT(DISTINCT COALESCE(NULLIF(currency, ''), 'BGN')) = 1
+    AND COUNT(NULLIF(TRIM(currency), '')) = COUNT(*) AND COUNT(DISTINCT currency) = 1
 )
 SELECT o.id, o.currency, s.signing_value AS value_before, o.release_value AS value_after
 FROM ocds o

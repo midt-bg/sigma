@@ -140,8 +140,10 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
 8. **OCDS corrections use the latest eligible release** (`ocds-source-value`). An OCDS amendment with an
    after-value fails the check if a later OCDS release supersedes it or an EOP annex exists under either
    contract number. For contracts without an EOP annex, the latest release must have an after-value if it
-   has a document number, carries a positive value in the signing currency and differs from the unambiguous
-   signing value by at least half a cent in that currency. A missing after-value fails the local build gate.
+   has a document number, carries a positive value in the explicit signing currency and differs from the
+   unambiguous signing value by at least half a cent in that currency. The served signing records retain
+   incomplete evidence from the same contract key, including unpriced lots dropped at admission.
+   A missing after-value on an eligible release fails the local build gate.
    The served gate reports it as a warning because a daily window only re-evaluates contracts it reaches.
    Slots built before the correction rule can carry these rows until a refresh reaches them or a full build
    replaces the slot. The check reports counts only.

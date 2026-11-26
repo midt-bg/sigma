@@ -14,6 +14,13 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BASE_SCHEMA } from './base-schema';
 import {
+  BASE_CONTRACT_COLS,
+  baseSqlLiteral,
+  escapeSqlText,
+  mapBaseRecord,
+} from '../../ingest/src/base';
+import { AMENDMENT_STAGING_COLS, releaseToAmendments } from '../../ingest/src/ocds';
+import {
   assertIntegrity,
   checkContractValueRule,
   checkOcdsSourceValue,
@@ -62,11 +69,11 @@ function initWorkDb(dbPath: string): void {
 
 // A new staging lifecycle between two daily windows: the raw tables hold only the next window.
 function resetRawStaging(dbPath: string): void {
-  const rows = sqliteJson<{ name: string }>(
+  const rows = sqliteJson<{ name: string; type: 'view' | 'table' }>(
     dbPath,
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'raw_%' ORDER BY name DESC",
+    "SELECT name, type FROM sqlite_master WHERE type IN ('view', 'table') AND name GLOB 'raw_*' ORDER BY type DESC",
   );
-  for (const row of rows) sqlite(dbPath, `DROP TABLE IF EXISTS "${row.name}";`);
+  for (const row of rows) sqlite(dbPath, `DROP ${row.type} IF EXISTS "${row.name}";`);
   readScript(dbPath, workStagingSchema);
 }
 
@@ -163,6 +170,64 @@ function eopAnnex(before: number, after: number): string {
 
 const NOTE = 'Техническа грешка в стойността на договора';
 
+function mappedSigning(
+  lot: string,
+  value: number | undefined,
+  currency: string | undefined,
+  day = '2026-10-05',
+): string {
+  const row = mapBaseRecord(
+    'contracts',
+    {
+      uniqueProcurementNumber: UNP,
+      tenderId: TENDER_ID,
+      noticeId: `DOC-${lot}-${day}`,
+      publicationDate: day,
+      contractNumber: CONTRACT,
+      contractDate: '2026-10-05',
+      lotIdentifier: lot,
+      buyerName: 'Община Тест',
+      buyerRegistryNumber: '733456781',
+      supplierName: 'ТЕСТ ГРУП ЕООД',
+      supplierRegisterNumber: '787777778',
+      contractValue: value,
+      contractCurrency: currency,
+    },
+    { day, fetchedAt: `${day}T06:00:00Z` },
+  );
+  expect(row).toMatchObject({ signing_value: value ?? null, currency: currency ?? null });
+  const values = BASE_CONTRACT_COLS.map((col) => baseSqlLiteral('contracts', col, row?.[col]));
+  return `INSERT INTO raw_contracts (${BASE_CONTRACT_COLS.join(', ')}) VALUES (${values.join(', ')});`;
+}
+
+function mappedRelease(currency: string): string {
+  const day = '2026-11-24';
+  const [row] = releaseToAmendments(
+    {
+      ocid: OCID,
+      id: `${OCID}-${day}-contractupdate`,
+      date: `${day}T06:00:00Z`,
+      tag: ['contractUpdate'],
+      tender: { id: TENDER_ID },
+      contracts: [{ id: CONTRACT, dateSigned: '2026-10-05', value: { amount: CORRECT, currency } }],
+    },
+    {
+      source: `ocds:${day}`,
+      datasetUri: null,
+      resourceUri: null,
+      year: 2026,
+      fetchedAt: `${day}T06:00:00Z`,
+    },
+  );
+  expect(row).toMatchObject({ value_before: CORRECT, value_after: null, currency });
+  const values = AMENDMENT_STAGING_COLS.map((col) => {
+    const value = row?.[col];
+    if (value == null) return 'NULL';
+    return typeof value === 'number' ? String(value) : escapeSqlText(value);
+  });
+  return `INSERT INTO raw_amendments (${AMENDMENT_STAGING_COLS.join(', ')}) VALUES (${values.join(', ')});`;
+}
+
 interface ContractState {
   annex_count: number;
   current_value: number | null;
@@ -194,7 +259,8 @@ const homeValue = (dbPath: string) =>
 const integrityRunner = (dbPath: string) => (sql: string) =>
   sqliteJson<Record<string, unknown>>(dbPath, sql);
 const valueRule = (dbPath: string) => checkContractValueRule(integrityRunner(dbPath));
-const sourceValueGate = (dbPath: string) => checkOcdsSourceValue(integrityRunner(dbPath));
+const sourceValueGate = (dbPath: string, build = false) =>
+  checkOcdsSourceValue(integrityRunner(dbPath), { build });
 
 let dir: string;
 let fullDb: string;
@@ -517,6 +583,89 @@ describe('OCDS source correction on the daily path', () => {
     expect(timeline(dailyDb)).toEqual(timeline(fullDb));
     expect(timeline(dailyDb)).toMatchObject([{ value_before: CORRECT, value_after: CORRECT + 1 }]);
   });
+});
+
+describe('OCDS source eligibility from mapped publications', () => {
+  function replayUpdate(update: string): void {
+    const snapshot = () => [contractState(dailyDb), timeline(dailyDb), homeValue(dailyDb)];
+    const before = snapshot();
+    resetRawStaging(dailyDb);
+    sqlite(dailyDb, update);
+    readScript(dailyDb, script('refresh-slice.sql'));
+    expect(snapshot()).toEqual(before);
+  }
+
+  it('keeps the veto from an unpriced sibling lot across admission and amendment-only replay', async () => {
+    const signings = `${tender()} ${mappedSigning('LOT-1', MISTYPED, 'EUR')}
+      ${mappedSigning('LOT-2', undefined, 'EUR')}`;
+    const update = mappedRelease('EUR');
+    fullBuild(fullDb, `${signings} ${update}`);
+    dailyWindows(dailyDb, [signings, update]);
+    replayUpdate(update);
+
+    for (const db of [fullDb, dailyDb]) {
+      expect(sqliteJson(db, 'SELECT COUNT(*) AS n FROM contracts')).toEqual([{ n: 1 }]);
+      expect(contractState(db)).toMatchObject({
+        annex_count: 1,
+        current_value: null,
+        value_flag: 'review',
+        amount: MISTYPED,
+      });
+      expect(timeline(db)).toMatchObject([{ value_before: CORRECT, value_after: null }]);
+      expect(homeValue(db)).toBe(MISTYPED);
+      expect(await sourceValueGate(db, true)).toMatchObject({ ok: true, warn: false });
+      expect((await valueRule(db)).ok).toBe(true);
+    }
+    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
+    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
+
+    // A later publication supplies the missing signing evidence on the same lot.
+    const replacement = `${mappedSigning('LOT-1', MISTYPED, 'EUR', '2026-11-25')}
+      ${mappedSigning('LOT-2', MISTYPED, 'EUR', '2026-11-25')}`;
+    resetRawStaging(dailyDb);
+    sqlite(dailyDb, replacement);
+    readScript(dailyDb, script('refresh-slice.sql'));
+    rmSync(fullDb);
+    fullBuild(fullDb, `${signings} ${update} ${replacement}`);
+    for (const db of [fullDb, dailyDb]) {
+      expect(sqliteJson(db, 'SELECT COUNT(*) AS n FROM contracts')).toEqual([{ n: 2 }]);
+      expect(contractState(db)?.current_value).toBe(CORRECT);
+      expect(homeValue(db)).toBe(2 * CORRECT);
+      expect(await sourceValueGate(db, true)).toMatchObject({ ok: true, warn: false });
+    }
+    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
+    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
+  });
+
+  it.each([
+    ['missing', undefined, 'BGN', null],
+    ['explicit BGN', 'BGN', 'BGN', CORRECT],
+    ['explicit EUR', 'EUR', 'EUR', CORRECT],
+  ] as const)(
+    'requires source currency (%s) for a matching release',
+    async (_, currency, releaseCurrency, after) => {
+      const signing = `${tender(releaseCurrency)} ${mappedSigning('LOT-1', MISTYPED, currency)}`;
+      const update = mappedRelease(releaseCurrency);
+      fullBuild(fullDb, `${signing} ${update}`);
+      dailyWindows(dailyDb, [signing, update]);
+      replayUpdate(update);
+
+      for (const db of [fullDb, dailyDb]) {
+        expect(sqliteJson(db, 'SELECT currency, signing_currency_raw FROM contracts')).toEqual([
+          { currency: releaseCurrency, signing_currency_raw: currency ?? null },
+        ]);
+        expect(contractState(db)).toMatchObject({
+          current_value: after,
+          amount: after ?? MISTYPED,
+        });
+        expect(timeline(db)).toMatchObject([{ value_after: after }]);
+        expect(await sourceValueGate(db, true)).toMatchObject({ ok: true, warn: false });
+        expect((await valueRule(db)).ok).toBe(true);
+      }
+      expect(contractState(dailyDb)).toEqual(contractState(fullDb));
+      expect(timeline(dailyDb)).toEqual(timeline(fullDb));
+    },
+  );
 });
 
 describe('OCDS source value integrity check', () => {

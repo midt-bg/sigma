@@ -812,6 +812,7 @@ WHERE x.amount IS NOT NULL
 DELETE FROM raw_contract_buyer_tenders;
 DELETE FROM raw_previous_ocds_contract_buyers;
 
+WITH incomplete_signings AS MATERIALIZED (SELECT * FROM raw_incomplete_signing_keys)
 INSERT OR IGNORE INTO contracts
   (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at,
    contract_number, signing_value, current_value, current_value_currency, annex_count, eu_funded, bids_received,
@@ -822,7 +823,7 @@ INSERT OR IGNORE INTO contracts
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
    eauction, framework, accelerated, strategic, own_estimate_source, own_estimate_value, own_estimate_currency,
-   signing_currency_raw, signing_contractor_eik, signing_contractor_status)
+   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete)
 SELECT
   p.contract_id,
   't:' || x.unp,
@@ -868,12 +869,14 @@ SELECT
   x.procurement_currency,
   x.currency,
   ci.eik_clean,
-  ci.eik_status
+  ci.eik_status,
+  COALESCE(s.incomplete, 0)
 FROM raw_contract_admissions p
 JOIN raw_contracts x ON x.id = p.raw_id
 JOIN raw_serving_contract_authorities a ON a.id = x.id
 JOIN raw_contract_value_results v ON v.id = x.id
-JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw;
+JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw
+LEFT JOIN incomplete_signings s ON s.unp = x.unp AND s.contract_number = x.contract_number;
 
 -- @ocds-buyer-selection start
 INSERT OR IGNORE INTO raw_contract_buyer_tenders (tender_id)

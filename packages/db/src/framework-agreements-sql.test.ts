@@ -29,6 +29,7 @@ const migrations = [
   'packages/db/migrations/0007_amendment_value_suspect.sql',
   'packages/db/migrations/0008_amendment_provenance.sql',
   'packages/db/migrations/0029_contract_value_evidence.sql',
+  'packages/db/migrations/0030_ocds_signing_evidence.sql',
   'scripts/work-staging-schema.sql',
 ].map((p) => resolve(root, p));
 const precomputePath = resolve(root, 'scripts/precompute.sql');

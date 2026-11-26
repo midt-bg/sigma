@@ -17,7 +17,8 @@ const handles: DatabaseSync[] = [];
 function freshDb(legacy = false) {
   const db = new DatabaseSync(':memory:');
   handles.push(db);
-  for (const migration of legacy ? migrations.filter((name) => name < '0029') : migrations) {
+  for (const migration of migrations) {
+    if (legacy && migration.startsWith('0029')) continue;
     db.exec(read(`${migrationDir}/${migration}`));
   }
   return db;

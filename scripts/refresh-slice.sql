@@ -1558,6 +1558,8 @@ FROM raw_contract_admissions p CROSS JOIN ocds_contract_buyers b ON b.contract_i
 
 DELETE FROM contracts WHERE id IN (SELECT id FROM raw_contract_value_existing);
 
+-- Signing promotion replaces a feed's rows on this key. Recompute their veto from the same window.
+WITH incomplete_signings AS MATERIALIZED (SELECT * FROM raw_incomplete_signing_keys)
 INSERT OR IGNORE INTO contracts
   (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at, contract_number, signing_value, current_value,
    current_value_currency,
@@ -1568,7 +1570,7 @@ INSERT OR IGNORE INTO contracts
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
    eauction, framework, accelerated, strategic, own_estimate_source, own_estimate_value, own_estimate_currency,
-   signing_currency_raw, signing_contractor_eik, signing_contractor_status)
+   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete)
 SELECT
   p.contract_id,
   't:' || x.unp,
@@ -1617,12 +1619,14 @@ SELECT
   x.procurement_currency,
   x.currency,
   ci.eik_clean,
-  ci.eik_status
+  ci.eik_status,
+  COALESCE(s.incomplete, 0)
 FROM raw_contract_admissions p
 JOIN raw_contracts x ON x.id = p.raw_id
 JOIN raw_serving_contract_authorities a ON a.id = x.id
 JOIN raw_contract_value_results v ON v.id = x.id
-JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw;
+JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw
+LEFT JOIN incomplete_signings s ON s.unp = x.unp AND s.contract_number = x.contract_number;
 
 -- @ocds-buyer-selection start
 INSERT OR IGNORE INTO raw_contract_buyer_tenders (tender_id)
@@ -1928,13 +1932,15 @@ ranked AS (
   FROM ocds o
 ), signings AS (
   SELECT k.unp, k.contract_number, MIN(c.signing_value) AS signing_value,
-    MIN(COALESCE(NULLIF(c.currency, ''), 'BGN')) AS currency
+    MIN(c.signing_currency_raw) AS currency
   FROM keys k
   CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
   WHERE c.id GLOB 'c:[eo]:*'
   GROUP BY k.unp, k.contract_number
-  HAVING COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
-    AND COUNT(DISTINCT COALESCE(NULLIF(c.currency, ''), 'BGN')) = 1
+  HAVING MAX(c.ocds_signing_incomplete) = 0
+    AND COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
+    AND COUNT(NULLIF(TRIM(c.signing_currency_raw), '')) = COUNT(*)
+    AND COUNT(DISTINCT c.signing_currency_raw) = 1
 ), decided AS (
   SELECT r.natural_key, r.unp, r.contract_number, r.rn, r.release_only, r.release_value, s.signing_value,
     r.rn = 1 AND r.release_only AND s.signing_value IS NOT NULL

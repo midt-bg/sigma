@@ -161,6 +161,7 @@ describe('transient staging statements', () => {
       'DROP VIEW IF EXISTS raw_contract_value_annex_history',
       'DROP VIEW IF EXISTS raw_contract_value_staged_annexes',
       'DROP VIEW IF EXISTS raw_amendment_publications',
+      'DROP VIEW IF EXISTS raw_incomplete_signing_keys',
       'DROP VIEW IF EXISTS raw_contract_publications',
       'DROP VIEW IF EXISTS raw_ocds_scoped_names',
       'DROP VIEW IF EXISTS raw_ocds_contract_buyer_moves',
