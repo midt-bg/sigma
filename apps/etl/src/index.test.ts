@@ -943,6 +943,7 @@ describe('RefreshWorkflow — the as-of date and the generation move with the se
     opts: { dieAt?: string; after?: Record<string, () => Promise<void> | void> } = {},
   ): WorkflowStep =>
     ({
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
@@ -1165,6 +1166,7 @@ describe('RefreshWorkflow — the as-of date and the generation move with the se
     let once: ReturnType<typeof served> | undefined;
     let again: ReturnType<typeof served> | undefined;
     const replaying: WorkflowStep = {
+      async sleep(_name: string, _duration: unknown) {},
       async do<T>(
         name: string,
         configOrCallback: Record<string, unknown> | (() => Promise<T>),
