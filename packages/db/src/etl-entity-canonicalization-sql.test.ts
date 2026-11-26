@@ -68,7 +68,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
 
 describe('ETL entity canonicalization through real SQL scripts', () => {
   it('uses the authority-name mode and all deterministic tiebreakers in both ETL paths', () => {
-    const modeEik = '000695114';
+    const modeEik = '000999044';
     const caseEik = '300000002';
     const lengthEik = '300000003';
     const lexicalEik = '300000004';
@@ -81,13 +81,13 @@ describe('ETL entity canonicalization through real SQL scripts', () => {
              (source, fetched_at, unp, authority_eik, authority_name, authority_type)
            VALUES
              ('eop:tenders:mode-1', '2026-06-01T00:00:00Z', 'UNP-MODE-1', '${modeEik}',
-              'БСУ Д-р Петър Берон', 'public'),
+              'БСУ Тестово', 'public'),
              ('eop:tenders:mode-2', '2026-06-01T00:00:00Z', 'UNP-MODE-2', '${modeEik}',
-              'МИНИСТЕРСТВО НА ОБРАЗОВАНИЕТО И НАУКАТА', 'public'),
+              'МИНИСТЕРСТВО НА ТЕСТОВЕТЕ', 'public'),
              ('eop:tenders:mode-3', '2026-06-01T00:00:00Z', 'UNP-MODE-3', '${modeEik}',
-              'МИНИСТЕРСТВО НА ОБРАЗОВАНИЕТО И НАУКАТА', 'public'),
+              'МИНИСТЕРСТВО НА ТЕСТОВЕТЕ', 'public'),
              ('eop:tenders:mode-4', '2026-06-01T00:00:00Z', 'UNP-MODE-4', '${modeEik}',
-              'МИНИСТЕРСТВО НА ОБРАЗОВАНИЕТО И НАУКАТА', 'public'),
+              'МИНИСТЕРСТВО НА ТЕСТОВЕТЕ', 'public'),
              ('eop:tenders:case-1', '2026-06-01T00:00:00Z', 'UNP-CASE-1', '${caseEik}',
               'TEST AUTHORITY', 'public'),
              ('eop:tenders:case-2', '2026-06-01T00:00:00Z', 'UNP-CASE-2', '${caseEik}',
@@ -106,10 +106,10 @@ describe('ETL entity canonicalization through real SQL scripts', () => {
               contract_date, signing_value, currency, contractor_eik, contractor_name)
            VALUES
              ('eop:contracts:subunit', '2026-06-01T00:00:00Z', 'UNP-MODE-1', '${modeEik}',
-              'СУ „Христо Ботев" гр. Пловдив', 'CONTRACT-SUBUNIT', '2026-06-01', 1000, 'BGN',
+              'СУ „Тестово" гр. Тест', 'CONTRACT-SUBUNIT', '2026-06-01', 1000, 'BGN',
               '400000011', 'Subunit Bidder'),
              ('eop:contracts:case', '2026-06-01T00:00:00Z', 'UNP-MODE-2', '${modeEik}',
-              'Министерство на образованието и науката', 'CONTRACT-CASE', '2026-06-01', 1000,
+              'Министерство на тестовете', 'CONTRACT-CASE', '2026-06-01', 1000,
               'BGN', '400000012', 'Case Bidder');`,
         );
 
@@ -118,7 +118,7 @@ describe('ETL entity canonicalization through real SQL scripts', () => {
             dbPath,
             `SELECT MIN(authority_name) AS name FROM raw_tenders WHERE authority_eik = '${modeEik}'`,
           )[0]?.name,
-        ).toBe('БСУ Д-р Петър Берон');
+        ).toBe('БСУ Тестово');
 
         readScript(dbPath, scriptPath);
 
@@ -130,7 +130,7 @@ describe('ETL entity canonicalization through real SQL scripts', () => {
              ORDER BY bulstat`,
           ),
         ).toEqual([
-          { bulstat: modeEik, name: 'МИНИСТЕРСТВО НА ОБРАЗОВАНИЕТО И НАУКАТА' },
+          { bulstat: modeEik, name: 'МИНИСТЕРСТВО НА ТЕСТОВЕТЕ' },
           { bulstat: caseEik, name: 'Test Authority' },
           { bulstat: lengthEik, name: 'Longer authority name' },
           { bulstat: lexicalEik, name: 'Alpha key' },
@@ -146,11 +146,11 @@ describe('ETL entity canonicalization through real SQL scripts', () => {
         ).toEqual([
           {
             contract_number: 'CONTRACT-CASE',
-            ordering_unit_name: 'Министерство на образованието и науката',
+            ordering_unit_name: 'Министерство на тестовете',
           },
           {
             contract_number: 'CONTRACT-SUBUNIT',
-            ordering_unit_name: 'СУ „Христо Ботев" гр. Пловдив',
+            ordering_unit_name: 'СУ „Тестово" гр. Тест',
           },
         ]);
       });

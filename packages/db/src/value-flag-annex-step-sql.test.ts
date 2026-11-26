@@ -92,8 +92,8 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
  *  estimate is the same, which keeps every case away from the estimate-driven flags (the стотинки
  *  band sits at 95x-105x the estimate; the largest aggregate used here is 30x). */
 const SIGNING_BGN = 195_583;
-const AUTH_EIK = '000695114';
-const BIDDER_EIK = '831646048';
+const AUTH_EIK = '999000033';
+const BIDDER_EIK = '999000024';
 
 interface AmendmentStep {
   before: number | null;

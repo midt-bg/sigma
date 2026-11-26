@@ -10,7 +10,7 @@ import { BASE_SCHEMA } from './base-schema';
 // Issue #247, second reported contract. The стотинки band added in #298 measures against the PROCEDURE
 // estimate, so it only fires when the whole procedure is one lot. On a multi-lot procedure the dropped
 // decimal point still lands at exactly 100x the LOT's own estimate, while the ratio to the procedure
-// total lands wherever that lot's share puts it - 00621-2020-0008 sits at 89.8x and is served at
+// total lands wherever that lot's share puts it - 99921-2020-0008 sits at 89.8x and is served at
 // 14,212,416 EUR instead of ~142,000 EUR.
 //
 // The own-row estimate CANNOT be used on its own: docs/etl.md is explicit that for framework and
@@ -81,8 +81,8 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
 
 /** The lot's own estimate: 195_583 BGN = exactly 100_000 EUR, so the multiples read directly. */
 const OWN_BGN = 195_583;
-const AUTH_EIK = '000695114';
-const BIDDER_EIK = '831646048';
+const AUTH_EIK = '999000033';
+const BIDDER_EIK = '999000024';
 
 interface Case {
   unp: string;
@@ -165,7 +165,7 @@ describe('стотинки band measured against the lot estimate (issue #247)',
     it(`${label}: catches the reported multi-lot case the procedure band misses`, () => {
       withEtlDb(label, (dbPath) => {
         seed(dbPath, [
-          // The shape of 00621-2020-0008: exactly 100x the lot estimate, but only 89.8x the procedure
+          // The shape of 99921-2020-0008: exactly 100x the lot estimate, but only 89.8x the procedure
           // estimate, so the #298 band (which measures against the procedure) never sees it.
           {
             unp: 'UNP-LOT100',

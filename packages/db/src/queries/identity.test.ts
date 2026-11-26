@@ -14,8 +14,8 @@ import {
 
 describe('company slug', () => {
   it('uses the bare ЕИК for valid bidders (clean, shareable)', () => {
-    expect(companySlug('eik:103267194')).toBe('103267194');
-    expect(bidderIdFromSlug('103267194')).toBe('eik:103267194');
+    expect(companySlug('eik:999000044')).toBe('999000044');
+    expect(bidderIdFromSlug('999000044')).toBe('eik:999000044');
   });
   it('reversibly encodes name-keyed bidders (incl. Cyrillic, no collisions)', () => {
     const id = 'name:МЕДПРИМЕР ООД; АЛФА ФАРМА ООД';
@@ -25,7 +25,7 @@ describe('company slug', () => {
     expect(bidderIdFromSlug(slug)).toBe(id);
   });
   it('round-trips a 13-digit ЕИК', () => {
-    expect(bidderIdFromSlug(companySlug('eik:8316417910124'))).toBe('eik:8316417910124');
+    expect(bidderIdFromSlug(companySlug('eik:9990008000001'))).toBe('eik:9990008000001');
   });
   it('resolves the unknown bidder linked from contract pages', () => {
     expect(companySlug('unknown:анонимен')).toBe('unknown:анонимен');
@@ -35,8 +35,8 @@ describe('company slug', () => {
 
 describe('authority / contract slugs', () => {
   it('round-trips authority ЕИК', () => {
-    expect(authoritySlug('auth:000695089')).toBe('000695089');
-    expect(authorityIdFromSlug('000695089')).toBe('auth:000695089');
+    expect(authoritySlug('auth:999000055')).toBe('999000055');
+    expect(authorityIdFromSlug('999000055')).toBe('auth:999000055');
   });
   it('round-trips contract rowid', () => {
     expect(contractSlug('c:52')).toBe('52');
@@ -51,19 +51,19 @@ describe('authority / contract slugs', () => {
   });
   it('bareContractId strips the c: prefix without URL-encoding (CSV/export form)', () => {
     // Raw form keeps "/" and "%" literal — contractSlug layers encoding on top of this.
-    expect(bareContractId('c:e:UNP:ОП20-42/22/:5:eik:102130456:1')).toBe(
-      'e:UNP:ОП20-42/22/:5:eik:102130456:1',
+    expect(bareContractId('c:e:UNP:ОП20-42/22/:5:eik:999000077:1')).toBe(
+      'e:UNP:ОП20-42/22/:5:eik:999000077:1',
     );
     expect(bareContractId('c:52')).toBe('52');
     // No leading c: → returned unchanged.
     expect(bareContractId('52')).toBe('52');
     // contractSlug builds on bareContractId, encoding only the path-unsafe chars ("/" here).
-    const id = 'c:e:UNP:ОП20-42/22/:5:eik:102130456:1';
+    const id = 'c:e:UNP:ОП20-42/22/:5:eik:999000077:1';
     expect(contractSlug(id)).toBe(bareContractId(id).replace(/\//g, '%2F'));
   });
   it('percent-encodes path-unsafe chars so the URL segment is always valid', () => {
     // "/" splits the route into multiple segments → 404 without encoding.
-    const id = 'c:e:00797-2020-0039:93-ОП20-42/22/:5:eik:102130456:1';
+    const id = 'c:e:99997-2020-0039:93-ОП20-42/22/:5:eik:999000077:1';
     const slug = contractSlug(id);
     expect(slug).not.toContain('/');
     expect(slug).toContain('%2F');
@@ -141,8 +141,8 @@ describe('person slug (свързани лица)', () => {
 
 describe('hrefForEntity', () => {
   it('maps a raw domain id (FTS ref) to its route', () => {
-    expect(hrefForEntity('authority', 'auth:000695089')).toBe('/authorities/000695089');
-    expect(hrefForEntity('company', 'eik:103267194')).toBe('/companies/103267194');
+    expect(hrefForEntity('authority', 'auth:999000055')).toBe('/authorities/999000055');
+    expect(hrefForEntity('company', 'eik:999000044')).toBe('/companies/999000044');
     expect(hrefForEntity('contract', 'c:52')).toBe('/contracts/52');
   });
   it('produces a URL-safe href for contract ids containing "/"', () => {
@@ -154,7 +154,7 @@ describe('hrefForEntity', () => {
 
 describe('slug decode edge cases', () => {
   it('authoritySlug returns an unprefixed id verbatim (no auth: prefix)', () => {
-    expect(authoritySlug('000695089')).toBe('000695089');
+    expect(authoritySlug('999000055')).toBe('999000055');
   });
 
   it('round trips a procedure-scoped OCDS buyer without a public EIK', () => {

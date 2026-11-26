@@ -19,11 +19,11 @@ describe('typeLabel', () => {
 
 describe('toCompanyListItem', () => {
   const base = {
-    bidder_id: 'eik:103267194',
+    bidder_id: 'eik:999000044',
     name: 'ТЕСТ ООД',
     kind: 'company' as const,
     ownership_kind: null,
-    eik: '103267194',
+    eik: '999000044',
     eik_valid: 1,
     settlement: 'София',
     won_eur: 50000,
@@ -37,7 +37,7 @@ describe('toCompanyListItem', () => {
 
   it('maps core fields', () => {
     const item = toCompanyListItem(base);
-    expect(item.slug).toBe('103267194');
+    expect(item.slug).toBe('999000044');
     expect(item.name).toBe('ТЕСТ ООД');
     expect(item.kind).toBe('company');
     expect(item.wonEur).toBe(50000);
@@ -79,8 +79,8 @@ describe('toCompanyListItem', () => {
 
 describe('toAuthorityListItem', () => {
   const base = {
-    authority_id: 'auth:000695089',
-    name: 'Министерство на финансите',
+    authority_id: 'auth:999000055',
+    name: 'Министерство на тестовете',
     type_group: 'министерство' as const,
     settlement: 'София',
     region: 'Столична',
@@ -96,8 +96,8 @@ describe('toAuthorityListItem', () => {
 
   it('maps core fields', () => {
     const item = toAuthorityListItem(base);
-    expect(item.slug).toBe('000695089');
-    expect(item.name).toBe('Министерство на финансите');
+    expect(item.slug).toBe('999000055');
+    expect(item.name).toBe('Министерство на тестовете');
     expect(item.typeGroup).toBe('министерство');
     expect(item.typeLabel).toBe('министерство');
     expect(item.settlement).toBe('София');
