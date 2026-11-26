@@ -74,10 +74,10 @@ before(() => {
     CREATE TABLE registry_identity_snapshots(eik TEXT PRIMARY KEY, source_hash TEXT);
     CREATE TABLE state_owned_eik(eik TEXT PRIMARY KEY, ownership_kind TEXT, canonical_name TEXT);
     CREATE TABLE public_owned_eik(eik TEXT PRIMARY KEY, ownership_kind TEXT);
-    INSERT INTO registry_deeds VALUES ('200101236','ТЕСТ ГРУП','AD','ok'),('121396123','ТЕСТ ПОЩИ','EAD','ok');
+    INSERT INTO registry_deeds VALUES ('999000190','ТЕСТ ГРУП','AD','ok'),('999000180','ТЕСТ ПОЩИ','EAD','ok');
     INSERT INTO registry_company_history VALUES
-      ('200101236','[{"name":"ТЕСТ ГРУП ХОЛДИНГ","legalForm":"АД","until":"2026-07-06"},{"name":"ТЕСТ ГРУП","legalForm":"АД","until":null}]','h1','2026-09-15');
-    INSERT INTO state_owned_eik VALUES ('121396123','state','"ТЕСТ ПОЩИ" ЕАД, гр.София');
+      ('999000190','[{"name":"ТЕСТ ГРУП ХОЛДИНГ","legalForm":"АД","until":"2026-07-06"},{"name":"ТЕСТ ГРУП","legalForm":"АД","until":null}]','h1','2026-09-15');
+    INSERT INTO state_owned_eik VALUES ('999000180','state','"ТЕСТ ПОЩИ" ЕАД, гр.София');
   `);
   db.exec(
     fs.readFileSync(
