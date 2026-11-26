@@ -7,6 +7,8 @@ import {
   IDLE_WAIT_MS,
   preflight,
   RELEASE_ENVIRONMENTS,
+  SALT_MIN_LENGTH,
+  saltVerdict,
   wranglerReads,
 } from './deploy-preflight.mjs';
 
@@ -14,7 +16,7 @@ const ID = '11111111-2222-4333-8444-555555555555';
 const ready = {
   SIGMA_D1_NAME: 'sigma-blue',
   SIGMA_D1_ID: ID,
-  SUPPRESSION_SALT: 'salt',
+  SUPPRESSION_SALT: '0123456789abcdef'.repeat(4),
   SUPPRESSION_KEY_VERSION: '1',
 };
 const run = (environment, env, { resolved = ID, named = env.SIGMA_D1_NAME, held = 2 } = {}) =>
@@ -65,6 +67,35 @@ test('production without the takedown salt or key version is refused', () => {
     run('production', { ...ready, SUPPRESSION_KEY_VERSION: '' }).failures.join('\n'),
     /SUPPRESSION_KEY_VERSION is not a number/,
   );
+});
+
+test('a salt written from an empty file is refused; a short one only warns at deploy time', () => {
+  for (const salt of [' ', '\n', '\r\n', '\t \n']) {
+    const { failures } = run('production', { ...ready, SUPPRESSION_SALT: salt });
+    assert.match(failures.join('\n'), /SUPPRESSION_SALT is only whitespace for production/);
+  }
+  const short = run('production', { ...ready, SUPPRESSION_SALT: 'abcdefgh' });
+  assert.deepEqual(short.failures, []);
+  assert.match(short.warnings.join('\n'), /shorter than 32 characters: rotate it/);
+  const trivial = run('production', { ...ready, SUPPRESSION_SALT: '0'.repeat(64) });
+  assert.match(trivial.warnings.join('\n'), /SUPPRESSION_SALT for production is trivial/);
+  for (const { warnings, failures } of [short, trivial])
+    assert.doesNotMatch([...warnings, ...failures].join('\n'), /abcdefgh|0{8}/, 'never the value');
+});
+
+test('the salt verdict tells empty, blank, short, trivial, padded and usable apart', () => {
+  const good = 'Zq81kX0pL2mN7vB4cR9tY6wE3uI5oA1s';
+  assert.equal(good.length, SALT_MIN_LENGTH);
+  assert.equal(saltVerdict(undefined), 'missing');
+  assert.equal(saltVerdict(''), 'missing');
+  assert.equal(saltVerdict('\n'), 'blank');
+  assert.equal(saltVerdict(good.slice(1)), 'short');
+  assert.equal(saltVerdict(`  ${good.slice(1)}  `), 'short', 'padding does not count');
+  assert.equal(saltVerdict('ab'.repeat(32)), 'trivial');
+  assert.equal(saltVerdict('abcdefg'.repeat(5)), 'trivial');
+  assert.equal(saltVerdict('abcdefgh'.repeat(4)), 'ok');
+  assert.equal(saltVerdict(`${good}\n`), 'padded');
+  assert.equal(saltVerdict(good), 'ok');
 });
 
 test('production refuses to release in place over rows built by other rules', () => {
