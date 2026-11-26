@@ -232,11 +232,90 @@ const wrangler = (args, output = false) =>
     maxBuffer: 256 * 1024 * 1024,
   });
 /** One statement's answer from the slot: its rows and what D1 says the statement cost. */
-const d1Answer = (name, sql) =>
+const d1Answer = (name, sql, cli = wrangler) =>
   parseWranglerJson(
-    wrangler(['d1', 'execute', name, '--remote', '--json', '--command', sql], true),
+    cli(['d1', 'execute', name, '--remote', '--json', '--command', sql], true),
   )[0] ?? {};
 const d1Json = (name, sql) => d1Answer(name, sql).results ?? [];
+
+const LIVE_LINK_PAGE_SIZE = 250;
+
+// The release hold and idle gate keep the source tables stable across these independent reads.
+// A D1 export blocks serving queries even when it names only these two tables.
+function captureLiveLinks(db, live, cli, sleep) {
+  const tables = ['interest_links', 'interest_link_evidence'];
+  const read = (label, sql, complete) => {
+    const rows = retryD1(
+      () => {
+        const { success, results } = d1Answer(live, sql, cli);
+        if (success !== true || !Array.isArray(results) || !complete(results))
+          throw new Error(`Incomplete live-link read from ${live} (${label})`);
+        return results;
+      },
+      { label: `capture live links: ${label}`, sleep },
+    );
+    sleep(BREATHER_MS);
+    return rows;
+  };
+  // An indexed upper bound lets us distinguish a real empty table from a short or empty page
+  // before the end. The only cursor values sent to Wrangler are checked integers.
+  const [ends] = read(
+    'table bounds',
+    `SELECT ${tables.map((t) => `(SELECT MAX(rowid) FROM ${t}) AS ${t}`).join(', ')}`,
+    ([row, extra]) =>
+      row && !extra && tables.every((t) => row[t] === null || Number.isSafeInteger(row[t])),
+  );
+  // The prior links can reference people or bidders absent from the new corpus. The loader will
+  // rebuild them after reading the baseline. Check the evidence-to-link FK separately.
+  const local = new DatabaseSync(db, { enableForeignKeyConstraints: false });
+  try {
+    local.exec('BEGIN');
+    let pages = 0;
+    for (const table of tables) {
+      const end = ends[table];
+      const quotedTable = sqlIdent(table);
+      const columns = local
+        .prepare(`PRAGMA table_info(${quotedTable})`)
+        .all()
+        .map((c) => c.name);
+      const projection = columns.map(sqlIdent).join(', ');
+      const insert = local.prepare(
+        `INSERT INTO ${quotedTable} (${projection}) VALUES (${columns.map(() => '?').join(', ')})`,
+      );
+      let cursor = null;
+      while (cursor !== end) {
+        const lower = cursor === null ? '' : ` AND rowid > ${cursor}`;
+        const rows = read(
+          table,
+          `SELECT rowid AS rebuild_rowid, ${projection} FROM ${quotedTable}
+            WHERE rowid <= ${end}${lower} ORDER BY rowid LIMIT ${LIVE_LINK_PAGE_SIZE}`,
+          (rows) =>
+            rows.length > 0 &&
+            rows.length <= LIVE_LINK_PAGE_SIZE &&
+            (rows.length === LIVE_LINK_PAGE_SIZE || rows.at(-1)?.rebuild_rowid === end) &&
+            rows.every((row, i) => {
+              const previous = i === 0 ? cursor : rows[i - 1].rebuild_rowid;
+              return (
+                Number.isSafeInteger(row?.rebuild_rowid) &&
+                row.rebuild_rowid <= end &&
+                (previous === null || row.rebuild_rowid > previous) &&
+                columns.every((column) => Object.hasOwn(row, column))
+              );
+            }),
+        );
+        for (const row of rows) insert.run(...columns.map((column) => row[column]));
+        cursor = rows.at(-1).rebuild_rowid;
+        progress('precompute', ++pages);
+      }
+    }
+    if (local.prepare('PRAGMA foreign_key_check(interest_link_evidence)').get())
+      throw new Error('Incomplete live-link capture: evidence has no matching link');
+    local.exec('COMMIT');
+  } finally {
+    // Closing rolls back an uncommitted capture, including pages already copied.
+    local.close();
+  }
+}
 
 // The rebuild is hours long and the container can be stopped at any moment (ADR-0049). Its durable
 // store is the idle slot itself: the data is going there anyway, and one file execution in D1 is one
@@ -907,6 +986,7 @@ export async function runRebuild({ verify = false, resume = false }, ops) {
  *   work, today         the local work directory and the day the procurement import reads up to
  *   apply, read         a file into the slot, one read of it (`wranglerFileSender`, `d1Json`)
  *   verifyRead          the verification's reader (`slotReader`)
+ *   liveSleep           pause between live link queries and retries
  *   wrangler, step, sqlite, emit   the CLI, a child step, the sqlite3 shell, `emit-refresh-group`
  *   version             the data version of the code that builds
  *   check, now          the integrity gate and the clock, for the ship's verification
@@ -922,6 +1002,7 @@ export function slotOps({
   read = d1Json,
   verifyRead,
   wrangler: cli = wrangler,
+  liveSleep = sleepSync,
   step: child = step,
   sqlite: shell = sqlite,
   emit = emitRefreshGroup,
@@ -1019,28 +1100,8 @@ export function slotOps({
       );
       await shell('precompute', db, readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8'));
 
-      // 4. The published links the live slot serves, so the declarations gate compares against them.
-      try {
-        const prior = join(work, 'live-links.sql');
-        cli([
-          'd1',
-          'export',
-          live.name,
-          '--remote',
-          '--no-schema',
-          '--table',
-          'interest_links',
-          '--table',
-          'interest_link_evidence',
-          '--output',
-          prior,
-        ]);
-        await shell('precompute', db, readFileSync(prior, 'utf8'));
-      } catch (error) {
-        console.warn(
-          JSON.stringify({ event: 'rebuild_no_live_links', reason: String(error).slice(0, 300) }),
-        );
-      }
+      // 4. Carry the prior links and seals so the declarations gate compares against what was published.
+      captureLiveLinks(db, live.name, cli, liveSleep);
 
       // 5. The declarations, in the job's local mode, against this snapshot — in two halves, because the
       // register was read for the winners and the declarations name companies no winner list contains
