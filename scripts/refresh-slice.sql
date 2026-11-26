@@ -1558,6 +1558,8 @@ FROM raw_contract_admissions p CROSS JOIN ocds_contract_buyers b ON b.contract_i
 
 DELETE FROM contracts WHERE id IN (SELECT id FROM raw_contract_value_existing);
 
+-- Signing promotion replaces a feed's rows on this key. Recompute their veto from the same window.
+WITH incomplete_signings AS MATERIALIZED (SELECT * FROM raw_incomplete_signing_keys)
 INSERT OR IGNORE INTO contracts
   (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at, contract_number, signing_value, current_value,
    current_value_currency,
@@ -1568,7 +1570,7 @@ INSERT OR IGNORE INTO contracts
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
    eauction, framework, accelerated, strategic, own_estimate_source, own_estimate_value, own_estimate_currency,
-   signing_currency_raw, signing_contractor_eik, signing_contractor_status)
+   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete)
 SELECT
   p.contract_id,
   't:' || x.unp,
@@ -1617,12 +1619,14 @@ SELECT
   x.procurement_currency,
   x.currency,
   ci.eik_clean,
-  ci.eik_status
+  ci.eik_status,
+  COALESCE(s.incomplete, 0)
 FROM raw_contract_admissions p
 JOIN raw_contracts x ON x.id = p.raw_id
 JOIN raw_serving_contract_authorities a ON a.id = x.id
 JOIN raw_contract_value_results v ON v.id = x.id
-JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw;
+JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw
+LEFT JOIN incomplete_signings s ON s.unp = x.unp AND s.contract_number = x.contract_number;
 
 -- @ocds-buyer-selection start
 INSERT OR IGNORE INTO raw_contract_buyer_tenders (tender_id)
@@ -1869,6 +1873,91 @@ WHERE source LIKE 'ocds:%'
         OR e.contract_number_raw = amendments.contract_number)
   );
 
+-- Re-evaluate OCDS releases on contracts reached by this window. Find the few keys with OCDS rows
+-- before checking for EOP annexes, which must be looked up by unp to match either contract number.
+-- Earlier windows may have promoted an OCDS release to an after-value. Use that amount when a
+-- later release supersedes it and the row goes back to storing the release amount as value_before.
+-- Ranked staged rows with their own raw_after retain it, as on the full path. The OCDS importer
+-- supplies only value_before. The contracts batch has already refreshed signing values.
+-- The ranking and eligibility block is shared with the ocds-source-value gate (lockstep-tested).
+DROP TABLE IF EXISTS refresh_ocds_value_rows;
+CREATE TABLE refresh_ocds_value_rows AS
+WITH ocds_keys AS MATERIALIZED (
+  SELECT k.unp, k.contract_number
+  FROM raw_contract_value_scope k
+  WHERE EXISTS (
+      SELECT 1 FROM raw_amendments o
+      WHERE o.unp = k.unp AND o.contract_number = k.contract_number AND o.source LIKE 'ocds:%'
+    )
+    OR EXISTS (
+      SELECT 1 FROM amendments o
+      WHERE o.unp = k.unp AND o.contract_number = k.contract_number AND o.source LIKE 'ocds:%'
+    )
+), keys AS MATERIALIZED (
+  SELECT k.unp, k.contract_number
+  FROM ocds_keys k
+  WHERE NOT EXISTS (
+      SELECT 1 FROM raw_amendments e
+      WHERE e.source LIKE 'eop:%' AND e.unp = k.unp
+        AND (e.contract_number = k.contract_number OR e.contract_number_raw = k.contract_number)
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM amendments e
+      WHERE e.source LIKE 'eop:%' AND e.unp = k.unp
+        AND (e.contract_number = k.contract_number OR e.contract_number_raw = k.contract_number)
+    )
+), staged AS MATERIALIZED (
+  SELECT a.natural_key, a.unp, a.contract_number, a.published_at, a.currency, a.document_number,
+    CASE WHEN a.raw_after IS NULL THEN a.value_before ELSE a.raw_after END AS release_value,
+    a.raw_after IS NULL AS release_only
+  FROM keys k
+  JOIN raw_amendment_publications a ON a.unp = k.unp AND a.contract_number = k.contract_number
+  WHERE a.source LIKE 'ocds:%'
+), ocds AS (
+  SELECT * FROM staged
+  UNION ALL
+  SELECT s.natural_key, s.unp, s.contract_number, s.published_at, s.currency, s.document_number,
+    CASE WHEN s.value_after IS NULL THEN s.value_before ELSE s.value_after END, 1
+  FROM keys k
+  CROSS JOIN amendments s ON s.unp = k.unp AND s.contract_number = k.contract_number
+  WHERE s.source LIKE 'ocds:%'
+    AND NOT EXISTS (SELECT 1 FROM staged w WHERE w.natural_key = s.natural_key)
+),
+-- @ocds-value-decision-lockstep start
+ranked AS (
+  SELECT o.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY o.unp, o.contract_number ORDER BY o.published_at DESC, o.natural_key DESC
+    ) AS rn
+  FROM ocds o
+), signings AS (
+  SELECT k.unp, k.contract_number, MIN(c.signing_value) AS signing_value,
+    MIN(c.signing_currency_raw) AS currency
+  FROM keys k
+  CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
+  WHERE c.id GLOB 'c:[eo]:*'
+  GROUP BY k.unp, k.contract_number
+  HAVING MAX(c.ocds_signing_incomplete) = 0
+    AND COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
+    AND COUNT(NULLIF(TRIM(c.signing_currency_raw), '')) = COUNT(*)
+    AND COUNT(DISTINCT c.signing_currency_raw) = 1
+), decided AS (
+  SELECT r.natural_key, r.unp, r.contract_number, r.rn, r.release_only, r.release_value, s.signing_value,
+    r.rn = 1 AND r.release_only AND s.signing_value IS NOT NULL
+      AND NULLIF(r.document_number, '') IS NOT NULL
+      AND r.currency = s.currency
+      AND r.release_value > 0
+      AND ABS(r.release_value - s.signing_value) >= 0.005 AS corrected
+  FROM ranked r
+  LEFT JOIN signings s ON s.unp = r.unp AND s.contract_number = r.contract_number
+)
+-- @ocds-value-decision-lockstep end
+SELECT natural_key, unp, contract_number,
+  CASE WHEN corrected THEN signing_value ELSE release_value END AS value_before,
+  CASE WHEN corrected THEN release_value END AS value_after
+FROM decided
+WHERE release_only;
+
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, contract_number_raw, link_method, unp,
   value_before, value_after, value_delta, currency,
@@ -1952,6 +2041,49 @@ WHERE o.source LIKE 'ocds:%'
   )
 -- @raw-number-twin-lockstep end
 );
+
+-- Apply the shapes decided above for the source-corrected OCDS value: to the served rows (this window's just
+-- promoted, and earlier windows'), to this run's value inputs, and to the winners of the affected contracts,
+-- which `@refresh-batch resolve-annexes` built before the decision. Only rows whose shape changes are written.
+-- The source publishes no delta for an OCDS release, so raw_value_delta stays as promoted.
+UPDATE amendments
+SET value_before = r.value_before,
+    value_after = r.value_after,
+    raw_value_after = r.value_after,
+    value_delta = r.value_after - r.value_before
+FROM refresh_ocds_value_rows r
+WHERE amendments.id = r.natural_key
+  AND (amendments.value_before IS NOT r.value_before OR amendments.value_after IS NOT r.value_after
+    OR amendments.raw_value_after IS NOT r.value_after);
+
+UPDATE raw_contract_value_annexes
+SET value_before = r.value_before, raw_after = r.value_after, effective_after = r.value_after
+FROM refresh_ocds_value_rows r
+WHERE raw_contract_value_annexes.natural_key = r.natural_key
+  AND (raw_contract_value_annexes.value_before IS NOT r.value_before
+    OR raw_contract_value_annexes.raw_after IS NOT r.value_after
+    OR raw_contract_value_annexes.effective_after IS NOT r.value_after);
+
+DELETE FROM refresh_amendment_winners
+WHERE (unp, contract_number) IN (SELECT unp, contract_number FROM refresh_ocds_value_rows);
+INSERT INTO refresh_amendment_winners
+SELECT natural_key, unp, contract_number, currency, effective_after, annex_count
+FROM (
+  SELECT a.natural_key, a.unp, a.contract_number, a.currency, a.effective_after,
+    COUNT(*) OVER (PARTITION BY a.unp, a.contract_number) AS annex_count,
+    ROW_NUMBER() OVER (
+      PARTITION BY a.unp, a.contract_number
+      ORDER BY a.effective_after IS NULL, a.published_at DESC, a.natural_key DESC
+    ) AS win_rn
+  FROM raw_contract_value_annexes a
+  WHERE EXISTS (
+    SELECT 1 FROM refresh_ocds_value_rows r
+    WHERE r.unp = a.unp AND r.contract_number = a.contract_number
+  )
+)
+WHERE win_rn = 1;
+
+DROP TABLE refresh_ocds_value_rows;
 
 -- Materialise affected inputs before the UPDATE to bound D1's statement compiler.
 DROP TABLE IF EXISTS amend_contract_base;

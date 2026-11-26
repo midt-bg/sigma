@@ -137,13 +137,25 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    that annex-side number, and no contract under the number itself. That is a second one-query definition,
    `AMENDMENT_RAW_NUMBER_TWINS_SQL`, counted by the gate and deleted by `refresh-slice.sql` on every
    refresh in the same way; the removed row is no contract's annex input, so no count or sum moves.
-8. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
+8. **OCDS corrections use the latest eligible release** (`ocds-source-value`). An OCDS amendment with an
+   after-value fails the check if a later OCDS release supersedes it or an EOP annex exists under either
+   contract number. For contracts without an EOP annex, the latest release must have an after-value if it
+   has a document number, carries a positive value in the explicit signing currency and differs from the
+   unambiguous signing value by at least half a cent in that currency. The served signing records retain
+   incomplete evidence from the same contract key, including unpriced lots dropped at admission.
+   A missing after-value on an eligible release fails the local build gate.
+   The served gate reports it as a warning because a daily window only re-evaluates contracts it reaches.
+   Slots built before the correction rule can carry these rows until a refresh reaches them or a full build
+   replaces the slot. The check reports counts only.
+9. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
    contract of the work database is staged through `raw_served_contract_value_base`, which reads a served
    row as the daily `amendments` batch does (a test holds the two equal), and evaluated by the rule itself
    (`raw_contract_annex_evidence` / `raw_contract_values`). Any row whose `value_flag`, `amount_eur`, other amounts (`amount`,
    `current_value`, `signing_value_eur`, `current_value_eur`; money to half a cent), current-value currency
-   or conversion marker, signing rate (relative 1e-9) or annex count differs **fails the build**. The detail
-   gives the count, the count per kind and the `amount_eur` that would move, never a row. It proves that the
+   or conversion marker, signing rate (relative 1e-9) or annex count differs **fails the build**. An OCDS
+   release that carries a value corrected at the source (docs/etl.md, „Стойност, поправена в източника само с
+   OCDS изменение") is served as an annex with an after-value, so the check reads it like any other annex.
+   The detail gives the count, the count per kind and the `amount_eur` that would move, never a row. It proves that the
    build and the daily path agree, so a contract that a later window re-values does not move for no reason.
    Two kinds of legacy row (`own_estimate_source` NULL) are **held as stored and counted** in the detail,
    because their stored inputs cannot settle them: a `value_suspect` verdict the rule no longer reaches

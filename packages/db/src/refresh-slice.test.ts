@@ -2298,7 +2298,15 @@ describe('refresh-slice served OCID annex twins', () => {
        ('eop:annexes:${o.published}', 2026, 'eop', '2026-09-09T00:00:00Z', '1', '${o.doc}',
         '${o.number}', '2026-06-02', '${o.published}', '${o.unp}', '${EIK}', 'Община Тест',
         'Test tender', 'works', ${o.before}, ${o.after}, ${o.after - o.before}, 'BGN', 'annex ${o.doc}');`;
-  const ocdsAnnex = (o: { ocid: string; tenderId: string; number: string; doc: string }): string =>
+  // The release value repeats the signing value, as an OCDS-only release almost always does; one that moves
+  // it is a source correction and would become the contract's current value.
+  const ocdsAnnex = (o: {
+    ocid: string;
+    tenderId: string;
+    number: string;
+    doc: string;
+    release: number;
+  }): string =>
     `INSERT INTO raw_amendments
        (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
         contract_number, contract_date, published_at, unp, tender_ext_id, authority_eik,
@@ -2307,7 +2315,7 @@ describe('refresh-slice served OCID annex twins', () => {
      VALUES
        ('ocds:2026-09-01', 2026, 'ocds', '2026-09-02T00:00:00Z', '1', '${o.doc}',
         '${o.number}', '2026-06-02', '2026-09-01', '${o.ocid}', '${o.tenderId}', '${EIK}',
-        'Община Тест', 'Test tender', 'works', 1000, NULL, NULL, 'BGN', 'OCDS annex');`;
+        'Община Тест', 'Test tender', 'works', ${o.release}, NULL, NULL, 'BGN', 'OCDS annex');`;
   // A served OCDS row keyed by its OCID, written the way an earlier window promoted it.
   const servedOcid = (ocid: string, number: string, doc: string): string =>
     `INSERT INTO amendments (id, natural_key, contract_number, unp, value_before, currency,
@@ -2334,7 +2342,7 @@ describe('refresh-slice served OCID annex twins', () => {
        ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-3', published: '2026-07-20', before: 115000, after: 120000 })}
        ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-4', published: '2026-08-03', before: 115000, after: 120000 })}
        ${eopAnnex({ unp: 'UNP-A', number: 'C-A1', doc: 'A1-5', published: '2026-08-20', before: 120000, after: 118000 })}
-       ${ocdsAnnex({ ocid: 'ocds-e82gsb-TA', tenderId: 'TA', number: 'C-A2', doc: 'REL-A2' })}
+       ${ocdsAnnex({ ocid: 'ocds-e82gsb-TA', tenderId: 'TA', number: 'C-A2', doc: 'REL-A2', release: 50000 })}
        ${tender('UNP-B', 'TB')}
        ${contract('UNP-B', 'TB', 'C-B1', 30000)}
        ${eopAnnex({ unp: 'UNP-B', number: 'C-B1', doc: 'B1-1', published: '2026-07-01', before: 30000, after: 33000 })}

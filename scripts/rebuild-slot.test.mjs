@@ -817,9 +817,9 @@ test('the slot preserves annex and signing evidence, including unknown legacy pr
     INSERT INTO tenders (id, source_id, title, authority_id, procedure_type, status)
       VALUES ('t:TEST', 'TEST', 'Test Tender', 'auth:test', 'open', 'awarded');
     INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signing_value, signing_currency_raw,
-      signing_contractor_eik, signing_contractor_status, own_estimate_source)
-      VALUES ('c:e:test', 't:TEST', 'bidder:test', 10000, 'EUR', 10000, 'EUR', '0000000000015', 'valid', 'eop:contracts:2026-06-01'),
-        ('c:e:unverified', 't:TEST', 'bidder:test', 20000, 'EUR', 20000, 'EUR', NULL, 'unverified', 'eop:contracts:2026-06-01');
+      signing_contractor_eik, signing_contractor_status, own_estimate_source, ocds_signing_incomplete)
+      VALUES ('c:e:test', 't:TEST', 'bidder:test', 10000, 'EUR', 10000, 'EUR', '0000000000015', 'valid', 'eop:contracts:2026-06-01', 1),
+        ('c:e:unverified', 't:TEST', 'bidder:test', 20000, 'EUR', 20000, 'EUR', NULL, 'unverified', 'eop:contracts:2026-06-01', 0);
     INSERT INTO amendments (id, natural_key, source, link_method, value_anchor_kind, value_anchor_contractor_eik, contractor_id_status)
       VALUES ('direct', 'direct', 'eop:annexes:2026-06-02', 'value_anchor', 'direct', '0000000000015', 'valid'),
         ('inherited', 'inherited', 'eop:annexes:2026-06-03', 'value_anchor', 'inherited', NULL, 'absent'),
@@ -838,7 +838,7 @@ test('the slot preserves annex and signing evidence, including unknown legacy pr
     'SELECT id, value_anchor_kind, value_anchor_contractor_eik, contractor_id_status FROM amendments ORDER BY id',
   );
   compare(
-    'SELECT id, signing_currency_raw, signing_contractor_eik, signing_contractor_status FROM contracts ORDER BY id',
+    'SELECT id, signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete FROM contracts ORDER BY id',
   );
   compare("SELECT sql FROM sqlite_schema WHERE name = 'idx_amendments_value_anchor'");
   assert.deepEqual(

@@ -138,6 +138,7 @@ describe('reconciliation gate — clean corpus', () => {
       'date-sanity',
       'staging-reconciliation',
       'amendment-twin-dedup',
+      'ocds-source-value',
     ])
       expect(results.find((r) => r.name === nm)?.skipped, `${nm} must not skip`).toBe(false);
   });

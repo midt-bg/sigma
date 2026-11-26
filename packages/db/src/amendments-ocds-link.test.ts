@@ -81,6 +81,7 @@ beforeEach(() => {
   readScript(db, migration7); // #305 residual value_suspect on served amendments
   readScript(db, migration8); // #306 provenance columns on served amendments
   readScript(db, resolve(root, 'packages/db/migrations/0029_contract_value_evidence.sql'));
+  readScript(db, resolve(root, 'packages/db/migrations/0030_ocds_signing_evidence.sql'));
   readScript(db, workStagingSchema); // raw_* staging
 
   // Two EOP procedures: T1 (contract 90029) already has an EOP annex; T2 (contract 55500) has NONE.
@@ -101,9 +102,11 @@ beforeEach(() => {
      -- OCDS twin of the 90029 annex: unp is the OCID, value is the pre-amendment number stored as value_before.
      INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
        ('ocds:2026-03-05', '2026-03-05', 'ocds-e82gsb-245534', 'T1', '90029', '2026-03-05', 'O1', 21602081.98, NULL, 'EUR');
-     -- OCDS-only annex for 55500: exists in NO EOP feed. This is the row #286 wants to make visible.
+     -- OCDS-only annex for 55500: exists in NO EOP feed. This is the row #286 wants to make visible. Its
+     -- release repeats the signing value, as almost every OCDS-only release does; a release that moves the
+     -- value is a source correction (amendments-ocds-value-correction.test.ts).
      INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
-       ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-999999', 'T2', '55500', '2026-04-01', 'O2', 480000, NULL, 'EUR');
+       ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-999999', 'T2', '55500', '2026-04-01', 'O2', 500000, NULL, 'EUR');
      -- OCDS-only annex for 77700 (contract-only procedure) — bridges via the raw_contracts fallback.
      INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
        ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-777777', 'T3', '77700', '2026-04-01', 'O3', 300000, NULL, 'EUR');
@@ -151,7 +154,7 @@ describe('OCDS amendment → contract linkage (issue #286)', () => {
     expect(twin[0]?.current_value).toBe(27435415.31);
 
     // OCDS-only annex is now visible on its contract (annex_count = 1); current_value stays NULL because
-    // OCDS cannot know the after-value (honest — no fabricated figure).
+    // the release only repeats the signing value — it states no after-value (honest — no fabricated figure).
     const only = sqliteJson<{ annex_count: number; current_value: number | null }>(
       db,
       "SELECT annex_count, current_value FROM raw_contracts WHERE contract_number = '55500'",

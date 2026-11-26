@@ -553,6 +553,13 @@ WHERE (c.source LIKE 'eop:%' AND NOT EXISTS (
       AND a.contract_number = c.contract_number
   ));
 
+-- Preserve incomplete signing evidence even when admission drops an unpriced lot.
+CREATE VIEW IF NOT EXISTS raw_incomplete_signing_keys AS
+SELECT DISTINCT unp, contract_number, 1 AS incomplete
+FROM raw_contract_publications
+WHERE unp IS NOT NULL AND contract_number IS NOT NULL
+  AND (signing_value IS NULL OR NULLIF(TRIM(currency), '') IS NULL);
+
 -- The existing publication key picks the same raw version as derive-amendments and promotion.
 -- Preserve its original delta and after-value for valuation, even if promotion corrects them.
 CREATE VIEW IF NOT EXISTS raw_amendment_publications AS

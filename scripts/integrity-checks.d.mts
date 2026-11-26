@@ -41,6 +41,12 @@ export function checkEikValidity(runner: IntegrityRunner): Promise<IntegrityResu
 export function checkDateSanity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkStagingReconciliation(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkAmendmentTwins(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkOcdsSourceValue(
+  runner: IntegrityRunner,
+  options?: { build?: boolean },
+): Promise<IntegrityResult>;
+/** The OCDS eligibility and ranking CTEs shared with refresh-slice.sql. */
+export const OCDS_SOURCE_VALUE_DECISION_SQL: string;
 /** The ids of served OCDS amendments still keyed by their OCID that duplicate an annex served under the
  *  resolved УНП. Shared with the removal in scripts/refresh-slice.sql (lockstep-tested). */
 export const AMENDMENT_OCID_TWINS_SQL: string;
@@ -51,7 +57,10 @@ export const AMENDMENT_RAW_NUMBER_TWINS_SQL: string;
 export const CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
 /** Each check's stable id, in CHECKS order (the `name` its result carries). */
 export const CHECK_NAMES: string[];
-export function runIntegrityChecks(runner: IntegrityRunner): Promise<IntegrityResult[]>;
+export function runIntegrityChecks(
+  runner: IntegrityRunner,
+  options?: { build?: boolean },
+): Promise<IntegrityResult[]>;
 
 export interface IntegritySummary {
   /** true when no check is a hard failure (warnings/skips don't break the gate) */
@@ -73,7 +82,7 @@ export interface AssertIntegrityOptions {
   label?: string;
   /** true (default) → print and process.exit(1) on failure; false → throw instead (for tests) */
   exit?: boolean;
-  /** true on a local work database: also run BUILD_CHECKS after the shared roster */
+  /** true on a local work database: require all OCDS corrections and run BUILD_CHECKS */
   build?: boolean;
 }
 export function assertIntegrity(

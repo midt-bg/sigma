@@ -94,6 +94,7 @@ const TRANSIENT_STAGING_VIEWS = [
   'raw_contract_value_annex_history',
   'raw_contract_value_staged_annexes',
   'raw_amendment_publications',
+  'raw_incomplete_signing_keys',
   'raw_contract_publications',
   'raw_ocds_scoped_names',
   'raw_ocds_contract_buyer_moves',
@@ -144,6 +145,8 @@ const SCRATCH_TABLES = [
   'raw_contract_value_existing',
   'refresh_amendment_rekeyed',
   'refresh_amendment_winners',
+  'refresh_ocds_value_rows',
+  'amendment_ocds_value_corrections',
   'contractor_identity',
   'contract_cube',
 ] as const;
