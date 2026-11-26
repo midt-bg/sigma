@@ -69,3 +69,83 @@ test('a deferred baseline is accepted only after the declarations name their com
   assert.equal(db.prepare('SELECT baseline_status s FROM registry_entry_state').get().s, 'ready');
   db.close();
 });
+
+// The rebuild sends each batch of partidas into the slot as it is read (scripts/rebuild-slot.mjs), and a
+// build resumed after the register takes the register from the slot alone: the import's own batches must
+// reach the slot as they are.
+test('the import’s batches reach the slot as the local build holds them', async () => {
+  const { slotFlusher } = await import('../rebuild-slot.mjs');
+  const migrated = () => {
+    const db = new DatabaseSync(':memory:');
+    for (const f of readdirSync('packages/db/migrations').sort())
+      if (f.endsWith('.sql')) db.exec(readFileSync(`packages/db/migrations/${f}`, 'utf8'));
+    return db;
+  };
+  const db = migrated();
+  const slot = migrated();
+  db.exec(`
+    INSERT INTO authorities (id, name) VALUES ('a:1','Община Тест');
+    INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:1','u','Т','a:1','открита');
+    INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
+      ('eik:000000019','ТЕСТ ГРУП ЕООД','000000019','000000019',1,'company');
+    INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
+      ('c:1','t:1','eik:000000019',1,'EUR','2024-01-01','1',1);`);
+  const indent = 'e'.repeat(64);
+  const body = {
+    uic: '000000019',
+    name: 'ТЕСТ ГРУП ЕООД',
+    status: 'N',
+    guid: 'g',
+    legalForm: 'EOOD',
+    subDeeds: [
+      {
+        subUic: '0014',
+        subUicType: 'MainCircumstances',
+        status: 'A',
+        fields: [
+          {
+            fieldIdent: '00070',
+            element: 'Managers',
+            operation: 'Add',
+            entryNumber: '20200101100000',
+            actionDate: '2020-01-01T10:00:00',
+            entryDate: '2020-01-01T10:00:00',
+            value: {
+              Manager: [
+                {
+                  RecordID: '1',
+                  Person: { Indent: indent, IndentType: 'EGN', Name: 'Петър Иванов Тестов' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const client = {
+    deed: async () => ({ status: 'ok', deed: { deed: body, deedActualState: body } }),
+  };
+  const flush = slotFlusher('slot', db, (_label, sql) => slot.exec(sql));
+  assert.equal(
+    await importRegistry(d1FromSqlite(db), client, { runId: 'r', complete: false, onBatch: flush }),
+    1,
+  );
+  const rows = (from, table) =>
+    from
+      .prepare(`SELECT * FROM "${table}"`)
+      .all()
+      .map((r) => JSON.stringify(r))
+      .sort();
+  const carried = db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'registry_%'
+         AND name <> 'registry_persons'`,
+    )
+    .all()
+    .map((r) => r.name);
+  for (const table of carried) assert.deepEqual(rows(slot, table), rows(db, table), table);
+  assert.equal(slot.prepare('SELECT COUNT(*) n FROM registry_roles').get().n, 1);
+  db.close();
+  slot.close();
+});

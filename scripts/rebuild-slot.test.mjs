@@ -234,20 +234,25 @@ test('a registry batch carries its rows, the queue it cleared and what it queued
   // The flusher sends one file per batch and only asks for what the batch touched.
   const sent = [];
   const flush = slotFlusher('slot', db, (label, body) => sent.push([label, body]));
-  return flush(['222222222'])
-    .then(() => {
-      assert.equal(sent.length, 1);
-      assert.equal(sent[0][0], 'registry-batch');
-      assert.match(sent[0][1], /'222222222'/);
-      assert.ok(!sent[0][1].includes('111111111'));
-    })
-    .then(() => flush([], 'SEAL;\n'))
-    .then(() => {
-      // The registry's receipt rides with its last cursors.
-      assert.equal(sent.length, 2);
-      assert.match(sent[1][1], /INSERT OR REPLACE INTO "registry_sync"[\s\S]*SEAL;\n$/);
-      db.close();
-    });
+  return (
+    flush(['222222222'])
+      .then(() => {
+        assert.equal(sent.length, 1);
+        assert.equal(sent[0][0], 'registry-batch');
+        assert.match(sent[0][1], /'222222222'/);
+        assert.ok(!sent[0][1].includes('111111111'));
+      })
+      // The import hands each batch its running count too, which never reaches the slot.
+      .then(() => flush(['111111111'], 2))
+      .then(() => assert.ok(!sent[1][1].endsWith('2'), 'the count is not SQL'))
+      .then(() => flush.seal('SEAL;\n'))
+      .then(() => {
+        // The registry's receipt rides with its last cursors.
+        assert.equal(sent.length, 3);
+        assert.match(sent[2][1], /INSERT OR REPLACE INTO "registry_sync"[\s\S]*SEAL;\n$/);
+        db.close();
+      })
+  );
 });
 
 test('a resumed rebuild takes the schema from the migrations and only the data from the slot', async (t) => {
@@ -963,7 +968,8 @@ function slotRun(
       const db = new DatabaseSync(arg('--db'));
       try {
         const eiks = register?.(db) ?? [];
-        if (eiks.length) await slotFlusher(arg('--slot'), db, apply)(eiks);
+        // As importRegistry calls it: the batch and how many partidas it has read so far.
+        if (eiks.length) await slotFlusher(arg('--slot'), db, apply)(eiks, eiks.length);
       } finally {
         db.close();
       }

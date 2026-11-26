@@ -250,11 +250,15 @@ export function slotFlusher(name, snapshot, apply) {
       dir: resolve(root, 'data/work/rebuild'),
       cwd: webDir,
     });
-  // `seal` rides with the batch: the registry's receipt goes in with its last cursors.
-  return async (eiks, seal = '') => {
+  const flush = (eiks, seal) => {
     send('registry-batch', registryBatchSql(snapshot, eiks, tables, cursors, since) + seal);
     since = new Date().toISOString();
   };
+  // A batch takes its companies alone: the import also hands it how many partidas it has read so far.
+  const batch = async (eiks) => flush(eiks, '');
+  // The registry's receipt rides with its last cursors, after the last batch.
+  batch.seal = async (sql) => flush([], sql);
+  return batch;
 }
 
 /**
@@ -841,7 +845,7 @@ export function slotOps({
       // The registry's receipt travels with its cursors once more, after the last batch.
       const local = new DatabaseSync(db, { readOnly: true });
       try {
-        await slotFlusher(target.name, local, apply)([], receipt('registry'));
+        await slotFlusher(target.name, local, apply).seal(receipt('registry'));
       } finally {
         local.close();
       }
