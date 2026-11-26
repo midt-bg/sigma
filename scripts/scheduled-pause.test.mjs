@@ -101,7 +101,7 @@ test('show reads the object as the ETL does', () => {
   assert.match(show(stored('{"reason":"no expiry"}')), /^b: not a valid hold, ignored by the ETL/);
   assert.match(show(stored('{"until":"2026-11-27T00:00:00Z"}')), /not a valid hold/);
   assert.match(show(stored('garbage')), /not a valid hold/);
-  assert.match(show(stored('{"until":4102444800000,"reason":"a number"}')), /not a valid hold/);
+  assert.match(show(stored('{"until":2030,"reason":"a number"}')), /not a valid hold/);
   const absent = fakeWrangler(() => {
     throw Object.assign(new Error('Command failed'), {
       stderr: 'The specified key does not exist.',

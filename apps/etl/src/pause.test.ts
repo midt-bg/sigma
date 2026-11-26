@@ -31,7 +31,7 @@ describe('readScheduledPause', () => {
       JSON.stringify({ until: 'next week', reason: 'unreadable expiry' }),
       JSON.stringify({ until: '2026-11-27T00:00:00Z' }),
       // A number parses as a year, so it would read as a date far ahead: only an ISO string is an expiry.
-      JSON.stringify({ until: 4102444800000, reason: 'a number' }),
+      JSON.stringify({ until: 2030, reason: 'a number' }),
     ])
       expect(await readScheduledPause(bucket(body), NOW), body).toEqual({
         pause: null,
