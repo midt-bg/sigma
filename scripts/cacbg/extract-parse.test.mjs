@@ -125,6 +125,18 @@ test('a listing that does not match its index, or a changed file, stops the fold
     parseFolder(corpus.store, { folder: '2024', index: idx, out: path.join(dir, 'x.jsonl') }),
     /Corpus inventory does not match list: 2024/,
   );
+  // As many names as the listing has, but one the listing does not name: a file the index renames, or a
+  // file the index has as missing in place of one it lost.
+  const renamed = index(corpus, '2024');
+  renamed.files[0] = { ...renamed.files[0], file: 'a9.xml' };
+  const swapped = index(corpus, '2024');
+  swapped.files.pop();
+  swapped.missing.push('a9.xml');
+  for (const idx of [renamed, swapped])
+    await assert.rejects(
+      parseFolder(corpus.store, { folder: '2024', index: idx, out: path.join(dir, 'x.jsonl') }),
+      /Corpus inventory does not match list: 2024/,
+    );
   corpus.objects.set('2024/a1.xml', Buffer.from(declaration(A, { hash: 'OTHER' })));
   await assert.rejects(parse(corpus, '2024', 'y'), /Corpus file missing or changed: 2024\/a1.xml/);
   corpus.objects.set('2024/list.xml', Buffer.from('<root/>'));
