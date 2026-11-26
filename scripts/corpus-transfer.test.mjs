@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import {
   CORPUS_PREFIX,
   PRODUCTION_BUCKET,
+  backoff,
   corpusKey,
   encodePath,
   r2Client,
@@ -35,7 +36,10 @@ const object = (body, extra = {}) => ({
  * copy-source condition and metadata. `fault(request)` may answer instead (a Response, or a throw), and
  * every request is recorded — method, path, the headers that matter.
  */
-function fakeR2(buckets, { page = 1000, fault = () => undefined, copyEtag } = {}) {
+function fakeR2(
+  buckets,
+  { page = 1000, fault = () => undefined, copyEtag, random = () => 0 } = {},
+) {
   const requests = [];
   const http = async (url, init) => {
     const u = new URL(url);
@@ -110,6 +114,7 @@ function fakeR2(buckets, { page = 1000, fault = () => undefined, copyEtag } = {}
     secretAccessKey: SECRET,
     http,
     pause: async (ms) => void pauses.push(ms),
+    random,
     now: () => new Date('2026-11-26T10:00:00Z'),
   });
   return { client, requests, pauses };
@@ -463,18 +468,70 @@ test('passing API failures are tried again with growing pauses', async () => {
   assert.deepEqual(r2.pauses, [500, 1000, 2000, 4000]);
 });
 
-test('a failure that persists ends the run after five attempts, with a clear message', async () => {
+test('the pauses are spread at random and come to about a minute at most', () => {
+  const pauses = (random) => Array.from({ length: 6 }, (_, i) => backoff(i + 1, random));
+  const sum = (list) => list.reduce((a, b) => a + b, 0);
+  assert.deepEqual(
+    pauses(() => 0),
+    [500, 1000, 2000, 4000, 8000, 15000],
+  );
+  assert.deepEqual(
+    pauses(() => 1),
+    [1000, 2000, 4000, 8000, 16000, 30000],
+  );
+  assert.equal(sum(pauses(() => 0)), 30500);
+  assert.equal(sum(pauses(() => 1)), 61000);
+  assert.equal(
+    backoff(3, () => 0.5),
+    3000,
+  );
+  assert.equal(
+    backoff(9, () => 1),
+    30000,
+    'the step stops growing at thirty seconds',
+  );
+});
+
+test('a 4xx that is an answer and a 501 are not tried again; 408 is', async () => {
+  for (const [status, code] of [
+    [400, 'InvalidArgument'],
+    [409, 'BucketNotEmpty'],
+    [501, 'NotImplemented'],
+  ]) {
+    const r2 = fakeR2(
+      { [FROM]: sourceBucket(), [TO]: sourceBucket() },
+      { fault: () => new Response(`<Error><Code>${code}</Code></Error>`, { status }) },
+    );
+    const { code: exit, out } = await run(['plan', '--from', FROM, '--to', TO], r2);
+    assert.equal(exit, 1);
+    assert.match(out, new RegExp(`HTTP ${status} ${code}`));
+    assert.deepEqual(r2.pauses, [], String(status));
+  }
+  let n = 0;
   const r2 = fakeR2(
     { [FROM]: sourceBucket(), [TO]: sourceBucket() },
-    { fault: () => new Response('', { status: 503 }) },
+    { fault: () => (n++ === 0 ? new Response('', { status: 408 }) : undefined) },
+  );
+  assert.equal((await run(['plan', '--from', FROM, '--to', TO], r2)).code, 0);
+  assert.deepEqual(r2.pauses, [500]);
+});
+
+test('a failure that persists ends the run after seven attempts, with a clear message', async () => {
+  const r2 = fakeR2(
+    { [FROM]: sourceBucket(), [TO]: sourceBucket() },
+    { fault: () => new Response('', { status: 503 }), random: () => 1 },
   );
   const { code, out } = await run(['plan', '--from', FROM, '--to', TO], r2);
   assert.equal(code, 1);
   assert.match(
     out,
-    /failed: list sigma-declarations-(src|dst): HTTP 503 \(gave up after 5 attempts\)/,
+    /failed: list sigma-declarations-(src|dst): HTTP 503 \(gave up after 7 attempts\)/,
   );
-  assert.equal(r2.pauses.length, 8, 'four pauses for each bucket');
+  assert.equal(r2.pauses.length, 12, 'six pauses for each bucket');
+  assert.equal(
+    r2.pauses.reduce((a, b) => a + b, 0),
+    2 * 61000,
+  );
 });
 
 test('timeouts are named and tried again', async () => {
@@ -488,7 +545,7 @@ test('timeouts are named and tried again', async () => {
   );
   const { code, out } = await run(['plan', '--from', FROM, '--to', TO, '--folders', '2024'], r2);
   assert.equal(code, 1);
-  assert.match(out, /list sigma-declarations-(src|dst): timed out \(gave up after 5 attempts\)/);
+  assert.match(out, /list sigma-declarations-(src|dst): timed out \(gave up after 7 attempts\)/);
 });
 
 test('a refusal is not tried again and never prints the credentials', async () => {

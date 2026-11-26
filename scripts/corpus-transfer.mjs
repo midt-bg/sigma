@@ -26,7 +26,7 @@ export const CORPUS_PREFIX = 'declarations/corpus-v2/';
 export const PRODUCTION_BUCKET = 'sigma-declarations';
 const FOLDER = /^20\d{2}[A-Za-z0-9_]{0,8}$/;
 const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
-const ATTEMPTS = 5;
+const ATTEMPTS = 7;
 const RECEIPT = '.index.json';
 
 /**
@@ -106,13 +106,28 @@ const tag = (xml, name) => {
 };
 const etagOf = (value) => (value ?? '').replace(/^(W\/)?"|"$/g, '');
 
+/**
+ * Worth another attempt: a request timeout, 429 and the server errors — except 501, which says the call
+ * itself is not supported and will say so again. Every other 4xx is an answer, not a passing failure.
+ */
+const retryable = (status) => status === 408 || status === 429 || (status >= 500 && status !== 501);
+
+/**
+ * The pause after the `attempt`-th failure: doubling from one second up to thirty, each drawn at random
+ * from the upper half of its step, so that thirty-two copies refused together do not all come back in
+ * the same instant. Six pauses come to about half a minute at the least and a minute at the most.
+ */
+export const backoff = (attempt, random) =>
+  Math.round(Math.min(1000 * 2 ** (attempt - 1), 30_000) * (0.5 + random() / 2));
+
 /** A failure that another attempt cannot fix: the run stops on it and says what it was. */
 class Fatal extends Error {}
 
 /**
- * The few S3 calls the transfer needs, over an injected `fetch` and `pause`, so every path is tested
- * without Cloudflare. Network errors, 429 and 5xx are tried again with growing pauses, up to five
- * attempts; anything else ends the run with the status and S3's error code — never a header or a secret.
+ * The few S3 calls the transfer needs, over an injected `fetch`, `pause` and `random`, so every path is
+ * tested without Cloudflare. Network errors, timeouts and the statuses `retryable` names are tried again
+ * after the pauses `backoff` draws, up to seven attempts; anything else ends the run with the status and
+ * S3's error code — never a header or a secret.
  */
 export function r2Client({
   accountId,
@@ -120,6 +135,7 @@ export function r2Client({
   secretAccessKey,
   http = fetch,
   pause = sleep,
+  random = Math.random,
   now = () => new Date(),
 }) {
   if (!/^[0-9a-f]{32}$/.test(accountId ?? ''))
@@ -171,13 +187,13 @@ export function r2Client({
         if ((res.ok && !error) || (res.status === 404 && allow404)) return { res, body };
         const code = tag(body, 'Code') ?? '';
         failure = `${what}: HTTP ${res.status}${code ? ` ${code}` : ''}`;
-        if (!res.ok && res.status !== 429 && res.status < 500) throw new Fatal(failure);
+        if (!res.ok && !retryable(res.status)) throw new Fatal(failure);
       } catch (error) {
         if (error instanceof Fatal) throw error;
         failure = `${what}: ${error?.name === 'TimeoutError' ? 'timed out' : 'network error'}`;
       }
       if (attempt === ATTEMPTS) throw new Fatal(`${failure} (gave up after ${ATTEMPTS} attempts)`);
-      await pause(500 * 2 ** (attempt - 1));
+      await pause(backoff(attempt, random));
     }
   }
   return {
