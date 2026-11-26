@@ -801,7 +801,7 @@ function refreshedSince(read, builtAt) {
 
 /**
  * A slot is ready only with the register's baseline accepted: the catch-up pass after the declarations read
- * every company they asked for, and the daily run then reads the register's new entries from where the
+ * every company the candidate pass asked for, and the daily run reads the register's new entries from where the
  * build left off. With the baseline open the daily run skips those reads until it closes it, and the slot
  * may lack partidas the declarations' links were decided against. A verdict, never retried, and before the
  * slot gets its version.
@@ -822,6 +822,21 @@ function refuseOpenBaseline(name, read, counts) {
       `${name} holds the register with its baseline ${status ?? 'missing'}, not accepted: the register ` +
         'pass after the declarations did not finish in this build. The slot is not ready — build it ' +
         'again without resume',
+    );
+  if (!counts.registry_requested_companies) return;
+  // Declaration requests are fixed by extraction. Ownership can discover further requests after
+  // catch-up; the native baseline already enforces lookups for the ownership requests it received.
+  // An explicit source absence has a deed row and is a completed lookup.
+  const missing = read(
+    `SELECT COUNT(DISTINCT r.eik) AS n FROM registry_requested_companies r
+      WHERE length(r.eik) = 9 AND r.declaration_id NOT GLOB 'ownership:*'
+        AND NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik = r.eik)`,
+    ([row]) => Number.isInteger(row?.n) && row.n >= 0,
+  )[0].n;
+  if (missing)
+    throw new SlotVerdict(
+      `${name} holds ${missing} declaration-requested company EIK(s) with no registry lookup. ` +
+        'The slot is not ready — build it again without resume',
     );
 }
 
