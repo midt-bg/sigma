@@ -14,9 +14,10 @@ export const HEALTH_PATH = '/health';
 export const VERSION_HEADER = 'X-Sigma-Version';
 
 /**
- * The data generation a response was rendered from: `home_totals.refreshed_at`, written whenever a refresh
- * or a slot rebuild publishes. The root loader reads that row for the footer anyway, so stamping it costs
- * no query. Stored with the edge copy like any header, a response proves which generation it shows,
+ * The data generation a response was rendered from: `home_totals.refreshed_at`. A slot rebuild writes it
+ * when it publishes; a refresh moves it before its first served write and again after its last, so it
+ * says the served data may have changed, not that a run finished (`runs.refresh.verdict` says how the last
+ * one ended). The root loader reads that row for the footer anyway, so stamping it costs no query. Stored with the edge copy like any header, a response proves which generation it shows,
  * whether it came from the cache or not.
  */
 export const GENERATION_HEADER = 'X-Sigma-Generation';
@@ -42,7 +43,10 @@ export interface Health {
   };
   runs: {
     refresh: {
-      /** When a refresh (or a rebuild) last published: the same value as `data.generation`. */
+      /**
+       * When a refresh last started or finished writing served data, or a rebuild published: the same
+       * value as `data.generation`. Not the end of a completed run; `verdictAt` and `verifiedAt` are.
+       */
       publishedAt: string | null;
       /** Windows a run recorded and no passed integrity gate has settled yet (running, stopped or failed). */
       unsettledWindows: number | null;
