@@ -37,7 +37,10 @@ Scoped, идемпотентен дневен delta refresh. Заменя сам
 **Записва директно в live (served) таблици — няма blue-green swap:**
 - contracts (DELETE стари `c:e:`/`c:o:` от прозореца → INSERT нови с `amount_eur`)
 - `authority_totals`, `company_totals`, `flow_pairs`, `home_totals`, `sector_totals`, `facet_counts`, `contract_rollup`, `cpv_division_stats` (DELETE + REPLACE на засегнатите rollup-и; `contract_rollup` записва само променените редове)
-- `search_index`, `data_freshness`
+- `search_index`, `data_freshness` (`globals`; само за планера)
+- `home_totals.as_of` в batch-а `contracts`, заедно с договорите, и `home_totals.refreshed_at` (поколението)
+  в `setup` и в `cleanup` - преди първия и след последния batch, който пише обслужвани редове; никога NULL
+  (виж [`etl.md`](etl.md#датата-данни-към-и-поколението-на-данните))
 
 `flow_pairs`, редовете на компаниите и институциите в `search_index` и обогатяването на институциите и фирмите от
 `parties` се пресмятат изцяло на всеки ход, но се записват само редовете, които се различават от записаното
@@ -75,7 +78,8 @@ lease-а - подновяват го и спират, ако вече не е т
    `record-verdict` записва `skipped` - бяг без нищо за проверка, който никога не се чете като присъда); наследено обещание се
    удостоверява само от derive + гейт
 9. ⛨ `load-fx` (#158)
-10. ⛨ за всеки batch: `derive-slice:{batch}` (пуска refresh-slice групите)
+10. ⛨ за всеки batch: `derive-slice:{batch}` (пуска refresh-slice групите; датата „данни към" се
+    движи в `derive-slice:contracts`, поколението в `derive-slice:setup` и `derive-slice:cleanup`)
 11. ⛨ `derive-slice:count`
 12. ⛨ `integrity-gate` (#156; post-commit аларма: разминаване → `etl_integrity_violation` с падналите
     проверки, D1 без отговор след повторните опити → `etl_integrity_unverified`; ходът завършва и в двата случая)

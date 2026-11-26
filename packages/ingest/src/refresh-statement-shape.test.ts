@@ -11,9 +11,9 @@
 // this size, exceeded what D1 would allocate". Splitting the heavy half into a real table acts as an
 // optimisation fence and keeps the surviving statement small.
 //
-// The failure was invisible from outside: `@refresh-batch setup` NULLs home_totals.as_of and only
-// `globals` restores it, so a death in between leaves the surface with no freshness marker at all
-// rather than an error anyone would notice.
+// The failure was invisible from outside: `@refresh-batch setup` then NULLed home_totals.as_of and only
+// `globals` restored it, so a death in between left the surface with no freshness marker at all rather
+// than an error anyone would notice.
 //
 // LIMITS OF THIS TEST, stated plainly: it reads SQL with regexes. It catches the shape in the forms
 // we have seen or would routinely write — a bare name, `FROM x alias`, `FROM x AS a`, `FROM x JOIN …`,
