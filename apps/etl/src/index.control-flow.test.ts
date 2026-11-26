@@ -48,6 +48,7 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
       { name: 'g1', statements: ['b'] },
     ]),
     runRefreshSliceStatementGroup: vi.fn(async () => {}),
+    recordRefreshVerdict: vi.fn(async (_db: unknown, _v: Record<string, unknown>) => {}),
     loadFxRates: vi.fn(async () => ({
       inserted: 0,
       fetched: 0,
@@ -61,12 +62,18 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
     ingestBucketWindow: vi.fn(),
   },
   integrity: {
-    runServedIntegrityGate: vi.fn(async (_db: unknown, _log: GateLog) => true as boolean),
+    runServedIntegrityGate: vi.fn(
+      async (_db: unknown, _log: GateLog): Promise<{ ok: boolean; violations: string[] }> => ({
+        ok: true,
+        violations: [],
+      }),
+    ),
   },
 }));
 vi.mock('@sigma/ingest', () => ingest);
 vi.mock('./eop', () => eop);
-vi.mock('./integrity', () => integrity);
+// The real `incompleteCheck` (it only reads an error message); the gate itself is mocked.
+vi.mock('./integrity', async (original) => ({ ...(await original()), ...integrity }));
 
 import worker, { RefreshWorkflow } from './index';
 
@@ -180,7 +187,7 @@ describe('RefreshWorkflow.run — control flow', () => {
       log.info({ event: 'gate_info' });
       log.warn({ event: 'gate_warn' });
       log.error({ event: 'gate_error' });
-      return true;
+      return { ok: true, violations: [] };
     });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -277,7 +284,10 @@ describe('RefreshWorkflow.run — control flow', () => {
   it('finishes the run on a violation: the numbers are served already, the alarm is the log', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
-    integrity.runServedIntegrityGate.mockResolvedValueOnce(false);
+    integrity.runServedIntegrityGate.mockResolvedValueOnce({
+      ok: false,
+      violations: ['rollup-reconciliation'],
+    });
     const wf = makeWorkflow();
     const names: string[] = [];
 
@@ -321,7 +331,7 @@ describe('RefreshWorkflow.run — control flow', () => {
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
     integrity.runServedIntegrityGate
       .mockRejectedValueOnce(new Error('D1 DB is overloaded'))
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce({ ok: true, violations: [] });
     const { NonRetryableError } = await import('cloudflare:workflows');
     // Like the platform: a plain error is retried, a NonRetryableError is not.
     const retrying = {
@@ -347,7 +357,10 @@ describe('RefreshWorkflow.run — control flow', () => {
   it('reports no settled count when the check did not pass', async () => {
     eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
     eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 2 })]);
-    integrity.runServedIntegrityGate.mockResolvedValueOnce(false);
+    integrity.runServedIntegrityGate.mockResolvedValueOnce({
+      ok: false,
+      violations: ['rollup-reconciliation'],
+    });
     const wf = makeWorkflow();
 
     const result = await wf.run({ payload: {} } as never, fakeStep([]) as never);
@@ -1020,5 +1033,134 @@ describe('scheduled handler', () => {
       await worker.scheduled?.({} as never, env);
       expect(create.mock.calls.length, String(hours)).toBe(started ? 1 : 0);
     }
+  });
+});
+
+// The gate's verdict reaches refresh_verdict, so a run that ends `unverified` or `violation` no longer
+// looks like a healthy one from outside the log. Names only, never row data; a write that fails is loud
+// and does not fail the run; a run with nothing to verify is recorded as exactly that.
+describe('RefreshWorkflow.run — the stored verdict', () => {
+  const STARTED = new Date('2026-06-07T00:30:56.000Z');
+  const run = (names: string[] = []) =>
+    makeWorkflow().run(
+      { payload: {}, timestamp: STARTED, instanceId: 'wf-7' } as never,
+      fakeStep(names) as never,
+    );
+  const recorded = () => ingest.recordRefreshVerdict.mock.calls.map((c) => c[1]);
+
+  it('records an ok verdict for the run, after the gate and before the window settles', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    const names: string[] = [];
+
+    const result = await run(names);
+
+    expect(recorded()).toEqual([
+      {
+        runStartedAt: STARTED.toISOString(),
+        windowFrom: PLAN.from,
+        windowTo: PLAN.to,
+        verdict: 'ok',
+        checks: [],
+        decidedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      },
+    ]);
+    expect(ingest.recordRefreshVerdict.mock.calls[0]![0]).toBe(DB);
+    expect(names.indexOf('record-verdict')).toBeGreaterThan(names.indexOf('integrity-gate'));
+    expect(names.indexOf('record-verdict')).toBeLessThan(names.indexOf('settle-windows'));
+    expect(result).toMatchObject({ integrity: 'ok', verdictRecorded: true });
+  });
+
+  it('records a violation with the names of the broken checks', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    integrity.runServedIntegrityGate.mockResolvedValueOnce({
+      ok: false,
+      violations: ['rollup-reconciliation', 'eik-validity'],
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await run();
+
+    expect(recorded()).toMatchObject([
+      { verdict: 'violation', checks: ['rollup-reconciliation', 'eik-validity'] },
+    ]);
+  });
+
+  it('records unverified with the check that could not complete', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    integrity.runServedIntegrityGate.mockRejectedValueOnce(
+      new Error('integrity check current-amount-parity could not complete: D1 DB is overloaded'),
+    );
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await run();
+
+    expect(recorded()).toMatchObject([
+      { verdict: 'unverified', checks: ['current-amount-parity'] },
+    ]);
+    const logged = error.mock.calls.map((c) => String(c[0]));
+    expect(logged.some((l) => l.includes('"check":"current-amount-parity"'))).toBe(true);
+  });
+
+  it('records unverified with no check name when the failure names none', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    integrity.runServedIntegrityGate.mockRejectedValueOnce(new Error('step timed out'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await run();
+
+    expect(recorded()).toMatchObject([{ verdict: 'unverified', checks: [] }]);
+  });
+
+  it('records a run with nothing to verify as skipped, and runs no gate', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult()]); // nothing staged, nothing pending
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await run();
+
+    expect(integrity.runServedIntegrityGate).not.toHaveBeenCalled();
+    expect(recorded()).toMatchObject([{ verdict: 'skipped', checks: [] }]);
+    expect(result.integrity).toBeUndefined();
+    expect(result.verdictRecorded).toBe(true);
+  });
+
+  it('finishes a healthy run when the verdict cannot be written, and says so at error level', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    ingest.recordRefreshVerdict.mockRejectedValueOnce(new Error('D1 DB is overloaded'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await run();
+
+    expect(result).toMatchObject({ integrity: 'ok', verdictRecorded: false });
+    expect(ingest.settlePendingWindows).toHaveBeenCalled();
+    const logged = error.mock.calls.map((c) => JSON.parse(String(c[0])));
+    expect(logged).toContainEqual({
+      level: 'error',
+      event: 'etl_refresh_verdict_unrecorded',
+      verdict: 'ok',
+      error: 'D1 DB is overloaded',
+    });
+  });
+
+  it('records nothing for a run that failed before the gate, or stepped aside for the lease', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockRejectedValueOnce(new Error('storage down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(run()).rejects.toThrow('storage down');
+
+    ingest.acquireRefreshLease.mockResolvedValueOnce({
+      acquired: false,
+      holder: 'wf-6',
+      expiresAt: '2026-06-07T00:50:00.000Z',
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await run();
+
+    expect(ingest.recordRefreshVerdict).not.toHaveBeenCalled();
   });
 });

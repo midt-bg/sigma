@@ -1,7 +1,8 @@
 import {
   BREATHER_MS,
+  CHECK_NAMES,
+  CHECKS,
   HEAVY_ROWS,
-  runIntegrityChecks,
   summarizeIntegrity,
   type IntegrityResult,
 } from '../../../scripts/integrity-checks.mjs';
@@ -31,11 +32,12 @@ export interface GateLog {
 const brief = (r: IntegrityResult) => ({ name: r.name, detail: r.detail });
 
 // Run the shared gate against the served D1, emit structured observability events, and return whether
-// the numbers reconcile. The verdict comes from `summarizeIntegrity` — the SAME reducer assertIntegrity
-// uses — so the cron path and the CLI paths can never report a different decision. The runner is async
-// (D1 `.all()` is a Promise); integrity-checks awaits it. On the served D1 the rollup checks run and
-// staging-reconciliation self-skips (pipeline_stats is not shipped). FX priced-ness is not yet gated —
-// the Worker DOES load FX since #263, so a follow-up check belongs in the shared roster (#154).
+// the numbers reconcile, with the names of the checks that did not. The verdict comes from
+// `summarizeIntegrity` — the SAME reducer assertIntegrity uses — so the cron path and the CLI paths can
+// never report a different decision. The runner is async (D1 `.all()` is a Promise); integrity-checks
+// awaits it. On the served D1 the rollup checks run and staging-reconciliation self-skips
+// (pipeline_stats is not shipped). FX priced-ness is not yet gated — the Worker DOES load FX since
+// #263, so a follow-up check belongs in the shared roster (#154).
 // A query that fails (an overloaded D1) throws: that is not a verdict, and the step retries it.
 //
 // The served D1 allows only so much work inside any ten seconds, and the gate runs straight after the
@@ -44,25 +46,49 @@ const brief = (r: IntegrityResult) => ({ name: r.name, detail: r.detail });
 // way. After a query that read a table's worth of rows the gate therefore waits before the next one
 // (HEAVY_ROWS, BREATHER_MS — shared with the slot rebuild's verification, scripts/integrity-checks.mjs).
 
+/** The gate's decision: `ok`, or the names of the checks that broke (names only, never row data). */
+export interface GateOutcome {
+  ok: boolean;
+  violations: string[];
+}
+
+/** The message a check that could not complete throws with; `incompleteCheck` reads the name back out —
+ *  a Workflow step carries only an error's message across its boundary, not its properties. */
+const INCOMPLETE = /^integrity check ([a-z0-9-]+) could not complete: /;
+export function incompleteCheck(error: unknown): string | null {
+  return INCOMPLETE.exec(error instanceof Error ? error.message : String(error))?.[1] ?? null;
+}
+
 export async function runServedIntegrityGate(
   db: D1Database,
   log: GateLog,
   pause: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
-): Promise<boolean> {
+): Promise<GateOutcome> {
   const runner = async (sql: string) => {
     const { results, meta } = await db.prepare(sql).all();
     if (Number(meta?.rows_read ?? 0) >= HEAVY_ROWS) await pause(BREATHER_MS);
     return results;
   };
-  const results = await runIntegrityChecks(runner);
+  // The roster in order, as runIntegrityChecks runs it, but naming the check whose query failed: that
+  // name is what the stored verdict says could not be verified.
+  const results: IntegrityResult[] = [];
+  for (const [i, check] of CHECKS.entries()) {
+    try {
+      results.push(await check(runner));
+    } catch (err) {
+      throw new Error(
+        `integrity check ${CHECK_NAMES[i] ?? `#${i}`} could not complete: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
   const summary = summarizeIntegrity(results, 'cron refresh');
   if (summary.warned.length) {
     log.warn({ event: 'etl_integrity_warn', checks: summary.warned.map(brief) });
   }
   if (!summary.ok) {
     log.error({ event: 'etl_integrity_violation', checks: summary.violations.map(brief) });
-    return false;
+    return { ok: false, violations: summary.violations.map((v) => v.name) };
   }
   log.info({ event: 'etl_integrity_ok', ran: summary.ran, skipped: summary.skipped });
-  return true;
+  return { ok: true, violations: [] };
 }
