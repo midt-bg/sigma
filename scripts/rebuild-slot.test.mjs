@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -22,6 +30,7 @@ import {
   checkpointRun,
   shippedTables,
   slotFlusher,
+  slotOps,
   slotReader,
   slotState,
   sqlite,
@@ -30,6 +39,7 @@ import {
   verifySlot,
 } from './rebuild-slot.mjs';
 import { BREATHER_MS, HEAVY_ROWS } from './integrity-checks.mjs';
+import { insertStatements } from './ship-related-persons.mjs';
 
 test('the slot takes the served tables only, parents first, with DDL safe on a migrated slot', () => {
   const staging = readFileSync('scripts/work-staging-schema.sql', 'utf8');
@@ -841,16 +851,24 @@ test('a resume adopts the declarations checkpoints of the run that prepared the 
     [null, 'c0ffee1'], // prepared by code that did not record its commit
     ['not json', 'c0ffee1'],
     [same, null], // this run does not know its own commit
+    [JSON.stringify({ commit: null }), null], // nor did the run that prepared the slot
   ])
     assert.equal(checkpointRun(done('run-a', detail), 'run-b', commit), 'run-b');
 });
 
-// A whole run against a real slot: each stage writes its receipt as main() does — the import and the ship
-// sealed into their last file, the registry with its last flush, the prepare on its own — and the run can be
-// stopped right after any stage, or inside the ship after a number of its files. What ran is recorded, so a
-// test can assert what a later run did NOT do again.
-function slotRun(s, { runId, stopAfter, stopInShipAfter, commit = 'c0ffee1' }) {
+// A whole run against a real slot, through the stages main() runs (`slotOps`): only what reaches outside the
+// process is replaced. The CLI applies the migrations to the slot and exports its tables as SQL; a child
+// step does what its script would do to the local files — the import leaves the test corpus, the register
+// writes what a test gives it and sends each batch through the real flusher, the declarations job copies its
+// source into the snapshot in its first half and keeps it in its second; the sqlite3 shell runs the real
+// SQL. A run can be stopped right after any stage, or inside the ship after a number of its files. What ran
+// is recorded, so a test can assert what a later run did NOT do again.
+function slotRun(
+  s,
+  { runId, stopAfter, stopInShipAfter, commit = 'c0ffee1', register, catchUp, check = passes },
+) {
   const ran = [];
+  const steps = [];
   let shipping = false;
   let shipFiles = 0;
   const apply = (label, sql) => {
@@ -858,52 +876,94 @@ function slotRun(s, { runId, stopAfter, stopInShipAfter, commit = 'c0ffee1' }) {
       throw new Error('container stopped inside the ship');
     s.apply(label, sql);
   };
-  const stage = (name, work) => async (arg) => {
-    ran.push(name);
-    const result = await work(arg);
-    if (stopAfter === name) throw new Error(`container stopped after ${name}`);
-    return result;
+  // Every container attempt starts from an empty work directory.
+  const work = mkdtempSync(join(s.dir, 'work-'));
+  const exec = (file, sql) => {
+    const db = new DatabaseSync(file);
+    try {
+      db.exec(sql);
+    } finally {
+      db.close();
+    }
   };
-  const at = () => new Date().toISOString();
-  const ops = {
-    state: (anyRun) => slotState('sigma-test', runId, s.read, anyRun),
-    rehydrate: stage('rehydrate', () => {}),
-    prepare: stage('prepare', () => {
-      emptySlot('sigma-test', apply, s.read);
+  const wrangler = (args) => {
+    if (args[1] === 'migrations') {
       for (const file of readdirSync('packages/db/migrations')
         .filter((name) => name.endsWith('.sql'))
         .sort())
         s.slot.exec(readFileSync(join('packages/db/migrations', file), 'utf8'));
-      apply('state-prepare', receiptSql('prepare', runId, at(), JSON.stringify({ commit })));
-    }),
-    unverify: stage('unverify', () => apply('unverify', UNVERIFY_SQL)),
-    import: stage('import', () =>
-      fillSlot('sigma-test', s.snapshot, s.dir, {
-        label: 'import',
-        apply,
-        read: s.read,
-        seal: () => receiptSql('import', runId, at()),
-      }),
-    ),
-    registry: stage('registry', () => apply('registry-batch', receiptSql('registry', runId, at()))),
-    local: stage('local', (done) => ({ checkpoints: checkpointRun(done, runId, commit) })),
-    ship: stage('ship', () => {
-      shipping = true;
-      return finishBuild('sigma-test', s.snapshot, s.dir, {
-        apply,
-        read: s.read,
-        verifyRead: s.reader(),
-        runId,
-        version: 7,
-        commit,
-        check: passes,
+      return '';
+    }
+    if (args[1] === 'export') {
+      // The live slot serves no links in these tests.
+      const tables = args.flatMap((a, i) => (args[i - 1] === '--table' ? [a] : []));
+      const dump = tables.flatMap((t) => {
+        if (args[2] !== 'sigma-test') return [];
+        const rows = s.slot.prepare(`SELECT * FROM "${t}"`).all();
+        return insertStatements(t, rows.length ? Object.keys(rows[0]) : [], rows);
       });
-    }),
-    verify: stage('verify', () =>
-      verifySlot('sigma-test', { read: s.reader(), apply, runId, check: passes }),
-    ),
+      writeFileSync(args[args.indexOf('--output') + 1], dump.join(''));
+      return '';
+    }
+    throw new Error(`no ${args.slice(0, 3).join(' ')} in this test`);
   };
-  return { ops, ran };
+  const step = async (name, args, env = {}) => {
+    steps.push({ name, script: args[0], args, env });
+    const arg = (flag) => args[args.indexOf(flag) + 1];
+    if (args[0] === 'scripts/import.mjs')
+      copyFileSync(s.snapshot, args.find((a) => a.startsWith('--work-db=')).slice(10));
+    else if (args[0] === 'scripts/tr/rebuild-registry.mjs' && args.includes('--slot')) {
+      const db = new DatabaseSync(arg('--db'));
+      try {
+        const eiks = register?.(db) ?? [];
+        if (eiks.length) await slotFlusher(arg('--slot'), db, apply)(eiks);
+      } finally {
+        db.close();
+      }
+    } else if (args[0] === 'scripts/tr/rebuild-registry.mjs') catchUp?.(arg('--db'));
+    else if (args[0] === 'scripts/related-persons-job.mjs' && args.includes('--until')) {
+      mkdirSync(arg('--work-dir'), { recursive: true });
+      const source = new DatabaseSync(arg('--source-db'), { readOnly: true });
+      source.prepare('VACUUM INTO ?').run(join(arg('--work-dir'), 'backfill.sqlite'));
+      source.close();
+    }
+  };
+  const real = slotOps({
+    target: { name: 'sigma-test' },
+    live: { name: 'sigma-live' },
+    runId,
+    commit,
+    work,
+    today: '2026-11-26',
+    apply,
+    read: s.read,
+    verifyRead: s.reader(),
+    wrangler,
+    step,
+    sqlite: async (_label, file, sql) => exec(file, sql),
+    emit: () => '',
+    version: () => 7,
+    check,
+  });
+  const ops = Object.fromEntries(
+    Object.entries(real).map(([name, op]) => [
+      name,
+      name === 'state'
+        ? op
+        : async (arg) => {
+            ran.push(name);
+            if (name === 'ship') shipping = true;
+            const result = await op(arg);
+            if (stopAfter === name) throw new Error(`container stopped after ${name}`);
+            return result;
+          },
+    ]),
+  );
+  // Under which run the declarations keep their checkpoints, as this run passed it to the job.
+  const checkpoints = () =>
+    steps.find((st) => st.script === 'scripts/related-persons-job.mjs')?.env
+      .SIGMA_CHECKPOINT_RUN_ID;
+  return { ops, ran, steps, checkpoints, work };
 }
 
 test('a build stopped after any stage continues at the next one and does not redo the finished ones', async (t) => {
@@ -1005,17 +1065,48 @@ test('a resume reads the declarations under the run that prepared the slot', asy
   const s = builtSlot(t);
   await assert.rejects(runRebuild({}, slotRun(s, { runId: 'run-a', stopAfter: 'registry' }).ops));
   const resumed = slotRun(s, { runId: 'run-b' });
-  const local = resumed.ops.local;
-  let checkpoints;
-  resumed.ops.local = async (done) => ({ checkpoints } = await local(done));
   await runRebuild({ resume: true }, resumed.ops);
-  assert.equal(checkpoints, 'run-a');
+  assert.equal(resumed.checkpoints(), 'run-a');
+  // Both halves of the job read under the same run.
+  assert.deepEqual(
+    resumed.steps
+      .filter((st) => st.script === 'scripts/related-persons-job.mjs')
+      .map((st) => [st.env.SIGMA_REBUILD, st.env.SIGMA_CHECKPOINT_RUN_ID]),
+    [
+      ['1', 'run-a'],
+      ['1', 'run-a'],
+    ],
+  );
   // Code deployed in between reads them again, under its own run.
   const t2 = builtSlot(t);
   await assert.rejects(runRebuild({}, slotRun(t2, { runId: 'run-a', stopAfter: 'registry' }).ops));
   const fixed = slotRun(t2, { runId: 'run-b', commit: 'deadbee' });
-  const fixedLocal = fixed.ops.local;
-  fixed.ops.local = async (done) => ({ checkpoints } = await fixedLocal(done));
   await runRebuild({ resume: true }, fixed.ops);
-  assert.equal(checkpoints, 'run-b');
+  assert.equal(fixed.checkpoints(), 'run-b');
+  // A run that does not know its own commit adopts nothing, even from a preparer that did not know its own.
+  const t3 = builtSlot(t);
+  await assert.rejects(
+    runRebuild({}, slotRun(t3, { runId: 'run-a', stopAfter: 'registry', commit: null }).ops),
+  );
+  assert.equal(
+    t3.slot.prepare("SELECT detail FROM rebuild_state WHERE stage='prepare'").get().detail,
+    '{"commit":null}',
+  );
+  const blind = slotRun(t3, { runId: 'run-b', commit: null });
+  await runRebuild({ resume: true }, blind.ops);
+  assert.equal(blind.checkpoints(), 'run-b');
+});
+
+test('the stages leave their receipts in the slot as a run writes them', async (t) => {
+  const s = builtSlot(t);
+  const at = (stage) =>
+    s.slot.prepare('SELECT run_id, detail FROM rebuild_state WHERE stage=?').get(stage);
+  await assert.rejects(runRebuild({}, slotRun(s, { runId: 'run-a', stopAfter: 'registry' }).ops));
+  assert.deepEqual({ ...at('prepare') }, { run_id: 'run-a', detail: '{"commit":"c0ffee1"}' });
+  assert.equal(at('import').run_id, 'run-a');
+  assert.equal(at('registry').run_id, 'run-a');
+  // The import's receipt went in with its last rows, the registry's with its last cursors.
+  const labels = s.sent.slice(s.sent.indexOf('state-prepare') + 1);
+  assert.match(labels[labels.length - 2], /^ship-\w+-\d{3}$/);
+  assert.equal(labels.at(-1), 'registry-batch');
 });
