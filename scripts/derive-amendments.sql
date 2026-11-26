@@ -90,11 +90,13 @@ FROM (
   SELECT o.unp, o.contract_number,
     COUNT(*) AS ocds_n,
     (SELECT COUNT(*) FROM raw_amendments e
-       WHERE e.source LIKE 'eop:%' AND e.unp = o.unp AND e.contract_number = o.contract_number) AS eop_n
+       WHERE e.source LIKE 'eop:%' AND e.unp = o.unp
+         AND (e.contract_number = o.contract_number OR e.contract_number_raw = o.contract_number)) AS eop_n
   FROM raw_amendments o
   WHERE o.source LIKE 'ocds:%'
     AND EXISTS (SELECT 1 FROM raw_amendments e
-                  WHERE e.source LIKE 'eop:%' AND e.unp = o.unp AND e.contract_number = o.contract_number)
+                  WHERE e.source LIKE 'eop:%' AND e.unp = o.unp
+                    AND (e.contract_number = o.contract_number OR e.contract_number_raw = o.contract_number))
   GROUP BY o.unp, o.contract_number
 ) g;
 
@@ -102,13 +104,19 @@ FROM (
 -- keeping both would double annex_count and duplicate the served timeline. Drop the OCDS twin when an
 -- EOP annex already exists for the same (unp, contract_number). Genuinely OCDS-only annexes survive
 -- (they carry value_after = NULL from ingest, so they never drive current_value — issue #286).
+-- The value resolver has already moved a namespace-mismatched EOP annex onto its contract and kept the
+-- annex-side number in contract_number_raw; the OCDS release of the same annex still carries that
+-- annex-side number. So an EOP annex is matched on either number: on the one it now links by, and on the
+-- one it was published under. The resolver rewrites only an annex whose own number names no contract, so
+-- the OCDS row matched through contract_number_raw hangs on no contract either.
 DELETE FROM raw_amendments
 WHERE source LIKE 'ocds:%'
   AND EXISTS (
     SELECT 1 FROM raw_amendments e
     WHERE e.source LIKE 'eop:%'
       AND e.unp = raw_amendments.unp
-      AND e.contract_number = raw_amendments.contract_number
+      AND (e.contract_number = raw_amendments.contract_number
+        OR e.contract_number_raw = raw_amendments.contract_number)
   );
 
 -- #306: the value-anchor resolver that links namespace-mismatched EOP annexes (annex-side number ≠ the

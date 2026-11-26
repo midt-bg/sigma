@@ -132,6 +132,11 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    same OCDS publication is already served there; a row whose OCID carries contracts of its own is the
    key, not a twin. The definition is one query, `AMENDMENT_OCID_TWINS_SQL`: the gate counts it and
    `refresh-slice.sql` deletes it on every refresh, so the gate is the post-condition of that removal.
+   Nor does an OCDS amendment stay served under the number its EOP twin was published under before the
+   value resolver moved that annex onto its contract (`contract_number_raw`): same УНП, an EOP annex with
+   that annex-side number, and no contract under the number itself. That is a second one-query definition,
+   `AMENDMENT_RAW_NUMBER_TWINS_SQL`, counted by the gate and deleted by `refresh-slice.sql` on every
+   refresh in the same way; the removed row is no contract's annex input, so no count or sum moves.
 8. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
    contract of the work database is staged through `raw_served_contract_value_base`, which reads a served
    row as the daily `amendments` batch does (a test holds the two equal), and evaluated by the rule itself

@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BASE_SCHEMA } from './base-schema';
 import {
+  AMENDMENT_RAW_NUMBER_TWINS_SQL,
   assertIntegrity,
   CHECK_NAMES,
   CHECKS,
@@ -421,6 +422,70 @@ describe('reconciliation gate — injected violations', () => {
          ('am:o505:C-5:R6','am:o505:C-5:R6','C-5','ocds-e82gsb-505','2026-03-07','ocds-e82gsb-505-2/x','ocds:2026-03-07'),
          -- no served tender carries tender.id 999
          ('am:o999:C-1:R7','am:o999:C-1:R7','C-1','ocds-e82gsb-999','2026-03-05','ocds-e82gsb-999-1/x','ocds:2026-03-05');`,
+    );
+    const result = await checkAmendmentTwins(runner(db));
+    expect(result.ok).toBe(true);
+    expect(result.detail).toMatch(/prefer-EOP dedup intact/);
+  });
+
+  // The value resolver moved an EOP annex published under number N-1 onto contract C-1 and kept N-1 in
+  // contract_number_raw. The OCDS release of the same annex still carries N-1, so no (unp, contract_number)
+  // comparison meets the two. Procedure UNP-7 has contract C-1; no contract carries N-1.
+  it('amendment-twin-dedup catches an OCDS amendment served under the annex-side number of its EOP twin', async () => {
+    const db = track(freshDb());
+    sqlite(
+      db,
+      `INSERT INTO tenders (id, source_id, title, authority_id, procedure_type)
+       VALUES ('t:UNP-7','UNP-7','Tender Seven','auth:1','открита процедура');
+       INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur,
+         contract_number)
+       VALUES ('c:e:9','t:UNP-7','eik:900000001',10,'EUR','2026-01-01','ok',10,'C-1');
+       INSERT INTO amendments (id, natural_key, contract_number, contract_number_raw, link_method, unp,
+         published_at, document_number, source)
+       VALUES
+         ('am:UNP-7:N-1:E1','am:UNP-7:N-1:E1','C-1','N-1','value_anchor','UNP-7','2026-03-05','E1','eop:annexes:2026-03-05'),
+         ('am:UNP-7:N-1:E2','am:UNP-7:N-1:E2','C-1','N-1','value_anchor','UNP-7','2026-04-05','E2','eop:annexes:2026-04-05'),
+         ('am:UNP-7:N-1:R1','am:UNP-7:N-1:R1','N-1',NULL,NULL,'UNP-7','2026-03-05','ocds-e82gsb-7-1/x','ocds:2026-03-05'),
+         ('am:UNP-7:N-1:R2','am:UNP-7:N-1:R2','N-1',NULL,NULL,'UNP-7','2026-04-05','ocds-e82gsb-7-2/x','ocds:2026-04-05');`,
+    );
+    const result = await checkAmendmentTwins(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.skipped).toBe(false);
+    expect(result.detail).toMatch(
+      /^2 OCDS amendment\(s\) are served under the number their EOP twin was published under/,
+    );
+    // Removing them by the shared definition turns the gate green.
+    sqlite(db, `DELETE FROM amendments WHERE id IN (${AMENDMENT_RAW_NUMBER_TWINS_SQL});`);
+    await expect(checkAmendmentTwins(runner(db))).resolves.toMatchObject({ ok: true });
+    expect(runner(db)("SELECT COUNT(*) AS n FROM amendments WHERE source LIKE 'eop:%'")).toEqual([
+      { n: 2 },
+    ]);
+  });
+
+  it('amendment-twin-dedup keeps OCDS rows whose number only coincides with an annex-side number', async () => {
+    const db = track(freshDb());
+    sqlite(
+      db,
+      `-- served ids follow the pipeline: a tender is 't:' || УНП
+       INSERT INTO tenders (id, source_id, title, authority_id, procedure_type)
+       VALUES ('t:UNP-7','UNP-7','Tender Seven','auth:1','открита процедура');
+       INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur,
+         contract_number)
+       VALUES ('c:e:9','t:UNP-7','eik:900000001',10,'EUR','2026-01-01','ok',10,'N-2');
+       INSERT INTO amendments (id, natural_key, contract_number, contract_number_raw, link_method, unp,
+         published_at, document_number, source)
+       VALUES
+         ('am:UNP-7:N-1:E1','am:UNP-7:N-1:E1','C-1','N-1','value_anchor','UNP-7','2026-03-05','E1','eop:annexes:2026-03-05'),
+         -- the same number in another procedure: no EOP annex of UNP-2 was published under it
+         ('am:UNP-2:N-1:R1','am:UNP-2:N-1:R1','N-1',NULL,NULL,'UNP-2','2026-03-05','ocds-e82gsb-2-1/x','ocds:2026-03-05'),
+         -- an annex-side number of another procedure's EOP annex
+         ('am:UNP-3:C-3:E3','am:UNP-3:C-3:E3','C-3','N-3','value_anchor','UNP-3','2026-03-05','E3','eop:annexes:2026-03-05'),
+         ('am:UNP-2:N-3:R3','am:UNP-2:N-3:R3','N-3',NULL,NULL,'UNP-2','2026-03-05','ocds-e82gsb-2-3/x','ocds:2026-03-05'),
+         -- an annex-side number that names a contract of its own: that contract's annex input, kept
+         ('am:UNP-7:N-2:E4','am:UNP-7:N-2:E4','C-1','N-2','value_anchor','UNP-7','2026-03-05','E4','eop:annexes:2026-03-05'),
+         ('am:UNP-7:N-2:R4','am:UNP-7:N-2:R4','N-2',NULL,NULL,'UNP-7','2026-03-05','ocds-e82gsb-7-4/x','ocds:2026-03-05'),
+         -- an EOP annex published under N-5 by number, never moved: two EOP rows, no OCDS twin
+         ('am:UNP-7:N-5:E5','am:UNP-7:N-5:E5','N-5',NULL,NULL,'UNP-7','2026-03-05','E5','eop:annexes:2026-03-05');`,
     );
     const result = await checkAmendmentTwins(runner(db));
     expect(result.ok).toBe(true);

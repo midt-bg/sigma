@@ -631,4 +631,87 @@ describe('#306 amendment→contract value-anchor resolver', () => {
     const twoCol = diagRows(out).filter((r) => r.length === 2);
     expect(twoCol[twoCol.length - 1]).toEqual([1, 0]);
   });
+
+  // The EOP annex is published under ANNEX-T1, a number no contract carries, and the resolver moves it onto
+  // FILING-T1 by value. The OCDS release of the same annex arrives keyed by its OCID and still carries
+  // ANNEX-T1; derive-amendments.sql recovers its УНП through the tender.id bridge, AFTER the resolver ran.
+  // It now meets its EOP twin only through contract_number_raw, and the prefer-EOP DELETE must match it there.
+  describe('prefer-EOP dedup on the annex-side number', () => {
+    const twinFixture = `
+      INSERT INTO raw_tenders (source, fetched_at, unp, tender_id) VALUES
+        ('eop:tenders:2026-03-05','2026-03-05','UNP-TWIN-1','T-TWIN-1'),
+        ('eop:tenders:2026-03-05','2026-03-05','UNP-TWIN-2','T-TWIN-2');
+      INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency) VALUES
+        ('eop:contracts:2026-03-05','2026-03-05','UNP-TWIN-1','FILING-T1',5000,'BGN'),
+        -- another procedure files a contract under the very number the twin carries
+        ('eop:contracts:2026-03-05','2026-03-05','UNP-TWIN-2','ANNEX-T1',7000,'BGN');
+      INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at,
+        document_number, value_before, value_after, currency) VALUES
+        ('eop:annexes:2026-03-05','2026-03-05','UNP-TWIN-1',NULL,'ANNEX-T1','2026-03-05','E-T1',5000,5500,'BGN'),
+        ('eop:annexes:2026-04-05','2026-04-05','UNP-TWIN-1',NULL,'ANNEX-T1','2026-04-05','E-T2',5500,6000,'BGN'),
+        -- the twin: the same annex in OCDS, keyed by its OCID, number as published
+        ('ocds:2026-03-05','2026-03-05','ocds-tst001-T-TWIN-1','T-TWIN-1','ANNEX-T1','2026-03-05','ocds-tst001-T-TWIN-1-1',5000,NULL,'BGN'),
+        -- not twins: the same number in another procedure, where it names that procedure's contract …
+        ('ocds:2026-03-05','2026-03-05','ocds-tst001-T-TWIN-2','T-TWIN-2','ANNEX-T1','2026-03-05','ocds-tst001-T-TWIN-2-1',7000,NULL,'BGN'),
+        -- … and another number in the twin's own procedure that no EOP annex was published under
+        ('ocds:2026-03-05','2026-03-05','ocds-tst001-T-TWIN-1','T-TWIN-1','ANNEX-T9','2026-03-05','ocds-tst001-T-TWIN-1-9',100,NULL,'BGN');`;
+
+    const ocdsRows = () =>
+      sqliteJson<{ unp: string; contract_number: string }>(
+        db,
+        "SELECT unp, contract_number FROM raw_amendments WHERE source LIKE 'ocds:%' ORDER BY unp, contract_number",
+      );
+    const rollup = () =>
+      sqliteJson<{
+        unp: string;
+        contract_number: string;
+        annex_count: number;
+        current_value: number | null;
+      }>(
+        db,
+        'SELECT unp, contract_number, annex_count, current_value FROM raw_contracts ORDER BY unp',
+      );
+
+    it('drops the OCDS twin that meets its EOP annex only through the annex-side number', () => {
+      sqlite(db, twinFixture);
+      readScript(db, resolveAmendments);
+      const out = readScriptCapture(db, deriveAmendments);
+
+      expect(
+        sqliteJson<{ contract_number: string; contract_number_raw: string }>(
+          db,
+          "SELECT DISTINCT contract_number, contract_number_raw FROM raw_amendments WHERE source LIKE 'eop:%'",
+        ),
+      ).toEqual([{ contract_number: 'FILING-T1', contract_number_raw: 'ANNEX-T1' }]);
+      // Only the twin goes; both non-twins stay.
+      expect(ocdsRows()).toEqual([
+        { unp: 'UNP-TWIN-1', contract_number: 'ANNEX-T9' },
+        { unp: 'UNP-TWIN-2', contract_number: 'ANNEX-T1' },
+      ]);
+      // The moved chain rolls onto its contract alone; the other procedure keeps its own OCDS annex.
+      expect(rollup()).toEqual([
+        { unp: 'UNP-TWIN-1', contract_number: 'FILING-T1', annex_count: 2, current_value: 6000 },
+        { unp: 'UNP-TWIN-2', contract_number: 'ANNEX-T1', annex_count: 1, current_value: null },
+      ]);
+      // The bounds diagnostic counts the dropped twin (dropped | excess over EOP).
+      expect(diagRows(out)).toContainEqual([1, 0]);
+    });
+
+    it('drops it again on a replay of the same batch and changes nothing else', () => {
+      sqlite(db, twinFixture);
+      runFullDerive(db);
+      const first = { ocds: ocdsRows(), rollup: rollup() };
+      // Replay: the same OCDS release staged again, then the full derive again.
+      sqlite(
+        db,
+        `INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at,
+           document_number, value_before, value_after, currency) VALUES
+           ('ocds:2026-03-05','2026-03-05','ocds-tst001-T-TWIN-1','T-TWIN-1','ANNEX-T1','2026-03-05','ocds-tst001-T-TWIN-1-1',5000,NULL,'BGN');`,
+      );
+      runFullDerive(db);
+      expect({ ocds: ocdsRows(), rollup: rollup() }).toEqual(first);
+      runFullDerive(db);
+      expect({ ocds: ocdsRows(), rollup: rollup() }).toEqual(first);
+    });
+  });
 });
