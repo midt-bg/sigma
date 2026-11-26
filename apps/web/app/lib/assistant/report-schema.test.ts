@@ -12,8 +12,8 @@ const results: QueryResult[] = [
     handle: 'R1',
     columns: ['authority', 'authority_id', 'spent_eur'],
     rows: [
-      ['Министерство на финансите', 'auth:000695089', 1234567],
-      ['Община Пловдив', 'auth:000471504', 890000],
+      ['Министерство на тестовете', 'auth:999000055', 1234567],
+      ['Община Тест', 'auth:999000066', 890000],
     ],
   },
   {
@@ -73,7 +73,7 @@ describe('bindReport — server owns the values', () => {
     if (out.ok && out.report.blocks[0]?.type === 'table') {
       const rows = out.report.blocks[0].rows;
       expect(rows).toHaveLength(2); // exactly the result rows — no more, no fewer
-      expect(rows[0]!.cells).toEqual(['Министерство на финансите', 1234567]);
+      expect(rows[0]!.cells).toEqual(['Министерство на тестовете', 1234567]);
     }
   });
 
@@ -136,8 +136,8 @@ describe('bindReport — server owns the values', () => {
     expect(out.ok).toBe(true);
     if (out.ok && out.report.blocks[0]?.type === 'bar') {
       expect(out.report.blocks[0].points).toEqual([
-        { label: 'Министерство на финансите', value: 1234567 },
-        { label: 'Община Пловдив', value: 890000 },
+        { label: 'Министерство на тестовете', value: 1234567 },
+        { label: 'Община Тест', value: 890000 },
       ]);
     }
   });
@@ -175,8 +175,8 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
     expect(out.ok).toBe(true);
     if (out.ok && out.report.blocks[0]?.type === 'table') {
       const row0 = out.report.blocks[0].rows[0]!;
-      expect(row0.cells).toEqual(['Министерство на финансите', 1234567]);
-      expect(row0.links).toEqual(['auth:000695089', null]); // id for the linked col, null otherwise
+      expect(row0.cells).toEqual(['Министерство на тестовете', 1234567]);
+      expect(row0.links).toEqual(['auth:999000055', null]); // id for the linked col, null otherwise
     }
   });
 

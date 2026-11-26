@@ -22,7 +22,7 @@ describe('formatCell', () => {
   });
 
   it('renders text as-is and absent/blank values as the em-dash', () => {
-    expect(formatCell('Министерство на финансите', 'text')).toBe('Министерство на финансите');
+    expect(formatCell('Министерство на тестовете', 'text')).toBe('Министерство на тестовете');
     expect(formatCell(null, 'text')).toBe('—');
     expect(formatCell('', 'text')).toBe('—');
     expect(formatCell(null, 'money')).toBe(money(null)); // shared helper's em-dash
@@ -31,8 +31,8 @@ describe('formatCell', () => {
 
 describe('entityHref', () => {
   it('builds canonical internal hrefs from raw domain ids', () => {
-    expect(entityHref('authority', 'auth:000695089')).toBe('/authorities/000695089');
-    expect(entityHref('company', 'eik:103267194')).toBe('/companies/103267194');
+    expect(entityHref('authority', 'auth:999000055')).toBe('/authorities/999000055');
+    expect(entityHref('company', 'eik:999000044')).toBe('/companies/999000044');
     expect(entityHref('contract', 'c:abc123')).toBe('/contracts/abc123');
   });
 

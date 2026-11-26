@@ -124,11 +124,11 @@ describe('leaderboard loader — narrowed to one institution (?authority=)', () 
     q.getAuthorityName.mockResolvedValue('Главна дирекция „Изпълнение на наказанията"');
     q.getRelatedPersonRows.mockResolvedValue([]);
     const res = (await leaderboardLoader({
-      request: req('?authority=BG129010029'),
+      request: req('?authority=BG999000099'),
       context,
     } as never)) as { data: { authority: unknown } };
-    expect(q.getRelatedPersonRows).toHaveBeenCalledWith(DB, 'auth:BG129010029');
-    expect(res.data.authority).toMatchObject({ slug: 'BG129010029' });
+    expect(q.getRelatedPersonRows).toHaveBeenCalledWith(DB, 'auth:BG999000099');
+    expect(res.data.authority).toMatchObject({ slug: 'BG999000099' });
   });
 
   it('refuses a value that names no institution instead of serving the whole list', async () => {
