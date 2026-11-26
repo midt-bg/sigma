@@ -206,6 +206,10 @@ migration or ship touches it.
 - **Not recorded:** the CLI paths (`import.mjs`, `ship-domain.mjs`) and a rebuilt slot until its
   first refresh. On such a slot the table does not exist yet, which a reader treats as "no verdict".
 
+The site's `/health` report carries the verdict as `runs.refresh.verdict`, `verdictAt` and `verifiedAt`
+(the last `ok`), read inside the report's own statement ([deploy.md](deploy.md), „Проверка след
+внедряване“).
+
 The one-row read is `getLatestRefreshVerdict` in `@sigma/db` (`packages/db/src/queries/refresh-verdict.ts`).
 It returns `null` when the table is missing or holds no gate verdict yet, and every other error
 propagates. The query walks `idx_refresh_verdict_decided` from the newest row:

@@ -22,6 +22,7 @@ export const VERSION_HEADER = 'X-Sigma-Version';
 export const GENERATION_HEADER = 'X-Sigma-Generation';
 
 export type HealthDb = 'ok' | 'overloaded' | 'error';
+export type RefreshVerdict = 'ok' | 'violation' | 'unverified';
 
 export interface Health {
   /** `degraded` when the database did not answer; the code fields are still right. */
@@ -47,6 +48,14 @@ export interface Health {
       unsettledWindows: number | null;
       /** Seconds since the oldest of them was recorded; null when there is none. */
       oldestUnsettledAgeSeconds: number | null;
+      /**
+       * What the last run that reached the integrity gate concluded. Only `ok` says the numbers
+       * reconcile; null before any run has reached the gate on this slot.
+       */
+      verdict: RefreshVerdict | null;
+      verdictAt: string | null;
+      /** When a run last concluded `ok`: how fresh the proof is, whatever came after it. */
+      verifiedAt: string | null;
     };
     /**
      * The last closed day whose commercial-register changes the run has scheduled for reading
@@ -67,11 +76,15 @@ interface CoreRow {
   changes_through: string | null;
   has_windows: number;
   has_related: number;
+  has_verdict: number;
 }
 
 interface RunRow {
   unsettled: number | null;
   unsettled_since: string | null;
+  verdict: RefreshVerdict | null;
+  verdict_at: string | null;
+  verified_at: string | null;
   related_published_at: string | null;
 }
 
@@ -86,39 +99,51 @@ const CORE_SQL = `SELECT
   d.built_at AS built_at,
   r.seeded_through AS changes_through,
   EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refresh_pending_window') AS has_windows,
-  EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'rp_generation') AS has_related
+  EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'rp_generation') AS has_related,
+  EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refresh_verdict') AS has_verdict
 FROM (SELECT 1)
 LEFT JOIN home_totals h ON h.id = 1
 LEFT JOIN data_version d ON d.id = 1
 LEFT JOIN registry_entry_state r ON r.id = 1`;
 
-// ── The refresh's integrity outcome ─────────────────────────────────────────────────────────────────────
-// The refresh does not store its integrity verdict yet; it settles a recorded window only after the gate
-// passed, so the windows still on record are the closest durable signal. When the verdict is stored, THIS
-// is the one place to change: read it in REFRESH_SETTLEMENT_SQL and map it in refreshSettlement().
+// The refresh's integrity outcome, from the two things a run leaves on record. The windows: a run
+// settles the one it recorded only after its gate passed, so a window still there belongs to a run that
+// is in progress, stopped or failed. The verdict: the row every run that reached the gate stores in
+// `refresh_verdict` (docs/integrity-gate.md) — a run with nothing to verify stores `skipped`, which is
+// never read as the verdict, exactly as in `getLatestRefreshVerdict` (@sigma/db).
 const REFRESH_SETTLEMENT_SQL = (present: boolean) =>
   present
     ? `(SELECT COUNT(*) FROM refresh_pending_window) AS unsettled,
   (SELECT MIN(started_at) FROM refresh_pending_window) AS unsettled_since`
     : `0 AS unsettled, NULL AS unsettled_since`;
 
-function refreshSettlement(
+const REFRESH_VERDICT_SQL = (present: boolean) =>
+  present
+    ? `(SELECT verdict FROM refresh_verdict WHERE verdict <> 'skipped' ORDER BY decided_at DESC LIMIT 1) AS verdict,
+  (SELECT MAX(decided_at) FROM refresh_verdict WHERE verdict <> 'skipped') AS verdict_at,
+  (SELECT MAX(decided_at) FROM refresh_verdict WHERE verdict = 'ok') AS verified_at`
+    : `NULL AS verdict, NULL AS verdict_at, NULL AS verified_at`;
+
+function refreshOutcome(
   run: RunRow | null,
   now: Date,
-): Pick<Health['runs']['refresh'], 'unsettledWindows' | 'oldestUnsettledAgeSeconds'> {
+): Omit<Health['runs']['refresh'], 'publishedAt'> {
   const since = run?.unsettled_since ? Date.parse(run.unsettled_since) : Number.NaN;
   return {
     unsettledWindows: run?.unsettled ?? 0,
     oldestUnsettledAgeSeconds: Number.isNaN(since)
       ? null
       : Math.max(0, Math.floor((now.getTime() - since) / 1000)),
+    verdict: run?.verdict ?? null,
+    verdictAt: run?.verdict_at ?? null,
+    verifiedAt: run?.verified_at ?? null,
   };
 }
-// ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 // Statement 2, only when a run table exists: everything read from them, in one statement.
 const RUNS_SQL = (core: Partial<CoreRow>) => `SELECT
   ${REFRESH_SETTLEMENT_SQL(Boolean(core.has_windows))},
+  ${REFRESH_VERDICT_SQL(Boolean(core.has_verdict))},
   ${core.has_related ? '(SELECT MAX(published_at) FROM rp_generation)' : 'NULL'} AS related_published_at`;
 
 const short = (commit: string | null | undefined) => (commit ? commit.slice(0, 12) : null);
@@ -127,7 +152,9 @@ async function readHealth(db: D1Database, now: Date): Promise<Omit<Health, 'code
   // A SELECT over `(SELECT 1)` always yields its one row; the fallbacks only satisfy the types.
   const core: Partial<CoreRow> = (await db.prepare(CORE_SQL).first<CoreRow>()) ?? {};
   const run =
-    core.has_windows || core.has_related ? await db.prepare(RUNS_SQL(core)).first<RunRow>() : null;
+    core.has_windows || core.has_related || core.has_verdict
+      ? await db.prepare(RUNS_SQL(core)).first<RunRow>()
+      : null;
   return {
     status: 'ok',
     db: 'ok',
@@ -139,7 +166,7 @@ async function readHealth(db: D1Database, now: Date): Promise<Omit<Health, 'code
       asOf: core.as_of ?? null,
     },
     runs: {
-      refresh: { publishedAt: core.generation ?? null, ...refreshSettlement(run, now) },
+      refresh: { publishedAt: core.generation ?? null, ...refreshOutcome(run, now) },
       registry: { changesThrough: core.changes_through ?? null },
       declarations: { relatedPersonsPublishedAt: run?.related_published_at ?? null },
     },
@@ -149,7 +176,14 @@ async function readHealth(db: D1Database, now: Date): Promise<Omit<Health, 'code
 const UNREAD: Omit<Health, 'code' | 'checkedAt' | 'status' | 'db'> = {
   data: { version: null, builtAt: null, builtFromCommit: null, generation: null, asOf: null },
   runs: {
-    refresh: { publishedAt: null, unsettledWindows: null, oldestUnsettledAgeSeconds: null },
+    refresh: {
+      publishedAt: null,
+      unsettledWindows: null,
+      oldestUnsettledAgeSeconds: null,
+      verdict: null,
+      verdictAt: null,
+      verifiedAt: null,
+    },
     registry: { changesThrough: null },
     declarations: { relatedPersonsPublishedAt: null },
   },
