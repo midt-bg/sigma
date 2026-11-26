@@ -32,7 +32,18 @@ wrangler workflows instances describe sigma-rebuild-cutover <instance>
 Етапите: `import` → `registry` → `precompute` → `declarations` → `search` → `ship` → `verify`. Празна кофа
 за декларациите значи и пълно обхождане на регистъра на декларациите в етапа `declarations`. Прекъснат опит
 продължава от последния завършен етап, ако се пусне с `"resume": true`; без него слотът се изпразва и
-строи отначало. Изграждането може да е ден-два преди превключването: обновяването наваксва пропуснатите
+строи отначало.
+
+Ход, паднал във `verify` заради D1 („overloaded“, `7429`, прекъсната връзка), след като повторенията на
+четенето са изчерпани, не се изгражда отново. Редовете са в слота. Пуска се само проверката:
+
+```bash
+wrangler workflows trigger sigma-rebuild-cutover '{"targetName":"<празен слот>","targetId":"<id>","verify":true}'
+```
+
+Проверката отказва слот без разписка за завършен `ship`. Ход, паднал във `verify` с несъответствие в броя
+на редовете или с нарушена проверка за цялост, е истински дефект. Повторна проверка не помага: търси се
+причината и слотът се изгражда отново. Изграждането може да е ден-два преди превключването: обновяването наваксва пропуснатите
 дни след него.
 
 `"reason": "There is no container instance that can be provided to this Durable Object"` при растящ
@@ -42,8 +53,10 @@ wrangler workflows instances describe sigma-rebuild-cutover <instance>
 ## Фаза 3 — проверка на слота
 
 - Ходът е `complete`: броят на редовете във всяка таблица съвпада със снимката и integrity gate е минал.
-- Слотът носи версията на данните на кода и комита, от който е изграден:
-  `wrangler d1 execute <слот> --remote --command "SELECT * FROM data_version"`.
+- Слотът носи версията на данните на кода и комита, от който е изграден, и разписка за минала проверка:
+  `wrangler d1 execute <слот> --remote --command "SELECT * FROM data_version"` и
+  `wrangler d1 execute <слот> --remote --command "SELECT * FROM rebuild_state WHERE stage IN ('ship','verify')"`.
+  Без ред във `data_version` слотът не е проверен и внедряването на production отказва.
 - `node scripts/release-schema.mjs plan <слот>` — всички миграции са в журнала, паритетът е наред.
 
 ## Фаза 4 — превключването, в тих прозорец
