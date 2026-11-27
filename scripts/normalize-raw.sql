@@ -899,7 +899,7 @@ FROM raw_contract_admissions p
 JOIN raw_contracts x ON x.id = p.raw_id
 JOIN raw_serving_contract_authorities a ON a.id = x.id
 JOIN raw_contract_value_results v ON v.id = x.id
-JOIN raw_contract_value_inputs i ON i.id = x.id
+JOIN raw_contract_value_inputs i ON i.id = v.id
 JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw
 LEFT JOIN incomplete_signings s ON s.unp = x.unp AND s.contract_number = x.contract_number;
 
