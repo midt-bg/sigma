@@ -300,8 +300,9 @@ function validateDeriveMode(mode) {
 // with no contracts but populated tenders, bidders or authorities is exactly the state a half-failed
 // run leaves behind, and the narrow-window rebuild would then wipe those too while the guard waved
 // it through. The list comes out of normalize-raw.sql itself (see @full-clear there).
-function assertDeriveWindowSafe(mode, from) {
+function assertDeriveWindowSafe(mode, from, { cleanupStaging = true } = {}) {
   if (mode !== 'full') return;
+  if (fullDeriveIsSafe({ windowFrom: from, feedStart: DEFAULT_FROM, hasCorpus: true })) return;
   const tables = fullClearTables(readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8'));
   if (tables.length === 0)
     throw new Error(
@@ -319,7 +320,9 @@ function assertDeriveWindowSafe(mode, from) {
       `!! refusing --derive=full: could not read the corpus. Every table normalize-raw.sql clears ` +
         `(${tables.join(', ')}) must be answerable before a rebuild may drop it.`,
     );
-    execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+    if (cleanupStaging) {
+      execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+    }
     process.exit(1);
   }
   const populated = Object.entries(row)
@@ -337,7 +340,9 @@ function assertDeriveWindowSafe(mode, from) {
       `   Use --derive=slice for an incremental refresh, or reload the whole feed with ` +
       `--from=${DEFAULT_FROM}.`,
   );
-  execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+  if (cleanupStaging) {
+    execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+  }
   process.exit(1);
 }
 
@@ -425,6 +430,14 @@ async function runWorkBackfill() {
           `  the start of the feed and state --derive=full.`,
       );
     }
+  }
+
+  const windowFrom = plan ? plan.from : String(cli.from || DEFAULT_FROM);
+  if (!cli['no-ship']) {
+    // Shipping replaces every served table wholesale, so a partial window over a populated target
+    // drops earlier corpus rows (including retained unpriced signing evidence). Check the served
+    // target before deleting the caller's work DB or starting any load.
+    assertDeriveWindowSafe('full', windowFrom, { cleanupStaging: false });
   }
 
   const legacyFile = cli['ocds-legacy-ids'];
