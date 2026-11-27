@@ -90,3 +90,70 @@ test('orders companies with an active role first regardless of role insertion or
   const expected = `${mixedCompany}, ${formerCompany}`;
   assert.deepEqual(subtitles, [expected, expected]);
 });
+
+test('caps subtitles at top 2 companies in deterministic (active, name) order across 1-, 2-, and 3-company cases', (t) => {
+  const db = createDb();
+  t.after(() => db.close());
+  const oneCo = '1'.repeat(64);
+  const oneActiveTwoFormer = '2'.repeat(64);
+  const threeActive = '3'.repeat(64);
+  const companies = [
+    ['000000011', 'А ТЕСТ ПЪРВА ЕООД'],
+    ['000000012', 'Б ТЕСТ ВТОРА ЕООД'],
+    ['000000013', 'В ТЕСТ ТРЕТА ЕООД'],
+    ['000000014', 'Г ТЕСТ ЧЕТВЪРТА ЕООД'],
+  ];
+  db.exec(`
+    INSERT INTO registry_persons(indent,name) VALUES
+      ('${oneCo}','Тест Една Компания'),
+      ('${oneActiveTwoFormer}','Тест Една Активна Две Бивши'),
+      ('${threeActive}','Тест Три Активни');`);
+  const addCompany = db.prepare(
+    "INSERT INTO bidders(id,name,kind,eik_normalized) VALUES(?,?,'company',?)",
+  );
+  const addTotal = db.prepare(
+    "INSERT INTO company_totals(bidder_id,name,kind,won_eur,contracts,authorities) VALUES(?,?,'company',1,1,1)",
+  );
+  for (const [eik, name] of companies) {
+    addCompany.run(`eik:${eik}`, name, eik);
+    addTotal.run(`eik:${eik}`, name);
+  }
+  const insertRole = db.prepare(`
+    INSERT INTO registry_roles(eik,sub_uic,field_ident,role,subject_kind,subject_id,subject_name,entry_number,added_on,removed_on)
+    VALUES(?,'0000','00070','manager','person',?,?,?,'2020-01-01',?)`);
+  const roles = [
+    // 1 company -> no trailing separator
+    ['000000013', oneCo, 'Тест Една Компания', 'e1', null],
+    // 1 active (with both former + active rows, alphabetically last) + 2 former -> active first, then alphabetically first former
+    ['000000012', oneActiveTwoFormer, 'Тест Една Активна Две Бивши', 'f2', '2021-01-01'],
+    ['000000011', oneActiveTwoFormer, 'Тест Една Активна Две Бивши', 'f1', '2021-01-01'],
+    ['000000014', oneActiveTwoFormer, 'Тест Една Активна Две Бивши', 'f4', '2021-01-01'],
+    ['000000014', oneActiveTwoFormer, 'Тест Една Активна Две Бивши', 'a4', null],
+    // 3 active companies -> caps at top 2 alphabetically
+    ['000000013', threeActive, 'Тест Три Активни', 'a3', null],
+    ['000000011', threeActive, 'Тест Три Активни', 'a1', null],
+    ['000000012', threeActive, 'Тест Три Активни', 'a2', null],
+  ];
+  const rebuild = readFileSync('scripts/person-search-index.sql', 'utf8');
+  const subtitle = db.prepare(
+    "SELECT subtitle FROM search_index WHERE kind = 'person' AND ref = ?",
+  );
+  for (const orderedRoles of [roles, roles.toReversed()]) {
+    db.exec('DELETE FROM registry_roles');
+    for (const [eik, indent, personName, entry, removedOn] of orderedRoles) {
+      insertRole.run(eik, indent, personName, entry, removedOn);
+    }
+    db.exec(rebuild);
+    assert.equal(subtitle.get(oneCo).subtitle, 'В ТЕСТ ТРЕТА ЕООД');
+    assert.equal(
+      subtitle.get(oneActiveTwoFormer).subtitle,
+      'Г ТЕСТ ЧЕТВЪРТА ЕООД, А ТЕСТ ПЪРВА ЕООД',
+    );
+    assert.equal(subtitle.get(threeActive).subtitle, 'А ТЕСТ ПЪРВА ЕООД, Б ТЕСТ ВТОРА ЕООД');
+  }
+});
+
+test('person-search-index.sql avoids SQLite 3.44+ aggregate ORDER BY syntax', () => {
+  const sql = readFileSync('scripts/person-search-index.sql', 'utf8');
+  assert.doesNotMatch(sql, /\b(?:group_concat|string_agg)\s*\([^)]*\border\s+by\b/i);
+});
