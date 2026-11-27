@@ -2,7 +2,7 @@
 // source of truth used by both the Worker-side ingest package and the CLI loaders.
 
 import { createHash } from 'node:crypto';
-import { clean, toISODate, validYear } from './base.ts';
+import { clean, decimalMills, toISODate, validYear } from './base.ts';
 import { addDays } from './fx.ts';
 
 const KIND_CATEGORY: Record<string, string> = {
@@ -14,6 +14,21 @@ const KIND_CATEGORY: Record<string, string> = {
 const MS_PER_DAY = 86_400_000;
 
 const dateOnly = (s: unknown): string | null => toISODate(s);
+
+function publicationTimestamp(value: string | undefined): string | null {
+  if (!value || !dateOnly(value)) return null;
+  if (value.includes('T') && !/(?:Z|[+-]\d{2}:\d{2})$/u.test(value)) return null;
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return null;
+  const utc = new Date(time).toISOString();
+  // Preserve source precision beyond JavaScript's milliseconds. Normalize equivalent offsets
+  // and trailing zeroes so equal instants have the same ordering key.
+  const fraction = /T\d{2}:\d{2}:\d{2}\.(\d+)/u.exec(value)?.[1];
+  return fraction
+    ? `${utc.slice(0, 20)}${fraction.padEnd(3, '0').replace(/(\d{3}.*?)0*$/u, '$1')}Z`
+    : utc;
+}
+
 const finiteNum = (v: unknown): number | null => {
   if (v === null || v === undefined) return null;
   if (typeof v === 'string' && v.trim() === '') return null;
@@ -41,6 +56,22 @@ function validateDay(day: string, label: string): void {
 
 const subtractDays = (day: string, days: number): string =>
   addDays(day, -Math.max(0, Math.floor(days)));
+
+interface OcdsAmendment {
+  id?: string;
+  date?: string;
+  description?: string;
+  rationale?: string;
+  changes?: Array<{ property?: string; former_value?: unknown }>;
+}
+
+const numericAmountSource = Symbol('numericAmountSource');
+
+interface OcdsValue {
+  amount?: unknown;
+  currency?: unknown;
+  [numericAmountSource]?: string;
+}
 
 // Minimal shapes of the OCDS fields we read (the feed carries far more; keep it loose on purpose).
 export interface OcdsRelease {
@@ -84,14 +115,28 @@ export interface OcdsRelease {
     awardID?: string;
     title?: string;
     dateSigned?: string;
-    value?: { amount?: unknown; currency?: unknown };
-    amendments?: Array<{ description?: string; rationale?: string }>;
+    value?: OcdsValue;
+    amendments?: OcdsAmendment[];
   }>;
 }
 
 export interface OcdsPackage {
   publishedDate?: string;
   releases?: OcdsRelease[];
+}
+
+export function parseOcdsPackage(text: string): OcdsPackage | { data?: OcdsPackage } {
+  return JSON.parse(text, function (this: OcdsValue, key, value, context?: { source: string }) {
+    if (key === 'amount' && typeof value === 'number' && context) {
+      // Keep the value's JSON representation and the exact source token available to the mapper.
+      this[numericAmountSource] = context.source;
+    }
+    return value;
+  });
+}
+
+function sourceAmount(value: OcdsValue | undefined): unknown {
+  return value?.[numericAmountSource] ?? value?.amount;
 }
 
 export interface OcdsMeta {
@@ -128,6 +173,7 @@ export interface ContractStagingRow {
   contractor_eik: string | null;
   contractor_name: string | null;
   signing_value: number | null;
+  signing_value_mills: string | null;
   currency: string | null;
   vat: string | null;
   sme: string | null;
@@ -150,6 +196,8 @@ export interface AmendmentStagingRow {
   contract_number: string | null;
   contract_date: string | null;
   published_at: string | null;
+  published_at_utc: string | null;
+  publication_version: string;
   unp: string | null;
   authority_eik: string | null;
   authority_name: string | null;
@@ -160,6 +208,7 @@ export interface AmendmentStagingRow {
   contractor_eik: string | null;
   contractor_name: string | null;
   value_before: number | null;
+  value_before_mills: string | null;
   value_after: number | null;
   value_delta: number | null;
   currency: string | null;
@@ -167,6 +216,8 @@ export interface AmendmentStagingRow {
   reason: string | null;
   circumstances: string | null;
   sme: string | null;
+  signing_correction: 0 | 1;
+  metadata_only: 0 | 1;
   // The EOP procedure id (OCDS `tender.id`) — the bridge to the УНП. The OCID is a surrogate; the
   // real УНП is not in the OCDS release, so the ETL recovers it via tender_ext_id → raw_tenders → unp
   // in scripts/derive-amendments.sql (and scripts/refresh-slice.sql on the incremental path), mirroring
@@ -281,7 +332,14 @@ function supplierOf(
 
 /** Flatten a contract-tagged release into raw_contracts staging rows. */
 export function releaseToContracts(rel: OcdsRelease, meta: OcdsMeta): ContractStagingRow[] {
-  if (!(rel.tag ?? []).includes('contract') || !(rel.contracts ?? []).length) return [];
+  const tags = rel.tag ?? [];
+  if (!tags.includes('contract') || !(rel.contracts ?? []).length) return [];
+  const contracts = (rel.contracts ?? []).filter(
+    (c) =>
+      !tags.includes('contractUpdate') ||
+      tags.includes('contractAmendment') ||
+      !isSigningCorrection(c.amendments),
+  );
   const ctx = relContext(rel, meta);
   const t = ctx.tender;
   const procedure_type = t.procurementMethodDetails || t.procurementMethod || null;
@@ -292,8 +350,9 @@ export function releaseToContracts(rel: OcdsRelease, meta: OcdsMeta): ContractSt
   const buyer = ctx.buyerWithIdentifier;
   const buyerAppearance = buyer ? appearanceOf(rel.ocid, buyer) : null;
   const buyerIsSupplier = buyer && isSupplier(buyer, supplierReferences(rel)) ? 1 : 0;
-  return (rel.contracts ?? []).map((c) => {
+  return contracts.map((c) => {
     const sup = supplierOf(rel, ctx, c);
+    const amount = finiteNum(c.value?.amount);
     return {
       ...metaBase(meta),
       dataset_year: boundedYear(meta.year),
@@ -315,7 +374,8 @@ export function releaseToContracts(rel: OcdsRelease, meta: OcdsMeta): ContractSt
       contract_subject: c.title || sup.awardTitle || null,
       contractor_eik: sup.eik,
       contractor_name: sup.name,
-      signing_value: finiteNum(c.value?.amount),
+      signing_value: amount,
+      signing_value_mills: decimalMills(amount, sourceAmount(c.value)),
       currency: isoCurrency(c.value?.currency),
       vat: null,
       sme: null,
@@ -328,19 +388,96 @@ export function releaseToContracts(rel: OcdsRelease, meta: OcdsMeta): ContractSt
   });
 }
 
+// The feed also uses contractUpdate for real annexes. Require affirmative evidence in the
+// contract's own amendment metadata that the notice fixes the published contract amount.
+function isSigningCorrection(amendments: OcdsAmendment[] | undefined): boolean {
+  const amendment = amendments?.[0];
+  if (amendments?.length !== 1 || !amendment) return false;
+  if (
+    amendment.changes?.some((change) => {
+      const property = clean(change?.property);
+      return property && !/^\/?value(?:[./]amount)?$/u.test(property);
+    })
+  )
+    return false;
+  const text = [amendment.description, amendment.rationale]
+    .map((part) => part?.toLowerCase().trim() ?? '')
+    .join('; ');
+  const sentenceBoundary = /[.!?;\r\n]+/u;
+  const normalized = text.replace(/[^\S\r\n]+/gu, ' ');
+  const agreementOrLaw =
+    /(?:^|[^\p{L}])(?:допълнителн\p{L}* споразумени\p{L}*|анекс\p{L}*|чл\s*(?:\.|\d)|член(?:ът|а)?\s+\d)/u;
+  const change =
+    /(?:^|[^\p{L}])(?:измен|промен|промян|удълж|продълж|съкрат|съкращ|разшир|огранич|поднов)\p{L}*/u;
+  const term = /(?:^|[^\p{L}])(?:срок|продължителност|обхват|предмет|услови)\p{L}*/u;
+  // Either word order can carry qualifiers such as "за изпълнение на договора".
+  if (
+    agreementOrLaw.test(text.replace(/\s+/gu, ' ')) ||
+    normalized
+      .split(sentenceBoundary)
+      .some((sentence) => term.test(sentence) && change.test(sentence))
+  )
+    return false;
+  const correction =
+    /(?:техническ[аи] грешк[аи]|очевидн[аи] фактическ[аи] грешк[аи])(?: в (?:общата |публикуваната |изписването на )?| при (?:изписването|въвеждането) на |[.:]\s*)(?:стойност(?:та)? (?:за изпълнение )?на договора|договорната стойност)/gu;
+  const negated = /(?:^|[^\p{L}])(?:не|няма|липсва\p{L}*|отсъств\p{L}*|без|нито)(?=[^\p{L}]|$)/u;
+  return Array.from(normalized.matchAll(correction)).some((match) => {
+    const before = normalized.slice(0, match.index).split(sentenceBoundary).at(-1) ?? '';
+    const after = normalized.slice(match.index + match[0].length).split(sentenceBoundary)[0] ?? '';
+    return !negated.test(before) && !negated.test(after);
+  });
+}
+
 export function releaseToAmendments(rel: OcdsRelease, meta: OcdsMeta): AmendmentStagingRow[] {
   const tags = rel.tag ?? [];
-  if (
-    !(tags.includes('contractAmendment') || tags.includes('contractUpdate')) ||
-    !(rel.contracts ?? []).length
-  ) {
+  const taggedAmendment = tags.includes('contractAmendment');
+  if (!(taggedAmendment || tags.includes('contractUpdate')) || !(rel.contracts ?? []).length) {
     return [];
   }
   const ctx = relContext(rel, meta);
   return (rel.contracts ?? []).flatMap((c) => {
-    if (!c.id) return [];
+    const contractNumber = clean(c.id);
+    if (!contractNumber) return [];
+    const amendments = c.amendments ?? [];
+    const amd = amendments.at(-1);
+    const metadataOnly =
+      !taggedAmendment &&
+      !amendments.some(
+        (a) =>
+          a?.description?.trim() ||
+          a?.rationale?.trim() ||
+          (clean(a?.id) && dateOnly(a?.date)) ||
+          a?.changes?.some((change) => clean(change?.property)),
+      );
+    // An excluded update needs all parts of its publication key to retire a legacy history row.
+    if (metadataOnly && (!clean(rel.id) || !clean(rel.ocid))) return [];
+    const signingCorrection = !taggedAmendment && isSigningCorrection(amendments);
+    const publishedAtUtc = publicationTimestamp(rel.date ?? meta.publishedDate);
+    const amount = finiteNum(c.value?.amount);
     const sup = supplierOf(rel, ctx, c);
-    const amd = (c.amendments ?? []).slice(-1)[0] ?? null;
+    const contractDate = dateOnly(c.dateSigned);
+    const currency = isoCurrency(c.value?.currency);
+    const amountMills = signingCorrection ? decimalMills(amount, sourceAmount(c.value)) : null;
+    const exactAmount =
+      amountMills !== null && amountMills !== decimalMills(amount, c.value?.amount)
+        ? [amountMills]
+        : [];
+    // Tie-break equivalent UTC timestamps in one packet by stable source evidence.
+    // Fetch metadata can change on replay and is excluded from the fingerprint.
+    const publicationVersion = createHash('sha256')
+      .update(
+        JSON.stringify([
+          tags,
+          clean(rel.tender?.id),
+          c.dateSigned,
+          c.value,
+          amendments,
+          sup.eik,
+          sup.name,
+          ...exactAmount,
+        ]),
+      )
+      .digest('hex');
     return [
       {
         ...metaBase(meta),
@@ -348,9 +485,11 @@ export function releaseToAmendments(rel: OcdsRelease, meta: OcdsMeta): Amendment
         dataset_variant: 'OCDS',
         seq_no: null,
         document_number: rel.id ?? null,
-        contract_number: clean(c.id),
-        contract_date: dateOnly(c.dateSigned),
-        published_at: ctx.published_at,
+        contract_number: contractNumber,
+        contract_date: contractDate,
+        published_at: signingCorrection ? publishedAtUtc : ctx.published_at,
+        published_at_utc: publishedAtUtc,
+        publication_version: publicationVersion,
         unp: rel.ocid ?? null,
         authority_eik: ctx.authority_eik,
         authority_name: ctx.authority_name,
@@ -362,17 +501,19 @@ export function releaseToAmendments(rel: OcdsRelease, meta: OcdsMeta): Amendment
         contractor_name: sup.name,
         // An OCDS contractAmendment/contractUpdate release carries the contract value as it stands in
         // that release — measured against the EOP annex stream this is the value BEFORE the amendment,
-        // never a reliable "after" (issue #286). Record it as value_before with a null value_after so an
-        // OCDS row can never drive the derived current_value (derive-amendments.sql selects the latest
-        // non-null value_after); the authoritative after-value comes from the EOP annex.
-        value_before: finiteNum(c.value?.amount),
+        // never a reliable "after" (issue #286). Keep the reported amount for signing corrections
+        // and as the before-value for OCDS annexes. EOP supplies the structured annex after-value.
+        value_before: amount,
+        value_before_mills: amountMills,
         value_after: null,
         value_delta: null,
-        currency: isoCurrency(c.value?.currency),
+        currency,
         description: amd?.description || null,
         reason: amd?.rationale || null,
         circumstances: null,
         sme: null,
+        signing_correction: signingCorrection ? 1 : 0,
+        metadata_only: metadataOnly ? 1 : 0,
         // OCDS tender.id === the EOP procedure id; the bridge to the УНП (derive-amendments.sql, and
         // refresh-slice.sql on the incremental path). The ocid stored in `unp` here is a surrogate that
         // the ETL bridge rewrites to the real УНП.
@@ -507,6 +648,7 @@ export const CONTRACT_STAGING_COLS: (keyof ContractStagingRow)[] = [
   'contractor_eik',
   'contractor_name',
   'signing_value',
+  'signing_value_mills',
   'currency',
   'vat',
   'sme',
@@ -529,6 +671,8 @@ export const AMENDMENT_STAGING_COLS: (keyof AmendmentStagingRow)[] = [
   'contract_number',
   'contract_date',
   'published_at',
+  'published_at_utc',
+  'publication_version',
   'unp',
   'authority_eik',
   'authority_name',
@@ -539,6 +683,7 @@ export const AMENDMENT_STAGING_COLS: (keyof AmendmentStagingRow)[] = [
   'contractor_eik',
   'contractor_name',
   'value_before',
+  'value_before_mills',
   'value_after',
   'value_delta',
   'currency',
@@ -546,6 +691,8 @@ export const AMENDMENT_STAGING_COLS: (keyof AmendmentStagingRow)[] = [
   'reason',
   'circumstances',
   'sme',
+  'signing_correction',
+  'metadata_only',
   'tender_ext_id',
 ];
 

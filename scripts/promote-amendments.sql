@@ -13,17 +13,18 @@ CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.
 INSERT INTO amendments (
   id, natural_key, contract_number, contract_number_raw, link_method, unp,
   value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source,
+  published_at, published_at_utc, document_number, description, source,
   value_restated, value_treatment, value_suspect, value_evidence_known, raw_value_after, raw_value_delta,
-  value_anchor_kind, value_anchor_contractor_eik, contractor_id_status
+  value_anchor_kind, value_anchor_contractor_eik, contractor_id_status, anchor_candidate_contractor_eik
 )
 WITH suppliers AS MATERIALIZED (SELECT * FROM raw_supplier_evidence)
 SELECT
   a.natural_key, a.natural_key, a.contract_number, a.contract_number_raw, a.link_method, a.unp,
   a.value_before, a.effective_after, a.effective_after - a.value_before, a.currency,
-  a.published_at, a.document_number, a.description, a.source,
+  a.published_at, a.published_at_utc, a.document_number, a.description, a.source,
   a.restated, a.value_treatment, s.natural_key IS NOT NULL, 1, a.raw_after, a.raw_delta,
-  a.value_anchor_kind, CASE WHEN a.value_anchor_kind = 'direct' THEN ids.eik END, ids.evidence_status
+  a.value_anchor_kind, CASE WHEN a.value_anchor_kind = 'direct' THEN ids.eik END, ids.evidence_status,
+  CASE WHEN a.source LIKE 'eop:%' THEN ids.eik END
 FROM raw_amendment_publications a
 JOIN suppliers ids ON ids.eik_raw IS a.contractor_eik
 LEFT JOIN (SELECT DISTINCT natural_key FROM raw_contract_suspect_annexes) s USING (natural_key);

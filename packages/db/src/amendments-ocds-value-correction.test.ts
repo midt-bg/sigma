@@ -1,11 +1,4 @@
-// A contract value corrected at the source and published only as OCDS contract updates, with no EOP annex:
-// the latest release that moves the value away from the signing value becomes the contract's current value,
-// on the full build (derive-amendments.sql → normalize-raw.sql → promote-amendments.sql → precompute.sql)
-// and on the daily path (refresh-slice.sql, the release arriving in a later window than the contract). Every
-// other OCDS row keeps the #286 shape — the release value as value_before, no after-value — and a contract
-// with an EOP annex keeps the EOP annex as its only value source.
-//
-// Runs the REAL scripts through the sqlite3 CLI. All names, numbers and amounts are invented.
+// Exercise signing corrections through the actual full-build and daily SQL paths.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,18 +6,26 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BASE_SCHEMA } from './base-schema';
+import { AMENDMENTS_SQL } from './queries/details';
 import {
   BASE_CONTRACT_COLS,
   baseSqlLiteral,
   escapeSqlText,
   mapBaseRecord,
 } from '../../ingest/src/base';
-import { AMENDMENT_STAGING_COLS, releaseToAmendments } from '../../ingest/src/ocds';
+import {
+  AMENDMENT_STAGING_COLS,
+  CONTRACT_STAGING_COLS,
+  parseOcdsPackage,
+  releaseToAmendments,
+  releaseToContracts,
+  type OcdsPackage,
+  type OcdsRelease,
+} from '../../ingest/src/ocds';
 import {
   assertIntegrity,
   checkContractValueRule,
   checkOcdsSourceValue,
-  OCDS_SOURCE_VALUE_DECISION_SQL,
 } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -47,7 +48,7 @@ const script = (name: string) => resolve(root, 'scripts', name);
 const workStagingSchema = script('work-staging-schema.sql');
 
 function sqlite(dbPath: string, sql: string): string {
-  return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
+  return execFileSync('sqlite3', ['-bail', dbPath], { input: sql, encoding: 'utf8' });
 }
 
 function sqliteJson<T>(dbPath: string, sql: string): T[] {
@@ -56,7 +57,7 @@ function sqliteJson<T>(dbPath: string, sql: string): T[] {
 }
 
 function readScript(dbPath: string, path: string): void {
-  execFileSync('sqlite3', [dbPath], {
+  execFileSync('sqlite3', ['-bail', dbPath], {
     input: `PRAGMA foreign_keys=ON;\n.read ${path}\n`,
     stdio: 'pipe',
   });
@@ -80,6 +81,7 @@ function resetRawStaging(dbPath: string): void {
 function fullBuild(dbPath: string, seed: string): void {
   initWorkDb(dbPath);
   sqlite(dbPath, seed);
+  readScript(dbPath, script('resolve-amendment-contracts.sql'));
   readScript(dbPath, script('derive-amendments.sql'));
   readScript(dbPath, script('normalize-raw.sql'));
   readScript(dbPath, script('promote-amendments.sql'));
@@ -117,7 +119,11 @@ function tender(currency = 'EUR'): string {
        '733456781', 'public', '2026-10-01');`;
 }
 
-function contract(signing: number, currency = 'EUR'): string {
+function contract(
+  signing: number,
+  currency = 'EUR',
+  { number = CONTRACT, supplier = '787777778' } = {},
+): string {
   return `INSERT INTO raw_contracts
       (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
        published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
@@ -127,48 +133,66 @@ function contract(signing: number, currency = 'EUR'): string {
        awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
        eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
     VALUES
-      ('eop:contracts:2026-10-05', 2026, 'eop', '2026-10-06T00:00:00Z', 0, 'DOC-${CONTRACT}',
+      ('eop:contracts:2026-10-05', 2026, 'eop', '2026-10-06T00:00:00Z', 0, 'DOC-${number}',
        '2026-10-05', '${UNP}', '${TENDER_ID}', 'open', 'Test tender', '45000000',
        'Construction', 'works', ${ESTIMATE}, '${currency}', 'basis', 'lowest', 'Община Тест',
-       '733456781', 'public', 'activity', 'notice', NULL, '${CONTRACT}', '2026-10-05', ${signing},
-       '${currency}', 'Test contract', 0, '787777778', 'ТЕСТ ГРУП ЕООД', 'BG', 'small', 0, 1, 1, 0, 0, 365);`;
+       '733456781', 'public', 'activity', 'notice', NULL, '${number}', '2026-10-05', ${signing},
+       '${currency}', 'Test contract', 0, '${supplier}', 'ТЕСТ ГРУП ЕООД', 'BG', 'small', 0, 1, 1, 0, 0, 365);`;
 }
 
-// An OCDS contractUpdate release, staged the way releaseToAmendments maps it: the contract value in the
-// release as value_before, no after-value, keyed by the OCID until the bridge recovers the УНП.
-function release(o: {
-  published: string;
-  value: number;
-  currency?: string;
-  description?: string;
-  doc?: string | null;
-}): string {
-  const doc =
-    o.doc === undefined ? `'${OCID}-${o.published}/${o.published}-contractupdate'` : 'NULL';
-  const description = o.description ? `'${o.description}'` : 'NULL';
-  return `INSERT INTO raw_amendments
-      (source, dataset_year, dataset_variant, fetched_at, document_number, contract_number,
-       contract_date, published_at, unp, tender_ext_id, authority_eik, authority_name,
-       procurement_subject, contract_kind, value_before, value_after, value_delta, currency,
-       description)
-    VALUES
-      ('ocds:${o.published}', 2026, 'OCDS', '${o.published}T06:00:00Z', ${doc}, '${CONTRACT}',
-       '2026-10-05', '${o.published}', '${OCID}', '${TENDER_ID}', '733456781', 'Община Тест',
-       'Test tender', 'works', ${o.value}, NULL, NULL, '${o.currency ?? 'EUR'}', ${description});`;
-}
-
-function eopAnnex(before: number, after: number): string {
+function eopAnnex(before: number, after: number, day = '2026-11-02', number = CONTRACT): string {
   return `INSERT INTO raw_amendments
       (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number, contract_number,
        contract_date, published_at, unp, authority_eik, authority_name, procurement_subject,
-       contract_kind, value_before, value_after, value_delta, currency, description)
+       contract_kind, value_before, value_after, value_delta, currency, description, contractor_eik)
     VALUES
-      ('eop:annexes:2026-11-02', 2026, 'eop', '2026-11-03T00:00:00Z', '1', 'ANX-1', '${CONTRACT}',
-       '2026-10-05', '2026-11-02', '${UNP}', '733456781', 'Община Тест', 'Test tender', 'works',
-       ${before}, ${after}, ${after - before}, 'EUR', 'EOP annex');`;
+      ('eop:annexes:${day}', 2026, 'eop', '${day}T06:00:00Z', '1', 'ANX-${day}', '${number}',
+       '2026-10-05', '${day}', '${UNP}', '733456781', 'Община Тест', 'Test tender', 'works',
+       ${before}, ${after}, ${after - before}, 'EUR', 'EOP annex', '999999995');`;
 }
 
 const NOTE = 'Техническа грешка в стойността на договора';
+
+function ocdsSigning(
+  value: number | undefined,
+  { day = '2026-10-05', document = 'TEST-SIGNING' } = {},
+): string {
+  const [row] = releaseToContracts(
+    {
+      ocid: OCID,
+      id: document,
+      tag: ['contract'],
+      date: `${day}T06:00:00Z`,
+      tender: { id: TENDER_ID, value: { amount: ESTIMATE, currency: 'EUR' } },
+      buyer: { id: 'TEST-BUYER', name: 'Община Тест' },
+      parties: [
+        {
+          id: 'TEST-BUYER',
+          roles: ['buyer'],
+          identifier: { id: '733456781' },
+          name: 'Община Тест',
+        },
+      ],
+      contracts: [
+        { id: CONTRACT, dateSigned: '2026-10-05', value: { amount: value, currency: 'EUR' } },
+      ],
+    },
+    {
+      source: `ocds:${day}`,
+      year: 2026,
+      datasetUri: null,
+      resourceUri: null,
+      fetchedAt: `${day}T06:00:00Z`,
+    },
+  );
+  const values = CONTRACT_STAGING_COLS.map((col) => sqlValue(row?.[col]));
+  return `INSERT INTO raw_contracts (${CONTRACT_STAGING_COLS.join(', ')}) VALUES (${values.join(', ')});`;
+}
+
+function sqlValue(value: number | string | null | undefined) {
+  if (value == null) return 'NULL';
+  return typeof value === 'number' ? String(value) : escapeSqlText(value);
+}
 
 function mappedSigning(
   lot: string,
@@ -200,35 +224,72 @@ function mappedSigning(
   return `INSERT INTO raw_contracts (${BASE_CONTRACT_COLS.join(', ')}) VALUES (${values.join(', ')});`;
 }
 
-function mappedRelease(currency: string): string {
-  const day = '2026-11-24';
-  const [row] = releaseToAmendments(
-    {
-      ocid: OCID,
-      id: `${OCID}-${day}-contractupdate`,
-      date: `${day}T06:00:00Z`,
-      tag: ['contractUpdate'],
-      tender: { id: TENDER_ID },
-      contracts: [{ id: CONTRACT, dateSigned: '2026-10-05', value: { amount: CORRECT, currency } }],
-    },
-    {
-      source: `ocds:${day}`,
-      datasetUri: null,
-      resourceUri: null,
-      year: 2026,
-      fetchedAt: `${day}T06:00:00Z`,
-    },
-  );
-  expect(row).toMatchObject({ value_before: CORRECT, value_after: null, currency });
-  const values = AMENDMENT_STAGING_COLS.map((col) => {
-    const value = row?.[col];
-    if (value == null) return 'NULL';
-    return typeof value === 'number' ? String(value) : escapeSqlText(value);
+interface ReportOptions {
+  day?: string;
+  amount?: number | string;
+  currency?: string;
+  dateSigned?: string;
+  taggedAmendment?: boolean;
+  document?: boolean;
+  publication?: string;
+  timestamp?: string;
+  rationale?: string;
+  tenderId?: string | null;
+  jsonAmount?: string;
+}
+
+function mappedRelease({
+  day = '2026-11-24',
+  amount = CORRECT,
+  currency = 'EUR',
+  dateSigned = '2026-10-05',
+  taggedAmendment = false,
+  document = true,
+  publication = `TEST-REPORT-${day}`,
+  timestamp = `${day}T06:00:00Z`,
+  rationale = NOTE,
+  tenderId = TENDER_ID,
+  jsonAmount,
+}: ReportOptions = {}): string {
+  let release: OcdsRelease = {
+    ocid: OCID,
+    id: document ? publication : undefined,
+    date: timestamp,
+    tag: [taggedAmendment ? 'contractAmendment' : 'contractUpdate'],
+    tender: tenderId === null ? undefined : { id: tenderId },
+    contracts: [
+      {
+        id: CONTRACT,
+        dateSigned,
+        value: { amount: jsonAmount === undefined ? amount : 'TEST-RAW-AMOUNT', currency },
+        amendments: [{ rationale }],
+      },
+    ],
+  };
+  if (jsonAmount !== undefined) {
+    const json = JSON.stringify({ releases: [release] }).replace('"TEST-RAW-AMOUNT"', jsonAmount);
+    const pkg = parseOcdsPackage(json) as OcdsPackage;
+    release = pkg.releases![0]!;
+  }
+  const [row] = releaseToAmendments(release, {
+    source: `ocds:${day}`,
+    datasetUri: null,
+    resourceUri: null,
+    year: 2026,
+    fetchedAt: `${day}T06:00:00Z`,
   });
+  expect(row).toMatchObject({
+    value_before: Number(jsonAmount ?? amount),
+    value_after: null,
+    currency,
+  });
+  const values = AMENDMENT_STAGING_COLS.map((col) => sqlValue(row?.[col]));
   return `INSERT INTO raw_amendments (${AMENDMENT_STAGING_COLS.join(', ')}) VALUES (${values.join(', ')});`;
 }
 
 interface ContractState {
+  signing_value: number;
+  signing_value_original: number;
   annex_count: number;
   current_value: number | null;
   value_flag: string;
@@ -239,10 +300,10 @@ interface ContractState {
 const contractState = (dbPath: string): ContractState | undefined =>
   sqliteJson<ContractState>(
     dbPath,
-    `SELECT annex_count, current_value, value_flag, amount, ROUND(amount_eur, 2) AS amount_eur,
+    `SELECT signing_value, signing_value_original, annex_count, current_value, value_flag, amount, ROUND(amount_eur, 2) AS amount_eur,
        signing_value_eur, current_value_eur, current_value_currency,
        fx_converted, fx_rate
-     FROM contracts WHERE contract_number = '${CONTRACT}'`,
+     FROM contracts WHERE contract_number = '${CONTRACT}' ORDER BY id`,
   )[0];
 
 const timeline = (dbPath: string) =>
@@ -276,464 +337,702 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('OCDS source correction on the full build', () => {
-  it('takes a value corrected down x0.01 as the current value; the flag, the amount and the sums follow', async () => {
-    // Control: the mistyped contract with only the release that repeats it.
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-23', value: MISTYPED })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({
-      annex_count: 1,
-      current_value: null,
-      value_flag: 'review',
-      amount: MISTYPED,
-      amount_eur: MISTYPED,
+function snapshot(db: string) {
+  return {
+    contracts: contractState(db),
+    history: timeline(db),
+    homeValue: homeValue(db),
+    bidderTotals: sqliteJson(db, 'SELECT won_eur FROM company_totals'),
+    authorityTotals: sqliteJson(db, 'SELECT spent_eur FROM authority_totals'),
+    flowTotals: sqliteJson(db, 'SELECT won_eur FROM flow_pairs'),
+    reports: sqliteJson(db, 'SELECT * FROM contract_signing_corrections ORDER BY document_number'),
+  };
+}
+
+function replay(db: string, update: string) {
+  resetRawStaging(db);
+  sqlite(db, update);
+  readScript(db, script('refresh-slice.sql'));
+}
+
+async function expectClean(db: string) {
+  for (const build of [false, true])
+    expect(await sourceValueGate(db, build)).toMatchObject({
+      ok: true,
+      warn: false,
+      skipped: false,
     });
-    rmSync(fullDb);
+  expect(await valueRule(db)).toMatchObject({ ok: true });
+}
 
-    // The first release still carries the mistyped value; only the second carries the correction.
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)}
-       ${release({ published: '2026-11-23', value: MISTYPED })}
-       ${release({ published: '2026-11-24', value: CORRECT, description: NOTE })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({
-      annex_count: 2,
-      current_value: CORRECT,
-      value_flag: 'ok',
-      amount: CORRECT,
-      amount_eur: CORRECT,
+describe('technical source values across full build and daily refresh', () => {
+  it('revokes a correction when a distinct unpriced OCDS signing arrives', async () => {
+    const first = tender() + ocdsSigning(9000);
+    const correction = mappedRelease({ amount: 1200 });
+    const unpriced = ocdsSigning(undefined, {
+      day: '2026-11-26',
+      document: 'TEST-UNPRICED-SIGNING',
     });
-    // The timeline: the earlier release is unchanged (no after-value); the correction reads as the change
-    // from the signing value to the corrected one, with the source's explanation.
-    expect(timeline(fullDb)).toMatchObject([
-      {
-        published_at: '2026-11-23',
-        source: 'ocds',
-        value_before: MISTYPED,
-        value_after: null,
-        value_delta: null,
-        raw_value_after: null,
-        description: null,
-      },
-      {
-        published_at: '2026-11-24',
-        source: 'ocds',
-        value_before: MISTYPED,
-        value_after: CORRECT,
-        value_delta: CORRECT - MISTYPED,
-        raw_value_after: CORRECT,
-        description: NOTE,
-      },
-    ]);
-    expect(homeValue(fullDb)).toBe(CORRECT);
-    expect((await valueRule(fullDb)).ok).toBe(true);
-
-    // Re-running the derive on the same staging changes nothing.
-    const before = sqliteJson(fullDb, 'SELECT * FROM raw_amendments ORDER BY id');
-    readScript(fullDb, script('derive-amendments.sql'));
-    expect(sqliteJson(fullDb, 'SELECT * FROM raw_amendments ORDER BY id')).toEqual(before);
-  });
-
-  it('changes nothing when the latest release repeats the signing value', async () => {
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(CORRECT)} ${release({ published: '2026-11-23', value: CORRECT })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({
-      annex_count: 1,
-      current_value: null,
-      amount: CORRECT,
-    });
-    expect(timeline(fullDb)).toMatchObject([{ value_before: CORRECT, value_after: null }]);
-    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
-  });
-
-  it('decides by the latest release only: an earlier differing one followed by the signing value changes nothing', () => {
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)}
-       ${release({ published: '2026-11-23', value: CORRECT })}
-       ${release({ published: '2026-11-24', value: MISTYPED })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({ current_value: null, amount: MISTYPED });
-    expect(timeline(fullDb)).toMatchObject([
-      { value_before: CORRECT, value_after: null },
-      { value_before: MISTYPED, value_after: null },
-    ]);
-  });
-
-  it('keeps the EOP annex as the only value source when the contract has one', () => {
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)}
-       ${eopAnnex(MISTYPED, MISTYPED + 100000)}
-       ${release({ published: '2026-11-24', value: CORRECT, description: NOTE })}`,
-    );
-    // The OCDS twin is dropped (#286); the EOP after-value stands.
-    expect(contractState(fullDb)).toMatchObject({
-      annex_count: 1,
-      current_value: MISTYPED + 100000,
-    });
-    expect(timeline(fullDb)).toMatchObject([{ source: 'eop:', value_after: MISTYPED + 100000 }]);
-  });
-
-  it('changes nothing for a release in another currency than the signing value', async () => {
-    // A lev contract whose later release states the euro amount: a different number, not a correction.
-    fullBuild(
-      fullDb,
-      `${tender('BGN')} ${contract(7317200, 'BGN')}
-       ${release({ published: '2026-11-24', value: 3741205, currency: 'EUR' })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({ current_value: null, amount: 7317200 });
-    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
-  });
-
-  it('changes nothing for a non-positive release value or a release without a document number', async () => {
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-24', value: 0 })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({ current_value: null, amount: MISTYPED });
-    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
-    rmSync(fullDb);
-
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)}
-       ${release({ published: '2026-11-24', value: CORRECT, doc: null })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({ current_value: null, amount: MISTYPED });
-    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
-  });
-
-  it('changes nothing when the contract publications disagree on the signing value', async () => {
-    // Two lots under one contract number, signed for different amounts: there is no single "before".
-    const secondLot = contract(MISTYPED + 1)
-      .replace(`'DOC-${CONTRACT}'`, `'DOC-${CONTRACT}-2'`)
-      .replace("'notice', NULL,", "'notice', '2',");
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)} ${secondLot}
-       ${release({ published: '2026-11-24', value: CORRECT })}`,
-    );
-    expect(
-      sqliteJson<{ current_value: number | null }>(
-        fullDb,
-        `SELECT DISTINCT current_value FROM contracts WHERE contract_number = '${CONTRACT}'`,
-      ),
-    ).toEqual([{ current_value: null }]);
-    expect(await sourceValueGate(fullDb)).toMatchObject({ ok: true, warn: false });
-  });
-
-  it('holds an implausible "correction" upwards with the existing annex guards', () => {
-    // x100 up: the annex ratio guard; the sums keep the signing value.
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(CORRECT)} ${release({ published: '2026-11-24', value: MISTYPED })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({
-      annex_count: 1,
-      current_value: MISTYPED,
-      value_flag: 'annex_suspect',
-      amount: CORRECT,
-      amount_eur: CORRECT,
-    });
-    rmSync(fullDb);
-
-    // x10 up: the step guard (after >= 10 x before) with a ratio >= 5.
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(CORRECT)} ${release({ published: '2026-11-24', value: CORRECT * 10 })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({
-      current_value: CORRECT * 10,
-      value_flag: 'annex_suspect',
-      amount: CORRECT,
-    });
-    rmSync(fullDb);
-
-    // x3 up: the doubled-total guard holds it at the signing value as well.
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(CORRECT)} ${release({ published: '2026-11-24', value: CORRECT * 3 })}`,
-    );
-    expect(contractState(fullDb)).toMatchObject({
-      current_value: CORRECT * 3,
-      value_flag: 'annex_total_suspect',
-      amount: CORRECT,
-    });
-  });
-});
-
-describe('OCDS source correction on the daily path', () => {
-  it('applies a correction that arrives in a later window than the contract, as the full build does', async () => {
-    const first = `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-23', value: MISTYPED })}`;
-    const second = release({ published: '2026-11-24', value: CORRECT, description: NOTE });
-    dailyWindows(dailyDb, [first]);
-    expect(contractState(dailyDb)).toMatchObject({ current_value: null, value_flag: 'review' });
-
-    resetRawStaging(dailyDb);
-    sqlite(dailyDb, second);
-    readScript(dailyDb, script('refresh-slice.sql'));
-    fullBuild(fullDb, `${first} ${second}`);
-
-    expect(contractState(dailyDb)).toMatchObject({
-      annex_count: 2,
-      current_value: CORRECT,
-      value_flag: 'ok',
-      amount: CORRECT,
-      amount_eur: CORRECT,
-    });
-    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
-    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
-    expect(homeValue(dailyDb)).toBe(CORRECT);
-    expect((await valueRule(dailyDb)).ok).toBe(true);
-    expect(await sourceValueGate(dailyDb)).toMatchObject({ ok: true, warn: false });
-
-    // The same window again: nothing moves.
-    const contracts = sqliteJson(dailyDb, 'SELECT * FROM contracts ORDER BY id');
-    const amendments = sqliteJson(dailyDb, 'SELECT * FROM amendments ORDER BY id');
-    resetRawStaging(dailyDb);
-    sqlite(dailyDb, second);
-    readScript(dailyDb, script('refresh-slice.sql'));
-    expect(sqliteJson(dailyDb, 'SELECT * FROM contracts ORDER BY id')).toEqual(contracts);
-    expect(sqliteJson(dailyDb, 'SELECT * FROM amendments ORDER BY id')).toEqual(amendments);
-  });
-
-  it('moves the correction to a later release and back out, matching the full build at every step', async () => {
-    const releases = [
-      `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-23', value: MISTYPED })}`,
-      release({ published: '2026-11-24', value: CORRECT, description: NOTE }),
-      // A later update that carries the corrected value forward: the leading row moves to it, and the
-      // earlier correction goes back to the #286 shape, as a full build would leave it.
-      release({ published: '2026-11-30', value: CORRECT, description: 'Срок' }),
-      // A release that restates the signing value: the latest release decides, so nothing is corrected.
-      release({ published: '2026-12-07', value: MISTYPED }),
-    ];
-    initWorkDb(dailyDb);
-    for (let i = 0; i < releases.length; i++) {
-      if (i > 0) resetRawStaging(dailyDb);
-      sqlite(dailyDb, releases[i]!);
-      readScript(dailyDb, script('refresh-slice.sql'));
-
-      const full = resolve(dir, `full-${i}.sqlite`);
-      fullBuild(full, releases.slice(0, i + 1).join('\n'));
-      expect(contractState(dailyDb), `window ${i + 1}`).toEqual(contractState(full));
-      expect(timeline(dailyDb), `window ${i + 1}`).toEqual(timeline(full));
-      expect((await valueRule(dailyDb)).ok, `window ${i + 1}`).toBe(true);
-    }
-    expect(contractState(dailyDb)).toMatchObject({ current_value: null, amount: MISTYPED });
-    expect(timeline(dailyDb).filter((r) => r.value_after !== null)).toEqual([]);
-  });
-
-  it('leaves a contract with a served EOP annex to that annex when a differing release arrives', () => {
-    dailyWindows(dailyDb, [
-      `${tender()} ${contract(MISTYPED)} ${eopAnnex(MISTYPED, MISTYPED + 100000)}`,
-      release({ published: '2026-11-24', value: CORRECT, description: NOTE }),
-    ]);
-    expect(contractState(dailyDb)).toMatchObject({
-      annex_count: 1,
-      current_value: MISTYPED + 100000,
-    });
-    expect(timeline(dailyDb)).toMatchObject([{ source: 'eop:' }]);
-  });
-
-  it('replaces a served correction with the EOP annex that arrives in a later window', () => {
-    const first = `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-24', value: CORRECT })}`;
-    const second = eopAnnex(MISTYPED, MISTYPED + 100000);
-    dailyWindows(dailyDb, [first]);
-    expect(contractState(dailyDb)?.current_value).toBe(CORRECT);
-
-    resetRawStaging(dailyDb);
-    sqlite(dailyDb, second);
-    readScript(dailyDb, script('refresh-slice.sql'));
-    fullBuild(fullDb, `${first} ${second}`);
-    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
-    expect(contractState(dailyDb)?.current_value).toBe(MISTYPED + 100000);
-    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
-    expect(timeline(dailyDb)).toMatchObject([{ source: 'eop:' }]);
-  });
-
-  it('takes up an already served release when the contract arrives in a later window', () => {
-    const first = `${tender()} ${release({ published: '2026-11-24', value: CORRECT })}`;
-    const second = contract(MISTYPED);
-    dailyWindows(dailyDb, [first]);
-    expect(contractState(dailyDb)).toBeUndefined();
-    expect(timeline(dailyDb)).toMatchObject([{ value_before: CORRECT, value_after: null }]);
-
-    resetRawStaging(dailyDb);
-    sqlite(dailyDb, second);
-    readScript(dailyDb, script('refresh-slice.sql'));
-    fullBuild(fullDb, `${first} ${second}`);
-    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
-    expect(contractState(dailyDb)?.current_value).toBe(CORRECT);
-    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
-  });
-
-  it('preserves an explicit staged after-value and its before-value as the full path does', () => {
-    const first = `${tender()} ${contract(MISTYPED)}`;
-    const second = `${release({ published: '2026-11-24', value: CORRECT })}
-      UPDATE raw_amendments SET value_after = ${CORRECT + 1};`;
-    dailyWindows(dailyDb, [first, second]);
-    fullBuild(fullDb, `${first} ${second}`);
-    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
-    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
-    expect(timeline(dailyDb)).toMatchObject([{ value_before: CORRECT, value_after: CORRECT + 1 }]);
-  });
-});
-
-describe('OCDS source eligibility from mapped publications', () => {
-  function replayUpdate(update: string): void {
-    const snapshot = () => [contractState(dailyDb), timeline(dailyDb), homeValue(dailyDb)];
-    const before = snapshot();
-    resetRawStaging(dailyDb);
-    sqlite(dailyDb, update);
-    readScript(dailyDb, script('refresh-slice.sql'));
-    expect(snapshot()).toEqual(before);
-  }
-
-  it('keeps the veto from an unpriced sibling lot across admission and amendment-only replay', async () => {
-    const signings = `${tender()} ${mappedSigning('LOT-1', MISTYPED, 'EUR')}
-      ${mappedSigning('LOT-2', undefined, 'EUR')}`;
-    const update = mappedRelease('EUR');
-    fullBuild(fullDb, `${signings} ${update}`);
-    dailyWindows(dailyDb, [signings, update]);
-    replayUpdate(update);
-
+    fullBuild(fullDb, first + correction + unpriced);
+    dailyWindows(dailyDb, [first, correction]);
+    expect(homeValue(dailyDb)).toBe(1200);
+    replay(dailyDb, unpriced);
     for (const db of [fullDb, dailyDb]) {
-      expect(sqliteJson(db, 'SELECT COUNT(*) AS n FROM contracts')).toEqual([{ n: 1 }]);
-      expect(contractState(db)).toMatchObject({
-        annex_count: 1,
-        current_value: null,
-        value_flag: 'review',
-        amount: MISTYPED,
+      expect(sqliteJson(db, 'SELECT ocds_signing_incomplete FROM contracts')).toEqual([
+        { ocds_signing_incomplete: 1 },
+      ]);
+      expect(snapshot(db)).toMatchObject({
+        homeValue: 9000,
+        bidderTotals: [{ won_eur: 9000 }],
+        authorityTotals: [{ spent_eur: 9000 }],
+        flowTotals: [{ won_eur: 9000 }],
       });
-      expect(timeline(db)).toMatchObject([{ value_before: CORRECT, value_after: null }]);
-      expect(homeValue(db)).toBe(MISTYPED);
-      expect(await sourceValueGate(db, true)).toMatchObject({ ok: true, warn: false });
-      expect((await valueRule(db)).ok).toBe(true);
+      await expectClean(db);
     }
-    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
-    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
-
-    // A later publication supplies the missing signing evidence on the same lot.
-    const replacement = `${mappedSigning('LOT-1', MISTYPED, 'EUR', '2026-11-25')}
-      ${mappedSigning('LOT-2', MISTYPED, 'EUR', '2026-11-25')}`;
-    resetRawStaging(dailyDb);
-    sqlite(dailyDb, replacement);
-    readScript(dailyDb, script('refresh-slice.sql'));
-    rmSync(fullDb);
-    fullBuild(fullDb, `${signings} ${update} ${replacement}`);
-    for (const db of [fullDb, dailyDb]) {
-      expect(sqliteJson(db, 'SELECT COUNT(*) AS n FROM contracts')).toEqual([{ n: 2 }]);
-      expect(contractState(db)?.current_value).toBe(CORRECT);
-      expect(homeValue(db)).toBe(2 * CORRECT);
-      expect(await sourceValueGate(db, true)).toMatchObject({ ok: true, warn: false });
-    }
-    expect(contractState(dailyDb)).toEqual(contractState(fullDb));
-    expect(timeline(dailyDb)).toEqual(timeline(fullDb));
+    replay(dailyDb, first + correction);
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
   });
 
-  it.each([
-    ['missing', undefined, 'BGN', null],
-    ['explicit BGN', 'BGN', 'BGN', CORRECT],
-    ['explicit EUR', 'EUR', 'EUR', CORRECT],
-  ] as const)(
-    'requires source currency (%s) for a matching release',
-    async (_, currency, releaseCurrency, after) => {
-      const signing = `${tender(releaseCurrency)} ${mappedSigning('LOT-1', MISTYPED, currency)}`;
-      const update = mappedRelease(releaseCurrency);
-      fullBuild(fullDb, `${signing} ${update}`);
-      dailyWindows(dailyDb, [signing, update]);
-      replayUpdate(update);
-
+  it.each([false, true])(
+    'retains public IDs for conflicting OCDS notices (overlap: %s)',
+    async (overlap) => {
+      const first = tender() + ocdsSigning(9000);
+      const correction = mappedRelease({ amount: 1200 });
+      const second = ocdsSigning(8000, { day: '2026-11-26', document: 'TEST-SECOND-SIGNING' });
+      fullBuild(fullDb, second + correction + first);
+      dailyWindows(dailyDb, [first, correction]);
+      expect(homeValue(dailyDb)).toBe(1200);
+      replay(dailyDb, (overlap ? first : '') + second);
       for (const db of [fullDb, dailyDb]) {
-        expect(sqliteJson(db, 'SELECT currency, signing_currency_raw FROM contracts')).toEqual([
-          { currency: releaseCurrency, signing_currency_raw: currency ?? null },
+        const prefix = `c:o:${OCID}:${CONTRACT}:_:unknown:анонимен:`;
+        expect(
+          sqliteJson(db, 'SELECT id, document_number, signing_value FROM contracts ORDER BY id'),
+        ).toEqual([
+          { id: `${prefix}1`, document_number: 'TEST-SIGNING', signing_value: 9000 },
+          { id: `${prefix}2`, document_number: 'TEST-SECOND-SIGNING', signing_value: 8000 },
         ]);
-        expect(contractState(db)).toMatchObject({
-          current_value: after,
-          amount: after ?? MISTYPED,
+        expect(snapshot(db)).toMatchObject({
+          homeValue: 17000,
+          bidderTotals: [{ won_eur: 17000 }],
+          authorityTotals: [{ spent_eur: 17000 }],
+          flowTotals: [{ won_eur: 17000 }],
         });
-        expect(timeline(db)).toMatchObject([{ value_after: after }]);
-        expect(await sourceValueGate(db, true)).toMatchObject({ ok: true, warn: false });
-        expect((await valueRule(db)).ok).toBe(true);
+        await expectClean(db);
       }
-      expect(contractState(dailyDb)).toEqual(contractState(fullDb));
-      expect(timeline(dailyDb)).toEqual(timeline(fullDb));
+      expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+      const before = snapshot(dailyDb);
+      replay(dailyDb, second + correction);
+      expect(snapshot(dailyDb)).toEqual(before);
     },
   );
-});
 
-describe('OCDS source value integrity check', () => {
-  it('uses the daily ranking and eligibility SQL', () => {
-    const slice = readFileSync(script('refresh-slice.sql'), 'utf8');
-    const block = slice.split('-- @ocds-value-decision-lockstep start\n')[1];
-    expect(block?.split('\n-- @ocds-value-decision-lockstep end')[0]).toBe(
-      OCDS_SOURCE_VALUE_DECISION_SQL,
+  it('reconsiders a served value anchor when a competing signing arrives', async () => {
+    const first = tender() + contract(9000, 'EUR', { supplier: '999999995' });
+    const annex = eopAnnex(1000, 800, '2026-11-02', 'TEST-ALTERNATE');
+    const correction = mappedRelease({ amount: 1000 });
+    const second = contract(1000, 'EUR', { number: 'TEST-SECOND', supplier: '999999995' });
+    fullBuild(fullDb, first + annex + correction + second);
+    dailyWindows(dailyDb, [first, annex, correction]);
+    expect(homeValue(dailyDb)).toBe(800);
+    replay(dailyDb, second);
+    for (const db of [fullDb, dailyDb]) {
+      expect(sqliteJson(db, 'SELECT contract_number, link_method FROM amendments')).toEqual([
+        { contract_number: 'TEST-ALTERNATE', link_method: null },
+      ]);
+      expect(snapshot(db)).toMatchObject({
+        homeValue: 2000,
+        bidderTotals: [{ won_eur: 2000 }],
+        authorityTotals: [{ spent_eur: 2000 }],
+        flowTotals: [{ won_eur: 2000 }],
+      });
+      await expectClean(db);
+    }
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    const changes = sqlite(
+      dailyDb,
+      `
+      CREATE TRIGGER test_no_anchor_write BEFORE UPDATE ON amendments
+      BEGIN SELECT RAISE(ABORT, 'identical correction rewrote an annex'); END;
+      CREATE TRIGGER test_no_signing_write BEFORE UPDATE ON contracts
+      BEGIN SELECT RAISE(ABORT, 'identical correction rewrote a signing'); END;
+      CREATE TRIGGER test_no_report_write BEFORE UPDATE ON ocds_amendment_publications
+      BEGIN SELECT RAISE(ABORT, 'identical correction rewrote a source version'); END;
+    `,
     );
-  });
-
-  it('warns on a missing correction in the served gate and fails the full build gate', async () => {
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-24', value: MISTYPED })}`,
-    );
-    // Old served shape: the release amount is in value_before and the contract still uses signing value.
-    sqlite(fullDb, `UPDATE amendments SET value_before = ${CORRECT};`);
-    expect((await valueRule(fullDb)).ok).toBe(true);
-
-    const run = integrityRunner(fullDb);
-    const results = await assertIntegrity(run, { exit: false });
-    expect(results.find((r) => r.name === 'ocds-source-value')).toMatchObject({
-      ok: true,
-      warn: true,
-      detail: expect.stringContaining('missing after-values on eligible releases: 1'),
-    });
-    await expect(assertIntegrity(run, { exit: false, build: true })).rejects.toThrow(
-      /ocds-source-value.*missing after-values on eligible releases: 1/,
-    );
+    expect(changes).toBe('');
+    replay(dailyDb, correction);
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
   });
 
   it.each([
-    [CONTRACT, null],
-    ['ANNEX-NUMBER', CONTRACT],
-  ])('rejects an after-value beside an EOP annex under %s', async (number, rawNumber) => {
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)} ${release({ published: '2026-11-24', value: CORRECT })}`,
-    );
-    sqlite(
-      fullDb,
-      `INSERT INTO amendments (id, natural_key, unp, source, contract_number, contract_number_raw)
-       VALUES ('test-eop', 'test-eop', '${UNP}', 'eop:test', '${number}', ${rawNumber ? `'${rawNumber}'` : 'NULL'});`,
-    );
-    expect(await sourceValueGate(fullDb)).toMatchObject({
-      ok: false,
-      warn: false,
-      detail: expect.stringContaining('after-values beside an EOP annex: 1'),
-    });
+    'Техническа грешка в стойността на договора не е допусната.',
+    'Техническа грешка в стойността на договора не са установили.',
+    'Техническа грешка в стойността на договора не се констатира.',
+    'Техническа грешка в стойността на договора няма.',
+    'Техническа грешка в стойността на договора липсва.',
+    'Без техническа грешка в стойността на договора.',
+    'Не е вярно, че има техническа грешка в стойността на договора.',
+    'Техническа грешка в стойността на договора, както сочи проверката, не е допусната.',
+    'Страните изменят срока за изпълнение. Отстранява се техническа грешка в стойността на договора.',
+    'Изменение на срока за изпълнение. Техническа грешка в стойността на договора.',
+    'Страните удължават срока. Техническа грешка в стойността на договора.',
+    'Страните променят срока на договора. Техническа грешка в стойността на договора.',
+    'Страните изменят обхвата на договора. Техническа грешка в стойността на договора.',
+    'Срокът за изпълнение се изменя. Техническа грешка в стойността на договора.',
+    'Срокът за изпълнение на договора се удължава с един месец. Отстранена е техническа грешка в стойността на договора.',
+    'Сроковете за изпълнение на договора бяха съкратени. Техническа грешка в стойността на договора.',
+    'Подновява се договореният срок. Техническа грешка в стойността на договора.',
+    'Промяна на продължителността на договора. Техническа грешка в стойността на договора.',
+  ])('keeps denials and contractual changes in the amendment path (%s)', async (rationale) => {
+    const signing = tender() + contract(9000);
+    const update = mappedRelease({ amount: 1000, rationale });
+    fullBuild(fullDb, signing + update);
+    dailyWindows(dailyDb, [signing, update]);
+    for (const db of [fullDb, dailyDb]) {
+      expect(contractState(db)).toMatchObject({ signing_value: 9000, annex_count: 1 });
+      expect(timeline(db)).toMatchObject([{ value_before: 1000, value_after: null }]);
+      await expectClean(db);
+    }
   });
 
-  it('rejects an after-value superseded by a later release even when the publication dates tie', async () => {
-    fullBuild(
-      fullDb,
-      `${tender()} ${contract(MISTYPED)}
-       ${release({ published: '2026-11-23', value: MISTYPED })}
-       ${release({ published: '2026-11-24', value: CORRECT })}`,
+  it.each([
+    ['contractual', {}, { taggedAmendment: true }, 1],
+    ['metadata-only', { taggedAmendment: true }, { rationale: '' }, 0],
+  ] as const)(
+    'keeps the newest %s publication across paths and replays',
+    async (kind, oldClass, newClass, annexCount) => {
+      const signing = tender() + contract(9000);
+      const publication = 'TEST-SHARED-VERSION';
+      // The newer instant has the earlier packet name. Both versions are on the same UTC day.
+      const older = mappedRelease({
+        ...oldClass,
+        day: '2026-11-26',
+        timestamp: '2026-11-24T10:15:00.1231Z',
+        publication,
+        amount: 1200,
+      });
+      const newer = mappedRelease({
+        ...newClass,
+        day: '2026-11-25',
+        timestamp: '2026-11-24T12:15:00.1232+02:00',
+        publication,
+        amount: 1500,
+      });
+      fullBuild(fullDb, signing + newer + older);
+      dailyWindows(dailyDb, [signing, older]);
+      expect(contractState(dailyDb)).toMatchObject({
+        signing_value: kind === 'contractual' ? 1200 : 9000,
+        annex_count: kind === 'contractual' ? 0 : 1,
+      });
+      replay(dailyDb, newer);
+      for (const db of [fullDb, dailyDb]) {
+        expect(contractState(db)).toMatchObject({ signing_value: 9000, annex_count: annexCount });
+        expect(timeline(db)).toMatchObject(
+          annexCount ? [{ value_before: 1500, value_after: null }] : [],
+        );
+        await expectClean(db);
+        expect(
+          sqliteJson(db, 'SELECT kind, published_at FROM ocds_amendment_publications'),
+        ).toEqual([
+          {
+            kind: kind === 'contractual' ? kind : 'metadata',
+            published_at: '2026-11-24T10:15:00.1232',
+          },
+        ]);
+      }
+      expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+      replay(dailyDb, older);
+      expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+
+      const reversed = resolve(dir, 'reversed.sqlite');
+      dailyWindows(reversed, [signing, newer, older]);
+      expect(snapshot(reversed)).toEqual(snapshot(fullDb));
+      await expectClean(reversed);
+    },
+  );
+
+  it('retires a bridged publication when newer metadata omits tender.id', async () => {
+    const signing = tender() + contract(9000);
+    const publication = 'TEST-RETIRED-PUBLICATION';
+    const older = mappedRelease({ publication, taggedAmendment: true });
+    const newer = mappedRelease({
+      day: '2026-11-25',
+      publication,
+      rationale: '',
+      tenderId: null,
+    });
+    fullBuild(fullDb, signing + older + newer);
+    dailyWindows(dailyDb, [signing, older]);
+    expect(sqliteJson(dailyDb, 'SELECT unp FROM amendments')).toEqual([{ unp: UNP }]);
+    replay(dailyDb, newer);
+    for (const db of [fullDb, dailyDb]) {
+      expect(contractState(db)).toMatchObject({ signing_value: 9000, annex_count: 0 });
+      expect(timeline(db)).toEqual([]);
+      await expectClean(db);
+    }
+    replay(dailyDb, older);
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
+  });
+
+  it('corrects the OCDS signing when the resolved EOP procedure has no signing for that number', async () => {
+    const signing = tender() + ocdsSigning(MISTYPED);
+    fullBuild(fullDb, signing + mappedRelease());
+    dailyWindows(dailyDb, [signing, mappedRelease()]);
+    for (const db of [fullDb, dailyDb]) {
+      expect(contractState(db)).toMatchObject({ signing_value: CORRECT, annex_count: 0 });
+      expect(homeValue(db)).toBe(CORRECT);
+      expect(snapshot(db)).toMatchObject({
+        bidderTotals: [{ won_eur: CORRECT }],
+        authorityTotals: [{ spent_eur: CORRECT }],
+        flowTotals: [{ won_eur: CORRECT }],
+      });
+      await expectClean(db);
+      sqlite(db, 'UPDATE contracts SET signing_value = signing_value_original');
+      for (const build of [false, true])
+        expect(await sourceValueGate(db, build)).toMatchObject({ ok: false });
+    }
+  });
+
+  it('moves the correction to the EOP signing when it supersedes the OCDS document', async () => {
+    const procedure = tender();
+    const ocds = ocdsSigning(1000);
+    const eop = contract(1200);
+    const correction = mappedRelease({ amount: 1400 });
+    fullBuild(fullDb, procedure + ocds + eop + correction);
+    dailyWindows(dailyDb, [procedure + ocds, correction]);
+    expect(contractState(dailyDb)).toMatchObject({
+      signing_value: 1400,
+      signing_value_original: 1000,
+    });
+    replay(dailyDb, eop);
+    for (const db of [fullDb, dailyDb]) {
+      expect(
+        sqliteJson(db, 'SELECT tender_id, signing_value_original, signing_value FROM contracts'),
+      ).toEqual([{ tender_id: `t:${UNP}`, signing_value_original: 1200, signing_value: 1400 }]);
+      await expectClean(db);
+    }
+  });
+
+  it('revisits a served alternate-number annex when the correction supplies its signing anchor', async () => {
+    const signing = tender() + contract(MISTYPED, 'EUR', { supplier: '999999995' });
+    const after = CORRECT * 0.8;
+    const annex = eopAnnex(CORRECT, after, '2026-11-02', 'TEST-ALTERNATE');
+    fullBuild(fullDb, signing + annex + mappedRelease());
+    dailyWindows(dailyDb, [signing, annex]);
+    expect(contractState(dailyDb)?.annex_count).toBe(0);
+    replay(dailyDb, mappedRelease());
+    for (const db of [fullDb, dailyDb]) {
+      expect(sqliteJson(db, 'SELECT contract_number, link_method FROM amendments'), db).toEqual([
+        { contract_number: CONTRACT, link_method: 'value_anchor' },
+      ]);
+      expect(contractState(db), db).toMatchObject({
+        signing_value: CORRECT,
+        current_value: after,
+        annex_count: 1,
+      });
+      expect(homeValue(db)).toBe(after);
+      expect(snapshot(db)).toMatchObject({
+        bidderTotals: [{ won_eur: after }],
+        authorityTotals: [{ spent_eur: after }],
+        flowTotals: [{ won_eur: after }],
+      });
+      await expectClean(db);
+    }
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+  });
+
+  it('preserves ambiguity when the corrected anchor also matches another contract', async () => {
+    const signing =
+      tender() +
+      contract(MISTYPED, 'EUR', { supplier: '999999995' }) +
+      contract(CORRECT, 'EUR', { number: 'TEST-OTHER-SIGNING', supplier: '999999995' });
+    const annex = eopAnnex(CORRECT, CORRECT * 0.8, '2026-11-02', 'TEST-AMBIGUOUS');
+    fullBuild(fullDb, signing + annex + mappedRelease());
+    dailyWindows(dailyDb, [signing, annex, mappedRelease()]);
+    for (const db of [fullDb, dailyDb]) {
+      expect(sqliteJson(db, 'SELECT contract_number, link_method FROM amendments')).toEqual([
+        { contract_number: 'TEST-AMBIGUOUS', link_method: null },
+      ]);
+      expect(contractState(db)).toMatchObject({
+        signing_value: CORRECT,
+        current_value: null,
+        annex_count: 0,
+      });
+      await expectClean(db);
+    }
+  });
+
+  it('orders same-day corrections by timestamp and breaks actual ties by document key', async () => {
+    const signing = tender() + contract(1000);
+    const early = mappedRelease({
+      publication: 'TEST-Z',
+      timestamp: '2026-11-24T08:00:00Z',
+      amount: 1200,
+    });
+    const late = mappedRelease({
+      publication: 'TEST-A',
+      timestamp: '2026-11-24T18:00:00Z',
+      amount: 1500,
+    });
+    const tied = mappedRelease({
+      publication: 'TEST-B',
+      timestamp: '2026-11-24T20:00:00+02:00',
+      amount: 1600,
+    });
+    fullBuild(fullDb, signing + early + late + tied);
+    dailyWindows(dailyDb, [signing, late, early]);
+    expect(contractState(dailyDb)?.signing_value).toBe(1500);
+    replay(dailyDb, tied);
+    expect(contractState(dailyDb)?.signing_value).toBe(1600);
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    for (const db of [fullDb, dailyDb]) await expectClean(db);
+  });
+
+  it.each([
+    [100, 100.005, true],
+    [100, 99.995, true],
+    [100, 100.0049999, false],
+    [100, 99.9950001, false],
+    [100, 100.004, false],
+    [100, 99.996, false],
+    [100.0000001, 100.005, false],
+    [100.0000001, 99.9950001, true],
+    [10_000_000_000, 10_000_000_000.005, true],
+    [10_000_000_000, 9_999_999_999.995, true],
+    [10_000_000_000, 10_000_000_000.004, false],
+    [10_000_000_000, 9_999_999_999.996, false],
+    [10_000_000_000, '10000000000.0049999', false],
+    [10_000_000_000, '9999999999.9950001', false],
+  ])('compares the exact half-cent boundary from %s to %s', async (original, amount, replace) => {
+    const signing = tender() + mappedSigning('LOT-1', original, 'EUR');
+    const correction = mappedRelease({ amount });
+    fullBuild(fullDb, signing + correction);
+    dailyWindows(dailyDb, [signing, correction]);
+    for (const db of [fullDb, dailyDb]) {
+      expect(contractState(db)?.signing_value).toBe(replace ? Number(amount) : original);
+      await expectClean(db);
+    }
+  });
+
+  it.each([
+    ['10000000000.0049999', false],
+    ['9999999999.9950001', false],
+    ['10000000000.005', true],
+    ['9999999999.995', true],
+  ])(
+    'applies the exact half-cent boundary to unquoted JSON amount %s',
+    async (jsonAmount, replace) => {
+      const original = 10_000_000_000;
+      const signing = tender() + ocdsSigning(original);
+      const correction = mappedRelease({ jsonAmount });
+      fullBuild(fullDb, signing + correction);
+      dailyWindows(dailyDb, [signing, correction]);
+      for (const db of [fullDb, dailyDb]) {
+        expect(contractState(db)?.signing_value).toBe(replace ? Number(jsonAmount) : original);
+        await expectClean(db);
+      }
+    },
+  );
+
+  it('replaces signing and rollups without producing any annex or after-value', async () => {
+    const signing = tender() + contract(MISTYPED);
+    const earlyReport = mappedRelease({ day: '2026-11-23', amount: MISTYPED });
+    const correction = mappedRelease();
+
+    fullBuild(fullDb, signing + earlyReport + correction);
+    dailyWindows(dailyDb, [signing, earlyReport, correction]);
+    const publicHistory = AMENDMENTS_SQL.replace('am.unp = ?', `am.unp = '${UNP}'`).replace(
+      'am.contract_number = ?',
+      `am.contract_number = '${CONTRACT}'`,
     );
+
+    for (const db of [fullDb, dailyDb]) {
+      expect(contractState(db)).toMatchObject({
+        signing_value_original: MISTYPED,
+        signing_value: CORRECT,
+        signing_value_eur: CORRECT,
+        current_value: null,
+        current_value_eur: null,
+        annex_count: 0,
+        amount: CORRECT,
+        amount_eur: CORRECT,
+        value_flag: 'ok',
+      });
+      expect(sqliteJson(db, publicHistory)).toEqual([]);
+      expect(homeValue(db)).toBe(CORRECT);
+      expect(snapshot(db)).toMatchObject({
+        bidderTotals: [{ won_eur: CORRECT }],
+        authorityTotals: [{ spent_eur: CORRECT }],
+      });
+      await expectClean(db);
+    }
+
+    const expected = snapshot(fullDb);
+    replay(dailyDb, earlyReport + correction);
+    expect(snapshot(dailyDb)).toEqual(expected);
+    for (const file of [
+      'derive-amendments.sql',
+      'normalize-raw.sql',
+      'promote-amendments.sql',
+      'precompute.sql',
+    ])
+      readScript(fullDb, script(file));
+    expect(snapshot(fullDb)).toEqual(expected);
+  });
+
+  it.each([CORRECT * 1.1, CORRECT * 0.8])(
+    'keeps structured EOP increases and decreases on top of the corrected signing (%s)',
+    async (after) => {
+      const signing = tender() + contract(MISTYPED);
+      const correction = mappedRelease();
+      const before = CORRECT;
+      const annex = eopAnnex(before, after);
+      const twin = mappedRelease({ day: '2026-11-02', amount: before, taggedAmendment: true });
+      fullBuild(fullDb, signing + correction + annex + twin);
+      dailyWindows(dailyDb, [signing, annex + twin, correction]);
+
+      for (const db of [fullDb, dailyDb]) {
+        expect(contractState(db)).toMatchObject({
+          signing_value: CORRECT,
+          current_value: after,
+          annex_count: 1,
+          amount_eur: expect.closeTo(after, 2),
+        });
+        expect(timeline(db)).toMatchObject([
+          { source: 'eop:', value_before: before, value_after: after },
+        ]);
+        await expectClean(db);
+      }
+      expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+      replay(dailyDb, annex + twin + correction);
+      expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    },
+  );
+
+  it('retains an OCDS-only contractual amendment without treating its release value as an after-value', async () => {
+    const signing = tender() + contract(MISTYPED);
+    const amendment = mappedRelease({ day: '2026-11-25', taggedAmendment: true });
+    fullBuild(fullDb, signing + mappedRelease() + amendment);
+    dailyWindows(dailyDb, [signing, mappedRelease(), amendment]);
+
+    expect(contractState(dailyDb)).toMatchObject({
+      signing_value: CORRECT,
+      current_value: null,
+      annex_count: 1,
+    });
+    expect(timeline(dailyDb)).toMatchObject([
+      { source: 'ocds', value_before: CORRECT, value_after: null },
+    ]);
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
+  });
+
+  it('resolves a retained correction when the original signing and procedure arrive later', async () => {
+    const signing = tender() + contract(MISTYPED);
+    const correction = mappedRelease();
+    fullBuild(fullDb, signing + correction);
+    dailyWindows(dailyDb, [correction, signing]);
+
+    expect(contractState(dailyDb)?.signing_value).toBe(CORRECT);
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
+  });
+
+  it('converts a corrected BGN signing to euros through the ordinary currency rule', async () => {
+    const signing = tender('BGN') + contract(MISTYPED, 'BGN');
+    const correction = mappedRelease({ currency: 'BGN' });
+    fullBuild(fullDb, signing + correction);
+    dailyWindows(dailyDb, [signing, correction]);
+
+    expect(contractState(dailyDb)).toMatchObject({
+      signing_value: CORRECT,
+      signing_value_eur: expect.closeTo(CORRECT / 1.95583, 2),
+      amount: CORRECT,
+      amount_eur: expect.closeTo(CORRECT / 1.95583, 2),
+      current_value: null,
+      annex_count: 0,
+    });
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
+  });
+
+  it('chooses the latest matching correction and can restore the published signing', async () => {
+    const signing = tender() + contract(MISTYPED);
+    const correction = mappedRelease();
+    const later = mappedRelease({ day: '2026-11-25', amount: CORRECT * 1.5 });
+    const restored = mappedRelease({ day: '2026-11-26', amount: MISTYPED });
+    dailyWindows(dailyDb, [signing, correction, later]);
+    expect(contractState(dailyDb)?.signing_value).toBe(CORRECT * 1.5);
+    replay(dailyDb, restored);
+    fullBuild(fullDb, restored + later + correction + signing);
+
+    expect(contractState(dailyDb)).toMatchObject({
+      signing_value: MISTYPED,
+      current_value: null,
+      annex_count: 0,
+    });
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
+  });
+
+  it.each([
+    ['different currency', { currency: 'BGN' }],
+    ['different signing date', { dateSigned: '2026-10-06' }],
+    ['missing document number', { document: false }],
+    ['zero amount', { amount: 0 }],
+  ])('keeps the signing for an unusable technical report (%s)', async (_, inputs) => {
+    const signing = tender() + contract(MISTYPED);
+    const correction = mappedRelease(inputs);
+    fullBuild(fullDb, signing + correction);
+    dailyWindows(dailyDb, [signing, correction]);
+
+    expect(contractState(dailyDb)).toMatchObject({
+      signing_value: MISTYPED,
+      current_value: null,
+      annex_count: 0,
+    });
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
+  });
+
+  it.each([
+    ['unpriced', undefined],
+    ['different amount', CORRECT],
+  ])('keeps the signing when sibling lots disagree (%s)', async (_, siblingAmount) => {
+    const signing =
+      tender() +
+      mappedSigning('LOT-1', MISTYPED, 'EUR') +
+      mappedSigning('LOT-2', siblingAmount, 'EUR');
+    const correction = mappedRelease();
+    fullBuild(fullDb, signing + correction);
+    dailyWindows(dailyDb, [signing, correction]);
+
+    expect(
+      sqliteJson(
+        dailyDb,
+        'SELECT signing_value, annex_count FROM contracts ORDER BY signing_value DESC',
+      ),
+    ).toEqual([
+      { signing_value: MISTYPED, annex_count: 0 },
+      ...(siblingAmount === undefined ? [] : [{ signing_value: siblingAmount, annex_count: 0 }]),
+    ]);
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
+  });
+
+  it('requires explicit signing currency and applies ordinary value guards after correction', async () => {
+    const correction = mappedRelease({ amount: CORRECT * 1000 });
+    const signing = tender() + contract(MISTYPED);
+    fullBuild(fullDb, signing + correction);
+    expect(contractState(fullDb)).toMatchObject({
+      signing_value: CORRECT * 1000,
+      annex_count: 0,
+      current_value: null,
+      signing_value_eur: null,
+      value_flag: 'value_suspect',
+      amount_eur: ESTIMATE,
+    });
+    await expectClean(fullDb);
+
+    dailyWindows(dailyDb, [
+      tender('BGN') + mappedSigning('LOT-1', MISTYPED, undefined),
+      mappedRelease({ currency: 'BGN' }),
+    ]);
+    expect(contractState(dailyDb)).toMatchObject({
+      signing_value: MISTYPED,
+      annex_count: 0,
+      current_value: null,
+    });
+    await expectClean(dailyDb);
+  });
+
+  it('replaces legacy inferred history when the identifiable publications are replayed', async () => {
+    dailyWindows(dailyDb, [tender() + contract(MISTYPED)]);
+    sqlite(
+      dailyDb,
+      `INSERT INTO amendments
+      (id, natural_key, unp, contract_number, document_number, source, published_at, value_before, value_after, currency)
+      VALUES ('old-1', 'old-1', '${UNP}', '${CONTRACT}', 'TEST-REPORT-2026-11-23', 'ocds:2026-11-23', '2026-11-23', ${MISTYPED}, NULL, 'EUR'),
+             ('old-2', 'old-2', '${UNP}', '${CONTRACT}', 'TEST-REPORT-2026-11-24', 'ocds:2026-11-24', '2026-11-24', ${MISTYPED}, ${CORRECT}, 'EUR');
+      UPDATE contracts SET annex_count=2, current_value=${CORRECT};`,
+    );
+    expect(await sourceValueGate(dailyDb)).toMatchObject({ ok: true, warn: true });
+    expect(await sourceValueGate(dailyDb, true)).toMatchObject({ ok: false });
+    replay(dailyDb, mappedRelease({ day: '2026-11-23', amount: MISTYPED }) + mappedRelease());
+
+    expect(timeline(dailyDb)).toEqual([]);
+    expect(contractState(dailyDb)).toMatchObject({
+      signing_value: CORRECT,
+      annex_count: 0,
+      current_value: null,
+      amount_eur: CORRECT,
+    });
+    const checks = await assertIntegrity(integrityRunner(dailyDb), { build: true, exit: false });
+    expect(checks.filter((c) => !c.ok || c.warn)).toEqual([]);
+  });
+
+  it('retires only the identifiable metadata-only OCDS publication on replay', async () => {
+    const signing = tender() + contract(1000);
+    const metadata = mappedRelease({ rationale: '' });
+    fullBuild(fullDb, signing + metadata);
+    dailyWindows(dailyDb, [signing]);
+    sqlite(
+      dailyDb,
+      `INSERT INTO amendments
+        (id, natural_key, unp, contract_number, document_number, source)
+      VALUES ('old-bridge', 'old-bridge', '${UNP}', '${CONTRACT}', 'TEST-REPORT-2026-11-24', 'ocds:2026-11-24'),
+             ('old-ocid', 'old-ocid', '${OCID}', '${CONTRACT}', 'TEST-REPORT-2026-11-24', 'ocds:2026-11-24'),
+             ('other', 'other', '${UNP}', '${CONTRACT}', 'TEST-OTHER', 'ocds:2026-11-24');
+      UPDATE contracts SET annex_count = 2;`,
+    );
+    replay(dailyDb, metadata);
+    expect(sqliteJson(dailyDb, 'SELECT id FROM amendments')).toEqual([{ id: 'other' }]);
+    expect(contractState(dailyDb)?.annex_count).toBe(1);
+    expect(timeline(fullDb)).toEqual([]);
+    await expectClean(dailyDb);
+  });
+
+  it('detects a superseded metadata-only publication in served history', async () => {
+    const signing = tender() + contract(9000);
+    const metadata = mappedRelease({ rationale: '' });
+    fullBuild(fullDb, signing + metadata);
     sqlite(
       fullDb,
-      `UPDATE amendments SET published_at = '2026-11-24', value_after = ${CORRECT}
-       WHERE published_at = '2026-11-23';`,
+      `
+      INSERT INTO amendments (id, natural_key, unp, contract_number, document_number, source)
+      VALUES ('TEST-LEGACY', 'TEST-LEGACY', '${UNP}', '${CONTRACT}',
+        'TEST-REPORT-2026-11-24', 'ocds:2026-11-24');
+    `,
     );
-    expect(await sourceValueGate(fullDb)).toMatchObject({
-      ok: false,
-      warn: false,
-      detail: expect.stringContaining('superseded after-values: 1'),
-    });
+    for (const build of [false, true]) {
+      expect(await sourceValueGate(fullDb, build)).toMatchObject({
+        ok: false,
+        detail: expect.stringContaining('metadata-only publications in history: 1'),
+      });
+    }
+  });
+
+  it('rejects an inconsistent signing or a known correction left in history in either gate mode', async () => {
+    fullBuild(fullDb, tender() + contract(MISTYPED) + mappedRelease());
+    sqlite(fullDb, 'UPDATE contracts SET signing_value = signing_value_original');
+    for (const build of [false, true])
+      expect(await sourceValueGate(fullDb, build)).toMatchObject({
+        ok: false,
+        detail: expect.stringContaining('Incorrect OCDS signing projections: 1'),
+      });
+
+    sqlite(
+      fullDb,
+      `UPDATE contracts SET signing_value = ${CORRECT};
+      INSERT INTO amendments (id, natural_key, unp, contract_number, document_number, source)
+      VALUES ('old', 'old', '${UNP}', '${CONTRACT}', 'TEST-REPORT-2026-11-24', 'ocds:2026-11-24');`,
+    );
+    for (const build of [false, true])
+      expect(await sourceValueGate(fullDb, build)).toMatchObject({
+        ok: false,
+        detail: expect.stringContaining('technical publications in history: 1'),
+      });
   });
 });

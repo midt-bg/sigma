@@ -82,6 +82,7 @@ beforeEach(() => {
   readScript(db, migration8); // #306 provenance columns on served amendments
   readScript(db, resolve(root, 'packages/db/migrations/0029_contract_value_evidence.sql'));
   readScript(db, resolve(root, 'packages/db/migrations/0030_ocds_signing_evidence.sql'));
+  readScript(db, resolve(root, 'packages/db/migrations/0031_contract_signing_corrections.sql'));
   readScript(db, workStagingSchema); // raw_* staging
 
   // Two EOP procedures: T1 (contract 90029) already has an EOP annex; T2 (contract 55500) has NONE.
@@ -137,7 +138,7 @@ describe('OCDS amendment → contract linkage (issue #286)', () => {
     // stays on its OCID (unbridgeable, but surfaced rather than silently deleted).
     const ocds = sqliteJson<{ contract_number: string; unp: string }>(
       db,
-      "SELECT contract_number, unp FROM raw_amendments WHERE source LIKE 'ocds:%' ORDER BY contract_number",
+      "SELECT contract_number, unp FROM raw_amendment_publications WHERE source LIKE 'ocds:%' ORDER BY contract_number",
     );
     expect(ocds).toEqual([
       { contract_number: '55500', unp: UNP_ONLY },

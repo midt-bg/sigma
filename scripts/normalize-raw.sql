@@ -49,6 +49,7 @@ DELETE FROM facet_counts;
 DELETE FROM home_totals;
 DELETE FROM contract_co_authorities;
 DELETE FROM ocds_contract_buyers;
+DELETE FROM ocds_amendment_publications;
 DELETE FROM contracts;
 DELETE FROM parties;
 DELETE FROM lots;
@@ -745,6 +746,12 @@ WHERE ownership_kind IS NULL AND eik_valid = 1
 DELETE FROM raw_contract_value_annexes;
 INSERT INTO raw_contract_value_annexes SELECT * FROM raw_contract_value_staged_annexes;
 
+-- Rebuild the source versions independently of the public annex history.
+INSERT INTO ocds_amendment_publications
+SELECT ocid, contract_number, document_number, tender_ext_id, signed_at, published_at,
+  currency, amount, amount_mills, source, version_key, kind
+FROM raw_ocds_amendment_window;
+
 -- Stage the native amounts and their currencies for the shared valuation rule.
 DELETE FROM raw_contract_value_inputs;
 INSERT INTO raw_contract_value_inputs
@@ -756,12 +763,14 @@ WITH amendment_winner AS (
   FROM raw_contract_value_annexes
   WHERE effective_after IS NOT NULL
 )
-SELECT c.id, c.unp, c.contract_number, c.contract_date, c.signing_value, c.currency, c.current_value, aw.currency,
+SELECT c.id, c.unp, c.contract_number, c.contract_date, COALESCE(s.signing_value, c.signing_value),
+  c.currency, c.current_value, aw.currency,
   t.estimated_value, t.currency, c.estimated_value, c.procurement_currency,
   CASE WHEN c.framework_contract = 1 THEN 1 WHEN c.framework_notice = 1 THEN 2 END,
   0, NULL, aw.natural_key
 FROM raw_contracts c
 LEFT JOIN tenders t ON t.id = 't:' || c.unp
+LEFT JOIN raw_corrected_signing_values s ON s.unp = c.unp AND s.contract_number = c.contract_number
 LEFT JOIN amendment_winner aw
   ON aw.unp = c.unp AND aw.contract_number = c.contract_number AND aw.win_rn = 1
 WHERE c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%';
@@ -769,7 +778,8 @@ DROP TABLE IF EXISTS raw_contract_value_results;
 CREATE TABLE raw_contract_value_results AS SELECT * FROM raw_contract_values;
 CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results(id);
 
--- Share the admitted rows with buyer selection. Preserve full rebuild's publication ranking.
+-- Share the admitted rows with buyer selection. Order OCDS notices by source packet so
+-- rebuilding a chronological refresh keeps each notice at the same public URL.
 DELETE FROM raw_contract_admissions;
 INSERT INTO raw_contract_admissions (raw_id, contract_id, bidder_id, amount, lot_id)
 SELECT x.id,
@@ -788,7 +798,11 @@ FROM (
             WHEN z.source LIKE 'eop:%' THEN COALESCE(NULLIF(z.lot_norm, ''), '_')
             ELSE COALESCE(NULLIF(z.lot_id, ''), '_')
           END
-        ORDER BY z.signing_value, z.contract_date, z.document_number, z.id
+        ORDER BY
+          CASE WHEN z.source LIKE 'ocds:%' THEN z.amount IS NULL END,
+          CASE WHEN z.source LIKE 'ocds:%' THEN z.source END,
+          CASE WHEN z.source LIKE 'ocds:%' THEN z.document_number END,
+          z.signing_value, z.contract_date, z.document_number, z.id
       ) AS contract_ordinal
   FROM (
     SELECT c.id, c.unp, c.source, c.contract_number, c.lot_id, c.signing_value, c.contract_date,
@@ -823,7 +837,7 @@ INSERT OR IGNORE INTO contracts
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
    eauction, framework, accelerated, strategic, own_estimate_source, own_estimate_value, own_estimate_currency,
-   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete)
+   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete, signing_value_original, signing_value_mills)
 SELECT
   p.contract_id,
   't:' || x.unp,
@@ -833,7 +847,7 @@ SELECT
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
   x.contract_number,
-  x.signing_value,
+  i.signing_value,
   x.current_value,
   v.current_value_currency,
   COALESCE(x.annex_count, 0),
@@ -870,11 +884,14 @@ SELECT
   x.currency,
   ci.eik_clean,
   ci.eik_status,
-  COALESCE(s.incomplete, 0)
+  COALESCE(s.incomplete, 0),
+  x.signing_value,
+  x.signing_value_mills
 FROM raw_contract_admissions p
 JOIN raw_contracts x ON x.id = p.raw_id
 JOIN raw_serving_contract_authorities a ON a.id = x.id
 JOIN raw_contract_value_results v ON v.id = x.id
+JOIN raw_contract_value_inputs i ON i.id = x.id
 JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw
 LEFT JOIN incomplete_signings s ON s.unp = x.unp AND s.contract_number = x.contract_number;
 

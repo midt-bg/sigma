@@ -137,16 +137,23 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    that annex-side number, and no contract under the number itself. That is a second one-query definition,
    `AMENDMENT_RAW_NUMBER_TWINS_SQL`, counted by the gate and deleted by `refresh-slice.sql` on every
    refresh in the same way; the removed row is no contract's annex input, so no count or sum moves.
-8. **OCDS corrections use the latest eligible release** (`ocds-source-value`). An OCDS amendment with an
-   after-value fails the check if a later OCDS release supersedes it or an EOP annex exists under either
-   contract number. For contracts without an EOP annex, the latest release must have an after-value if it
-   has a document number, carries a positive value in the explicit signing currency and differs from the
-   unambiguous signing value by at least half a cent in that currency. The served signing records retain
-   incomplete evidence from the same contract key, including unpriced lots dropped at admission.
-   A missing after-value on an eligible release fails the local build gate.
-   The served gate reports it as a warning because a daily window only re-evaluates contracts it reaches.
-   Slots built before the correction rule can carry these rows until a refresh reaches them or a full build
-   replaces the slot. The check reports counts only.
+8. **Technical OCDS corrections update signing values** (`ocds-source-value`). The gate
+   matches retained correction publications to an unambiguous original signing by procedure,
+   contract number, signing date and currency. It tries the original OCDS key when the uniquely
+   resolved EOP procedure has no signing for that number. It checks that the latest eligible
+   publication supplies the signing value for an absolute difference of at least 0.005 in the
+   signing currency. The comparison uses whole mills and the exact decimal remainder at the
+   boundary. Legacy rows without source decimals use the shifted endpoints. The gate orders
+   eligible corrections by UTC publication time and document key. The publication ledger
+   retains the latest version for every class, including metadata-only updates that retire a
+   previously served row.
+   It checks that the affected annex count and current value agree with
+   contractual history. It also checks that known corrections and superseded history rows from
+   metadata-only winners are absent. The gate also
+   detects a changed signing value with no remaining support. Both build and served checks
+   enforce these invariants. Inferred OCDS after-values carried over from the previous rule
+   fail the build check and warn on an already served slot until source replay or a rebuild.
+   The check reports aggregate counts.
 9. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
    contract of the work database is staged through `raw_served_contract_value_base`, which reads a served
    row as the daily `amendments` batch does (a test holds the two equal), and evaluated by the rule itself

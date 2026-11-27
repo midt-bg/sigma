@@ -535,76 +535,67 @@ WHERE o.source LIKE 'ocds:%'
       AND e.source LIKE 'eop:%'
   )`;
 
-// Shared with refresh-slice.sql. The lockstep test keeps the gate and refresh on the same
-// ranking and eligibility rules. keys holds contracts without an EOP annex.
-export const OCDS_SOURCE_VALUE_DECISION_SQL = `ranked AS (
-  SELECT o.*,
-    ROW_NUMBER() OVER (
-      PARTITION BY o.unp, o.contract_number ORDER BY o.published_at DESC, o.natural_key DESC
-    ) AS rn
-  FROM ocds o
-), signings AS (
-  SELECT k.unp, k.contract_number, MIN(c.signing_value) AS signing_value,
-    MIN(c.signing_currency_raw) AS currency
-  FROM keys k
-  CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
+// Check both owner keys through the served evidence view. The general value rule can pass
+// if an eligible correction was never applied to the signing it belongs to.
+const OCDS_SOURCE_VALUE_SQL = `WITH expected AS MATERIALIZED (
+  SELECT * FROM contract_signing_correction_values
+), affected AS MATERIALIZED (
+  SELECT c.id, e.unp, e.contract_number, c.signing_value, e.signing_value AS expected_signing,
+    c.annex_count, c.current_value
+  FROM expected e
+  CROSS JOIN contracts c ON c.tender_id = 't:' || e.unp AND c.contract_number = e.contract_number
   WHERE c.id GLOB 'c:[eo]:*'
-  GROUP BY k.unp, k.contract_number
-  HAVING MAX(c.ocds_signing_incomplete) = 0
-    AND COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
-    AND COUNT(NULLIF(TRIM(c.signing_currency_raw), '')) = COUNT(*)
-    AND COUNT(DISTINCT c.signing_currency_raw) = 1
-), decided AS (
-  SELECT r.natural_key, r.unp, r.contract_number, r.rn, r.release_only, r.release_value, s.signing_value,
-    r.rn = 1 AND r.release_only AND s.signing_value IS NOT NULL
-      AND NULLIF(r.document_number, '') IS NOT NULL
-      AND r.currency = s.currency
-      AND r.release_value > 0
-      AND ABS(r.release_value - s.signing_value) >= 0.005 AS corrected
-  FROM ranked r
-  LEFT JOIN signings s ON s.unp = r.unp AND s.contract_number = r.contract_number
-)`;
-
-// Read the release amount from value_after when the row was promoted and from value_before otherwise.
-// The OCDS importer supplies only a release amount, so every served OCDS row is a release candidate.
-const OCDS_SOURCE_VALUE_SQL = `WITH ocds AS MATERIALIZED (
-  SELECT natural_key, unp, contract_number, published_at, currency, document_number,
-    COALESCE(value_after, value_before) AS release_value, 1 AS release_only
-  FROM amendments
-  WHERE source LIKE 'ocds:%' AND unp IS NOT NULL AND contract_number IS NOT NULL
-), ocds_keys AS (
-  SELECT DISTINCT unp, contract_number FROM ocds
-), keys AS MATERIALIZED (
-  SELECT k.unp, k.contract_number
-  FROM ocds_keys k
-  WHERE NOT EXISTS (
-    SELECT 1 FROM amendments e
-    WHERE e.source LIKE 'eop:%' AND e.unp = k.unp
-      AND (e.contract_number = k.contract_number OR e.contract_number_raw = k.contract_number)
-  )
-),
-${OCDS_SOURCE_VALUE_DECISION_SQL}
+)
 SELECT
-  SUM(a.value_after IS NOT NULL AND k.unp IS NULL) AS beside_eop,
-  SUM(a.value_after IS NOT NULL AND k.unp IS NOT NULL AND d.rn > 1) AS superseded,
-  SUM(a.value_after IS NULL AND d.corrected) AS missed
-FROM decided d
-JOIN amendments a ON a.natural_key = d.natural_key
-LEFT JOIN keys k ON k.unp = d.unp AND k.contract_number = d.contract_number`;
+  (SELECT COUNT(*) FROM affected WHERE signing_value IS NOT expected_signing) AS wrong_signing,
+  (SELECT COUNT(*) FROM contracts c
+    WHERE c.signing_value_original IS NOT NULL AND c.signing_value IS NOT c.signing_value_original
+      AND NOT EXISTS (SELECT 1 FROM affected a WHERE a.id = c.id)) AS unsupported_signing,
+  (SELECT COUNT(*) FROM affected c WHERE c.annex_count IS NOT (
+    SELECT COUNT(*) FROM amendments a WHERE a.unp = c.unp AND a.contract_number = c.contract_number
+  ) OR c.current_value IS NOT (
+    SELECT a.value_after FROM amendments a
+    WHERE a.unp = c.unp AND a.contract_number = c.contract_number AND a.value_after IS NOT NULL
+    ORDER BY a.published_at DESC, a.natural_key DESC LIMIT 1
+  )) AS wrong_history,
+  (SELECT COUNT(DISTINCT a.id) FROM ocds_amendment_publication_reports r
+    CROSS JOIN amendments a ON a.unp IN (r.unp, r.ocid) AND a.contract_number = r.contract_number
+    WHERE r.kind = 'correction' AND a.source LIKE 'ocds:%'
+      AND a.document_number = r.document_number) AS correction_in_history,
+  (SELECT COUNT(DISTINCT a.id) FROM ocds_amendment_publication_reports r
+    CROSS JOIN amendments a ON a.unp IN (r.unp, r.ocid) AND a.contract_number = r.contract_number
+    WHERE r.kind = 'metadata' AND a.source LIKE 'ocds:%' AND a.document_number = r.document_number
+      AND CASE WHEN a.published_at_utc IS NULL THEN a.source <= r.source
+          ELSE (RTRIM(a.published_at_utc, 'Z'), a.source) <= (r.published_at, r.source) END) AS excluded_in_history,
+  (SELECT COUNT(*) FROM amendments WHERE source LIKE 'ocds:%' AND value_after IS NOT NULL) AS legacy_after`;
 
-// contract-value-rule replays the value rule using the stored annexes. It can pass even when
-// the affected contract and its stored OCDS row both predate the source correction rule.
 export async function checkOcdsSourceValue(runner, { build = false } = {}) {
   const name = 'ocds-source-value';
-  if (!(await tableExists(runner, 'amendments')) || !(await tableExists(runner, 'contracts')))
-    return { name, ok: true, skipped: true, detail: 'amendments or contracts table absent' };
+  if (
+    !(await tableExists(runner, 'amendments')) ||
+    !(await tableExists(runner, 'contracts')) ||
+    !(await tableExists(runner, 'ocds_amendment_publications'))
+  )
+    return {
+      name,
+      ok: true,
+      skipped: true,
+      detail: 'signing evidence or contract history table absent',
+    };
 
   const result = (await rows(runner, OCDS_SOURCE_VALUE_SQL))[0] ?? {};
-  const besideEop = num(result.beside_eop);
-  const superseded = num(result.superseded);
-  const missed = num(result.missed);
-  const ok = besideEop === 0 && superseded === 0 && (!build || missed === 0);
-  const warn = ok && missed > 0;
+  const wrongSigning = num(result.wrong_signing) + num(result.unsupported_signing);
+  const wrongHistory = num(result.wrong_history);
+  const inHistory = num(result.correction_in_history);
+  const excluded = num(result.excluded_in_history);
+  const legacyAfter = num(result.legacy_after);
+  const ok =
+    wrongSigning === 0 &&
+    wrongHistory === 0 &&
+    inHistory === 0 &&
+    excluded === 0 &&
+    (!build || legacyAfter === 0);
+  const warn = ok && legacyAfter > 0;
   return {
     name,
     ok,
@@ -612,8 +603,8 @@ export async function checkOcdsSourceValue(runner, { build = false } = {}) {
     skipped: false,
     detail:
       warn || !ok
-        ? `OCDS after-values beside an EOP annex: ${besideEop}, superseded after-values: ${superseded}, missing after-values on eligible releases: ${missed}`
-        : 'all eligible OCDS corrections are present and no EOP or later release supersedes them',
+        ? `Incorrect OCDS signing projections: ${wrongSigning}, incorrect annex rollups: ${wrongHistory}, technical publications in history: ${inHistory}, metadata-only publications in history: ${excluded}, inferred OCDS after-values awaiting source replay: ${legacyAfter}`
+        : 'eligible source corrections are reflected in signing values and are absent from annex history',
   };
 }
 

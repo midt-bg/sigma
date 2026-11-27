@@ -45,8 +45,6 @@ export function checkOcdsSourceValue(
   runner: IntegrityRunner,
   options?: { build?: boolean },
 ): Promise<IntegrityResult>;
-/** The OCDS eligibility and ranking CTEs shared with refresh-slice.sql. */
-export const OCDS_SOURCE_VALUE_DECISION_SQL: string;
 /** The ids of served OCDS amendments still keyed by their OCID that duplicate an annex served under the
  *  resolved УНП. Shared with the removal in scripts/refresh-slice.sql (lockstep-tested). */
 export const AMENDMENT_OCID_TWINS_SQL: string;

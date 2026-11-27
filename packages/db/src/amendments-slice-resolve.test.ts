@@ -31,6 +31,7 @@ const migrations = [
   'packages/db/migrations/0008_amendment_provenance.sql',
   'packages/db/migrations/0029_contract_value_evidence.sql',
   'packages/db/migrations/0030_ocds_signing_evidence.sql',
+  'packages/db/migrations/0031_contract_signing_corrections.sql',
   // #279/ADR-0033: refresh-slice.sql reads interest_link_evidence.
   'packages/db/migrations/0009_interest_link_evidence.sql',
   // The officials search rows read person_registry_links (0014), interest_link_observations (0015) and

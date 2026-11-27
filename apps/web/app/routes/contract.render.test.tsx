@@ -411,6 +411,15 @@ describe('contract document', () => {
     });
   });
 
+  it('shows a corrected signing without a current value, a change percentage or an annex history', async () => {
+    const { document } = await render(
+      fixture({ value: { ...emptyValue, estimatedEur: 700, signingEur: 500 } }),
+    );
+    expect(valueFigures(document)).toEqual(['700 €', '500 €', '—']);
+    expect(document.querySelector('#amendments')).toBeNull();
+    expect(text(document.body)).not.toContain('спрямо сключване');
+  });
+
   it('preserves the signing price and distinguishes corrected, suppressed and missing annex values', async () => {
     const clauseOne =
       '§ 1. Срокът за доставка на учебните комплекти се изменя. Първата пратка се предава по опис, подписан от представителите на двете страни. Уведомлението за приемане се изпраща след проверка на доставката.';

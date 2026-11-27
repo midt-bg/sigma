@@ -126,6 +126,14 @@ test('refuses when the probe cannot answer for every cleared table', () => {
   assert.match(r.stderr, /could not read the corpus/);
 });
 
+test('refuses a partial full derive when only pending signing corrections exist', () => {
+  const r = runImport(PARTIAL, { populated: 'ocds_amendment_publications' });
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.refused, true);
+  assert.equal(r.loadStarted, false);
+  assert.match(r.stderr, /ocds_amendment_publications/);
+});
+
 test('an empty corpus is the initial backfill and passes', () => {
   const r = runImport(PARTIAL, { populated: '' });
   assert.equal(r.refused, false, r.stderr);
@@ -162,6 +170,7 @@ const CLEARED = [
   'home_totals',
   'contract_co_authorities',
   'ocds_contract_buyers',
+  'ocds_amendment_publications',
   'contracts',
   'parties',
   'lots',

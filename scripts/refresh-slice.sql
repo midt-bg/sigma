@@ -15,6 +15,7 @@ CREATE INDEX IF NOT EXISTS idx_contracts_tender_id ON contracts(tender_id);
 DROP TABLE IF EXISTS refresh_amendment_winners;
 DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
 DROP TABLE IF EXISTS refresh_amendment_served_bridge;
+INSERT OR IGNORE INTO raw_signing_correction_slice VALUES (1);
 
 -- #286: recover the УНП for OCDS amendments via the tender.id bridge before any raw_amendments read
 -- below, mirroring derive-amendments.sql (raw_tenders first, then the raw_contracts synthetic-tender
@@ -34,16 +35,19 @@ CREATE INDEX IF NOT EXISTS idx_raw_contracts_tender_ext_id ON raw_contracts(tend
 CREATE TABLE refresh_amendment_ocids AS
 SELECT id, unp AS ocid
 FROM raw_amendments
-WHERE source LIKE 'ocds:%' AND unp LIKE 'ocds-%';
+WHERE source LIKE 'ocds:%' AND signing_correction = 0 AND metadata_only = 0 AND unp LIKE 'ocds-%'
+  AND (NULLIF(document_number, '') IS NULL OR id IN (SELECT id FROM raw_ocds_amendment_window));
 -- @bridge-lockstep start
 UPDATE raw_amendments
-SET unp = COALESCE(
+SET ocds_ocid = COALESCE(ocds_ocid, unp), unp = COALESCE(
   (SELECT rt.unp FROM raw_tenders rt
      WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL ORDER BY rt.unp LIMIT 1),
   (SELECT rc.unp FROM raw_contracts rc
      WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL ORDER BY rc.unp LIMIT 1)
 )
 WHERE source LIKE 'ocds:%'
+  AND signing_correction = 0
+  AND metadata_only = 0
   AND tender_ext_id IS NOT NULL
   AND (
     -- raw_tenders wins when it resolves the procedure to exactly ONE УНП; else fall back to raw_contracts
@@ -76,8 +80,7 @@ WHERE source LIKE 'ocds:%'
 --     overrule it;
 --   - only when the id resolves to exactly ONE served УНП; otherwise the OCID stays as the honest residual;
 --   - never onto an OCDS-only procedure (source_id is itself an OCID) — that is no УНП.
--- `tenders` has no index on eop_tender_id, so this is written as ONE scan of the table probing the
--- window's handful of ids, never a lookup per amendment (which is a scan per amendment).
+-- Probe the window's tender ids together, using the served tender-id index.
 CREATE TABLE refresh_amendment_served_bridge AS
 SELECT t.eop_tender_id AS tender_ext_id, MIN(t.source_id) AS unp
 FROM tenders t
@@ -85,6 +88,8 @@ WHERE t.eop_tender_id IN (
     SELECT o.tender_ext_id
     FROM raw_amendments o
     WHERE o.source LIKE 'ocds:%'
+      AND o.signing_correction = 0
+      AND o.metadata_only = 0
       AND o.unp LIKE 'ocds-%'
       AND o.tender_ext_id IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM raw_tenders rt
@@ -97,11 +102,13 @@ GROUP BY t.eop_tender_id
 HAVING COUNT(DISTINCT t.source_id) = 1;
 
 UPDATE raw_amendments
-SET unp = (
+SET ocds_ocid = COALESCE(ocds_ocid, unp), unp = (
   SELECT b.unp FROM refresh_amendment_served_bridge b
   WHERE b.tender_ext_id = raw_amendments.tender_ext_id
 )
 WHERE source LIKE 'ocds:%'
+  AND signing_correction = 0
+  AND metadata_only = 0
   AND unp LIKE 'ocds-%'
   AND tender_ext_id IN (SELECT tender_ext_id FROM refresh_amendment_served_bridge);
 
@@ -112,8 +119,8 @@ WHERE source LIKE 'ocds:%'
 -- matched on the OCID it was served under plus the contract and document numbers, so only the very row
 -- this amendment used to be goes. A row whose OCID still carries contracts of its own (an OCDS-only
 -- procedure) is left alone: there the OCID is the key the contract hangs on.
--- Retain the original aliases on a retry after a committed resolution batch. The EOP
--- filter can remove the raw OCDS row by then. A new staging lifecycle sweeps this table.
+-- Retain the original aliases on a retry after a committed bridge update.
+-- A new staging lifecycle sweeps this table.
 CREATE TABLE IF NOT EXISTS refresh_amendment_rekeyed AS
 SELECT o.ocid, r.contract_number, r.document_number
 FROM refresh_amendment_ocids o
@@ -129,21 +136,59 @@ DROP TABLE IF EXISTS refresh_amendment_served_bridge;
 CREATE TABLE refresh_amendment_contract_resolve AS
 WITH suppliers AS MATERIALIZED (
   SELECT * FROM raw_supplier_evidence
+), corrected AS MATERIALIZED (
+  SELECT * FROM raw_corrected_signing_values
+), changed_signing_unps AS (
+  SELECT unp FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+  UNION
+  SELECT substr(c.tender_id, 3) FROM raw_replaced_signings r JOIN contracts c ON c.id = r.id
+), affected_unps AS MATERIALIZED (
+  -- A different signing candidate can invalidate an annex anchored by a correction.
+  -- Without a changed or previously applied correction, keep historical ownership
+  -- and only reevaluate whether old direct witnesses may anchor new publications.
+  SELECT k.unp FROM changed_signing_unps k
+  WHERE EXISTS (
+    SELECT 1 FROM contracts c
+    WHERE c.tender_id = 't:' || k.unp AND c.signing_value_original IS NOT NULL
+      AND c.signing_value IS NOT c.signing_value_original
+  )
+  UNION
+  SELECT v.unp FROM corrected v
+  LEFT JOIN contracts c ON c.tender_id = 't:' || v.unp AND c.contract_number = v.contract_number
+    AND c.id GLOB 'c:[eo]:*'
+  WHERE v.signing_value IS NOT c.signing_value
+  UNION
+  SELECT substr(c.tender_id, 3) FROM contracts c
+  WHERE c.signing_value_original IS NOT NULL AND c.signing_value IS NOT c.signing_value_original
+    AND NOT EXISTS (SELECT 1 FROM corrected v
+      WHERE c.tender_id = 't:' || v.unp AND v.contract_number = c.contract_number)
 ), staged_annexes AS MATERIALIZED (
   -- The publication key uses the original annex number, including after a committed retry.
   SELECT a.id AS amendment_id, a.natural_key, a.unp,
     COALESCE(NULLIF(a.contract_number_raw, ''), a.contract_number) AS annex_cnum,
     a.source, a.link_method, a.value_before, a.currency, s.eik AS contractor_eik,
-    s.evidence_status AS contractor_status
+    s.evidence_status AS contractor_status, a.contract_number AS old_cnum
   FROM raw_amendment_publications a
   JOIN suppliers s ON s.eik_raw IS a.contractor_eik
 ), window_annexes AS MATERIALIZED (
   SELECT * FROM staged_annexes
   WHERE source LIKE 'eop:%' AND unp IS NOT NULL AND annex_cnum IS NOT NULL
+  UNION ALL
+  SELECT NULL, a.natural_key, a.unp, COALESCE(a.contract_number_raw, a.contract_number),
+    a.source, a.link_method, a.value_before, a.currency,
+    COALESCE(a.anchor_candidate_contractor_eik, a.value_anchor_contractor_eik),
+    CASE WHEN a.contractor_id_status = 'valid'
+      AND COALESCE(a.anchor_candidate_contractor_eik, a.value_anchor_contractor_eik) IS NULL
+      THEN 'unverified' ELSE a.contractor_id_status END, a.contract_number
+  FROM affected_unps k
+  CROSS JOIN amendments a ON a.unp = k.unp
+  WHERE a.source LIKE 'eop:%' AND a.contract_number IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM staged_annexes s WHERE s.natural_key = a.natural_key)
 ), window_unps AS (
   SELECT DISTINCT unp FROM window_annexes
 ), served_contracts AS MATERIALIZED (
-  SELECT w.unp, c.id, c.contract_number, c.signing_value, c.currency,
+  SELECT w.unp, c.id, c.contract_number,
+    COALESCE(c.signing_value_original, c.signing_value) AS signing_value, c.currency,
     c.own_estimate_source, c.signing_currency_raw, c.signing_contractor_eik, c.signing_contractor_status
   FROM window_unps w CROSS JOIN contracts c ON c.tender_id = 't:' || w.unp
   WHERE c.contract_number IS NOT NULL
@@ -172,15 +217,7 @@ WITH suppliers AS MATERIALIZED (
       ELSE 0
     END
   FROM served_contracts c
-  -- A staged change replaces served rows of its feed on this key, even if the current
-  -- signing is NULL, zero, or missing currency. EOP also removes OCDS by document number.
-  WHERE NOT EXISTS (
-    SELECT 1 FROM raw_contracts r
-    WHERE r.contract_number = c.contract_number AND (
-      (c.id GLOB 'c:e:*' AND r.source LIKE 'eop:%' AND r.unp = c.unp)
-      OR (c.id GLOB 'c:o:*' AND (r.source LIKE 'eop:%' OR (r.source LIKE 'ocds:%' AND r.unp = c.unp)))
-    )
-  )
+  WHERE c.id NOT IN (SELECT id FROM raw_replaced_signings)
 ), grp AS (
   -- A number match takes precedence regardless of signing value.
   SELECT a.*
@@ -200,10 +237,10 @@ WITH suppliers AS MATERIALIZED (
   WHERE a.link_method = 'value_anchor' AND a.value_anchor_kind = 'direct'
     AND a.source LIKE 'eop:%' AND a.contract_number IS NOT NULL
     AND NOT EXISTS (
-      SELECT 1 FROM staged_annexes staged WHERE staged.natural_key = a.natural_key
+      SELECT 1 FROM window_annexes staged WHERE staged.natural_key = a.natural_key
     )
 ), matches AS (
-  SELECT w.amendment_id, w.unp, w.annex_cnum, w.served_owner,
+  SELECT w.natural_key, w.unp, w.annex_cnum, w.served_owner,
     MIN(c.contract_number) AS resolved_cnum, COUNT(DISTINCT c.contract_number) AS n_match,
     MAX(CASE WHEN c.source_known = 1 AND p.contract_number IS NULL
       AND w.contractor_status IN ('absent', 'valid')
@@ -211,17 +248,20 @@ WITH suppliers AS MATERIALIZED (
   FROM witnesses w
   JOIN current_signings c
     ON c.unp = w.unp AND c.currency = w.currency AND c.currency <> ''
-    AND c.signing_value > 0 AND ABS(c.signing_value - w.value_before) < 0.005
     AND (w.contractor_eik IS NULL OR c.contractor_eik IS NULL OR w.contractor_eik = c.contractor_eik)
+  LEFT JOIN corrected v ON v.unp = c.unp AND v.contract_number = c.contract_number
   -- Alternate-number links are applied by procedure and filing number. When a
   -- surviving admin shares that key, a value match cannot prove which physical
   -- signing the link would reach. Keep that owner in the set of possibilities.
   LEFT JOIN admin_owners p ON p.unp = c.unp AND p.contract_number = c.contract_number
-  WHERE w.value_before > 0
-  GROUP BY w.amendment_id, w.unp, w.annex_cnum, w.served_owner, w.natural_key
+  WHERE w.value_before > 0 AND (
+    (c.signing_value > 0 AND ROUND(ABS(c.signing_value - w.value_before), 6) < 0.005)
+    OR (v.signing_value > 0 AND ROUND(ABS(v.signing_value - w.value_before), 6) < 0.005)
+  )
+  GROUP BY w.natural_key, w.unp, w.annex_cnum, w.served_owner
 ), direct AS (
   -- Legacy signings may indicate ambiguity, but lack original evidence to prove a match.
-  SELECT amendment_id, unp, annex_cnum, resolved_cnum
+  SELECT natural_key, resolved_cnum
   FROM matches
   WHERE n_match = 1 AND has_proof = 1
     AND (served_owner IS NULL OR served_owner = resolved_cnum)
@@ -234,17 +274,18 @@ WITH suppliers AS MATERIALIZED (
     AND MAX(has_proof = 1 AND (served_owner IS NULL OR served_owner = resolved_cnum)) = 1
 )
 -- A member's own unique match stands even if the chain disagrees. An ambiguous
--- member cannot inherit. A previously served row is rekeyed only on publication replay.
-SELECT a.amendment_id, a.annex_cnum, COALESCE(d.resolved_cnum, gt.resolved_cnum) AS resolved_cnum,
+-- member cannot inherit. Served links are reconsidered when correction evidence changes.
+SELECT a.amendment_id, a.natural_key, a.unp, a.old_cnum, a.annex_cnum,
+  COALESCE(d.resolved_cnum, gt.resolved_cnum) AS resolved_cnum,
   CASE WHEN d.resolved_cnum IS NOT NULL THEN 'direct'
        WHEN gt.resolved_cnum IS NOT NULL THEN 'inherited' END AS value_anchor_kind
 FROM window_annexes a
-LEFT JOIN grp g ON g.amendment_id = a.amendment_id
-LEFT JOIN matches m ON m.amendment_id = g.amendment_id
-LEFT JOIN direct d ON d.amendment_id = g.amendment_id
+LEFT JOIN grp g ON g.natural_key = a.natural_key
+LEFT JOIN matches m ON m.natural_key = g.natural_key
+LEFT JOIN direct d ON d.natural_key = g.natural_key
 LEFT JOIN group_target gt ON gt.unp = g.unp AND gt.annex_cnum = g.annex_cnum
   AND g.contractor_status IN ('absent', 'valid') AND COALESCE(m.has_proof, 1) = 1
-WHERE g.amendment_id IS NOT NULL OR a.link_method = 'value_anchor';
+WHERE g.natural_key IS NOT NULL OR a.link_method = 'value_anchor';
 
 UPDATE raw_amendments AS a
 SET
@@ -255,8 +296,6 @@ SET
 FROM refresh_amendment_contract_resolve r
 WHERE a.id = r.amendment_id AND (r.resolved_cnum IS NOT NULL OR a.link_method = 'value_anchor');
 
-DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
-
 -- #286: prefer the EOP annex — drop OCDS twins so annex_count and the served timeline aren't doubled.
 -- The full path (derive-amendments.sql) only checks raw_amendments because it re-stages the whole corpus
 -- every run. The slice path must ALSO consult the cumulative served `amendments`: an EOP annex promoted by
@@ -265,8 +304,11 @@ DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
 -- both rows and double annex_count (issue #286, review nikimilenkov HIGH 1).
 -- As on the full path, an EOP annex the value resolver moved onto its contract is matched on its annex-side
 -- number (contract_number_raw) too: the OCDS release of the same annex still carries that number.
-DELETE FROM raw_amendments
+UPDATE raw_amendments SET shadowed_by_eop = 0 WHERE shadowed_by_eop = 1;
+UPDATE raw_amendments SET shadowed_by_eop = 1
 WHERE source LIKE 'ocds:%'
+  AND signing_correction = 0
+  AND metadata_only = 0
   AND (
     EXISTS (
       SELECT 1 FROM raw_amendments e
@@ -282,6 +324,12 @@ WHERE source LIKE 'ocds:%'
         AND (s.contract_number = raw_amendments.contract_number
           OR s.contract_number_raw = raw_amendments.contract_number)
     )
+    OR EXISTS (
+      SELECT 1 FROM refresh_amendment_contract_resolve e
+      WHERE e.amendment_id IS NULL AND e.unp = raw_amendments.unp
+        AND e.resolved_cnum IS NOT NULL
+        AND raw_amendments.contract_number IN (e.resolved_cnum, e.annex_cnum)
+    )
   );
 
 DELETE FROM raw_contract_value_scope;
@@ -290,11 +338,24 @@ SELECT unp, contract_number FROM raw_contracts
 WHERE unp IS NOT NULL AND contract_number IS NOT NULL
   AND (source LIKE 'eop:%' OR source LIKE 'ocds:%')
 UNION
-SELECT unp, contract_number FROM raw_amendments
-WHERE unp IS NOT NULL AND contract_number IS NOT NULL;
+SELECT unp, contract_number FROM raw_amendment_publications
+WHERE unp IS NOT NULL AND contract_number IS NOT NULL
+UNION
+SELECT unp, old_cnum FROM refresh_amendment_contract_resolve
+WHERE amendment_id IS NULL AND COALESCE(resolved_cnum, annex_cnum) <> old_cnum
+UNION
+SELECT unp, COALESCE(resolved_cnum, annex_cnum) FROM refresh_amendment_contract_resolve
+WHERE amendment_id IS NULL AND COALESCE(resolved_cnum, annex_cnum) <> old_cnum;
 
 DELETE FROM raw_contract_value_annexes;
 INSERT INTO raw_contract_value_annexes SELECT * FROM raw_contract_value_staged_annexes;
+INSERT OR IGNORE INTO raw_contract_value_annexes
+SELECT a.natural_key, r.unp, COALESCE(r.resolved_cnum, r.annex_cnum),
+  a.value_before, a.raw_value_after, a.value_after, a.raw_value_delta, a.currency,
+  a.published_at, a.value_treatment, a.value_restated, a.value_evidence_known, a.value_suspect
+FROM refresh_amendment_contract_resolve r
+JOIN amendments a USING (natural_key)
+WHERE r.amendment_id IS NULL AND COALESCE(r.resolved_cnum, r.annex_cnum) <> r.old_cnum;
 -- Match promotion's source precedence and publication-key replacement in the price input.
 INSERT OR IGNORE INTO raw_contract_value_annexes
 SELECT a.natural_key, a.unp, a.contract_number, a.value_before, a.raw_value_after, a.value_after,
@@ -1387,46 +1448,23 @@ ON CONFLICT(id) DO UPDATE SET
     ELSE tenders.eop_tender_id END;
 
 -- 4) Contracts - replace rows represented by the transient window, then re-derive deltas.
+-- A distinct unpriced OCDS notice can veto a correction without acquiring a public
+-- row. Retain that evidence on its OCDS siblings before rebuilding or revaluing them.
+UPDATE contracts
+SET ocds_signing_incomplete = 1
+FROM (
+  SELECT DISTINCT unp, contract_number FROM raw_contract_publications
+  WHERE source LIKE 'ocds:%' AND signing_value IS NULL
+    AND unp IS NOT NULL AND contract_number IS NOT NULL
+) missing
+WHERE contracts.tender_id = 't:' || missing.unp
+  AND contracts.contract_number = missing.contract_number
+  AND contracts.id GLOB 'c:o:*' AND contracts.ocds_signing_incomplete = 0;
+
 DROP TABLE IF EXISTS raw_contract_value_existing;
 CREATE TABLE raw_contract_value_existing AS
-SELECT id, tender_id, amount FROM contracts
-WHERE id IN (
-  SELECT DISTINCT c.id
-  FROM raw_contracts r
-  JOIN contracts c ON c.contract_number = r.contract_number AND c.tender_id = 't:' || r.unp
-  WHERE r.contract_number IS NOT NULL
-    AND c.id GLOB 'c:[eo]:*'
-    AND (
-      (c.id LIKE 'c:e:%' AND r.source LIKE 'eop:%')
-      OR (c.id LIKE 'c:o:%' AND r.source LIKE 'ocds:%')
-    )
-  UNION
-  SELECT DISTINCT c.id
-  FROM raw_contracts r
-  JOIN contracts c ON c.contract_number IS NULL AND c.tender_id = 't:' || r.unp
-  WHERE r.contract_number IS NULL
-    AND c.id GLOB 'c:[eo]:*'
-    AND (
-      (c.id LIKE 'c:e:%' AND r.source LIKE 'eop:%')
-      OR (c.id LIKE 'c:o:%' AND r.source LIKE 'ocds:%')
-    )
-  -- EOP suppresses the served OCDS twin by document number, including when the
-  -- EOP row has no admissible value or is served under a different tender key.
-  UNION
-  SELECT DISTINCT c.id
-  FROM raw_contracts e
-  JOIN contracts c ON c.contract_number = e.contract_number
-  WHERE e.source LIKE 'eop:%'
-    AND e.contract_number IS NOT NULL
-    AND c.id GLOB 'c:o:*'
-  UNION
-  SELECT DISTINCT c.id
-  FROM raw_contracts e
-  JOIN contracts c ON c.contract_number IS NULL
-  WHERE e.source LIKE 'eop:%'
-    AND e.contract_number IS NULL
-    AND c.id GLOB 'c:o:*'
-);
+SELECT id, tender_id, amount, ocds_signing_incomplete FROM contracts
+WHERE id IN (SELECT id FROM raw_replaced_signings);
 CREATE UNIQUE INDEX idx_raw_contract_value_existing ON raw_contract_value_existing(id);
 INSERT OR IGNORE INTO refresh_touched_contracts (id)
 SELECT id FROM raw_contract_value_existing;
@@ -1448,12 +1486,14 @@ WHERE ca.contract_id IN (SELECT id FROM refresh_touched_contracts);
 -- Stage the native amounts and their currencies for the shared valuation rule.
 DELETE FROM raw_contract_value_inputs;
 INSERT INTO raw_contract_value_inputs
-SELECT c.id, c.unp, c.contract_number, c.contract_date, c.signing_value, c.currency, COALESCE(aw.effective_after, c.current_value), aw.currency,
+SELECT c.id, c.unp, c.contract_number, c.contract_date, COALESCE(s.signing_value, c.signing_value),
+  c.currency, COALESCE(aw.effective_after, c.current_value), aw.currency,
   t.estimated_value, t.currency, c.estimated_value, c.procurement_currency,
   CASE WHEN c.framework_contract = 1 THEN 1 WHEN c.framework_notice = 1 THEN 2 END,
   0, NULL, aw.natural_key
 FROM raw_contracts c
 LEFT JOIN tenders t ON t.id = 't:' || c.unp
+LEFT JOIN raw_corrected_signing_values s ON s.unp = c.unp AND s.contract_number = c.contract_number
 LEFT JOIN refresh_amendment_winners aw
   ON aw.unp = c.unp AND aw.contract_number = c.contract_number
 WHERE c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%';
@@ -1466,30 +1506,49 @@ CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results
 -- replaced here also has a staged EOP document that already vetoes its OCDS twin.
 DELETE FROM raw_contract_admissions;
 INSERT INTO raw_contract_admissions (raw_id, contract_id, bidder_id, amount, lot_id)
-SELECT x.id, x.derived_id, x.bidder_key, COALESCE(x.amount, previous.amount),
+WITH staged AS MATERIALIZED (
+  SELECT c.id, c.unp, c.contract_number, c.lot_id, c.document_number, c.source,
+    c.signing_value, c.contract_date, ci.bidder_key, v.amount,
+    'c:o:' || c.unp || ':' || COALESCE(c.contract_number, '') || ':' ||
+      COALESCE(NULLIF(c.lot_id, ''), '_') || ':' || ci.bidder_key || ':' AS id_prefix,
+    ROW_NUMBER() OVER (
+      PARTITION BY c.unp, c.contract_number, ci.bidder_key, COALESCE(NULLIF(c.lot_id, ''), '_'),
+        c.document_number
+      ORDER BY c.signing_value, c.contract_date, c.id
+    ) AS within_notice
+  FROM raw_contracts c
+  JOIN contractor_identity ci ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
+  JOIN raw_contract_value_results v ON v.id = c.id
+  WHERE c.source LIKE 'ocds:%'
+), prior AS MATERIALIZED (
+  SELECT k.id_prefix, c.id, c.document_number,
+    CAST(substr(c.id, length(k.id_prefix) + 1) AS INTEGER) AS ordinal,
+    ROW_NUMBER() OVER (
+      PARTITION BY k.id_prefix, c.document_number
+      ORDER BY CAST(substr(c.id, length(k.id_prefix) + 1) AS INTEGER)
+    ) AS within_notice
+  FROM (SELECT DISTINCT unp, contract_number, id_prefix FROM staged) k
+  CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number IS k.contract_number
+    AND c.id GLOB 'c:o:*' AND substr(c.id, 1, length(k.id_prefix)) = k.id_prefix
+), ordinals AS (
+  SELECT id_prefix, MAX(ordinal) AS last FROM prior GROUP BY id_prefix
+)
+-- Preserve the IDs of a replayed notice. Allocate slots for new notices after the
+-- existing ones, so an independently filed notice cannot replace another by ordinal.
+-- Only previously unassigned, admitted rows consume a slot, even on overlapping windows.
+SELECT x.id, COALESCE(p.id, x.id_prefix || (COALESCE(o.last, 0) +
+    SUM(p.id IS NULL) OVER (
+      PARTITION BY x.id_prefix
+      ORDER BY x.source, x.document_number, x.signing_value, x.contract_date, x.id
+      ROWS UNBOUNDED PRECEDING
+    ))),
+  x.bidder_key, COALESCE(x.amount, previous.amount),
   CASE WHEN x.lot_id IS NOT NULL AND TRIM(x.lot_id) <> '' THEN 'lot:' || x.unp || ':' || x.lot_id END
-FROM (
-  SELECT ranked.*, 'c:o:' || COALESCE(ranked.unp, '') || ':' || COALESCE(ranked.contract_number, '') || ':' ||
-    COALESCE(NULLIF(ranked.lot_id, ''), '_') || ':' || ranked.bidder_key || ':' || ranked.contract_ordinal AS derived_id
-  FROM (
-    SELECT z.*,
-      ROW_NUMBER() OVER (
-        PARTITION BY z.unp, COALESCE(z.contract_number, ''), z.bidder_key, COALESCE(NULLIF(z.lot_id, ''), '_')
-        ORDER BY z.signing_value, z.contract_date, z.document_number, z.id
-      ) AS contract_ordinal
-    FROM (
-      SELECT c.id, c.unp, c.source, c.contract_number, c.lot_id, c.signing_value, c.contract_date,
-        c.document_number, ci.bidder_key,
-        v.amount
-      FROM raw_contracts c
-      JOIN contractor_identity ci
-        ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
-      JOIN raw_contract_value_results v ON v.id = c.id
-      WHERE c.source LIKE 'ocds:%'
-    ) z
-  ) ranked
-) x
-LEFT JOIN raw_contract_value_existing previous ON previous.id = x.derived_id
+FROM staged x
+LEFT JOIN prior p ON p.id_prefix = x.id_prefix AND p.document_number IS x.document_number
+  AND p.within_notice = x.within_notice
+LEFT JOIN ordinals o ON o.id_prefix = x.id_prefix
+LEFT JOIN raw_contract_value_existing previous ON previous.id = p.id
 WHERE COALESCE(x.amount, previous.amount) IS NOT NULL
   AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
   AND EXISTS (SELECT 1 FROM bidders b WHERE b.id = x.bidder_key)
@@ -1570,7 +1629,7 @@ INSERT OR IGNORE INTO contracts
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
    eauction, framework, accelerated, strategic, own_estimate_source, own_estimate_value, own_estimate_currency,
-   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete)
+   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete, signing_value_original, signing_value_mills)
 SELECT
   p.contract_id,
   't:' || x.unp,
@@ -1580,7 +1639,7 @@ SELECT
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
   x.contract_number,
-  x.signing_value,
+  i.signing_value,
   v.current_value,
   v.current_value_currency,
   CASE WHEN x.source LIKE 'eop:%' THEN COALESCE(x.annex_count, 0) ELSE 0 END,
@@ -1620,12 +1679,17 @@ SELECT
   x.currency,
   ci.eik_clean,
   ci.eik_status,
-  COALESCE(s.incomplete, 0)
+  MAX(COALESCE(s.incomplete, 0),
+    CASE WHEN x.source LIKE 'ocds:%' THEN COALESCE(previous.ocds_signing_incomplete, 0) ELSE 0 END),
+  x.signing_value,
+  x.signing_value_mills
 FROM raw_contract_admissions p
 JOIN raw_contracts x ON x.id = p.raw_id
 JOIN raw_serving_contract_authorities a ON a.id = x.id
 JOIN raw_contract_value_results v ON v.id = x.id
+JOIN raw_contract_value_inputs i ON i.id = x.id
 JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw
+LEFT JOIN raw_contract_value_existing previous ON previous.id = p.contract_id
 LEFT JOIN incomplete_signings s ON s.unp = x.unp AND s.contract_number = x.contract_number;
 
 -- @ocds-buyer-selection start
@@ -1846,6 +1910,21 @@ UPDATE home_totals SET as_of = (SELECT MAX(signed_at) FROM contracts WHERE signe
 
 -- 5) Promote window amendments into served domain history and roll touched contracts.
 -- @refresh-batch amendments
+-- A correction can link a publication from an earlier window without re-reading its packet.
+-- Keep the served publication key and original value evidence when changing its owner.
+UPDATE amendments AS a
+SET contract_number = COALESCE(r.resolved_cnum, r.annex_cnum),
+  contract_number_raw = CASE WHEN r.resolved_cnum IS NOT NULL THEN r.annex_cnum END,
+  link_method = CASE WHEN r.resolved_cnum IS NOT NULL THEN 'value_anchor' END,
+  value_anchor_kind = r.value_anchor_kind,
+  anchor_candidate_contractor_eik = COALESCE(a.anchor_candidate_contractor_eik, a.value_anchor_contractor_eik),
+  value_anchor_contractor_eik = CASE WHEN r.value_anchor_kind = 'direct'
+    THEN COALESCE(a.anchor_candidate_contractor_eik, a.value_anchor_contractor_eik) END
+FROM refresh_amendment_contract_resolve r
+WHERE r.amendment_id IS NULL AND r.natural_key = a.natural_key
+  AND (COALESCE(r.resolved_cnum, r.annex_cnum) IS NOT a.contract_number
+    OR r.value_anchor_kind IS NOT a.value_anchor_kind);
+
 -- Remove the superseded OCID alias only after FX has succeeded.
 DELETE FROM amendments
 WHERE source LIKE 'ocds:%'
@@ -1865,113 +1944,37 @@ WHERE source LIKE 'ocds:%'
 -- EOP annex the value resolver moved onto its contract is matched on its annex-side number too.
 DELETE FROM amendments
 WHERE source LIKE 'ocds:%'
-  AND EXISTS (
-    SELECT 1 FROM raw_amendments e
-    WHERE e.source LIKE 'eop:%'
-      AND e.unp = amendments.unp
-      AND (e.contract_number = amendments.contract_number
-        OR e.contract_number_raw = amendments.contract_number)
-  );
-
--- Re-evaluate OCDS releases on contracts reached by this window. Find the few keys with OCDS rows
--- before checking for EOP annexes, which must be looked up by unp to match either contract number.
--- Earlier windows may have promoted an OCDS release to an after-value. Use that amount when a
--- later release supersedes it and the row goes back to storing the release amount as value_before.
--- Ranked staged rows with their own raw_after retain it, as on the full path. The OCDS importer
--- supplies only value_before. The contracts batch has already refreshed signing values.
--- The ranking and eligibility block is shared with the ocds-source-value gate (lockstep-tested).
-DROP TABLE IF EXISTS refresh_ocds_value_rows;
-CREATE TABLE refresh_ocds_value_rows AS
-WITH ocds_keys AS MATERIALIZED (
-  SELECT k.unp, k.contract_number
-  FROM raw_contract_value_scope k
-  WHERE EXISTS (
-      SELECT 1 FROM raw_amendments o
-      WHERE o.unp = k.unp AND o.contract_number = k.contract_number AND o.source LIKE 'ocds:%'
+  AND (
+    EXISTS (
+      SELECT 1 FROM raw_amendments e
+      WHERE e.source LIKE 'eop:%'
+        AND e.unp = amendments.unp
+        AND (e.contract_number = amendments.contract_number
+          OR e.contract_number_raw = amendments.contract_number)
     )
     OR EXISTS (
-      SELECT 1 FROM amendments o
-      WHERE o.unp = k.unp AND o.contract_number = k.contract_number AND o.source LIKE 'ocds:%'
+      SELECT 1 FROM refresh_amendment_contract_resolve e
+      WHERE e.amendment_id IS NULL AND e.unp = amendments.unp
+        AND e.resolved_cnum IS NOT NULL
+        AND amendments.contract_number IN (e.resolved_cnum, e.annex_cnum)
     )
-), keys AS MATERIALIZED (
-  SELECT k.unp, k.contract_number
-  FROM ocds_keys k
-  WHERE NOT EXISTS (
-      SELECT 1 FROM raw_amendments e
-      WHERE e.source LIKE 'eop:%' AND e.unp = k.unp
-        AND (e.contract_number = k.contract_number OR e.contract_number_raw = k.contract_number)
-    )
-    AND NOT EXISTS (
-      SELECT 1 FROM amendments e
-      WHERE e.source LIKE 'eop:%' AND e.unp = k.unp
-        AND (e.contract_number = k.contract_number OR e.contract_number_raw = k.contract_number)
-    )
-), staged AS MATERIALIZED (
-  SELECT a.natural_key, a.unp, a.contract_number, a.published_at, a.currency, a.document_number,
-    CASE WHEN a.raw_after IS NULL THEN a.value_before ELSE a.raw_after END AS release_value,
-    a.raw_after IS NULL AS release_only
-  FROM keys k
-  JOIN raw_amendment_publications a ON a.unp = k.unp AND a.contract_number = k.contract_number
-  WHERE a.source LIKE 'ocds:%'
-), ocds AS (
-  SELECT * FROM staged
-  UNION ALL
-  SELECT s.natural_key, s.unp, s.contract_number, s.published_at, s.currency, s.document_number,
-    CASE WHEN s.value_after IS NULL THEN s.value_before ELSE s.value_after END, 1
-  FROM keys k
-  CROSS JOIN amendments s ON s.unp = k.unp AND s.contract_number = k.contract_number
-  WHERE s.source LIKE 'ocds:%'
-    AND NOT EXISTS (SELECT 1 FROM staged w WHERE w.natural_key = s.natural_key)
-),
--- @ocds-value-decision-lockstep start
-ranked AS (
-  SELECT o.*,
-    ROW_NUMBER() OVER (
-      PARTITION BY o.unp, o.contract_number ORDER BY o.published_at DESC, o.natural_key DESC
-    ) AS rn
-  FROM ocds o
-), signings AS (
-  SELECT k.unp, k.contract_number, MIN(c.signing_value) AS signing_value,
-    MIN(c.signing_currency_raw) AS currency
-  FROM keys k
-  CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
-  WHERE c.id GLOB 'c:[eo]:*'
-  GROUP BY k.unp, k.contract_number
-  HAVING MAX(c.ocds_signing_incomplete) = 0
-    AND COUNT(c.signing_value) = COUNT(*) AND COUNT(DISTINCT c.signing_value) = 1
-    AND COUNT(NULLIF(TRIM(c.signing_currency_raw), '')) = COUNT(*)
-    AND COUNT(DISTINCT c.signing_currency_raw) = 1
-), decided AS (
-  SELECT r.natural_key, r.unp, r.contract_number, r.rn, r.release_only, r.release_value, s.signing_value,
-    r.rn = 1 AND r.release_only AND s.signing_value IS NOT NULL
-      AND NULLIF(r.document_number, '') IS NOT NULL
-      AND r.currency = s.currency
-      AND r.release_value > 0
-      AND ABS(r.release_value - s.signing_value) >= 0.005 AS corrected
-  FROM ranked r
-  LEFT JOIN signings s ON s.unp = r.unp AND s.contract_number = r.contract_number
-)
--- @ocds-value-decision-lockstep end
-SELECT natural_key, unp, contract_number,
-  CASE WHEN corrected THEN signing_value ELSE release_value END AS value_before,
-  CASE WHEN corrected THEN release_value END AS value_after
-FROM decided
-WHERE release_only;
+  );
 
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, contract_number_raw, link_method, unp,
   value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source,
+  published_at, published_at_utc, document_number, description, source,
   value_restated, value_treatment, value_suspect, value_evidence_known, raw_value_after, raw_value_delta,
-  value_anchor_kind, value_anchor_contractor_eik, contractor_id_status
+  value_anchor_kind, value_anchor_contractor_eik, contractor_id_status, anchor_candidate_contractor_eik
 )
 WITH suppliers AS MATERIALIZED (SELECT * FROM raw_supplier_evidence)
 SELECT
   natural_key, natural_key, contract_number, contract_number_raw, link_method, unp,
   value_before, effective_after, effective_after - value_before, currency,
-  published_at, document_number, description, source,
+  published_at, published_at_utc, document_number, description, source,
   restated, value_treatment, 0, 1, raw_after, raw_delta,
-  value_anchor_kind, CASE WHEN value_anchor_kind = 'direct' THEN ids.eik END, ids.evidence_status
+  value_anchor_kind, CASE WHEN value_anchor_kind = 'direct' THEN ids.eik END, ids.evidence_status,
+  CASE WHEN a.source LIKE 'eop:%' THEN ids.eik END
 FROM raw_amendment_publications a
 JOIN suppliers ids ON ids.eik_raw IS a.contractor_eik;
 
@@ -2042,54 +2045,76 @@ WHERE o.source LIKE 'ocds:%'
 -- @raw-number-twin-lockstep end
 );
 
--- Apply the shapes decided above for the source-corrected OCDS value: to the served rows (this window's just
--- promoted, and earlier windows'), to this run's value inputs, and to the winners of the affected contracts,
--- which `@refresh-batch resolve-annexes` built before the decision. Only rows whose shape changes are written.
--- The source publishes no delta for an OCDS release, so raw_value_delta stays as promoted.
-UPDATE amendments
-SET value_before = r.value_before,
-    value_after = r.value_after,
-    raw_value_after = r.value_after,
-    value_delta = r.value_after - r.value_before
-FROM refresh_ocds_value_rows r
-WHERE amendments.id = r.natural_key
-  AND (amendments.value_before IS NOT r.value_before OR amendments.value_after IS NOT r.value_after
-    OR amendments.raw_value_after IS NOT r.value_after);
+-- Advance all publication classes together. Equal and older versions cannot change source state.
+INSERT INTO ocds_amendment_publications
+SELECT ocid, contract_number, document_number, tender_ext_id, signed_at, published_at,
+  currency, amount, amount_mills, source, version_key, kind
+FROM raw_ocds_amendment_window WHERE 1
+ON CONFLICT(ocid, contract_number, document_number) DO UPDATE SET
+  tender_ext_id = excluded.tender_ext_id,
+  signed_at = excluded.signed_at,
+  published_at = excluded.published_at,
+  currency = excluded.currency,
+  amount = excluded.amount,
+  amount_mills = excluded.amount_mills,
+  source = excluded.source,
+  version_key = excluded.version_key,
+  kind = excluded.kind
+WHERE (excluded.published_at, excluded.source, excluded.version_key) >
+  (ocds_amendment_publications.published_at, ocds_amendment_publications.source, ocds_amendment_publications.version_key);
 
-UPDATE raw_contract_value_annexes
-SET value_before = r.value_before, raw_after = r.value_after, effective_after = r.value_after
-FROM refresh_ocds_value_rows r
-WHERE raw_contract_value_annexes.natural_key = r.natural_key
-  AND (raw_contract_value_annexes.value_before IS NOT r.value_before
-    OR raw_contract_value_annexes.raw_after IS NOT r.value_after
-    OR raw_contract_value_annexes.effective_after IS NOT r.value_after);
+INSERT OR IGNORE INTO raw_contract_value_scope
+SELECT v.unp, v.contract_number FROM contract_signing_correction_values v
+CROSS JOIN contracts c ON c.tender_id = 't:' || v.unp AND c.contract_number = v.contract_number
+WHERE c.id GLOB 'c:[eo]:*' AND c.signing_value IS NOT v.signing_value
+UNION
+-- Revert corrections invalidated by signing ambiguity, a procedure bridge or a newer publication version.
+SELECT substr(c.tender_id, 3), c.contract_number FROM contracts c
+WHERE c.signing_value_original IS NOT NULL AND c.signing_value IS NOT c.signing_value_original
+  AND c.tender_id IS NOT NULL AND c.contract_number IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM contract_signing_correction_values v
+    WHERE c.tender_id = 't:' || v.unp AND v.contract_number = c.contract_number);
 
-DELETE FROM refresh_amendment_winners
-WHERE (unp, contract_number) IN (SELECT unp, contract_number FROM refresh_ocds_value_rows);
-INSERT INTO refresh_amendment_winners
-SELECT natural_key, unp, contract_number, currency, effective_after, annex_count
-FROM (
-  SELECT a.natural_key, a.unp, a.contract_number, a.currency, a.effective_after,
-    COUNT(*) OVER (PARTITION BY a.unp, a.contract_number) AS annex_count,
-    ROW_NUMBER() OVER (
-      PARTITION BY a.unp, a.contract_number
-      ORDER BY a.effective_after IS NULL, a.published_at DESC, a.natural_key DESC
-    ) AS win_rn
-  FROM raw_contract_value_annexes a
-  WHERE EXISTS (
-    SELECT 1 FROM refresh_ocds_value_rows r
-    WHERE r.unp = a.unp AND r.contract_number = a.contract_number
-  )
-)
-WHERE win_rn = 1;
+-- Retire excluded winners under either alias. For legacy annexes, use their stored packet
+-- when the full UTC publication time was unavailable.
+DROP TABLE IF EXISTS refresh_excluded_amendments;
+CREATE TABLE refresh_excluded_amendments AS
+SELECT DISTINCT a.id, a.unp, a.contract_number
+FROM raw_ocds_amendment_window r
+LEFT JOIN raw_ocds_publication_bridge b USING (tender_ext_id)
+CROSS JOIN amendments a ON a.unp IN (r.ocid, b.unp) AND a.contract_number = r.contract_number
+WHERE r.kind IN ('correction', 'metadata') AND a.document_number = r.document_number
+  AND a.source LIKE 'ocds:%'
+  AND CASE WHEN a.published_at_utc IS NULL THEN a.source <= r.source
+      ELSE (RTRIM(a.published_at_utc, 'Z'), a.source) <= (r.published_at, r.source) END;
+INSERT OR IGNORE INTO raw_contract_value_scope
+SELECT unp, contract_number FROM refresh_excluded_amendments;
+DELETE FROM amendments WHERE id IN (SELECT id FROM refresh_excluded_amendments);
+DROP TABLE refresh_excluded_amendments;
 
-DROP TABLE refresh_ocds_value_rows;
+-- The resolved window may have gained correction-only keys. Read their surviving annexes
+-- after promotion and after removing legacy correction rows.
+DELETE FROM raw_contract_value_annexes;
+INSERT INTO raw_contract_value_annexes
+SELECT a.natural_key, a.unp, a.contract_number, a.value_before, a.raw_value_after, a.value_after,
+  a.raw_value_delta, a.currency, a.published_at, a.value_treatment, a.value_restated,
+  a.value_evidence_known, a.value_suspect
+FROM raw_contract_value_scope k
+CROSS JOIN amendments a ON a.unp = k.unp AND a.contract_number = k.contract_number;
+
+DELETE FROM refresh_amendment_winners;
+INSERT INTO refresh_amendment_winners SELECT * FROM raw_contract_value_winners;
 
 -- Materialise affected inputs before the UPDATE to bound D1's statement compiler.
 DROP TABLE IF EXISTS amend_contract_base;
 
 CREATE TABLE amend_contract_base AS
-SELECT c.id, k.unp, k.contract_number, c.signed_at, c.currency, c.signing_value,
+SELECT c.id, k.unp, k.contract_number, c.signed_at, c.currency,
+  COALESCE(c.signing_value_original, c.signing_value) AS signing_value_original,
+  COALESCE(s.signing_value, c.signing_value_original, c.signing_value) AS signing_value,
+  (COALESCE(w.annex_count, 0) > 0 OR c.annex_count > 0 OR c.current_value IS NOT NULL
+    OR s.signing_value IS NOT NULL
+    OR COALESCE(c.signing_value_original, c.signing_value) IS NOT c.signing_value) AS revalue,
   c.fx_rate AS prior_signing_rate, c.framework, w.effective_after AS current_value,
   COALESCE(NULLIF(CASE WHEN w.effective_after IS NOT NULL THEN w.currency END, ''), NULLIF(c.currency, ''), 'BGN')
     AS current_value_currency,
@@ -2104,6 +2129,8 @@ FROM raw_contract_value_scope k
 CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
 JOIN tenders t ON t.id = c.tender_id
 LEFT JOIN refresh_amendment_winners w ON w.unp = k.unp AND w.contract_number = k.contract_number
+LEFT JOIN contract_signing_correction_values s
+  ON c.id GLOB 'c:[eo]:*' AND s.unp = k.unp AND s.contract_number = k.contract_number
 WHERE c.id GLOB 'c:[eo]:*' OR EXISTS (
   SELECT 1 FROM raw_amendments a WHERE a.unp = k.unp AND a.contract_number = k.contract_number
 );
@@ -2112,7 +2139,7 @@ INSERT INTO raw_contract_value_inputs
 SELECT id, unp, contract_number, signed_at, signing_value, currency, current_value, current_value_currency,
   proc_est_native, proc_est_currency, own_estimate_value, own_estimate_currency, framework,
   own_estimate_source = 'legacy:value_low', prior_signing_rate, natural_key
-FROM amend_contract_base WHERE annex_count > 0;
+FROM amend_contract_base WHERE revalue;
 
 -- Re-evaluate known evidence on affected histories only. Legacy rows keep their published marker
 -- until the source publication is staged again.
@@ -2130,6 +2157,9 @@ CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results
 UPDATE contracts
 SET
   annex_count = b.annex_count,
+  signing_value = b.signing_value,
+  signing_value_original = COALESCE(contracts.signing_value_original, CASE
+    WHEN b.signing_value IS NOT contracts.signing_value THEN b.signing_value_original END),
   own_estimate_source = b.own_estimate_source,
   current_value = b.current_value,
   current_value_currency = b.current_value_currency,
@@ -2177,6 +2207,7 @@ WHERE ca.contract_id IN (SELECT id FROM amend_contract_base);
 DROP TABLE IF EXISTS amend_contract_base;
 
 DROP TABLE contractor_identity;
+DELETE FROM raw_signing_correction_slice;
 
 -- 6) Refresh rollups + FTS. Only the D1-hot rollups are scoped to touched rows; cheaper rollups stay
 -- full-recomputed in isolated batches so convergence stays simple.
@@ -2751,3 +2782,4 @@ DROP TABLE IF EXISTS refresh_touched_bidders;
 DROP TABLE IF EXISTS refresh_touched_authorities;
 DROP TABLE IF EXISTS refresh_amendment_winners;
 DROP TABLE IF EXISTS refresh_amendment_rekeyed;
+DROP TABLE IF EXISTS refresh_amendment_contract_resolve;

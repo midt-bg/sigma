@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeD1 } from '@sigma/test-support';
+import { releaseToContracts, upsertStagingRows } from '@sigma/ingest';
 
 // Keep the pure catch-up-window helpers real (computeWorkerCatchupPlan relies on them), but stub the
 // bucket-key classifier, the OCDS/base record mappers, and every staging writer so the tests drive
@@ -18,7 +19,7 @@ vi.mock('@sigma/ingest', async (importOriginal) => {
             : key.includes('annex')
               ? 'annexes'
               : null,
-    releaseToContracts: () => [{ id: 'c' }],
+    releaseToContracts: vi.fn(() => [{ id: 'c' }]),
     releaseToAmendments: () => [{ id: 'a' }],
     releaseToParties: () => [{ id: 'p' }],
     releaseToLots: () => [{ id: 'l' }],
@@ -294,6 +295,21 @@ describe('stageOcdsFromBucket', () => {
       '2026-06-01T00:00:00Z',
     );
     expect(counts.ocdsContracts).toBe(1);
+  });
+
+  it('stages exact signing mills from the raw OCDS response', async () => {
+    const actual = await vi.importActual<typeof import('@sigma/ingest')>('@sigma/ingest');
+    vi.mocked(releaseToContracts).mockImplementationOnce(actual.releaseToContracts);
+    stubFetch(() => ({
+      body: '{"releases":[{"tag":["contract"],"contracts":[{"value":{"amount":10000000000.0049999,"currency":"EUR"}}]}]}',
+    }));
+    await stageOcdsFromBucket(fakeDb, listingWith({ ocds: 'x/ocds.json' }), '2026-06-01T00:00:00Z');
+    expect(upsertStagingRows).toHaveBeenCalledWith(
+      fakeDb,
+      actual.OCDS_STAGING.contracts,
+      'ocds:2026-06-01',
+      [expect.objectContaining({ signing_value_mills: '10000000000004.9999' })],
+    );
   });
 
   it('tolerates a package with neither releases nor data', async () => {

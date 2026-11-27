@@ -25,6 +25,7 @@ const TABLES = [
   'contracts',
   'contract_co_authorities',
   'amendments',
+  'ocds_amendment_publications',
   'parties',
   'ocds_supplier_appearances',
   'ocds_tender_buyers',

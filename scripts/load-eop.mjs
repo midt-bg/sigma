@@ -34,6 +34,7 @@ import {
   LOT_STAGING_COLS,
   PARTY_STAGING_COLS,
   classifyBucketKey,
+  parseOcdsPackage,
   releaseToAmendments,
   releaseToContracts,
   releaseToLots,
@@ -313,7 +314,7 @@ function parseCachedJson(cat, day, text) {
   return json;
 }
 
-async function fetchAnyObjectJson(cat, day, key) {
+async function fetchOcdsObject(cat, day, key) {
   const bucketUrl = `${BASE_URL}/open-data-${day}/`;
   const url = `${bucketUrl}${encodeURIComponent(key)}`;
   return retryOperation(`${cat} ${day} object`, async (signal) => {
@@ -321,12 +322,12 @@ async function fetchAnyObjectJson(cat, day, key) {
     assertSameHost(url, res);
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} ${url}`);
     const text = await res.text();
-    return { text, json: JSON.parse(text) };
+    return { text, json: parseOcdsPackage(text) };
   });
 }
-function parseCachedAnyJson(cat, day, text) {
+function parseCachedOcds(cat, day, text) {
   try {
-    return JSON.parse(text);
+    return parseOcdsPackage(text);
   } catch (err) {
     throw new Error(`${cat} ${day}: invalid JSON: ${errText(err)}`);
   }
@@ -390,7 +391,7 @@ async function ocdsPackageForDay(day, failures, skips) {
     if (existsSync(jsonPath)) {
       process.stderr.write(`==> ${cat} ${day}: cache HIT ${jsonPath}\n`);
       return {
-        pkg: parseCachedAnyJson(cat, day, await readFile(jsonPath, 'utf8')),
+        pkg: parseCachedOcds(cat, day, await readFile(jsonPath, 'utf8')),
         resourceUri: `${BASE_URL}/open-data-${day}/${encodeURIComponent(key)}`,
         loaded: true,
         skipped: false,
@@ -398,7 +399,7 @@ async function ocdsPackageForDay(day, failures, skips) {
     }
 
     process.stderr.write(`==> ${cat} ${day}: fetching ${key}\n`);
-    const { text, json } = await fetchAnyObjectJson(cat, day, key);
+    const { text, json } = await fetchOcdsObject(cat, day, key);
     await atomicWrite(jsonPath, text);
     return {
       pkg: json,

@@ -11,6 +11,7 @@ export type BaseCoercionKind =
   | 'bool'
   | 'date'
   | 'real_signed'
+  | 'decimal_mills'
   | 'secured_inverse'
   | 'variants_enum'
   | 'present_flag';
@@ -91,14 +92,41 @@ export function toInt(v: unknown): number | null {
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
-export function toReal(v: unknown): number | null {
+function normalizedReal(v: unknown): string | null {
   let s = clean(v);
   if (s === null) return null;
   s = s.replace(/\s/g, '');
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
-  if (!/^\+?(?:\d+(?:\.\d+)?|\.\d+)$/.test(s)) return null;
+  return s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+}
+
+export function toReal(v: unknown): number | null {
+  const s = normalizedReal(v);
+  if (s === null || !/^\+?(?:\d+(?:\.\d+)?|\.\d+)$/.test(s)) return null;
   const n = Number(s);
   return Number.isFinite(n) && n >= 0 && n <= MAX_PLAUSIBLE_VALUE ? n : null;
+}
+
+// Store whole mills and their fractional remainder separately from the REAL used for serving.
+// The source string can distinguish amounts on either side of a half-cent even if the REAL can't.
+export function decimalMills(amount: number | null, source: unknown): string | null {
+  if (amount === null) return null;
+  const decimal = /^\+?(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/iu;
+  const [, whole = '', fraction = '', exponent = '0'] =
+    (typeof source === 'string' && decimal.exec(source.trim())) ||
+    decimal.exec(String(amount)) ||
+    [];
+  const point = whole.length + Number(exponent) + 3;
+  const digits = whole + fraction;
+  const integer = digits.slice(0, Math.max(0, point)).replace(/^0+/u, '');
+  if (!/[1-9]/u.test(digits) || point < -400) return '0.';
+  const head = integer
+    ? integer.padEnd(integer.length + Math.max(0, point - digits.length), '0')
+    : '0';
+  const tail = ('0'.repeat(Math.max(0, -point)) + digits.slice(Math.max(0, point))).replace(
+    /0+$/u,
+    '',
+  );
+  return `${head}.${tail}`;
 }
 
 // contractValueDifference is the one published figure that is legitimately negative - an annex can
@@ -158,6 +186,7 @@ export function coerce(kind: BaseCoercionKind, v: unknown): BaseStagingValue {
   }
   if (kind === 'int') return toInt(v);
   if (kind === 'real') return toReal(v);
+  if (kind === 'decimal_mills') return decimalMills(toReal(v), normalizedReal(v));
   if (kind === 'real_signed') return toSignedReal(v);
   if (kind === 'bool') return toBool(v);
   if (kind === 'date') return toISODate(v);
@@ -209,6 +238,7 @@ export const BASE_CATEGORIES: Record<BaseCategory, BaseCategoryConfig> = {
       field('contract_number', 'contractNumber', 'text'),
       field('contract_date', 'contractDate', 'date'),
       field('signing_value', 'contractValue', 'real'),
+      field('signing_value_mills', 'contractValue', 'decimal_mills'),
       field('currency', 'contractCurrency', 'text'),
       field('contract_subject', 'contractSubject', 'text'),
       field('awarded_to_group', 'awardedToGroup', 'bool'),
