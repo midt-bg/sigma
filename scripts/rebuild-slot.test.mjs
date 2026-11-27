@@ -47,8 +47,11 @@ import {
 import { BREATHER_MS, HEAVY_ROWS } from './integrity-checks.mjs';
 import { insertStatements } from './ship-related-persons.mjs';
 import { d1FromSqlite } from '../packages/test-support/src/d1-sqlite.ts';
-import { IDENTITY_RULES_VERSION } from './cacbg/registry-identity.mjs';
-import { importRegistry } from './tr/rebuild-registry.mjs';
+import './cacbg/register-ts.mjs';
+const [{ IDENTITY_RULES_VERSION }, { importRegistry }] = await Promise.all([
+  import('./cacbg/registry-identity.mjs'),
+  import('./tr/rebuild-registry.mjs'),
+]);
 
 test('the slot takes the served tables only, parents first, with DDL safe on a migrated slot', () => {
   const staging = readFileSync('scripts/work-staging-schema.sql', 'utf8');
