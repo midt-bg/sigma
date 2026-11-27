@@ -954,10 +954,21 @@ test('a resume adopts the declarations checkpoints of the run that prepared the 
 // is recorded, so a test can assert what a later run did NOT do again.
 function slotRun(
   s,
-  { runId, stopAfter, stopInShipAfter, commit = 'c0ffee1', register, catchUp, check = passes },
+  {
+    runId,
+    stopAfter,
+    stopInShipAfter,
+    commit = 'c0ffee1',
+    register,
+    catchUp,
+    check = passes,
+    readLive = (sql) => s.slot.prepare(sql).all(),
+  },
 ) {
   const ran = [];
   const steps = [];
+  const liveCalls = [];
+  const livePauses = [];
   let shipping = false;
   let shipFiles = 0;
   const apply = (label, sql) => {
@@ -976,6 +987,17 @@ function slotRun(
     }
   };
   const wrangler = (args) => {
+    if (args[2] === 'sigma-live') {
+      const [, command, , ...options] = args;
+      liveCalls.push(command);
+      if (command === 'export') throw new Error('Currently processing a long-running export');
+      const [remote, json, flag, sql] = options;
+      assert.deepEqual(
+        [command, remote, json, flag],
+        ['execute', '--remote', '--json', '--command'],
+      );
+      return JSON.stringify([{ success: true, results: readLive(sql) }]);
+    }
     if (args[1] === 'migrations') {
       for (const file of readdirSync('packages/db/migrations')
         .filter((name) => name.endsWith('.sql'))
@@ -984,7 +1006,6 @@ function slotRun(
       return '';
     }
     if (args[1] === 'export') {
-      // The live slot serves no links in these tests.
       const tables = args.flatMap((a, i) => (args[i - 1] === '--table' ? [a] : []));
       const dump = tables.flatMap((t) => {
         if (args[2] !== 'sigma-test') return [];
@@ -1038,6 +1059,7 @@ function slotRun(
     read: s.read,
     verifyRead: s.reader(),
     wrangler,
+    liveSleep: (ms) => livePauses.push(ms),
     step,
     sqlite: async (_label, file, sql) => exec(file, sql),
     emit: () => '',
@@ -1062,8 +1084,108 @@ function slotRun(
   const checkpoints = () =>
     steps.find((st) => st.script === 'scripts/related-persons-job.mjs')?.env
       .SIGMA_CHECKPOINT_RUN_ID;
-  return { ops, ran, steps, checkpoints, work };
+  return { ops, ran, steps, checkpoints, work, liveCalls, livePauses };
 }
+
+function liveLinkFixture(t, s) {
+  const file = join(s.dir, 'live.sqlite');
+  copyFileSync(s.snapshot, file);
+  const live = new DatabaseSync(file);
+  t.after(() => live.close());
+  live.exec(`
+    INSERT INTO persons (id, name) VALUES ('person:fixture', 'Синтетично Лице');
+    WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM ids WHERE n < 501)
+    INSERT INTO interest_links (
+      rowid, id, link_key, person_id, bidder_id, eik, entity_key,
+      matcher_version, publish_tier, relation, interest_class, status, contract_value_eur, verified_by
+    ) SELECT n * 2, 'il:fixture:' || n, 'fixture|' || n, 'person:fixture', 'bidder:test', '000000001',
+      'synthetic', 'fixture-v1', 'A_eik', 'owns', 'private_ownership',
+      CASE WHEN n % 2 = 0 THEN 'held' ELSE 'published' END,
+      CASE WHEN n % 2 = 0 THEN NULL ELSE 12.34 END, 'fixture reviewer''s note' FROM ids;
+    INSERT INTO interest_link_evidence (
+      link_key, evidence_kind, registry_role, entry_number, lookup_date, rules_version, live_status
+    ) SELECT link_key, 'document', 'owner', '0009007199254740993',
+      '2026-01-01', 'fixture-v2', 'live'
+      FROM interest_links WHERE rowid > 2 ORDER BY rowid DESC;
+  `);
+  return live;
+}
+
+test('the rebuild captures live links and their evidence in paced queries', async (t) => {
+  const s = builtSlot(t);
+  const live = liveLinkFixture(t, s);
+  const pages = [];
+  const run = slotRun(s, {
+    runId: 'capture',
+    readLive: (sql) => {
+      const rows = live.prepare(sql).all();
+      if (/ORDER BY rowid/.test(sql)) pages.push(rows.length);
+      return rows;
+    },
+  });
+  await run.ops.import();
+  await run.ops.local(new Map());
+  assert.ok(run.liveCalls.length > 1);
+  assert.ok(
+    run.liveCalls.every((command) => command === 'execute'),
+    'never export the live slot',
+  );
+  assert.deepEqual(pages, [250, 250, 1, 250, 250]);
+  assert.ok(run.livePauses.filter((ms) => ms === BREATHER_MS).length >= run.liveCalls.length - 1);
+
+  const captured = new DatabaseSync(join(run.work, 'declarations', 'backfill.sqlite'), {
+    readOnly: true,
+  });
+  try {
+    for (const table of ['interest_links', 'interest_link_evidence']) {
+      const sql = `SELECT * FROM ${table} ORDER BY link_key`;
+      assert.deepEqual(captured.prepare(sql).all(), live.prepare(sql).all());
+    }
+    const prior = captured
+      .prepare(
+        `
+      SELECT il.link_key, e.rules_version
+      FROM interest_links il LEFT JOIN interest_link_evidence e USING (link_key)
+      WHERE il.status = 'published' ORDER BY il.rowid
+    `,
+      )
+      .all();
+    assert.equal(prior.length, 251);
+    assert.equal(prior[0].rules_version, null);
+    assert.equal(prior[1].rules_version, 'fixture-v2');
+  } finally {
+    captured.close();
+  }
+});
+
+for (const partial of ['empty', 'missing seal with maximum retained'])
+  test(`an incomplete live evidence page (${partial}) rolls back the capture and stops the rebuild`, async (t) => {
+    const s = builtSlot(t);
+    const live = liveLinkFixture(t, s);
+    const run = slotRun(s, {
+      runId: 'partial',
+      readLive: (sql) => {
+        const rows = live.prepare(sql).all();
+        if (sql.includes('FROM "interest_link_evidence"') && sql.includes('rowid >'))
+          return partial === 'empty' ? [] : rows.slice(1);
+        return rows;
+      },
+    });
+    await assert.rejects(
+      runRebuild({}, run.ops),
+      /Incomplete live-link read.*interest_link_evidence/,
+    );
+    assert.deepEqual(run.ran, ['prepare', 'import', 'registry', 'local']);
+    assert.ok(run.steps.every((step) => step.name !== 'declarations'));
+    assert.deepEqual(s.stamp(), []);
+    const local = new DatabaseSync(join(run.work, 'slot.sqlite'), { readOnly: true });
+    try {
+      for (const table of ['interest_links', 'interest_link_evidence'])
+        assert.equal(local.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n, 0);
+    } finally {
+      local.close();
+    }
+  });
 
 test('a build stopped after any stage continues at the next one and does not redo the finished ones', async (t) => {
   const order = ['prepare', 'import', 'registry', 'local', 'ship'];
