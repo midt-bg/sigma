@@ -133,11 +133,16 @@ DROP TABLE IF EXISTS refresh_amendment_served_bridge;
 -- #306: resolve namespace-mismatched EOP annexes before dropping OCDS twins. Match the
 -- full resolver against the current contract publications plus served rows which survive
 -- this window's promotion. The contract and anchor lookups are scoped to affected procedures.
-CREATE TABLE refresh_amendment_contract_resolve AS
+-- Materialize each phase into a short-lived scratch table so SQLite's view/subquery depth
+-- stays bounded across both D1 and newer Node SQLite builds.
+DROP TABLE IF EXISTS refresh_signing_corrections;
+CREATE TABLE refresh_signing_corrections AS
+SELECT * FROM raw_corrected_signing_values;
+
+DROP TABLE IF EXISTS refresh_window_annexes;
+CREATE TABLE refresh_window_annexes AS
 WITH suppliers AS MATERIALIZED (
   SELECT * FROM raw_supplier_evidence
-), corrected AS MATERIALIZED (
-  SELECT * FROM raw_corrected_signing_values
 ), changed_signing_unps AS (
   SELECT unp FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
   UNION
@@ -153,14 +158,14 @@ WITH suppliers AS MATERIALIZED (
       AND c.signing_value IS NOT c.signing_value_original
   )
   UNION
-  SELECT v.unp FROM corrected v
+  SELECT v.unp FROM refresh_signing_corrections v
   LEFT JOIN contracts c ON c.tender_id = 't:' || v.unp AND c.contract_number = v.contract_number
     AND c.id GLOB 'c:[eo]:*'
   WHERE v.signing_value IS NOT c.signing_value
   UNION
   SELECT substr(c.tender_id, 3) FROM contracts c
   WHERE c.signing_value_original IS NOT NULL AND c.signing_value IS NOT c.signing_value_original
-    AND NOT EXISTS (SELECT 1 FROM corrected v
+    AND NOT EXISTS (SELECT 1 FROM refresh_signing_corrections v
       WHERE c.tender_id = 't:' || v.unp AND v.contract_number = c.contract_number)
 ), staged_annexes AS MATERIALIZED (
   -- The publication key uses the original annex number, including after a committed retry.
@@ -170,30 +175,33 @@ WITH suppliers AS MATERIALIZED (
     s.evidence_status AS contractor_status, a.contract_number AS old_cnum
   FROM raw_amendment_publications a
   JOIN suppliers s ON s.eik_raw IS a.contractor_eik
-), window_annexes AS MATERIALIZED (
-  SELECT * FROM staged_annexes
-  WHERE source LIKE 'eop:%' AND unp IS NOT NULL AND annex_cnum IS NOT NULL
-  UNION ALL
-  SELECT NULL, a.natural_key, a.unp, COALESCE(a.contract_number_raw, a.contract_number),
-    a.source, a.link_method, a.value_before, a.currency,
-    COALESCE(a.anchor_candidate_contractor_eik, a.value_anchor_contractor_eik),
-    CASE WHEN a.contractor_id_status = 'valid'
-      AND COALESCE(a.anchor_candidate_contractor_eik, a.value_anchor_contractor_eik) IS NULL
-      THEN 'unverified' ELSE a.contractor_id_status END, a.contract_number
-  FROM affected_unps k
-  CROSS JOIN amendments a ON a.unp = k.unp
-  WHERE a.source LIKE 'eop:%' AND a.contract_number IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM staged_annexes s WHERE s.natural_key = a.natural_key)
+)
+SELECT * FROM staged_annexes
+WHERE source LIKE 'eop:%' AND unp IS NOT NULL AND annex_cnum IS NOT NULL
+UNION ALL
+SELECT NULL, a.natural_key, a.unp, COALESCE(a.contract_number_raw, a.contract_number),
+  a.source, a.link_method, a.value_before, a.currency,
+  COALESCE(a.anchor_candidate_contractor_eik, a.value_anchor_contractor_eik),
+  CASE WHEN a.contractor_id_status = 'valid'
+    AND COALESCE(a.anchor_candidate_contractor_eik, a.value_anchor_contractor_eik) IS NULL
+    THEN 'unverified' ELSE a.contractor_id_status END, a.contract_number
+FROM affected_unps k
+CROSS JOIN amendments a ON a.unp = k.unp
+WHERE a.source LIKE 'eop:%' AND a.contract_number IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM staged_annexes s WHERE s.natural_key = a.natural_key);
+
+DROP TABLE IF EXISTS refresh_current_signings;
+CREATE TABLE refresh_current_signings AS
+WITH suppliers AS MATERIALIZED (
+  SELECT * FROM raw_supplier_evidence
 ), window_unps AS (
-  SELECT DISTINCT unp FROM window_annexes
+  SELECT DISTINCT unp FROM refresh_window_annexes
 ), served_contracts AS MATERIALIZED (
   SELECT w.unp, c.id, c.contract_number,
     COALESCE(c.signing_value_original, c.signing_value) AS signing_value, c.currency,
     c.own_estimate_source, c.signing_currency_raw, c.signing_contractor_eik, c.signing_contractor_status
   FROM window_unps w CROSS JOIN contracts c ON c.tender_id = 't:' || w.unp
   WHERE c.contract_number IS NOT NULL
-), admin_owners AS MATERIALIZED (
-  SELECT DISTINCT unp, contract_number FROM served_contracts WHERE id NOT GLOB 'c:[eo]:*'
 ), staged_contracts AS MATERIALIZED (
   SELECT c.unp, c.contract_number, c.signing_value, c.currency,
     s.eik AS contractor_eik, s.evidence_status AS contractor_status
@@ -205,25 +213,30 @@ WITH suppliers AS MATERIALIZED (
       SELECT 1 FROM contracts p
       WHERE p.contract_number = c.contract_number AND p.id NOT GLOB 'c:o:*'
     ))
-), current_signings AS MATERIALIZED (
-  SELECT *, 1 AS source_known FROM staged_contracts
-  UNION ALL
-  SELECT c.unp, c.contract_number, c.signing_value,
-    CASE WHEN c.own_estimate_source IS NULL OR c.own_estimate_source = 'legacy:value_low'
-      THEN c.currency ELSE c.signing_currency_raw END,
-    c.signing_contractor_eik, c.signing_contractor_status, CASE
-      WHEN c.id GLOB 'c:e:*' AND c.own_estimate_source LIKE 'eop:%' THEN 1
-      WHEN c.id GLOB 'c:o:*' AND c.own_estimate_source LIKE 'ocds:%' THEN 1
-      ELSE 0
-    END
-  FROM served_contracts c
-  WHERE c.id NOT IN (SELECT id FROM raw_replaced_signings)
+)
+SELECT *, 1 AS source_known, 0 AS is_admin FROM staged_contracts
+UNION ALL
+SELECT c.unp, c.contract_number, c.signing_value,
+  CASE WHEN c.own_estimate_source IS NULL OR c.own_estimate_source = 'legacy:value_low'
+    THEN c.currency ELSE c.signing_currency_raw END,
+  c.signing_contractor_eik, c.signing_contractor_status, CASE
+    WHEN c.id GLOB 'c:e:*' AND c.own_estimate_source LIKE 'eop:%' THEN 1
+    WHEN c.id GLOB 'c:o:*' AND c.own_estimate_source LIKE 'ocds:%' THEN 1
+    ELSE 0
+  END,
+  c.id NOT GLOB 'c:[eo]:*'
+FROM served_contracts c
+WHERE c.id NOT IN (SELECT id FROM raw_replaced_signings);
+
+CREATE TABLE refresh_amendment_contract_resolve AS
+WITH admin_owners AS MATERIALIZED (
+  SELECT DISTINCT unp, contract_number FROM refresh_current_signings WHERE is_admin = 1
 ), grp AS (
   -- A number match takes precedence regardless of signing value.
   SELECT a.*
-  FROM window_annexes a
+  FROM refresh_window_annexes a
   WHERE NOT EXISTS (
-    SELECT 1 FROM current_signings c WHERE c.unp = a.unp AND c.contract_number = a.annex_cnum
+    SELECT 1 FROM refresh_current_signings c WHERE c.unp = a.unp AND c.contract_number = a.annex_cnum
   )
 ), witnesses AS (
   SELECT amendment_id, unp, annex_cnum, value_before, currency, contractor_eik, contractor_status,
@@ -237,7 +250,7 @@ WITH suppliers AS MATERIALIZED (
   WHERE a.link_method = 'value_anchor' AND a.value_anchor_kind = 'direct'
     AND a.source LIKE 'eop:%' AND a.contract_number IS NOT NULL
     AND NOT EXISTS (
-      SELECT 1 FROM window_annexes staged WHERE staged.natural_key = a.natural_key
+      SELECT 1 FROM refresh_window_annexes staged WHERE staged.natural_key = a.natural_key
     )
 ), matches AS (
   SELECT w.natural_key, w.unp, w.annex_cnum, w.served_owner,
@@ -246,10 +259,10 @@ WITH suppliers AS MATERIALIZED (
       AND w.contractor_status IN ('absent', 'valid')
       AND c.contractor_status IN ('absent', 'valid') THEN 1 ELSE 0 END) AS has_proof
   FROM witnesses w
-  JOIN current_signings c
+  JOIN refresh_current_signings c
     ON c.unp = w.unp AND c.currency = w.currency AND c.currency <> ''
     AND (w.contractor_eik IS NULL OR c.contractor_eik IS NULL OR w.contractor_eik = c.contractor_eik)
-  LEFT JOIN corrected v ON v.unp = c.unp AND v.contract_number = c.contract_number
+  LEFT JOIN refresh_signing_corrections v ON v.unp = c.unp AND v.contract_number = c.contract_number
   -- Alternate-number links are applied by procedure and filing number. When a
   -- surviving admin shares that key, a value match cannot prove which physical
   -- signing the link would reach. Keep that owner in the set of possibilities.
@@ -279,13 +292,17 @@ SELECT a.amendment_id, a.natural_key, a.unp, a.old_cnum, a.annex_cnum,
   COALESCE(d.resolved_cnum, gt.resolved_cnum) AS resolved_cnum,
   CASE WHEN d.resolved_cnum IS NOT NULL THEN 'direct'
        WHEN gt.resolved_cnum IS NOT NULL THEN 'inherited' END AS value_anchor_kind
-FROM window_annexes a
+FROM refresh_window_annexes a
 LEFT JOIN grp g ON g.natural_key = a.natural_key
 LEFT JOIN matches m ON m.natural_key = g.natural_key
 LEFT JOIN direct d ON d.natural_key = g.natural_key
 LEFT JOIN group_target gt ON gt.unp = g.unp AND gt.annex_cnum = g.annex_cnum
   AND g.contractor_status IN ('absent', 'valid') AND COALESCE(m.has_proof, 1) = 1
 WHERE g.natural_key IS NOT NULL OR a.link_method = 'value_anchor';
+
+DROP TABLE IF EXISTS refresh_current_signings;
+DROP TABLE IF EXISTS refresh_window_annexes;
+DROP TABLE IF EXISTS refresh_signing_corrections;
 
 UPDATE raw_amendments AS a
 SET
@@ -1482,6 +1499,8 @@ FROM contract_co_authorities ca
 WHERE ca.contract_id IN (SELECT id FROM refresh_touched_contracts);
 
 -- Stage the native amounts and their currencies for the shared valuation rule.
+DROP TABLE IF EXISTS refresh_signing_corrections;
+CREATE TABLE refresh_signing_corrections AS SELECT * FROM raw_corrected_signing_values;
 DELETE FROM raw_contract_value_inputs;
 INSERT INTO raw_contract_value_inputs
 SELECT c.id, c.unp, c.contract_number, c.contract_date, COALESCE(s.signing_value, c.signing_value),
@@ -1491,10 +1510,11 @@ SELECT c.id, c.unp, c.contract_number, c.contract_date, COALESCE(s.signing_value
   0, NULL, aw.natural_key
 FROM raw_contracts c
 LEFT JOIN tenders t ON t.id = 't:' || c.unp
-LEFT JOIN raw_corrected_signing_values s ON s.unp = c.unp AND s.contract_number = c.contract_number
+LEFT JOIN refresh_signing_corrections s ON s.unp = c.unp AND s.contract_number = c.contract_number
 LEFT JOIN refresh_amendment_winners aw
   ON aw.unp = c.unp AND aw.contract_number = c.contract_number
 WHERE c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%';
+DROP TABLE IF EXISTS refresh_signing_corrections;
 DROP TABLE IF EXISTS raw_contract_value_results;
 CREATE TABLE raw_contract_value_results AS SELECT * FROM raw_contract_values;
 CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results(id);
@@ -2025,8 +2045,11 @@ ON CONFLICT(ocid, contract_number, document_number) DO UPDATE SET
 WHERE (excluded.published_at, excluded.source, excluded.version_key) >
   (ocds_amendment_publications.published_at, ocds_amendment_publications.source, ocds_amendment_publications.version_key);
 
+DROP TABLE IF EXISTS refresh_signing_corrections;
+CREATE TABLE refresh_signing_corrections AS SELECT * FROM contract_signing_correction_values;
+
 INSERT OR IGNORE INTO raw_contract_value_scope
-SELECT v.unp, v.contract_number FROM contract_signing_correction_values v
+SELECT v.unp, v.contract_number FROM refresh_signing_corrections v
 CROSS JOIN contracts c ON c.tender_id = 't:' || v.unp AND c.contract_number = v.contract_number
 WHERE c.id GLOB 'c:[eo]:*' AND c.signing_value IS NOT v.signing_value
 UNION
@@ -2034,7 +2057,7 @@ UNION
 SELECT substr(c.tender_id, 3), c.contract_number FROM contracts c
 WHERE c.signing_value_original IS NOT NULL AND c.signing_value IS NOT c.signing_value_original
   AND c.tender_id IS NOT NULL AND c.contract_number IS NOT NULL
-  AND NOT EXISTS (SELECT 1 FROM contract_signing_correction_values v
+  AND NOT EXISTS (SELECT 1 FROM refresh_signing_corrections v
     WHERE c.tender_id = 't:' || v.unp AND v.contract_number = c.contract_number);
 
 -- Retire excluded winners under either alias. For legacy annexes, use their stored packet
@@ -2091,11 +2114,12 @@ FROM raw_contract_value_scope k
 CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
 JOIN tenders t ON t.id = c.tender_id
 LEFT JOIN refresh_amendment_winners w ON w.unp = k.unp AND w.contract_number = k.contract_number
-LEFT JOIN contract_signing_correction_values s
+LEFT JOIN refresh_signing_corrections s
   ON c.id GLOB 'c:[eo]:*' AND s.unp = k.unp AND s.contract_number = k.contract_number
 WHERE c.id GLOB 'c:[eo]:*' OR EXISTS (
   SELECT 1 FROM raw_amendments a WHERE a.unp = k.unp AND a.contract_number = k.contract_number
 );
+DROP TABLE IF EXISTS refresh_signing_corrections;
 
 INSERT INTO raw_contract_value_inputs
 SELECT id, unp, contract_number, signed_at, signing_value, currency, current_value, current_value_currency,

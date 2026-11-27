@@ -148,10 +148,14 @@ const LEGACY_TRANSIENT_STAGING_TABLES = [
 // work-staging-schema.sql, so it stays out of transientStagingStatements' recreate path.
 const SCRATCH_TABLES = [
   'amendment_contract_resolve',
+  'amendment_signing_corrections',
   'amend_contract_base',
   'raw_contract_value_results',
   'raw_contract_value_existing',
   'refresh_amendment_rekeyed',
+  'refresh_signing_corrections',
+  'refresh_window_annexes',
+  'refresh_current_signings',
   'refresh_amendment_contract_resolve',
   'refresh_amendment_winners',
   'refresh_excluded_amendments',

@@ -701,16 +701,39 @@ WITH staged AS MATERIALIZED (
   SELECT ocid, contract_number, document_number, tender_ext_id, signed_at, published_at,
     currency, amount, amount_mills, source FROM staged WHERE kind = 'correction'
   UNION ALL
-  SELECT r.* FROM contract_signing_corrections r
-  WHERE EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+  SELECT r.ocid, r.contract_number, r.document_number, r.tender_ext_id, r.signed_at, r.published_at,
+    r.currency, r.amount, r.amount_mills, r.source
+  FROM ocds_amendment_publications r
+  WHERE r.kind = 'correction'
+    AND EXISTS (SELECT 1 FROM raw_signing_correction_slice)
     AND NOT EXISTS (SELECT 1 FROM staged s
       WHERE (s.ocid, s.contract_number, s.document_number) = (r.ocid, r.contract_number, r.document_number))
-), keys AS MATERIALIZED (
-  SELECT DISTINCT r.ocid, b.unp AS eop_unp, r.contract_number
-  FROM reports r LEFT JOIN raw_ocds_publication_bridge b USING (tender_ext_id)
+), bridge_ids AS MATERIALIZED (
+  SELECT DISTINCT tender_ext_id FROM reports WHERE tender_ext_id IS NOT NULL
+), bridge AS MATERIALIZED (
+  SELECT tender_ext_id, MIN(unp) AS unp
+  FROM (
+    SELECT i.tender_ext_id, t.unp FROM bridge_ids i
+    CROSS JOIN raw_tenders t ON t.tender_id = i.tender_ext_id
+    WHERE t.unp NOT LIKE 'ocds-%' AND t.lot_id IS NULL
+    UNION ALL
+    SELECT i.tender_ext_id, c.unp FROM bridge_ids i
+    CROSS JOIN raw_contracts c ON c.tender_ext_id = i.tender_ext_id
+    WHERE c.source LIKE 'eop:%' AND c.unp NOT LIKE 'ocds-%'
+      AND NOT EXISTS (SELECT 1 FROM raw_tenders t WHERE t.unp = c.unp)
+    UNION ALL
+    SELECT i.tender_ext_id, t.source_id FROM bridge_ids i
+    CROSS JOIN tenders t ON t.eop_tender_id = i.tender_ext_id
+    WHERE t.source_id NOT LIKE 'ocds-%'
+      AND EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+  )
+  GROUP BY tender_ext_id HAVING COUNT(DISTINCT unp) = 1
+), bridged_reports AS MATERIALIZED (
+  SELECT r.*, b.unp AS eop_unp
+  FROM reports r LEFT JOIN bridge b USING (tender_ext_id)
 ), candidate_keys AS MATERIALIZED (
-  SELECT eop_unp AS unp, contract_number FROM keys WHERE eop_unp IS NOT NULL
-  UNION SELECT ocid, contract_number FROM keys
+  SELECT eop_unp AS unp, contract_number FROM bridged_reports WHERE eop_unp IS NOT NULL
+  UNION SELECT ocid, contract_number FROM bridged_reports
 ), signing_rows AS MATERIALIZED (
   SELECT c.unp, c.contract_number, c.currency, c.contract_date AS signed_at,
     c.signing_value AS original, c.signing_value_mills AS original_mills,
@@ -738,11 +761,6 @@ WITH staged AS MATERIALIZED (
   WHERE EXISTS (SELECT 1 FROM raw_signing_correction_slice)
     AND c.id GLOB 'c:[eo]:*'
     AND c.id NOT IN (SELECT id FROM raw_replaced_signings)
-), owners AS MATERIALIZED (
-  SELECT r.*, CASE WHEN EXISTS (
-    SELECT 1 FROM signing_rows c WHERE c.unp = b.unp AND c.contract_number = r.contract_number
-  ) THEN b.unp ELSE r.ocid END AS owner_unp
-  FROM reports r LEFT JOIN raw_ocds_publication_bridge b USING (tender_ext_id)
 ), signings AS (
   SELECT c.unp, c.contract_number, MIN(c.currency) AS currency,
     MIN(c.signed_at) AS signed_at, MIN(c.original) AS original, MIN(c.original_mills) AS original_mills
@@ -755,18 +773,19 @@ WITH staged AS MATERIALIZED (
     AND COUNT(c.signed_at) = COUNT(*) AND MIN(c.signed_at) = MAX(c.signed_at)
 ), ranked AS (
   SELECT s.unp, s.contract_number, s.original, r.amount, s.original_mills, r.amount_mills,
+    CAST(r.amount_mills AS INTEGER) - CAST(s.original_mills AS INTEGER) AS diff_mills,
+    substr(r.amount_mills, instr(r.amount_mills, '.') + 1) AS amount_tail,
+    substr(s.original_mills, instr(s.original_mills, '.') + 1) AS original_tail,
     ROW_NUMBER() OVER (PARTITION BY s.unp, s.contract_number
       ORDER BY RTRIM(r.published_at, 'Z') DESC, r.document_number DESC, r.ocid DESC) AS rn
   FROM signings s
-  JOIN owners r ON r.owner_unp = s.unp AND r.contract_number = s.contract_number
+  JOIN bridged_reports r
+    ON (CASE WHEN EXISTS (
+          SELECT 1 FROM signing_rows c WHERE c.unp = r.eop_unp AND c.contract_number = r.contract_number
+        ) THEN r.eop_unp ELSE r.ocid END) = s.unp
+    AND r.contract_number = s.contract_number
     AND r.signed_at = s.signed_at AND r.currency = s.currency
   WHERE r.published_at >= r.signed_at AND r.currency <> '' AND r.amount > 0
-), decimal_comparison AS (
-  SELECT *,
-    CAST(amount_mills AS INTEGER) - CAST(original_mills AS INTEGER) AS diff_mills,
-    substr(amount_mills, instr(amount_mills, '.') + 1) AS amount_tail,
-    substr(original_mills, instr(original_mills, '.') + 1) AS original_tail
-  FROM ranked WHERE rn = 1
 )
 SELECT unp, contract_number,
   CASE
@@ -779,7 +798,7 @@ SELECT unp, contract_number,
     WHEN amount <> original AND (amount >= original + 0.005 OR amount <= original - 0.005) THEN amount
     ELSE original
   END AS signing_value
-FROM decimal_comparison;
+FROM ranked WHERE rn = 1;
 
 -- The existing publication key picks the same raw version as derive-amendments and promotion.
 -- Preserve its original delta and after-value for valuation, even if promotion corrects them.

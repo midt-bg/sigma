@@ -3,12 +3,14 @@
 -- evidence. A direct match may support other publications with the same annex number.
 -- Run before derive-amendments.sql clears OCDS twins. The slice resolver in
 -- refresh-slice.sql also considers contracts and direct witnesses served by past windows.
+DROP TABLE IF EXISTS amendment_signing_corrections;
+CREATE TABLE amendment_signing_corrections AS
+SELECT * FROM raw_corrected_signing_values;
+
 DROP TABLE IF EXISTS amendment_contract_resolve;
 CREATE TABLE amendment_contract_resolve AS
 WITH suppliers AS MATERIALIZED (
   SELECT * FROM raw_supplier_evidence
-), corrected AS MATERIALIZED (
-  SELECT * FROM raw_corrected_signing_values
 ), publications AS MATERIALIZED (
   SELECT a.id AS amendment_id, a.unp,
     COALESCE(NULLIF(a.contract_number_raw, ''), a.contract_number) AS annex_cnum,
@@ -30,7 +32,7 @@ WITH suppliers AS MATERIALIZED (
   FROM grp g
   JOIN raw_contract_publications c
     ON c.unp = g.unp AND c.contract_number IS NOT NULL AND c.currency = g.currency AND c.currency <> ''
-  LEFT JOIN corrected v ON v.unp = c.unp AND v.contract_number = c.contract_number
+  LEFT JOIN amendment_signing_corrections v ON v.unp = c.unp AND v.contract_number = c.contract_number
   JOIN suppliers s ON s.eik_raw IS c.contractor_eik
     AND (g.contractor_eik IS NULL OR s.eik IS NULL OR g.contractor_eik = s.eik)
   WHERE g.value_before > 0 AND (
@@ -74,3 +76,4 @@ SELECT
     AS eop_annexes_still_unlinked;
 
 DROP TABLE IF EXISTS amendment_contract_resolve;
+DROP TABLE IF EXISTS amendment_signing_corrections;

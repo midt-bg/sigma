@@ -205,10 +205,14 @@ describe('transient staging statements', () => {
       'DROP TABLE IF EXISTS refresh_excluded_amendments',
       'DROP TABLE IF EXISTS refresh_amendment_winners',
       'DROP TABLE IF EXISTS refresh_amendment_contract_resolve',
+      'DROP TABLE IF EXISTS refresh_current_signings',
+      'DROP TABLE IF EXISTS refresh_window_annexes',
+      'DROP TABLE IF EXISTS refresh_signing_corrections',
       'DROP TABLE IF EXISTS refresh_amendment_rekeyed',
       'DROP TABLE IF EXISTS raw_contract_value_existing',
       'DROP TABLE IF EXISTS raw_contract_value_results',
       'DROP TABLE IF EXISTS amend_contract_base',
+      'DROP TABLE IF EXISTS amendment_signing_corrections',
       'DROP TABLE IF EXISTS amendment_contract_resolve',
     ]);
   });

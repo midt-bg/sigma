@@ -757,6 +757,8 @@ INSERT INTO ocds_unpriced_signings
 SELECT unp, contract_number FROM raw_unpriced_ocds_signing_keys;
 
 -- Stage the native amounts and their currencies for the shared valuation rule.
+DROP TABLE IF EXISTS amendment_signing_corrections;
+CREATE TABLE amendment_signing_corrections AS SELECT * FROM raw_corrected_signing_values;
 DELETE FROM raw_contract_value_inputs;
 INSERT INTO raw_contract_value_inputs
 WITH amendment_winner AS (
@@ -774,10 +776,11 @@ SELECT c.id, c.unp, c.contract_number, c.contract_date, COALESCE(s.signing_value
   0, NULL, aw.natural_key
 FROM raw_contracts c
 LEFT JOIN tenders t ON t.id = 't:' || c.unp
-LEFT JOIN raw_corrected_signing_values s ON s.unp = c.unp AND s.contract_number = c.contract_number
+LEFT JOIN amendment_signing_corrections s ON s.unp = c.unp AND s.contract_number = c.contract_number
 LEFT JOIN amendment_winner aw
   ON aw.unp = c.unp AND aw.contract_number = c.contract_number AND aw.win_rn = 1
 WHERE c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%';
+DROP TABLE IF EXISTS amendment_signing_corrections;
 DROP TABLE IF EXISTS raw_contract_value_results;
 CREATE TABLE raw_contract_value_results AS SELECT * FROM raw_contract_values;
 CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results(id);
