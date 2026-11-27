@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 
-test('indexes each person with a page once: declarants not already officials, and registered people', () => {
+function createDb() {
   const db = new DatabaseSync(':memory:');
   for (const f of readdirSync('packages/db/migrations').sort())
     if (f.endsWith('.sql')) db.exec(readFileSync(`packages/db/migrations/${f}`, 'utf8'));
+  return db;
+}
+
+test('indexes each person with a page once: declarants not already officials, and registered people', () => {
+  const db = createDb();
   const A = 'a'.repeat(64);
   const B = 'b'.repeat(64);
   const C = 'c'.repeat(64);
@@ -45,4 +50,43 @@ test('indexes each person with a page once: declarants not already officials, an
     { ref: 'person:plain', title: 'Декларант Без Дял', subtitle: 'Експерт · Министерство' },
   ]);
   db.close();
+});
+
+test('orders companies with an active role first regardless of role insertion order', (t) => {
+  const db = createDb();
+  t.after(() => db.close());
+  const person = 'd'.repeat(64);
+  const personName = 'Тестово Вписано Лице';
+  const formerCompany = 'А ТЕСТ БИВША ЕООД';
+  const mixedCompany = 'Б ТЕСТ АКТИВНА ЕООД';
+  db.exec(`
+    INSERT INTO registry_persons(indent,name) VALUES('${person}','${personName}');
+    INSERT INTO bidders(id,name,kind,eik_normalized)
+      VALUES('eik:000000001','${formerCompany}','company','000000001'),
+            ('eik:000000002','${mixedCompany}','company','000000002');
+    INSERT INTO company_totals(bidder_id,name,kind,won_eur,contracts,authorities)
+      VALUES('eik:000000001','${formerCompany}','company',1,1,1),
+            ('eik:000000002','${mixedCompany}','company',1,1,1);`);
+  const insertRole = db.prepare(`
+    INSERT INTO registry_roles(eik,sub_uic,field_ident,role,subject_kind,subject_id,subject_name,entry_number,added_on,removed_on)
+    VALUES(?,'0000','00070','manager','person',?,?,?,'2020-01-01',?)`);
+  const roles = [
+    ['000000001', 'former', '2021-01-01'],
+    ['000000002', 'former', '2021-01-01'],
+    ['000000002', 'active', null],
+  ];
+  const rebuild = readFileSync('scripts/person-search-index.sql', 'utf8');
+  const subtitle = db.prepare(
+    "SELECT subtitle FROM search_index WHERE kind = 'person' AND ref = ?",
+  );
+  const subtitles = [roles, roles.toReversed()].map((orderedRoles) => {
+    db.exec('DELETE FROM registry_roles');
+    for (const [eik, entry, removedOn] of orderedRoles) {
+      insertRole.run(eik, person, personName, entry, removedOn);
+    }
+    db.exec(rebuild);
+    return subtitle.get(person).subtitle;
+  });
+  const expected = `${mixedCompany}, ${formerCompany}`;
+  assert.deepEqual(subtitles, [expected, expected]);
 });

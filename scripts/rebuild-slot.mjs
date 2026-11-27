@@ -801,7 +801,7 @@ function refreshedSince(read, builtAt) {
 
 /**
  * A slot is ready only with the register's baseline accepted: the catch-up pass after the declarations read
- * every company they asked for, and the daily run then reads the register's new entries from where the
+ * every company the candidate pass asked for, and the daily run reads the register's new entries from where the
  * build left off. With the baseline open the daily run skips those reads until it closes it, and the slot
  * may lack partidas the declarations' links were decided against. A verdict, never retried, and before the
  * slot gets its version.
@@ -822,6 +822,21 @@ function refuseOpenBaseline(name, read, counts) {
       `${name} holds the register with its baseline ${status ?? 'missing'}, not accepted: the register ` +
         'pass after the declarations did not finish in this build. The slot is not ready — build it ' +
         'again without resume',
+    );
+  if (!counts.registry_requested_companies) return;
+  // Declaration requests are fixed by extraction. Ownership can discover further requests after
+  // catch-up; the native baseline already enforces lookups for the ownership requests it received.
+  // An explicit source absence has a deed row and is a completed lookup.
+  const missing = read(
+    `SELECT COUNT(DISTINCT r.eik) AS n FROM registry_requested_companies r
+      WHERE length(r.eik) = 9 AND r.declaration_id NOT GLOB 'ownership:*'
+        AND NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik = r.eik)`,
+    ([row]) => Number.isInteger(row?.n) && row.n >= 0,
+  )[0].n;
+  if (missing)
+    throw new SlotVerdict(
+      `${name} holds ${missing} declaration-requested company EIK(s) with no registry lookup. ` +
+        'The slot is not ready — build it again without resume',
     );
 }
 
@@ -1135,6 +1150,19 @@ export function slotOps({
       // requested together. It writes the snapshot, which stage 7 ships whole, so the new partidas travel
       // with it.
       await child('declarations', ['scripts/tr/rebuild-registry.mjs', '--db', snapshot]);
+      // Newly read owner deeds can change ownership without requiring further lookups.
+      // Decisions and the shipped company labels must use the same completed register.
+      await shell(
+        'declarations',
+        snapshot,
+        [
+          ...PUBLIC_OWNERSHIP_SQL.map((sql) => `${sql};`),
+          ownershipStatements(readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')),
+          `UPDATE company_totals SET ownership_kind = b.ownership_kind
+             FROM bidders b WHERE company_totals.bidder_id = b.id
+             AND company_totals.ownership_kind IS NOT b.ownership_kind;`,
+        ].join('\n'),
+      );
       await declarations('--from', 'decide');
 
       // 6. The people in the search index.

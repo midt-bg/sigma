@@ -1441,7 +1441,7 @@ function emitCandidates(trCacheDb) {
   );
 }
 
-test('a bootstrap pass leaves the REAL work DB untouched — it runs on a throwaway copy', () => {
+test('a bootstrap pass preserves the work DB’s published links and audit snapshot', () => {
   // Reaching the candidate list means rebuilding the corpus tables, and the pass never publishes, so
   // against the real DB it would leave interest_links empty. That is the damage: not the pass itself,
   // but what the NEXT run then reads.

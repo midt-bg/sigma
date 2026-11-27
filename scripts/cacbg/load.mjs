@@ -83,11 +83,9 @@ const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // verdicts the list is used to decide. Ignoring the refusal's exit code instead would erase the difference
 // between „no verdicts yet" and „this run is broken".
 //
-// POINT THIS AT A SCRATCH COPY OF THE WORK DB. It is not a read-only pass: reaching the candidate list
-// means rebuilding the corpus tables, so it drops and repopulates persons/declarations/declared_interests
-// and leaves interest_links EMPTY. The bootstrap is never marked as an audited build, and no link
-// can be published without evidence it never gathered, but it is not the state a subsequent real run
-// should inherit. The one thing it must never touch either way is the monotonicity snapshot — see below.
+// The bootstrap rebuilds the corpus tables on a throwaway copy. It puts only the registry requests
+// back into the work DB, for the catch-up pass to read before decisions. The work DB's existing
+// persons, links and monotonicity snapshot are preserved for the final load.
 const EMIT_CANDIDATES_ONLY = process.argv.includes('--emit-candidates');
 const { companyNameKey, isMatchableKey, registryCompanyName } =
   await import('../../packages/shared/src/company-name-key.ts');
@@ -113,6 +111,7 @@ const readJsonl = (f) =>
 // set, and the carried person ids and the audit's list of removed links would both be lost.
 // Copying here rather than asking the caller to do it keeps the flag safe wherever it is invoked from.
 const WORK_DB = EMIT_CANDIDATES_ONLY ? `${DB}.bootstrap` : DB;
+const SQLITE_SIDECARS = ['-journal', '-wal', '-shm'];
 // Check compatibility before opening or rebuilding the database.
 const stagingManifest = path.join(STAGING, 'manifest.json');
 const sourceGroupsFile = path.join(STAGING, 'source-groups.jsonl');
@@ -137,12 +136,14 @@ for (const rec of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
     );
 }
 if (EMIT_CANDIDATES_ONLY) {
-  for (const suffix of ['', '-wal', '-shm']) {
-    // -wal/-shm may legitimately be absent (a cleanly closed DB has neither); anything else must surface.
+  fs.copyFileSync(DB, WORK_DB);
+  for (const suffix of SQLITE_SIDECARS) {
     try {
       fs.copyFileSync(`${DB}${suffix}`, `${WORK_DB}${suffix}`);
     } catch (e) {
       if (e.code !== 'ENOENT') throw e;
+      // A stopped bootstrap may have left sidecars from a different copy of the DB.
+      fs.rmSync(`${WORK_DB}${suffix}`, { force: true });
     }
   }
 }
@@ -393,7 +394,10 @@ const holdersOf = (h, did) =>
     : h.holderRelation === 'unknown'
       ? []
       : [h.person];
-if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_companies'").get()) {
+const hasRegistryRequests = db
+  .prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_companies'")
+  .get();
+if (hasRegistryRequests) {
   db.exec('DELETE FROM registry_requested_companies');
   const putRequest = db.prepare('INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)');
   for (const r of readJsonl(path.join(STAGING, 'registry-requests.jsonl')))
@@ -534,7 +538,7 @@ const ownershipUnsettled = new Set();
   if (ready) {
     const owners = db.prepare(PUBLIC_OWNER_UNSETTLED_SQL).all();
     for (const o of owners) ownershipUnsettled.add(String(o.eik));
-    if (columns('registry_requested_companies').size > 0) {
+    if (hasRegistryRequests) {
       const request = db.prepare(
         'INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)',
       );
@@ -1132,15 +1136,26 @@ fs.writeFileSync(
 );
 
 if (EMIT_CANDIDATES_ONLY) {
-  // Stop BEFORE the TR gate and before anything is written to the domain. A bootstrap pass that built
-  // links would leave a surface resting on no evidence at all, and a failure between this pass and the
-  // real one would leave that surface sitting in the work DB, shippable.
+  try {
+    // Hand both request sources to the catch-up pass as one complete replacement, just as in the
+    // final load. Keep the candidate pass's rebuilt person and link tables in the throwaway copy.
+    if (hasRegistryRequests) {
+      db.prepare('ATTACH DATABASE ? AS work').run(DB);
+      db.exec(`BEGIN;
+        DELETE FROM work.registry_requested_companies;
+        INSERT INTO work.registry_requested_companies (eik, declaration_id, declared_name)
+          SELECT eik, declaration_id, declared_name FROM main.registry_requested_companies;
+        COMMIT;`);
+    }
+  } finally {
+    db.close();
+    for (const suffix of ['', ...SQLITE_SIDECARS])
+      fs.rmSync(`${WORK_DB}${suffix}`, { force: true });
+  }
   console.log(
     `${candidateEiks.length} candidate ЕИК / ${candidateLinks.length} link(s) written for the ` +
       `decision pass; stopping (--emit-candidates)`,
   );
-  db.close();
-  for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${WORK_DB}${suffix}`, { force: true }); // the copy has served its purpose
   process.exit(0);
 }
 

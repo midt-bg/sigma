@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   copyFileSync,
   mkdirSync,
@@ -44,6 +46,12 @@ import {
 } from './rebuild-slot.mjs';
 import { BREATHER_MS, HEAVY_ROWS } from './integrity-checks.mjs';
 import { insertStatements } from './ship-related-persons.mjs';
+import { d1FromSqlite } from '../packages/test-support/src/d1-sqlite.ts';
+import './cacbg/register-ts.mjs';
+const [{ IDENTITY_RULES_VERSION }, { importRegistry }] = await Promise.all([
+  import('./cacbg/registry-identity.mjs'),
+  import('./tr/rebuild-registry.mjs'),
+]);
 
 test('the slot takes the served tables only, parents first, with DDL safe on a migrated slot', () => {
   const staging = readFileSync('scripts/work-staging-schema.sql', 'utf8');
@@ -1040,12 +1048,15 @@ function slotRun(
       } finally {
         db.close();
       }
-    } else if (args[0] === 'scripts/tr/rebuild-registry.mjs') catchUp?.(arg('--db'));
-    else if (args[0] === 'scripts/related-persons-job.mjs' && args.includes('--until')) {
-      mkdirSync(arg('--work-dir'), { recursive: true });
-      const source = new DatabaseSync(arg('--source-db'), { readOnly: true });
-      source.prepare('VACUUM INTO ?').run(join(arg('--work-dir'), 'backfill.sqlite'));
-      source.close();
+    } else if (args[0] === 'scripts/tr/rebuild-registry.mjs') await catchUp?.(arg('--db'));
+    else if (args[0] === 'scripts/related-persons-job.mjs') {
+      if (args.includes('--until')) {
+        mkdirSync(arg('--work-dir'), { recursive: true });
+        const source = new DatabaseSync(arg('--source-db'), { readOnly: true });
+        source.prepare('VACUUM INTO ?').run(join(arg('--work-dir'), 'backfill.sqlite'));
+        source.close();
+      }
+      s.runDeclarations?.(arg('--work-dir'), args.includes('--until'));
     }
   };
   const real = slotOps({
@@ -1589,6 +1600,224 @@ test('a build stopped after any stage serves the same rows as one that never sto
     }
 });
 
+for (const [mode, resume, knownOwner] of [
+  ['clean', false, false],
+  ['resumed', true, false],
+  ['clean with a known owner', false, true],
+  ['resumed with a known owner', true, true],
+]) {
+  test(`declaration and public-ownership requests reach the native catch-up on a ${mode} build`, async (t) => {
+    const declared = '000000020';
+    const owner = '000000021';
+    const scope = ['decl:2024:test.xml', 'decl:2023:test.xml'];
+    const expectedRequests = [
+      [declared, scope[1]],
+      [declared, scope[0]],
+      [owner, `ownership:${TEST_EIK}`],
+    ];
+    const requests = (db) =>
+      db
+        .prepare('SELECT eik, declaration_id FROM registry_requested_companies ORDER BY 1, 2')
+        .all()
+        .map((r) => [r.eik, r.declaration_id]);
+    const s = builtSlot(t);
+    const source = new DatabaseSync(s.snapshot);
+    source.exec(`UPDATE bidders SET eik_normalized = '${TEST_EIK}', eik_valid = 1;
+      INSERT INTO tenders (id, source_id, title, authority_id, procedure_type)
+        VALUES ('t:test', 't:test', 'Тест', 'auth:test', 'открита');
+      INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur)
+        VALUES ('c:test', 't:test', 'bidder:test', 100, 'EUR', '2024-01-01', '1', 100);`);
+    source.close();
+    const staging = join(s.dir, 'staging');
+    mkdirSync(staging);
+    const filing = {
+      person: 'Декларант Тестов Примеров',
+      institution: 'Ведомство Тест',
+      folder: '2024',
+      xmlFile: 'test.xml',
+      template: 'interests',
+      year: '2024',
+      sourceHash: createHash('sha256').update('fixture declaration').digest('hex'),
+    };
+    const filings = JSON.stringify(filing) + '\n';
+    writeFileSync(join(staging, 'filings.jsonl'), filings);
+    writeFileSync(
+      join(staging, 'holdings.jsonl'),
+      JSON.stringify({
+        ...filing,
+        entity: 'ТЕСТ ГРУП ЕООД',
+        kind: 'management',
+        detail: 'управител',
+        timing: 'current',
+      }) + '\n',
+    );
+    writeFileSync(join(staging, 'source-groups.jsonl'), '');
+    writeFileSync(
+      join(staging, 'manifest.json'),
+      JSON.stringify({
+        schemaVersion: 8,
+        identityRules: IDENTITY_RULES_VERSION,
+        filingsHash: createHash('sha256').update(filings).digest('hex'),
+        sourceGroupsHash: createHash('sha256').digest('hex'),
+      }),
+    );
+    writeFileSync(
+      join(staging, 'registry-requests.jsonl'),
+      [scope[0], scope[0], scope[1]]
+        .map((declarationId) =>
+          JSON.stringify({ eik: declared, declarationId, declaredName: 'ДЕКЛАРИРАНО ТЕСТ ООД' }),
+        )
+        .join('\n'),
+    );
+    const register = (db) => {
+      const eiks = registerOnePerson(db);
+      db.exec(`INSERT INTO registry_identity_snapshots VALUES ('${TEST_EIK}', 'h', '2026-11-20');
+        INSERT INTO registry_company_history VALUES ('${TEST_EIK}', '[]', 'h', '2026-11-20');
+        INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id,
+          subject_name, share, entry_number, added_on) VALUES
+          ('${TEST_EIK}', '0000', '00190', 'partner', 'entity', '000000023', 'Община Тестова', '100', '1', '2020-01-01'),
+          ('${TEST_EIK}', '0000', '00190', 'partner', 'entity', '${owner}', 'СЪДРУЖНИК ТЕСТ ООД', '900', '1', '2020-01-01');`);
+      return eiks;
+    };
+    const declarations = (work, candidates) => {
+      const dbPath = join(work, 'backfill.sqlite');
+      if (candidates) {
+        const db = new DatabaseSync(dbPath);
+        db.exec(`INSERT INTO persons (id, name) VALUES ('person:prior', 'Предишен Тестов Примеров');
+          INSERT INTO registry_requested_companies VALUES ('000000022', 'decl:old', 'СТАРО ТЕСТ ООД');`);
+        db.close();
+      }
+      execFileSync(
+        process.execPath,
+        [
+          'scripts/related-persons-job.mjs',
+          '--work-dir',
+          work,
+          '--from',
+          candidates ? 'candidates' : 'decide',
+          '--until',
+          candidates ? 'candidates' : 'load',
+        ],
+        { env: { ...process.env, CACBG_STAGING: staging } },
+      );
+      if (!candidates) {
+        const verdicts = new DatabaseSync(join(work, 'verdicts.sqlite'), { readOnly: true });
+        try {
+          assert.equal(verdicts.prepare('SELECT eik FROM verdicts').get()?.eik, TEST_EIK);
+        } finally {
+          verdicts.close();
+        }
+      }
+    };
+    const calls = [];
+    const catchUp = async (path) => {
+      const db = new DatabaseSync(path);
+      try {
+        assert.equal(db.prepare('SELECT id FROM persons').get().id, 'person:prior');
+        const read = await importRegistry(
+          d1FromSqlite(db),
+          {
+            deed: async (eik) => {
+              calls.push(eik);
+              if (knownOwner && eik === owner) {
+                const body = {
+                  uic: owner,
+                  name: 'СЪДРУЖНИК ТЕСТ ООД',
+                  status: 'N',
+                  guid: 'test-guid',
+                  legalForm: 'EOOD',
+                  subDeeds: [
+                    {
+                      subUic: '0000',
+                      subUicType: 'MainCircumstances',
+                      status: 'A',
+                      fields: [
+                        {
+                          fieldIdent: '00230',
+                          element: 'SoleCapitalOwner',
+                          operation: 'Add',
+                          entryNumber: '20200101100000',
+                          actionDate: '2020-01-01T10:00:00',
+                          entryDate: '2020-01-01T10:00:00',
+                          value: {
+                            RecordID: '1',
+                            Subject: {
+                              Name: 'Община Тестова',
+                              Indent: '000000023',
+                              IndentType: 'UIC',
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                };
+                return { status: 'ok', deed: { deed: body, deedActualState: body } };
+              }
+              return { status: 'absent' };
+            },
+          },
+          { runId: 'run-build', now: () => new Date('2026-11-20T01:00:00Z') },
+        );
+        assert.equal(
+          read,
+          2,
+          'both request sources reach the catch-up before it accepts the baseline',
+        );
+        assert.deepEqual(requests(db), expectedRequests);
+      } finally {
+        db.close();
+      }
+    };
+    if (resume) {
+      const stopped = slotRun(s, { runId: 'run-old', stopAfter: 'registry', register });
+      await assert.rejects(runRebuild({}, stopped.ops), /stopped after registry/);
+    }
+    const run = slotRun(
+      { ...s, runDeclarations: declarations },
+      { runId: 'run-build', register, catchUp },
+    );
+    await runRebuild({ resume }, run.ops);
+    assert.deepEqual(calls, [declared, owner]);
+    assert.equal(run.ran.includes('registry'), !resume);
+    assert.deepEqual(
+      requests(s.slot),
+      knownOwner ? expectedRequests.filter(([eik]) => eik !== owner) : expectedRequests,
+    );
+    assert.deepEqual(
+      s.slot
+        .prepare("SELECT eik FROM registry_deeds WHERE outcome='absent' ORDER BY eik")
+        .all()
+        .map((r) => r.eik),
+      knownOwner ? [declared] : calls,
+    );
+    if (knownOwner) {
+      assert.deepEqual(
+        s.slot
+          .prepare(
+            'SELECT eik, ownership_kind FROM public_owned_eik WHERE eik IN (?, ?) ORDER BY eik',
+          )
+          .all(TEST_EIK, owner)
+          .map((r) => [r.eik, r.ownership_kind]),
+        [TEST_EIK, owner].sort().map((eik) => [eik, 'municipal']),
+      );
+      assert.equal(
+        s.slot.prepare('SELECT ownership_kind FROM bidders WHERE id=?').get('bidder:test')
+          .ownership_kind,
+        'municipal',
+      );
+      assert.equal(
+        s.slot
+          .prepare('SELECT ownership_kind FROM company_totals WHERE bidder_id=?')
+          .get('bidder:test').ownership_kind,
+        'municipal',
+      );
+    }
+    assert.equal(s.slot.prepare('SELECT name FROM persons').get().name, filing.person);
+    assert.equal(s.stamp().length, 1);
+  });
+}
+
 test('every table the build leaves is either taken by the slot or left out by name', async () => {
   // The build's own SQL on the served schema and the work staging, as the import and the local stages run
   // it: whatever tables it leaves behind must each be classified, or a real build would stop on them.
@@ -1666,6 +1895,36 @@ test('a slot whose register baseline was never accepted is refused, once, before
     /baseline missing, not accepted/,
   );
   assert.deepEqual(s.stamp(), []);
+});
+
+test('verification rejects a ready baseline that skipped an eligible declaration request', async (t) => {
+  const s = builtSlot(t);
+  const db = new DatabaseSync(s.snapshot);
+  registerOnePerson(db);
+  db.exec(`UPDATE registry_entry_state SET baseline_status = 'ready';
+    INSERT INTO registry_deeds (eik, outcome, fetched_at) VALUES ('000000020', 'absent', '2026-11-20');
+    INSERT INTO registry_requested_companies VALUES
+      ('${TEST_EIK}', 'decl:test', 'ТЕСТ ГРУП ЕООД'),
+      ('000000020', 'decl:test', 'ЛИПСВАЩО ТЕСТ ООД'),
+      ('0000000000000', 'decl:test', 'КЛОН ТЕСТ ООД'),
+      ('000000021', 'ownership:${TEST_EIK}', 'ПОСЛЕДВАЩО ТЕСТ ООД'),
+      ('000000022', 'decl:test', 'ПРОПУСНАТО ТЕСТ ООД'),
+      ('000000022', 'decl:another', 'ПРОПУСНАТО ТЕСТ ООД');`);
+  db.close();
+  await assert.rejects(
+    build(s),
+    /1 declaration-requested company EIK\(s\) with no registry lookup/,
+  );
+  assert.deepEqual(s.stamp(), []);
+  assert.deepEqual(s.receipts(), { ship: 'run-build' });
+
+  const completed = new DatabaseSync(s.snapshot);
+  completed.exec(
+    "INSERT INTO registry_deeds (eik, outcome, fetched_at) VALUES ('000000022', 'absent', '2026-11-20');",
+  );
+  completed.close();
+  await build(s);
+  assert.equal(s.stamp().length, 1, 'an explicit source absence resolves the missed lookup');
 });
 
 test('a resume over a register written without its people is refused before it gets a version', async (t) => {
