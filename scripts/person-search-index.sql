@@ -19,16 +19,25 @@ WHERE EXISTS (SELECT 1 FROM declarations d WHERE d.person_id = p.id)
 
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'person', rp.indent, rp.name, '',
-  (SELECT group_concat(company, ', ' ORDER BY active_rank, company) FROM (
-     SELECT b.name company, MIN(r.removed_on IS NOT NULL) active_rank FROM registry_roles r
-     JOIN bidders b ON b.id = 'eik:' || r.eik JOIN company_totals ct ON ct.bidder_id = b.id AND ct.contracts > 0
+  (SELECT CASE
+     WHEN MAX(CASE WHEN rn = 2 THEN company END) IS NOT NULL
+       THEN MAX(CASE WHEN rn = 1 THEN company END) || ', ' || MAX(CASE WHEN rn = 2 THEN company END)
+     ELSE MAX(CASE WHEN rn = 1 THEN company END)
+   END
+   FROM (
+     SELECT b.name AS company,
+       ROW_NUMBER() OVER (ORDER BY MIN(r.removed_on IS NOT NULL), b.name) AS rn
+     FROM registry_roles r
+     JOIN bidders b ON b.id = 'eik:' || r.eik
+     JOIN company_totals ct ON ct.bidder_id = b.id AND ct.contracts > 0
      WHERE r.subject_id = rp.indent AND r.subject_kind = 'person'
        AND r.role IN ('manager', 'representative', 'chair', 'board_of_directors', 'management_board',
                       'governing_body', 'board_of_trustees', 'supervisory_board', 'controlling_board',
                       'verification_commission', 'partner', 'sole_owner', 'trader', 'procurator',
                       'branch_manager', 'liquidator', 'trustee')
      GROUP BY b.name
-     ORDER BY active_rank, b.name LIMIT 2)),
+   )
+   WHERE rn <= 2),
   NULL
 FROM registry_persons rp
 WHERE EXISTS (
