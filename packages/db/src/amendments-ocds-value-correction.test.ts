@@ -1,6 +1,6 @@
 // Exercise signing corrections through the actual full-build and daily SQL paths.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,6 +80,10 @@ function resetRawStaging(dbPath: string): void {
 
 function fullBuild(dbPath: string, seed: string): void {
   initWorkDb(dbPath);
+  deriveFull(dbPath, seed);
+}
+
+function deriveFull(dbPath: string, seed: string): void {
   sqlite(dbPath, seed);
   readScript(dbPath, script('resolve-amendment-contracts.sql'));
   readScript(dbPath, script('derive-amendments.sql'));
@@ -366,6 +370,87 @@ async function expectClean(db: string) {
 }
 
 describe('technical source values across full build and daily refresh', () => {
+  it('preserves an issued OCDS ID through the 0031 upgrade, replay and a fresh build', async () => {
+    const file = '0031_contract_signing_corrections.sql';
+    for (const name of readdirSync(dirname(migration(file))).sort()) {
+      if (name.endsWith('.sql') && name < file) readScript(dailyDb, migration(name));
+    }
+    const legacyId = `c:o:${OCID}:${CONTRACT}:_:unknown:анонимен:1`;
+    sqlite(
+      dailyDb,
+      `PRAGMA foreign_keys=ON;
+       INSERT INTO authorities (id, name) VALUES ('auth:test', 'Община Тест');
+       INSERT INTO bidders (id, name) VALUES ('unknown:анонимен', 'Тестов изпълнител');
+       INSERT INTO tenders (id, source_id, title, authority_id, procedure_type)
+         VALUES ('t:${OCID}', '${OCID}', 'Test tender', 'auth:test', 'неизвестна');
+       INSERT INTO contracts (id, tender_id, bidder_id, contract_number, document_number, amount,
+                              signing_value, currency, signed_at)
+         VALUES ('${legacyId}', 't:${OCID}', 'unknown:анонимен', '${CONTRACT}', 'TEST-SIGNING',
+                 9000, 9000, 'EUR', '2026-10-05');
+       INSERT INTO amendments (id, natural_key, contract_number, unp, source)
+         VALUES ('am:test', 'am:test', '${CONTRACT}', '${OCID}', 'eop:test');`,
+    );
+    const signings = (db: string) =>
+      sqliteJson(
+        db,
+        'SELECT id, document_number, signing_value FROM contracts ORDER BY signing_value DESC',
+      );
+    const before = signings(dailyDb);
+    const amendments = sqliteJson(dailyDb, 'SELECT id, natural_key FROM amendments');
+    readScript(dailyDb, migration(file));
+    expect(signings(dailyDb)).toEqual(before);
+    expect(sqliteJson(dailyDb, 'SELECT id, natural_key FROM amendments')).toEqual(amendments);
+    expect(sqliteJson(dailyDb, 'PRAGMA foreign_key_check')).toEqual([]);
+    expect(sqliteJson(dailyDb, 'SELECT * FROM contract_signing_corrections')).toEqual([]);
+    const reservations = sqliteJson<{ id: string; document_number: string }>(
+      dailyDb,
+      'SELECT id, document_number FROM ocds_legacy_contract_ids',
+    );
+    expect(reservations).toEqual([{ id: legacyId, document_number: 'TEST-SIGNING' }]);
+
+    const first = ocdsSigning(9000);
+    const second = ocdsSigning(8000, { day: '2026-11-26', document: 'TEST-SECOND-SIGNING' });
+    initWorkDb(fullDb);
+    for (const { id, document_number } of reservations)
+      sqlite(
+        fullDb,
+        `INSERT INTO ocds_legacy_contract_ids VALUES (${sqlValue(id)}, ${sqlValue(document_number)});`,
+      );
+    deriveFull(fullDb, second + first);
+    expect(signings(fullDb)[0]).toEqual(before[0]);
+
+    replay(dailyDb, second);
+    replay(dailyDb, first + second);
+    expect(signings(dailyDb)).toEqual(signings(fullDb));
+    expect(sqliteJson(dailyDb, 'PRAGMA foreign_key_check')).toEqual([]);
+  });
+
+  it('retains an unpriced notice staged before the first priced signing', async () => {
+    const unpriced = ocdsSigning(undefined, {
+      day: '2026-10-06',
+      document: 'TEST-UNPRICED-SIGNING',
+    });
+    const priced = ocdsSigning(9000, { day: '2026-10-15' });
+    const correction = mappedRelease({ amount: 1200 });
+    fullBuild(fullDb, unpriced + priced + correction);
+    dailyWindows(dailyDb, [unpriced, priced, correction]);
+    for (const db of [fullDb, dailyDb]) {
+      expect(snapshot(db)).toMatchObject({
+        homeValue: 9000,
+        bidderTotals: [{ won_eur: 9000 }],
+        authorityTotals: [{ spent_eur: 9000 }],
+        flowTotals: [{ won_eur: 9000 }],
+      });
+      expect(sqliteJson(db, 'SELECT ocds_signing_incomplete FROM contracts')).toEqual([
+        { ocds_signing_incomplete: 1 },
+      ]);
+      await expectClean(db);
+    }
+    replay(dailyDb, priced + correction);
+    expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+    await expectClean(dailyDb);
+  });
+
   it('revokes a correction when a distinct unpriced OCDS signing arrives', async () => {
     const first = tender() + ocdsSigning(9000);
     const correction = mappedRelease({ amount: 1200 });
@@ -394,24 +479,35 @@ describe('technical source values across full build and daily refresh', () => {
     await expectClean(dailyDb);
   });
 
-  it.each([false, true])(
-    'retains public IDs for conflicting OCDS notices (overlap: %s)',
-    async (overlap) => {
+  it.each([
+    { backfill: false, overlap: false },
+    { backfill: false, overlap: true },
+    { backfill: true, overlap: false },
+    { backfill: true, overlap: true },
+  ])(
+    'retains public IDs for conflicting OCDS notices (backfill: $backfill, overlap: $overlap)',
+    async ({ backfill, overlap }) => {
       const first = tender() + ocdsSigning(9000);
       const correction = mappedRelease({ amount: 1200 });
       const second = ocdsSigning(8000, { day: '2026-11-26', document: 'TEST-SECOND-SIGNING' });
       fullBuild(fullDb, second + correction + first);
-      dailyWindows(dailyDb, [first, correction]);
+      const ids = (db: string) =>
+        sqliteJson<{ id: string; document_number: string; signing_value: number }>(
+          db,
+          'SELECT id, document_number, signing_value FROM contracts ORDER BY signing_value DESC',
+        );
+      const rebuiltIds = ids(fullDb);
+      const [initial, next] = backfill ? [second, first] : [first, second];
+      dailyWindows(dailyDb, [initial, correction]);
+      expect(ids(dailyDb).map((row) => row.id)).toEqual([rebuiltIds[backfill ? 1 : 0]?.id]);
       expect(homeValue(dailyDb)).toBe(1200);
-      replay(dailyDb, (overlap ? first : '') + second);
+      replay(dailyDb, (overlap ? initial : '') + next);
       for (const db of [fullDb, dailyDb]) {
-        const prefix = `c:o:${OCID}:${CONTRACT}:_:unknown:анонимен:`;
-        expect(
-          sqliteJson(db, 'SELECT id, document_number, signing_value FROM contracts ORDER BY id'),
-        ).toEqual([
-          { id: `${prefix}1`, document_number: 'TEST-SIGNING', signing_value: 9000 },
-          { id: `${prefix}2`, document_number: 'TEST-SECOND-SIGNING', signing_value: 8000 },
+        expect(ids(db)).toMatchObject([
+          { document_number: 'TEST-SIGNING', signing_value: 9000 },
+          { document_number: 'TEST-SECOND-SIGNING', signing_value: 8000 },
         ]);
+        expect(ids(db)).toEqual(rebuiltIds);
         expect(snapshot(db)).toMatchObject({
           homeValue: 17000,
           bidderTotals: [{ won_eur: 17000 }],
@@ -421,9 +517,10 @@ describe('technical source values across full build and daily refresh', () => {
         await expectClean(db);
       }
       expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
-      const before = snapshot(dailyDb);
-      replay(dailyDb, second + correction);
-      expect(snapshot(dailyDb)).toEqual(before);
+      replay(dailyDb, first + second + correction);
+      expect(ids(dailyDb)).toEqual(rebuiltIds);
+      expect(snapshot(dailyDb)).toEqual(snapshot(fullDb));
+      await expectClean(dailyDb);
     },
   );
 

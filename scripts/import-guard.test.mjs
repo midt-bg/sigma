@@ -171,6 +171,7 @@ const CLEARED = [
   'contract_co_authorities',
   'ocds_contract_buyers',
   'ocds_amendment_publications',
+  'ocds_unpriced_signings',
   'contracts',
   'parties',
   'lots',
@@ -187,6 +188,13 @@ test('the probe covers every table the SQL clears, not a subset', () => {
   for (const table of CLEARED) {
     assert.match(sql, new RegExp(`FROM ${table}\\)`), `probe is missing ${table}`);
   }
+});
+
+test('refuses a partial rebuild when only unpriced OCDS evidence is retained', () => {
+  const r = runImport(PARTIAL, { populated: 'ocds_unpriced_signings' });
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.loadStarted, false);
+  assert.match(r.stderr, /including ocds_unpriced_signings/);
 });
 
 test('the hand-written list still matches what the SQL clears', () => {

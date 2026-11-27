@@ -563,6 +563,12 @@ WHERE (c.source LIKE 'eop:%' AND NOT EXISTS (
   ));
 
 -- Preserve incomplete or conflicting signing evidence even when admission drops a lot.
+CREATE VIEW IF NOT EXISTS raw_unpriced_ocds_signing_keys AS
+SELECT DISTINCT unp, contract_number
+FROM raw_contract_publications
+WHERE source LIKE 'ocds:%' AND signing_value IS NULL
+  AND unp IS NOT NULL AND contract_number IS NOT NULL;
+
 CREATE VIEW IF NOT EXISTS raw_incomplete_signing_keys AS
 SELECT unp, contract_number, 1 AS incomplete
 FROM raw_contract_publications
@@ -572,6 +578,37 @@ HAVING COUNT(signing_value) <> COUNT(*) OR COUNT(DISTINCT signing_value) <> 1
   OR COUNT(DISTINCT signing_value_mills) > 1
   OR COUNT(NULLIF(TRIM(currency), '')) <> COUNT(*) OR COUNT(DISTINCT currency) <> 1
   OR COUNT(contract_date) <> COUNT(*) OR COUNT(DISTINCT contract_date) <> 1;
+
+-- Use a notice key in both admission paths. A newly seen sibling never consumes a
+-- slot under another notice's ID. A repeated notice is ranked only within itself.
+CREATE VIEW IF NOT EXISTS raw_ocds_contract_ids AS
+WITH publications AS (
+  SELECT c.id, c.unp, c.contract_number, c.lot_id, c.document_number, c.signing_value, c.contract_date,
+    v.amount,
+    ci.bidder_key,
+    'c:o:' || COALESCE(c.unp, '') || ':' || COALESCE(c.contract_number, '') || ':' ||
+      COALESCE(NULLIF(c.lot_id, ''), '_') || ':' || ci.bidder_key || ':' AS id_prefix
+  FROM raw_contract_publications c
+  JOIN contractor_identity ci ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
+  JOIN raw_contract_value_results v ON v.id = c.id
+  WHERE c.source LIKE 'ocds:%'
+), staged AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY id_prefix, document_number ORDER BY amount IS NULL, signing_value, contract_date, id
+  ) AS notice_ordinal
+  FROM publications
+), legacy AS (
+  SELECT id, rtrim(id, '0123456789') AS id_prefix, document_number, ROW_NUMBER() OVER (
+    PARTITION BY rtrim(id, '0123456789'), document_number ORDER BY length(id), id
+  ) AS notice_ordinal
+  FROM ocds_legacy_contract_ids
+)
+SELECT s.id AS raw_id, s.unp, s.contract_number, s.bidder_key, s.lot_id, s.amount,
+  COALESCE(l.id, s.id_prefix || 'n' || lower(hex(json_quote(s.document_number))) || ':' ||
+    s.notice_ordinal) AS contract_id
+FROM staged s
+LEFT JOIN legacy l ON l.id_prefix = s.id_prefix AND l.document_number IS s.document_number
+  AND l.notice_ordinal = s.notice_ordinal;
 
 -- The daily resolver sees retained versions as well as the incoming window.
 CREATE TABLE IF NOT EXISTS raw_signing_correction_slice (active INTEGER PRIMARY KEY);
@@ -677,11 +714,14 @@ WITH staged AS MATERIALIZED (
 ), signing_rows AS MATERIALIZED (
   SELECT c.unp, c.contract_number, c.currency, c.contract_date AS signed_at,
     c.signing_value AS original, c.signing_value_mills AS original_mills,
-    c.source LIKE 'ocds:%' AND EXISTS (
-      SELECT 1 FROM contracts p
-      WHERE EXISTS (SELECT 1 FROM raw_signing_correction_slice)
-        AND p.tender_id = 't:' || c.unp AND p.contract_number = c.contract_number
-        AND p.id GLOB 'c:o:*' AND p.ocds_signing_incomplete = 1
+    c.source LIKE 'ocds:%' AND EXISTS (SELECT 1 FROM raw_signing_correction_slice) AND (
+      EXISTS (SELECT 1 FROM ocds_unpriced_signings u
+        WHERE u.unp = c.unp AND u.contract_number = c.contract_number)
+      OR EXISTS (
+        SELECT 1 FROM contracts p
+        WHERE p.tender_id = 't:' || c.unp AND p.contract_number = c.contract_number
+          AND p.id GLOB 'c:o:*' AND p.ocds_signing_incomplete = 1
+      )
     ) AS incomplete
   FROM candidate_keys k
   CROSS JOIN raw_contract_publications c ON c.unp = k.unp AND c.contract_number = k.contract_number

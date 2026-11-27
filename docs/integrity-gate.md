@@ -146,7 +146,11 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    boundary. Legacy rows without source decimals use the shifted endpoints. The gate orders
    eligible corrections by UTC publication time and document key. The publication ledger
    retains the latest version for every class, including metadata-only updates that retire a
-   previously served row.
+   previously served row. The original signing must also agree with all signing evidence.
+   `ocds_unpriced_signings` retains evidence from an unpriced OCDS notice across refreshes,
+   including before admission of the first priced notice. The full build reconstructs this
+   evidence from the source corpus. Both integrity modes use it to disallow a correction and
+   catch a stored correction that lost its support.
    It checks that the affected annex count and current value agree with
    contractual history. It also checks that known corrections and superseded history rows from
    metadata-only winners are absent. The gate also
@@ -154,6 +158,9 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    enforce these invariants. Inferred OCDS after-values carried over from the previous rule
    fail the build check and warn on an already served slot until source replay or a rebuild.
    The check reports aggregate counts.
+   Synthetic ETL tests compare the exact public ID of each OCDS notice across chronological
+   refresh, late backfill, replay and a full build. The integrity totals can agree even when
+   URLs identify different notices, so the tests assert identities separately.
 9. **Every contract carries the value rule** (`contract-value-rule`, build check only). Each `c:e:`/`c:o:`
    contract of the work database is staged through `raw_served_contract_value_base`, which reads a served
    row as the daily `amendments` batch does (a test holds the two equal), and evaluated by the rule itself

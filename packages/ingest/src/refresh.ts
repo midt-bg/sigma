@@ -99,7 +99,9 @@ const TRANSIENT_STAGING_VIEWS = [
   'raw_ocds_amendment_window',
   'raw_ocds_signing_reports', // from the previous staging shape
   'raw_replaced_signings',
+  'raw_ocds_contract_ids',
   'raw_incomplete_signing_keys',
+  'raw_unpriced_ocds_signing_keys',
   'raw_contract_publications',
   'raw_ocds_scoped_names',
   'raw_ocds_contract_buyer_moves',

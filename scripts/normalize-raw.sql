@@ -50,6 +50,7 @@ DELETE FROM home_totals;
 DELETE FROM contract_co_authorities;
 DELETE FROM ocds_contract_buyers;
 DELETE FROM ocds_amendment_publications;
+DELETE FROM ocds_unpriced_signings;
 DELETE FROM contracts;
 DELETE FROM parties;
 DELETE FROM lots;
@@ -752,6 +753,9 @@ SELECT ocid, contract_number, document_number, tender_ext_id, signed_at, publish
   currency, amount, amount_mills, source, version_key, kind
 FROM raw_ocds_amendment_window;
 
+INSERT INTO ocds_unpriced_signings
+SELECT unp, contract_number FROM raw_unpriced_ocds_signing_keys;
+
 -- Stage the native amounts and their currencies for the shared valuation rule.
 DELETE FROM raw_contract_value_inputs;
 INSERT INTO raw_contract_value_inputs
@@ -778,14 +782,13 @@ DROP TABLE IF EXISTS raw_contract_value_results;
 CREATE TABLE raw_contract_value_results AS SELECT * FROM raw_contract_values;
 CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results(id);
 
--- Share the admitted rows with buyer selection. Order OCDS notices by source packet so
--- rebuilding a chronological refresh keeps each notice at the same public URL.
+-- Share the admitted rows with buyer selection.
 DELETE FROM raw_contract_admissions;
 INSERT INTO raw_contract_admissions (raw_id, contract_id, bidder_id, amount, lot_id)
 SELECT x.id,
-  CASE WHEN x.source LIKE 'eop:%' THEN 'c:e:' ELSE 'c:o:' END ||
+  'c:e:' ||
     COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
-    COALESCE(NULLIF(CASE WHEN x.source LIKE 'eop:%' THEN x.lot_norm ELSE x.lot_id END, ''), '_') ||
+    COALESCE(NULLIF(x.lot_norm, ''), '_') ||
     ':' || x.bidder_key || ':' || x.contract_ordinal,
   x.bidder_key, x.amount,
   CASE WHEN x.lot_id IS NOT NULL AND TRIM(x.lot_id) <> ''
@@ -794,18 +797,11 @@ FROM (
   SELECT z.*,
     ROW_NUMBER() OVER (
         PARTITION BY z.unp, COALESCE(z.contract_number, ''), z.bidder_key,
-          CASE
-            WHEN z.source LIKE 'eop:%' THEN COALESCE(NULLIF(z.lot_norm, ''), '_')
-            ELSE COALESCE(NULLIF(z.lot_id, ''), '_')
-          END
-        ORDER BY
-          CASE WHEN z.source LIKE 'ocds:%' THEN z.amount IS NULL END,
-          CASE WHEN z.source LIKE 'ocds:%' THEN z.source END,
-          CASE WHEN z.source LIKE 'ocds:%' THEN z.document_number END,
-          z.signing_value, z.contract_date, z.document_number, z.id
+          COALESCE(NULLIF(z.lot_norm, ''), '_')
+        ORDER BY z.signing_value, z.contract_date, z.document_number, z.id
       ) AS contract_ordinal
   FROM (
-    SELECT c.id, c.unp, c.source, c.contract_number, c.lot_id, c.signing_value, c.contract_date,
+    SELECT c.id, c.unp, c.contract_number, c.lot_id, c.signing_value, c.contract_date,
       c.document_number, ci.bidder_key,
       v.amount,
       CASE
@@ -817,11 +813,20 @@ FROM (
     JOIN contractor_identity ci
       ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
     JOIN raw_contract_value_results v ON v.id = c.id
+    WHERE c.source LIKE 'eop:%'
   ) z
 ) x
 WHERE x.amount IS NOT NULL
   AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
   AND EXISTS (SELECT 1 FROM bidders  b  WHERE b.id  = x.bidder_key);
+
+INSERT INTO raw_contract_admissions (raw_id, contract_id, bidder_id, amount, lot_id)
+SELECT x.raw_id, x.contract_id, x.bidder_key, x.amount,
+  CASE WHEN x.lot_id IS NOT NULL AND TRIM(x.lot_id) <> '' THEN 'lot:' || x.unp || ':' || x.lot_id END
+FROM raw_ocds_contract_ids x
+WHERE x.amount IS NOT NULL
+  AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
+  AND EXISTS (SELECT 1 FROM bidders b WHERE b.id = x.bidder_key);
 
 DELETE FROM raw_contract_buyer_tenders;
 DELETE FROM raw_previous_ocds_contract_buyers;

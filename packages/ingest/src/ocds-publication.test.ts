@@ -423,6 +423,11 @@ describe('OCDS buyer attribution', () => {
 
     for (const cumulative of [true, false]) {
       const db = open();
+      insert(
+        db,
+        'ocds_legacy_contract_ids',
+        [originalId, removedId].map((id) => ({ id, document_number: `DOC-${ocid}` })),
+      );
       const first = signing(db, days[0]);
       if (!cumulative) {
         slice(db);

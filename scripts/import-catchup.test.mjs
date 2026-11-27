@@ -47,6 +47,10 @@ appendFileSync(process.env.CU_LOG, JSON.stringify(argv) + '\\n');
 const ci = argv.indexOf('--command');
 if (ci !== -1) {
   const sql = argv[ci + 1];
+  if (sql.includes('sqlite_schema')) {
+    process.stdout.write(JSON.stringify([{ results: [{ migrated: 0, contracts: 1 }], success: true }]));
+    process.exit(0);
+  }
   if (/raw_contracts/.test(sql)) {
     if (process.env.CU_OTHER_ERROR) {
       process.stdout.write(JSON.stringify({ error: { text: 'database is locked: SQLITE_BUSY' } }));

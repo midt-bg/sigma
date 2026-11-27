@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { assertIntegrity } from './integrity-checks.mjs';
+import { LEGACY_OCDS_IDS_TABLE, readLegacyOcdsContractIds } from './ocds-legacy-contract-ids.mjs';
 import {
   assertD1TargetAuthorized,
   insertStatements,
@@ -26,6 +27,8 @@ const TABLES = [
   'contract_co_authorities',
   'amendments',
   'ocds_amendment_publications',
+  'ocds_unpriced_signings',
+  LEGACY_OCDS_IDS_TABLE,
   'parties',
   'ocds_supplier_appearances',
   'ocds_tender_buyers',
@@ -173,6 +176,20 @@ if (targetPopulated) {
         `refusing to ship: source ${table} ${sourceCounts[table]} is less than half of target ${beforeCounts[table]}`,
       );
     }
+  }
+}
+if (beforeCounts[LEGACY_OCDS_IDS_TABLE] > 0) {
+  const reservation = sourceDb.prepare(
+    `SELECT 1 FROM ${LEGACY_OCDS_IDS_TABLE} WHERE id = ? AND document_number IS ?`,
+  );
+  if (
+    readLegacyOcdsContractIds(d1Json).some(
+      ({ id, document_number }) => !reservation.get(id, document_number),
+    )
+  ) {
+    throw new Error(
+      'refusing to ship: rebuild the work DB with the target’s OCDS URL reservations',
+    );
   }
 }
 

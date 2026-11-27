@@ -5,6 +5,22 @@ ALTER TABLE amendments ADD COLUMN published_at_utc TEXT;
 -- Retain the contractor evidence needed to reconsider an alternate-number EOP annex.
 ALTER TABLE amendments ADD COLUMN anchor_candidate_contractor_eik TEXT;
 
+-- An unpriced publication can veto a correction before any sibling has a served row.
+CREATE TABLE IF NOT EXISTS ocds_unpriced_signings (
+  unp TEXT NOT NULL,
+  contract_number TEXT NOT NULL,
+  PRIMARY KEY (unp, contract_number)
+) WITHOUT ROWID;
+
+-- Reserve previously published IDs for the notices they already identify.
+CREATE TABLE IF NOT EXISTS ocds_legacy_contract_ids (
+  id TEXT PRIMARY KEY NOT NULL,
+  document_number TEXT
+) WITHOUT ROWID;
+
+INSERT INTO ocds_legacy_contract_ids (id, document_number)
+SELECT id, document_number FROM contracts WHERE id GLOB 'c:o:*';
+
 -- Record the latest source version even when its projection is excluded from history.
 CREATE TABLE IF NOT EXISTS ocds_amendment_publications (
   ocid TEXT NOT NULL,
@@ -61,7 +77,10 @@ signings AS (
   CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
   WHERE c.id GLOB 'c:[eo]:*'
   GROUP BY k.unp, k.contract_number
-  HAVING MAX(c.ocds_signing_incomplete) = 0
+  HAVING MAX(c.ocds_signing_incomplete OR (c.id GLOB 'c:o:*' AND EXISTS (
+      SELECT 1 FROM ocds_unpriced_signings u
+      WHERE u.unp = k.unp AND u.contract_number = k.contract_number
+    ))) = 0
     AND COUNT(COALESCE(c.signing_value_original, c.signing_value)) = COUNT(*)
     AND MIN(COALESCE(c.signing_value_original, c.signing_value)) = MAX(COALESCE(c.signing_value_original, c.signing_value))
     AND COUNT(DISTINCT c.signing_value_mills) <= 1

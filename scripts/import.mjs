@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { parseArgs } from 'node:util';
 import {
   computeCatchupWindow,
@@ -28,6 +29,7 @@ import {
 import { FX_LOOKBACK_DAYS } from '../packages/ingest/src/fx.ts';
 import { assertIntegrity } from './integrity-checks.mjs';
 import { buildAnomalyReport, formatAnomalyReport } from './anomaly-report.mjs';
+import { LEGACY_OCDS_IDS_TABLE, readLegacyOcdsContractIds } from './ocds-legacy-contract-ids.mjs';
 
 // Per-refresh anomaly report (#100): cross-row outliers the per-row value_flag can't see. OBSERVES
 // only — wrapped so a detector bug or an odd corpus can never fail the import (contrast assertIntegrity,
@@ -425,6 +427,15 @@ async function runWorkBackfill() {
     }
   }
 
+  const legacyFile = cli['ocds-legacy-ids'];
+  if (legacyFile === true) throw new Error('--ocds-legacy-ids requires a JSON file path');
+  const legacyIds =
+    typeof legacyFile === 'string'
+      ? JSON.parse(readFileSync(resolve(legacyFile), 'utf8'))
+      : cli['no-ship']
+        ? []
+        : readLegacyOcdsContractIds(d1);
+  if (!Array.isArray(legacyIds)) throw new Error('Expected an array of OCDS URL reservations');
   const workDir = dirname(workDb);
   mkdirSync(workDir, { recursive: true });
   if (existsSync(workDb)) rmSync(workDb, { force: true });
@@ -435,6 +446,19 @@ async function runWorkBackfill() {
     .filter((name) => /^\d+.*\.sql$/.test(name))
     .sort();
   for (const migration of migrations) sqliteFile(workDb, resolve(migrationsDir, migration));
+  if (legacyIds.length > 0) {
+    const db = new DatabaseSync(workDb);
+    try {
+      db.exec('BEGIN');
+      const insert = db.prepare(
+        `INSERT INTO ${LEGACY_OCDS_IDS_TABLE} (id, document_number) VALUES (?, ?)`,
+      );
+      for (const { id, document_number } of legacyIds) insert.run(id, document_number);
+      db.exec('COMMIT');
+    } finally {
+      db.close();
+    }
+  }
   sqliteFile(workDb, resolve(root, 'scripts/work-staging-schema.sql'));
 
   const loadFlags = plan ? rangeFlags(plan.from, plan.to) : explicitRangeFlags();

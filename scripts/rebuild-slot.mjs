@@ -9,7 +9,7 @@
 //   SIGMA_REBUILD_RESUME=1              continue what an earlier run of the build left in the slot
 //   SIGMA_REBUILD_VERIFY=1              only verify what the slot already holds, and stamp it once it passes
 import { execFileSync, spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -25,6 +25,7 @@ import {
 import { importSql } from './cacbg/import-sql.mjs';
 import { retryD1, sleepSync } from './d1-retry.mjs';
 import { assertIntegrity, BREATHER_MS, HEAVY_ROWS } from './integrity-checks.mjs';
+import { readLegacyOcdsContractIds } from './ocds-legacy-contract-ids.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const webDir = resolve(root, 'apps/web');
@@ -1067,9 +1068,21 @@ export function slotOps({
 
     // 1. The procurement corpus, from the open data, into a fresh file with every migration.
     import: async () => {
+      const capture = slotReader(live.name, {
+        answer: (name, sql) => d1Answer(name, sql, cli),
+        sleep: liveSleep,
+      });
+      const idsPath = join(work, 'ocds-legacy-contract-ids.json');
+      const legacyIds = readLegacyOcdsContractIds((sql) => {
+        const rows = capture(sql);
+        liveSleep(BREATHER_MS);
+        return rows;
+      });
+      writeFileSync(idsPath, JSON.stringify(legacyIds), { mode: 0o600 });
       await child('import', [
         'scripts/import.mjs',
         `--work-db=${db}`,
+        `--ocds-legacy-ids=${idsPath}`,
         '--from=2020-01-01',
         `--to=${today}`,
         '--no-ship',

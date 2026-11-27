@@ -1448,15 +1448,13 @@ ON CONFLICT(id) DO UPDATE SET
     ELSE tenders.eop_tender_id END;
 
 -- 4) Contracts - replace rows represented by the transient window, then re-derive deltas.
--- A distinct unpriced OCDS notice can veto a correction without acquiring a public
--- row. Retain that evidence on its OCDS siblings before rebuilding or revaluing them.
+-- Keep unpriced evidence even when this window admits no signing.
+INSERT OR IGNORE INTO ocds_unpriced_signings
+SELECT unp, contract_number FROM raw_unpriced_ocds_signing_keys;
+
 UPDATE contracts
 SET ocds_signing_incomplete = 1
-FROM (
-  SELECT DISTINCT unp, contract_number FROM raw_contract_publications
-  WHERE source LIKE 'ocds:%' AND signing_value IS NULL
-    AND unp IS NOT NULL AND contract_number IS NOT NULL
-) missing
+FROM raw_unpriced_ocds_signing_keys missing
 WHERE contracts.tender_id = 't:' || missing.unp
   AND contracts.contract_number = missing.contract_number
   AND contracts.id GLOB 'c:o:*' AND contracts.ocds_signing_incomplete = 0;
@@ -1506,49 +1504,10 @@ CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results
 -- replaced here also has a staged EOP document that already vetoes its OCDS twin.
 DELETE FROM raw_contract_admissions;
 INSERT INTO raw_contract_admissions (raw_id, contract_id, bidder_id, amount, lot_id)
-WITH staged AS MATERIALIZED (
-  SELECT c.id, c.unp, c.contract_number, c.lot_id, c.document_number, c.source,
-    c.signing_value, c.contract_date, ci.bidder_key, v.amount,
-    'c:o:' || c.unp || ':' || COALESCE(c.contract_number, '') || ':' ||
-      COALESCE(NULLIF(c.lot_id, ''), '_') || ':' || ci.bidder_key || ':' AS id_prefix,
-    ROW_NUMBER() OVER (
-      PARTITION BY c.unp, c.contract_number, ci.bidder_key, COALESCE(NULLIF(c.lot_id, ''), '_'),
-        c.document_number
-      ORDER BY c.signing_value, c.contract_date, c.id
-    ) AS within_notice
-  FROM raw_contracts c
-  JOIN contractor_identity ci ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
-  JOIN raw_contract_value_results v ON v.id = c.id
-  WHERE c.source LIKE 'ocds:%'
-), prior AS MATERIALIZED (
-  SELECT k.id_prefix, c.id, c.document_number,
-    CAST(substr(c.id, length(k.id_prefix) + 1) AS INTEGER) AS ordinal,
-    ROW_NUMBER() OVER (
-      PARTITION BY k.id_prefix, c.document_number
-      ORDER BY CAST(substr(c.id, length(k.id_prefix) + 1) AS INTEGER)
-    ) AS within_notice
-  FROM (SELECT DISTINCT unp, contract_number, id_prefix FROM staged) k
-  CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number IS k.contract_number
-    AND c.id GLOB 'c:o:*' AND substr(c.id, 1, length(k.id_prefix)) = k.id_prefix
-), ordinals AS (
-  SELECT id_prefix, MAX(ordinal) AS last FROM prior GROUP BY id_prefix
-)
--- Preserve the IDs of a replayed notice. Allocate slots for new notices after the
--- existing ones, so an independently filed notice cannot replace another by ordinal.
--- Only previously unassigned, admitted rows consume a slot, even on overlapping windows.
-SELECT x.id, COALESCE(p.id, x.id_prefix || (COALESCE(o.last, 0) +
-    SUM(p.id IS NULL) OVER (
-      PARTITION BY x.id_prefix
-      ORDER BY x.source, x.document_number, x.signing_value, x.contract_date, x.id
-      ROWS UNBOUNDED PRECEDING
-    ))),
-  x.bidder_key, COALESCE(x.amount, previous.amount),
+SELECT x.raw_id, x.contract_id, x.bidder_key, COALESCE(x.amount, previous.amount),
   CASE WHEN x.lot_id IS NOT NULL AND TRIM(x.lot_id) <> '' THEN 'lot:' || x.unp || ':' || x.lot_id END
-FROM staged x
-LEFT JOIN prior p ON p.id_prefix = x.id_prefix AND p.document_number IS x.document_number
-  AND p.within_notice = x.within_notice
-LEFT JOIN ordinals o ON o.id_prefix = x.id_prefix
-LEFT JOIN raw_contract_value_existing previous ON previous.id = p.id
+FROM raw_ocds_contract_ids x
+LEFT JOIN raw_contract_value_existing previous ON previous.id = x.contract_id
 WHERE COALESCE(x.amount, previous.amount) IS NOT NULL
   AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
   AND EXISTS (SELECT 1 FROM bidders b WHERE b.id = x.bidder_key)
@@ -1680,7 +1639,10 @@ SELECT
   ci.eik_clean,
   ci.eik_status,
   MAX(COALESCE(s.incomplete, 0),
-    CASE WHEN x.source LIKE 'ocds:%' THEN COALESCE(previous.ocds_signing_incomplete, 0) ELSE 0 END),
+    CASE WHEN x.source LIKE 'ocds:%' THEN MAX(COALESCE(previous.ocds_signing_incomplete, 0),
+      EXISTS (SELECT 1 FROM ocds_unpriced_signings u
+        WHERE u.unp = x.unp AND u.contract_number = x.contract_number))
+    ELSE 0 END),
   x.signing_value,
   x.signing_value_mills
 FROM raw_contract_admissions p

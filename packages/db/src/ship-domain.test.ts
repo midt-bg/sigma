@@ -51,6 +51,8 @@ Description line 2', 'test');
          INSERT INTO ocds_amendment_publications (ocid, contract_number, document_number, source, published_at, amount, kind, version_key)
            VALUES ('ocds-test', 'TEST-PENDING-SIGNING', 'TEST-REPORT', 'ocds:2026-06-08', '2026-06-08T00:00:00.000', 20, 'correction', '[]'),
                   ('ocds-test', 'TEST-RETIRED-ANNEX', 'TEST-METADATA', 'ocds:2026-06-08', '2026-06-08T00:00:00.000', NULL, 'metadata', '[]');
+         INSERT INTO ocds_unpriced_signings VALUES ('ocds-test', 'TEST-PENDING-SIGNING');
+         INSERT INTO ocds_legacy_contract_ids VALUES ('c:o:1', 'TEST-LEGACY-SIGNING');
          INSERT INTO nuts_regions (nuts3, nuts3_name, nuts2, nuts2_name, nuts1, nuts1_name)
            VALUES ('BG000', 'Region', 'BG00', 'Region 2', 'BG0', 'Region 1');
          INSERT INTO data_freshness (source, rows, refreshed_at) VALUES ('eop', 1, '2026-06-08');`,
@@ -94,6 +96,12 @@ Description line 2', 'test');
           "SELECT document_number FROM ocds_amendment_publications WHERE kind = 'metadata'",
         ),
       ).toEqual([{ document_number: 'TEST-METADATA' }]);
+      expect(d1Json(persistTo, 'SELECT * FROM ocds_unpriced_signings')).toEqual([
+        { unp: 'ocds-test', contract_number: 'TEST-PENDING-SIGNING' },
+      ]);
+      expect(d1Json(persistTo, 'SELECT * FROM ocds_legacy_contract_ids')).toEqual([
+        { id: 'c:o:1', document_number: 'TEST-LEGACY-SIGNING' },
+      ]);
       expect(
         d1Json(
           persistTo,

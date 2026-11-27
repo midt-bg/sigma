@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -35,11 +36,16 @@ test('the work backfill gate proves the build against the value rule', () => {
       writeFileSync(join(binDir, name), FAKE);
       chmodSync(join(binDir, name), 0o755);
     }
+    const workDb = join(dir, 'work.sqlite');
+    const reservationsFile = join(dir, 'legacy-ids.json');
+    const reservations = [{ id: 'c:o:test:1', document_number: 'TEST-LEGACY-SIGNING' }];
+    writeFileSync(reservationsFile, JSON.stringify(reservations));
     const res = spawnSync(
       process.execPath,
       [
         SCRIPT,
-        `--work-db=${join(dir, 'work.sqlite')}`,
+        `--work-db=${workDb}`,
+        `--ocds-legacy-ids=${reservationsFile}`,
         '--from=2026-06-01',
         '--to=2026-06-01',
         '--no-ship',
@@ -61,6 +67,18 @@ test('the work backfill gate proves the build against the value rule', () => {
     );
     assert.equal(res.status, 1, res.stderr);
     assert.match(res.stderr, /\(work backfill \(sqlite\)\): non-empty-corpus/);
+    const db = new DatabaseSync(workDb, { readOnly: true });
+    try {
+      assert.deepEqual(
+        db
+          .prepare('SELECT id, document_number FROM ocds_legacy_contract_ids')
+          .all()
+          .map((row) => ({ ...row })),
+        reservations,
+      );
+    } finally {
+      db.close();
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
