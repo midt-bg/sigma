@@ -34,6 +34,7 @@ CREATE TABLE raw_contracts (
   contractor_eik       TEXT,              -- ЕИК на изпълнителя (leading zeros kept)
   contractor_name      TEXT,              -- Изпълнител
   awarded_to_group     INTEGER,           -- Възложена на група (обединение/консорциум)
+  signing_value_mills  TEXT,              -- whole and fractional mills in source decimal precision
   signing_value        REAL,              -- Стойност при сключване
   currency             TEXT,              -- Валута (BGN / EUR / foreign)
   vat                  TEXT,              -- ДДС
@@ -166,6 +167,10 @@ CREATE TABLE raw_amendments (
   value_anchor_kind    TEXT,              -- direct value match or inherited chain link
   link_method          TEXT,              -- #306: 'value_anchor' when the resolver linked this row by value; NULL = matched by number / unlinked
   contract_date        TEXT,
+  publication_version TEXT,              -- deterministic source evidence tie-break
+  published_at_utc     TEXT,              -- OCDS publication version ordering across all classifications
+  ocds_ocid            TEXT,              -- original key retained when unp is bridged
+  shadowed_by_eop      INTEGER NOT NULL DEFAULT 0,
   published_at         TEXT,              -- amendment publication date (ordering key)
   unp                  TEXT,              -- ← link to raw_contracts
   authority_eik        TEXT,
@@ -176,6 +181,7 @@ CREATE TABLE raw_amendments (
   contract_subject     TEXT,
   contractor_eik       TEXT,
   contractor_name      TEXT,
+  value_before_mills TEXT,                -- exact amount for OCDS signing corrections
   value_before     REAL,                  -- Стойност преди изменението
   value_after      REAL,                  -- Стойност след изменението  → current_value
   value_delta      REAL,                  -- Изменение на стойността
@@ -186,6 +192,8 @@ CREATE TABLE raw_amendments (
   -- as the effective after, and skip the arithmetic annex_total_suspect flag when value_treatment IS NOT NULL.
   value_treatment      TEXT,
   value_after_restated REAL,
+  signing_correction   INTEGER NOT NULL DEFAULT 0,
+  metadata_only        INTEGER NOT NULL DEFAULT 0, -- identifiable OCDS update excluded from history
   currency         TEXT,
   description      TEXT,                  -- Описание на измененията
   reason           TEXT,                  -- Причини за изменение (ЗОП основание)
@@ -261,6 +269,7 @@ CREATE TABLE raw_ocds_lots (
 CREATE INDEX idx_raw_unp ON raw_contracts(unp);
 CREATE INDEX idx_raw_unp_cnum ON raw_contracts(unp, contract_number);
 CREATE INDEX idx_raw_cnum ON raw_contracts(contract_number);  -- admin↔OCDS dedup key (normalize step 5)
+CREATE INDEX IF NOT EXISTS idx_raw_contracts_tender_ext_id ON raw_contracts(tender_ext_id);
 CREATE INDEX idx_raw_eik ON raw_contracts(contractor_eik);
 CREATE INDEX idx_raw_year ON raw_contracts(dataset_year);
 CREATE INDEX idx_raw_needs_enrichment ON raw_contracts(needs_enrichment);
@@ -553,12 +562,243 @@ WHERE (c.source LIKE 'eop:%' AND NOT EXISTS (
       AND a.contract_number = c.contract_number
   ));
 
--- Preserve incomplete signing evidence even when admission drops an unpriced lot.
+-- Preserve incomplete or conflicting signing evidence even when admission drops a lot.
+CREATE VIEW IF NOT EXISTS raw_unpriced_ocds_signing_keys AS
+SELECT DISTINCT unp, contract_number
+FROM raw_contract_publications
+WHERE source LIKE 'ocds:%' AND signing_value IS NULL
+  AND unp IS NOT NULL AND contract_number IS NOT NULL;
+
 CREATE VIEW IF NOT EXISTS raw_incomplete_signing_keys AS
-SELECT DISTINCT unp, contract_number, 1 AS incomplete
+SELECT unp, contract_number, 1 AS incomplete
 FROM raw_contract_publications
 WHERE unp IS NOT NULL AND contract_number IS NOT NULL
-  AND (signing_value IS NULL OR NULLIF(TRIM(currency), '') IS NULL);
+GROUP BY unp, contract_number
+HAVING COUNT(signing_value) <> COUNT(*) OR COUNT(DISTINCT signing_value) <> 1
+  OR COUNT(DISTINCT signing_value_mills) > 1
+  OR COUNT(NULLIF(TRIM(currency), '')) <> COUNT(*) OR COUNT(DISTINCT currency) <> 1
+  OR COUNT(contract_date) <> COUNT(*) OR COUNT(DISTINCT contract_date) <> 1;
+
+-- Use a notice key in both admission paths. A newly seen sibling never consumes a
+-- slot under another notice's ID. A repeated notice is ranked only within itself.
+CREATE VIEW IF NOT EXISTS raw_ocds_contract_ids AS
+WITH publications AS (
+  SELECT c.id, c.unp, c.contract_number, c.lot_id, c.document_number, c.signing_value, c.contract_date,
+    v.amount,
+    ci.bidder_key,
+    'c:o:' || COALESCE(c.unp, '') || ':' || COALESCE(c.contract_number, '') || ':' ||
+      COALESCE(NULLIF(c.lot_id, ''), '_') || ':' || ci.bidder_key || ':' AS id_prefix
+  FROM raw_contract_publications c
+  JOIN contractor_identity ci ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
+  JOIN raw_contract_value_results v ON v.id = c.id
+  WHERE c.source LIKE 'ocds:%'
+), staged AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY id_prefix, document_number ORDER BY amount IS NULL, signing_value, contract_date, id
+  ) AS notice_ordinal
+  FROM publications
+), legacy AS (
+  SELECT id, rtrim(id, '0123456789') AS id_prefix, document_number, ROW_NUMBER() OVER (
+    PARTITION BY rtrim(id, '0123456789'), document_number ORDER BY length(id), id
+  ) AS notice_ordinal
+  FROM ocds_legacy_contract_ids
+)
+SELECT s.id AS raw_id, s.unp, s.contract_number, s.bidder_key, s.lot_id, s.amount,
+  COALESCE(l.id, s.id_prefix || 'n' || lower(hex(json_quote(s.document_number))) || ':' ||
+    s.notice_ordinal) AS contract_id
+FROM staged s
+LEFT JOIN legacy l ON l.id_prefix = s.id_prefix AND l.document_number IS s.document_number
+  AND l.notice_ordinal = s.notice_ordinal;
+
+-- The daily resolver sees retained versions as well as the incoming window.
+CREATE TABLE IF NOT EXISTS raw_signing_correction_slice (active INTEGER PRIMARY KEY);
+
+-- A signing notice can replace the same notice, and EOP can supersede OCDS by
+-- contract number. Other OCDS notices remain independent evidence across windows.
+CREATE VIEW IF NOT EXISTS raw_replaced_signings AS
+SELECT c.id
+FROM raw_contracts r
+JOIN contracts c ON c.tender_id = 't:' || r.unp AND c.contract_number IS r.contract_number
+WHERE (c.id GLOB 'c:e:*' AND r.source LIKE 'eop:%')
+   OR (c.id GLOB 'c:o:*' AND r.source LIKE 'ocds:%' AND c.document_number IS r.document_number)
+UNION
+SELECT c.id FROM raw_contracts r
+JOIN contracts c ON c.contract_number IS r.contract_number
+WHERE r.source LIKE 'eop:%' AND c.id GLOB 'c:o:*';
+
+-- Rank all classes under the original publication key before routing the winner.
+-- Source packet and the staged payload break ties deterministically at the same UTC instant.
+CREATE VIEW IF NOT EXISTS raw_ocds_amendment_window AS
+WITH versions AS (
+  SELECT id, COALESCE(ocds_ocid, unp) AS ocid, contract_number, document_number, tender_ext_id,
+    contract_date AS signed_at,
+    CASE WHEN length(COALESCE(published_at_utc, published_at)) = 10
+      THEN COALESCE(published_at_utc, published_at) || 'T00:00:00.000'
+      ELSE RTRIM(COALESCE(published_at_utc, published_at, ''), 'Z') END AS published_at,
+    currency, value_before AS amount, value_before_mills AS amount_mills, source,
+    COALESCE(publication_version, json_array(signing_correction, metadata_only, tender_ext_id,
+      contract_date, currency, value_before_mills, value_before, value_after, value_delta,
+      description, reason, contractor_eik, contractor_name)) AS version_key,
+    CASE WHEN signing_correction = 1 THEN 'correction'
+         WHEN metadata_only = 1 THEN 'metadata' ELSE 'contractual' END AS kind
+  FROM raw_amendments
+  WHERE source LIKE 'ocds:%' AND NULLIF(COALESCE(ocds_ocid, unp), '') IS NOT NULL
+    AND NULLIF(contract_number, '') IS NOT NULL AND NULLIF(document_number, '') IS NOT NULL
+), ranked AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY ocid, contract_number, document_number
+    ORDER BY published_at DESC, source DESC, version_key DESC, id DESC
+  ) AS rn, FIRST_VALUE(tender_ext_id) OVER (
+    PARTITION BY ocid, contract_number, document_number
+    ORDER BY tender_ext_id IS NULL, published_at DESC, source DESC, version_key DESC, id DESC
+  ) AS staged_tender_ext_id
+  FROM versions
+)
+-- A metadata-only winner may omit the tender ID. Carry its publication's known
+-- alias forward so it can retire the older annex under either procedure key.
+SELECT r.id, r.ocid, r.contract_number, r.document_number,
+  CASE WHEN r.kind = 'metadata'
+    THEN COALESCE(r.tender_ext_id, p.tender_ext_id, r.staged_tender_ext_id)
+    ELSE r.tender_ext_id END AS tender_ext_id,
+  r.signed_at, r.published_at, r.currency, r.amount, r.amount_mills, r.source, r.version_key, r.kind
+FROM ranked r
+LEFT JOIN ocds_amendment_publications p
+  ON EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+  AND (p.ocid, p.contract_number, p.document_number) = (r.ocid, r.contract_number, r.document_number)
+WHERE r.rn = 1 AND (p.ocid IS NULL OR
+  (p.published_at, p.source, p.version_key) <= (r.published_at, r.source, r.version_key));
+
+CREATE VIEW IF NOT EXISTS raw_ocds_publication_bridge AS
+WITH ids AS MATERIALIZED (
+  SELECT tender_ext_id FROM raw_ocds_amendment_window WHERE kind IN ('correction', 'metadata')
+  UNION
+  SELECT tender_ext_id FROM contract_signing_corrections
+  WHERE EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+), candidates AS (
+  SELECT i.tender_ext_id, t.unp FROM ids i
+  CROSS JOIN raw_tenders t ON t.tender_id = i.tender_ext_id
+  WHERE t.unp NOT LIKE 'ocds-%' AND t.lot_id IS NULL
+  UNION ALL
+  SELECT i.tender_ext_id, c.unp FROM ids i
+  CROSS JOIN raw_contracts c ON c.tender_ext_id = i.tender_ext_id
+  WHERE c.source LIKE 'eop:%' AND c.unp NOT LIKE 'ocds-%'
+    AND NOT EXISTS (SELECT 1 FROM raw_tenders t WHERE t.unp = c.unp)
+  UNION ALL
+  SELECT i.tender_ext_id, t.source_id FROM ids i
+  CROSS JOIN tenders t ON t.eop_tender_id = i.tender_ext_id
+  WHERE t.source_id NOT LIKE 'ocds-%'
+    AND EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+)
+SELECT tender_ext_id, MIN(unp) AS unp FROM candidates
+GROUP BY tender_ext_id HAVING COUNT(DISTINCT unp) = 1;
+
+-- Use the same dated and currency-matched report ranking as the served view, against the
+-- entire set of incoming signing publications, before admission can drop unpriced lots.
+CREATE VIEW IF NOT EXISTS raw_corrected_signing_values AS
+WITH staged AS MATERIALIZED (
+  SELECT * FROM raw_ocds_amendment_window
+), reports AS MATERIALIZED (
+  SELECT ocid, contract_number, document_number, tender_ext_id, signed_at, published_at,
+    currency, amount, amount_mills, source FROM staged WHERE kind = 'correction'
+  UNION ALL
+  SELECT r.ocid, r.contract_number, r.document_number, r.tender_ext_id, r.signed_at, r.published_at,
+    r.currency, r.amount, r.amount_mills, r.source
+  FROM ocds_amendment_publications r
+  WHERE r.kind = 'correction'
+    AND EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+    AND NOT EXISTS (SELECT 1 FROM staged s
+      WHERE (s.ocid, s.contract_number, s.document_number) = (r.ocid, r.contract_number, r.document_number))
+), bridge_ids AS MATERIALIZED (
+  SELECT DISTINCT tender_ext_id FROM reports WHERE tender_ext_id IS NOT NULL
+), bridge AS MATERIALIZED (
+  SELECT tender_ext_id, MIN(unp) AS unp
+  FROM (
+    SELECT i.tender_ext_id, t.unp FROM bridge_ids i
+    CROSS JOIN raw_tenders t ON t.tender_id = i.tender_ext_id
+    WHERE t.unp NOT LIKE 'ocds-%' AND t.lot_id IS NULL
+    UNION ALL
+    SELECT i.tender_ext_id, c.unp FROM bridge_ids i
+    CROSS JOIN raw_contracts c ON c.tender_ext_id = i.tender_ext_id
+    WHERE c.source LIKE 'eop:%' AND c.unp NOT LIKE 'ocds-%'
+      AND NOT EXISTS (SELECT 1 FROM raw_tenders t WHERE t.unp = c.unp)
+    UNION ALL
+    SELECT i.tender_ext_id, t.source_id FROM bridge_ids i
+    CROSS JOIN tenders t ON t.eop_tender_id = i.tender_ext_id
+    WHERE t.source_id NOT LIKE 'ocds-%'
+      AND EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+  )
+  GROUP BY tender_ext_id HAVING COUNT(DISTINCT unp) = 1
+), bridged_reports AS MATERIALIZED (
+  SELECT r.*, b.unp AS eop_unp
+  FROM reports r LEFT JOIN bridge b USING (tender_ext_id)
+), candidate_keys AS MATERIALIZED (
+  SELECT eop_unp AS unp, contract_number FROM bridged_reports WHERE eop_unp IS NOT NULL
+  UNION SELECT ocid, contract_number FROM bridged_reports
+), signing_rows AS MATERIALIZED (
+  SELECT c.unp, c.contract_number, c.currency, c.contract_date AS signed_at,
+    c.signing_value AS original, c.signing_value_mills AS original_mills,
+    c.source LIKE 'ocds:%' AND EXISTS (SELECT 1 FROM raw_signing_correction_slice) AND (
+      EXISTS (SELECT 1 FROM ocds_unpriced_signings u
+        WHERE u.unp = c.unp AND u.contract_number = c.contract_number)
+      OR EXISTS (
+        SELECT 1 FROM contracts p
+        WHERE p.tender_id = 't:' || c.unp AND p.contract_number = c.contract_number
+          AND p.id GLOB 'c:o:*' AND p.ocds_signing_incomplete = 1
+      )
+    ) AS incomplete
+  FROM candidate_keys k
+  CROSS JOIN raw_contract_publications c ON c.unp = k.unp AND c.contract_number = k.contract_number
+  WHERE (c.source LIKE 'eop:%' OR NOT EXISTS (
+      SELECT 1 FROM contracts p
+      WHERE EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+        AND p.contract_number = c.contract_number AND p.id NOT GLOB 'c:o:*'
+    ))
+  UNION ALL
+  SELECT k.unp, c.contract_number, c.signing_currency_raw, c.signed_at,
+    COALESCE(c.signing_value_original, c.signing_value), c.signing_value_mills, c.ocds_signing_incomplete
+  FROM candidate_keys k
+  CROSS JOIN contracts c ON c.tender_id = 't:' || k.unp AND c.contract_number = k.contract_number
+  WHERE EXISTS (SELECT 1 FROM raw_signing_correction_slice)
+    AND c.id GLOB 'c:[eo]:*'
+    AND c.id NOT IN (SELECT id FROM raw_replaced_signings)
+), signings AS (
+  SELECT c.unp, c.contract_number, MIN(c.currency) AS currency,
+    MIN(c.signed_at) AS signed_at, MIN(c.original) AS original, MIN(c.original_mills) AS original_mills
+  FROM signing_rows c
+  GROUP BY c.unp, c.contract_number
+  HAVING MAX(c.incomplete) = 0
+    AND COUNT(c.original) = COUNT(*) AND MIN(c.original) = MAX(c.original)
+    AND COUNT(DISTINCT c.original_mills) <= 1
+    AND COUNT(c.currency) = COUNT(*) AND MIN(c.currency) = MAX(c.currency)
+    AND COUNT(c.signed_at) = COUNT(*) AND MIN(c.signed_at) = MAX(c.signed_at)
+), ranked AS (
+  SELECT s.unp, s.contract_number, s.original, r.amount, s.original_mills, r.amount_mills,
+    CAST(r.amount_mills AS INTEGER) - CAST(s.original_mills AS INTEGER) AS diff_mills,
+    substr(r.amount_mills, instr(r.amount_mills, '.') + 1) AS amount_tail,
+    substr(s.original_mills, instr(s.original_mills, '.') + 1) AS original_tail,
+    ROW_NUMBER() OVER (PARTITION BY s.unp, s.contract_number
+      ORDER BY RTRIM(r.published_at, 'Z') DESC, r.document_number DESC, r.ocid DESC) AS rn
+  FROM signings s
+  JOIN bridged_reports r
+    ON (CASE WHEN EXISTS (
+          SELECT 1 FROM signing_rows c WHERE c.unp = r.eop_unp AND c.contract_number = r.contract_number
+        ) THEN r.eop_unp ELSE r.ocid END) = s.unp
+    AND r.contract_number = s.contract_number
+    AND r.signed_at = s.signed_at AND r.currency = s.currency
+  WHERE r.published_at >= r.signed_at AND r.currency <> '' AND r.amount > 0
+)
+SELECT unp, contract_number,
+  CASE
+    -- Compare exact whole mills first and use the fractional remainder at the boundary.
+    WHEN instr(amount_mills, '.') BETWEEN 2 AND 19 AND instr(original_mills, '.') BETWEEN 2 AND 19
+      THEN CASE WHEN diff_mills > 5 OR (diff_mills = 5 AND amount_tail >= original_tail)
+          OR diff_mills < -5 OR (diff_mills = -5 AND amount_tail <= original_tail)
+        THEN amount ELSE original END
+    -- Legacy REAL values have no source decimal. Compare against shifted endpoints.
+    WHEN amount <> original AND (amount >= original + 0.005 OR amount <= original - 0.005) THEN amount
+    ELSE original
+  END AS signing_value
+FROM ranked WHERE rn = 1;
 
 -- The existing publication key picks the same raw version as derive-amendments and promotion.
 -- Preserve its original delta and after-value for valuation, even if promotion corrects them.
@@ -579,7 +819,11 @@ WITH amendment_dedup AS (
           COALESCE(currency, '') || ':' ||
           COALESCE(description, '')
       ) AS natural_key
-  FROM raw_amendments
+  FROM raw_amendments a
+  WHERE a.signing_correction = 0 AND a.metadata_only = 0 AND a.shadowed_by_eop = 0
+    AND (a.source NOT LIKE 'ocds:%' OR NULLIF(COALESCE(a.ocds_ocid, a.unp), '') IS NULL
+      OR NULLIF(a.contract_number, '') IS NULL OR NULLIF(a.document_number, '') IS NULL
+      OR a.id IN (SELECT id FROM raw_ocds_amendment_window))
 ), amendment_rn AS (
   SELECT *,
     ROW_NUMBER() OVER (PARTITION BY natural_key ORDER BY source DESC, id DESC) AS rn
@@ -588,7 +832,7 @@ WITH amendment_dedup AS (
 SELECT id, natural_key, unp, contract_number, contract_number_raw, link_method, value_anchor_kind,
   contractor_eik,
   value_before, value_after AS raw_after, COALESCE(value_after_restated, value_after) AS effective_after,
-  value_delta AS raw_delta, currency, published_at, document_number, description, source,
+  value_delta AS raw_delta, currency, published_at, published_at_utc, document_number, description, source,
   value_treatment, value_after_restated IS NOT NULL AS restated
 FROM amendment_rn WHERE rn = 1;
 

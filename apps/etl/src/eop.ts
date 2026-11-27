@@ -8,6 +8,7 @@ import {
   discardBody,
   mapBaseRecord,
   OCDS_STAGING,
+  parseOcdsPackage,
   releaseToAmendments,
   releaseToContracts,
   releaseToLots,
@@ -198,7 +199,7 @@ export async function listBucketForDay(
   return { day, bucketUrl, keys };
 }
 
-async function fetchJson(url: string): Promise<unknown> {
+async function fetchObject(url: string): Promise<Response> {
   const res = await fetch(url);
   try {
     assertSameFinalHost(url, res.url, 'EOP');
@@ -207,7 +208,7 @@ async function fetchJson(url: string): Promise<unknown> {
     throw err;
   }
   if (!res.ok) return releaseAndFail(res, `${url}: HTTP ${res.status}`);
-  return res.json();
+  return res;
 }
 
 export async function stageOcdsFromBucket(
@@ -228,7 +229,7 @@ export async function stageOcdsFromBucket(
   }
 
   const resourceUri = objectUrl(listing.bucketUrl, key);
-  const pkg = (await fetchJson(resourceUri)) as OcdsPackage | { data?: OcdsPackage };
+  const pkg = parseOcdsPackage(await (await fetchObject(resourceUri)).text());
   const meta: OcdsMeta = {
     source,
     datasetUri: listing.bucketUrl,
@@ -280,7 +281,7 @@ export async function stageBaseFromBucket(
     const key = listing.keys[cat];
     if (!key) continue;
     const rows = jsonArray(
-      await fetchJson(objectUrl(listing.bucketUrl, key)),
+      await (await fetchObject(objectUrl(listing.bucketUrl, key))).json(),
       `${cat} ${listing.day}`,
     )
       .map((record) => mapBaseRecord(cat, record, { day: listing.day, fetchedAt }))

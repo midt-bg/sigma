@@ -49,6 +49,8 @@ DELETE FROM facet_counts;
 DELETE FROM home_totals;
 DELETE FROM contract_co_authorities;
 DELETE FROM ocds_contract_buyers;
+DELETE FROM ocds_amendment_publications;
+DELETE FROM ocds_unpriced_signings;
 DELETE FROM contracts;
 DELETE FROM parties;
 DELETE FROM lots;
@@ -745,7 +747,18 @@ WHERE ownership_kind IS NULL AND eik_valid = 1
 DELETE FROM raw_contract_value_annexes;
 INSERT INTO raw_contract_value_annexes SELECT * FROM raw_contract_value_staged_annexes;
 
+-- Rebuild the source versions independently of the public annex history.
+INSERT INTO ocds_amendment_publications
+SELECT ocid, contract_number, document_number, tender_ext_id, signed_at, published_at,
+  currency, amount, amount_mills, source, version_key, kind
+FROM raw_ocds_amendment_window;
+
+INSERT INTO ocds_unpriced_signings
+SELECT unp, contract_number FROM raw_unpriced_ocds_signing_keys;
+
 -- Stage the native amounts and their currencies for the shared valuation rule.
+DROP TABLE IF EXISTS amendment_signing_corrections;
+CREATE TABLE amendment_signing_corrections AS SELECT * FROM raw_corrected_signing_values;
 DELETE FROM raw_contract_value_inputs;
 INSERT INTO raw_contract_value_inputs
 WITH amendment_winner AS (
@@ -756,26 +769,29 @@ WITH amendment_winner AS (
   FROM raw_contract_value_annexes
   WHERE effective_after IS NOT NULL
 )
-SELECT c.id, c.unp, c.contract_number, c.contract_date, c.signing_value, c.currency, c.current_value, aw.currency,
+SELECT c.id, c.unp, c.contract_number, c.contract_date, COALESCE(s.signing_value, c.signing_value),
+  c.currency, c.current_value, aw.currency,
   t.estimated_value, t.currency, c.estimated_value, c.procurement_currency,
   CASE WHEN c.framework_contract = 1 THEN 1 WHEN c.framework_notice = 1 THEN 2 END,
   0, NULL, aw.natural_key
 FROM raw_contracts c
 LEFT JOIN tenders t ON t.id = 't:' || c.unp
+LEFT JOIN amendment_signing_corrections s ON s.unp = c.unp AND s.contract_number = c.contract_number
 LEFT JOIN amendment_winner aw
   ON aw.unp = c.unp AND aw.contract_number = c.contract_number AND aw.win_rn = 1
 WHERE c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%';
+DROP TABLE IF EXISTS amendment_signing_corrections;
 DROP TABLE IF EXISTS raw_contract_value_results;
 CREATE TABLE raw_contract_value_results AS SELECT * FROM raw_contract_values;
 CREATE UNIQUE INDEX idx_raw_contract_value_results ON raw_contract_value_results(id);
 
--- Share the admitted rows with buyer selection. Preserve full rebuild's publication ranking.
+-- Share the admitted rows with buyer selection.
 DELETE FROM raw_contract_admissions;
 INSERT INTO raw_contract_admissions (raw_id, contract_id, bidder_id, amount, lot_id)
 SELECT x.id,
-  CASE WHEN x.source LIKE 'eop:%' THEN 'c:e:' ELSE 'c:o:' END ||
+  'c:e:' ||
     COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
-    COALESCE(NULLIF(CASE WHEN x.source LIKE 'eop:%' THEN x.lot_norm ELSE x.lot_id END, ''), '_') ||
+    COALESCE(NULLIF(x.lot_norm, ''), '_') ||
     ':' || x.bidder_key || ':' || x.contract_ordinal,
   x.bidder_key, x.amount,
   CASE WHEN x.lot_id IS NOT NULL AND TRIM(x.lot_id) <> ''
@@ -784,14 +800,11 @@ FROM (
   SELECT z.*,
     ROW_NUMBER() OVER (
         PARTITION BY z.unp, COALESCE(z.contract_number, ''), z.bidder_key,
-          CASE
-            WHEN z.source LIKE 'eop:%' THEN COALESCE(NULLIF(z.lot_norm, ''), '_')
-            ELSE COALESCE(NULLIF(z.lot_id, ''), '_')
-          END
+          COALESCE(NULLIF(z.lot_norm, ''), '_')
         ORDER BY z.signing_value, z.contract_date, z.document_number, z.id
       ) AS contract_ordinal
   FROM (
-    SELECT c.id, c.unp, c.source, c.contract_number, c.lot_id, c.signing_value, c.contract_date,
+    SELECT c.id, c.unp, c.contract_number, c.lot_id, c.signing_value, c.contract_date,
       c.document_number, ci.bidder_key,
       v.amount,
       CASE
@@ -803,11 +816,20 @@ FROM (
     JOIN contractor_identity ci
       ON c.contractor_eik IS ci.eik_raw AND c.contractor_name IS ci.name_raw
     JOIN raw_contract_value_results v ON v.id = c.id
+    WHERE c.source LIKE 'eop:%'
   ) z
 ) x
 WHERE x.amount IS NOT NULL
   AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
   AND EXISTS (SELECT 1 FROM bidders  b  WHERE b.id  = x.bidder_key);
+
+INSERT INTO raw_contract_admissions (raw_id, contract_id, bidder_id, amount, lot_id)
+SELECT x.raw_id, x.contract_id, x.bidder_key, x.amount,
+  CASE WHEN x.lot_id IS NOT NULL AND TRIM(x.lot_id) <> '' THEN 'lot:' || x.unp || ':' || x.lot_id END
+FROM raw_ocds_contract_ids x
+WHERE x.amount IS NOT NULL
+  AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
+  AND EXISTS (SELECT 1 FROM bidders b WHERE b.id = x.bidder_key);
 
 DELETE FROM raw_contract_buyer_tenders;
 DELETE FROM raw_previous_ocds_contract_buyers;
@@ -823,7 +845,7 @@ INSERT OR IGNORE INTO contracts
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
    eauction, framework, accelerated, strategic, own_estimate_source, own_estimate_value, own_estimate_currency,
-   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete)
+   signing_currency_raw, signing_contractor_eik, signing_contractor_status, ocds_signing_incomplete, signing_value_original, signing_value_mills)
 SELECT
   p.contract_id,
   't:' || x.unp,
@@ -833,7 +855,7 @@ SELECT
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
   x.contract_number,
-  x.signing_value,
+  i.signing_value,
   x.current_value,
   v.current_value_currency,
   COALESCE(x.annex_count, 0),
@@ -870,11 +892,14 @@ SELECT
   x.currency,
   ci.eik_clean,
   ci.eik_status,
-  COALESCE(s.incomplete, 0)
+  COALESCE(s.incomplete, 0),
+  x.signing_value,
+  x.signing_value_mills
 FROM raw_contract_admissions p
 JOIN raw_contracts x ON x.id = p.raw_id
 JOIN raw_serving_contract_authorities a ON a.id = x.id
 JOIN raw_contract_value_results v ON v.id = x.id
+JOIN raw_contract_value_inputs i ON i.id = x.id
 JOIN contractor_identity ci ON x.contractor_eik IS ci.eik_raw AND x.contractor_name IS ci.name_raw
 LEFT JOIN incomplete_signings s ON s.unp = x.unp AND s.contract_number = x.contract_number;
 

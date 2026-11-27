@@ -1031,6 +1031,12 @@ function slotRun(
     if (args[0] === 'scripts/import.mjs') {
       const workDb = args.find((a) => a.startsWith('--work-db=')).slice(10);
       copyFileSync(s.snapshot, workDb);
+      const idsFile = args.find((a) => a.startsWith('--ocds-legacy-ids=')).split('=')[1];
+      const ids = JSON.parse(readFileSync(idsFile, 'utf8'));
+      exec(
+        workDb,
+        insertStatements('ocds_legacy_contract_ids', ['id', 'document_number'], ids).join(''),
+      );
       // The import's normalisation also leaves a table no migration makes: its own counts, which the
       // integrity gate reconciles the slot against.
       exec(
@@ -1167,6 +1173,23 @@ test('the rebuild captures live links and their evidence in paced queries', asyn
   } finally {
     captured.close();
   }
+});
+
+test('a fresh slot imports the original OCDS URL reservations from live', async (t) => {
+  const s = builtSlot(t);
+  const live = new DatabaseSync(':memory:');
+  t.after(() => live.close());
+  live.exec(`CREATE TABLE contracts (id TEXT PRIMARY KEY, document_number TEXT);
+    INSERT INTO contracts VALUES ('c:o:test:1', 'TEST-LEGACY-SIGNING'), ('c:e:test:1', 'TEST-EOP');`);
+  const run = slotRun(s, { runId: 'legacy-ids', readLive: (sql) => live.prepare(sql).all() });
+  await run.ops.import();
+  assert.deepEqual(
+    s.slot
+      .prepare('SELECT id, document_number FROM ocds_legacy_contract_ids')
+      .all()
+      .map((row) => ({ ...row })),
+    [{ id: 'c:o:test:1', document_number: 'TEST-LEGACY-SIGNING' }],
+  );
 });
 
 for (const partial of ['empty', 'missing seal with maximum retained'])

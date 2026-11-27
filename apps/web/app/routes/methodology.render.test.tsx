@@ -77,6 +77,21 @@ describe('/methodology', () => {
     );
   });
 
+  it('explains the signing correction and contractual amendment value rules', () => {
+    const t = text();
+    expect(t).toContain('по-висока или по-ниска от стойността при сключване');
+    expect(t).toContain('Отразяваме техническа поправка в стойността при сключване');
+    expect(t).toContain('когато източникът изрично потвърждава грешката');
+    expect(t).toContain('по номер, дата на подписване и валута');
+    expect(t).toContain('една и съща първоначална сума');
+    expect(t).toContain('поне половин стотна');
+    expect(t).toContain('отчитаме последната по момента на публикуване');
+    expect(t).toMatch(/„История на измененията“ включваме публикации/);
+    expect(t).toContain('даваме предимство на ЕОП пред OCDS');
+    expect(t).toContain('преминава проверките за съпоставимост');
+    expect(t).not.toContain('законно я е увеличил');
+  });
+
   it('cites the edition of the merger guidelines and writes thresholds with a decimal comma', () => {
     const t = text();
     expect(t).toContain('2010');

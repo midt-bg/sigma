@@ -126,6 +126,14 @@ test('refuses when the probe cannot answer for every cleared table', () => {
   assert.match(r.stderr, /could not read the corpus/);
 });
 
+test('refuses a partial full derive when only pending signing corrections exist', () => {
+  const r = runImport(PARTIAL, { populated: 'ocds_amendment_publications' });
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.refused, true);
+  assert.equal(r.loadStarted, false);
+  assert.match(r.stderr, /ocds_amendment_publications/);
+});
+
 test('an empty corpus is the initial backfill and passes', () => {
   const r = runImport(PARTIAL, { populated: '' });
   assert.equal(r.refused, false, r.stderr);
@@ -162,6 +170,8 @@ const CLEARED = [
   'home_totals',
   'contract_co_authorities',
   'ocds_contract_buyers',
+  'ocds_amendment_publications',
+  'ocds_unpriced_signings',
   'contracts',
   'parties',
   'lots',
@@ -178,6 +188,13 @@ test('the probe covers every table the SQL clears, not a subset', () => {
   for (const table of CLEARED) {
     assert.match(sql, new RegExp(`FROM ${table}\\)`), `probe is missing ${table}`);
   }
+});
+
+test('refuses a partial rebuild when only unpriced OCDS evidence is retained', () => {
+  const r = runImport(PARTIAL, { populated: 'ocds_unpriced_signings' });
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.loadStarted, false);
+  assert.match(r.stderr, /including ocds_unpriced_signings/);
 });
 
 test('the hand-written list still matches what the SQL clears', () => {
@@ -202,4 +219,60 @@ test('a refusal leaves no transient staging behind', () => {
     files.some((f) => /drop-transient-staging\.sql$/.test(String(f))),
     'the guard should tear down the staging it found created',
   );
+});
+
+test('--work-db shipping refuses a partial window when only unpriced OCDS evidence is retained', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-workdb-'));
+  try {
+    const workDb = join(dir, 'work.sqlite');
+    writeFileSync(workDb, 'PRE-EXISTING');
+    const r = runImport([`--work-db=${workDb}`, '--from=2026-06-01'], {
+      populated: 'ocds_unpriced_signings',
+    });
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.refused, true, r.stderr);
+    assert.equal(r.loadStarted, false, 'load-eop must not start after a refusal');
+    assert.ok(
+      !r.calls.some((c) => c[0] === 'node' && String(c[1]).includes('ship-domain')),
+      'ship-domain must not start after a refusal',
+    );
+    assert.match(r.stderr, /including ocds_unpriced_signings/);
+    assert.equal(
+      readFileSync(workDb, 'utf8'),
+      'PRE-EXISTING',
+      'a refusal must not delete the caller work DB',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--work-db shipping refuses a partial window when the probe cannot answer for every cleared table', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-workdb-missing-'));
+  try {
+    const workDb = join(dir, 'work.sqlite');
+    const r = runImport([`--work-db=${workDb}`, '--from=2026-06-01'], {
+      populated: 'contracts',
+      missing: 'ocds_unpriced_signings',
+    });
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.loadStarted, false);
+    assert.match(r.stderr, /could not read the corpus/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--work-db --no-ship does not probe or refuse a partial window against the served target', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-workdb-noship-'));
+  try {
+    const workDb = join(dir, 'work.sqlite');
+    const r = runImport([`--work-db=${workDb}`, '--from=2026-06-01', '--no-ship'], {
+      populated: 'ocds_unpriced_signings',
+    });
+    assert.equal(r.refused, false, r.stderr);
+    assert.equal(r.probe, undefined, '--no-ship must not probe the served target');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

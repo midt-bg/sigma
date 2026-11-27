@@ -5,6 +5,7 @@ import {
   MAX_SQL_TEXT_LEN,
   assertWellFormedSqlLiteral,
   baseSqlLiteral,
+  decimalMills,
   escapeSqlText,
   mapBaseRecord,
   supplierIdSqlLiteral,
@@ -46,7 +47,17 @@ describe('base EOP mapper', () => {
     expect(row?.authority_eik).toBe('001234567');
     expect(row?.contractor_eik).toBe('000987654');
     expect(row?.signing_value).toBe(1234.56);
+    expect(row?.signing_value_mills).toBe('1234560.');
     expect(row?.bids_received).toBe(3);
+  });
+
+  it('keeps source decimal precision when splitting whole and fractional mills', () => {
+    expect(decimalMills(10_000_000_000, '10000000000.00000001')).toBe('10000000000000.00001');
+    expect(decimalMills(100, '1e2')).toBe('100000.');
+    expect(decimalMills(1.2e-5, 1.2e-5)).toBe('0.012');
+    expect(decimalMills(0, '1e-500')).toBe('0.');
+    expect(decimalMills(16, '0x10')).toBe('16000.');
+    expect(decimalMills(null, undefined)).toBeNull();
   });
 
   it('applies tender-specific inverse and enum coercions', () => {

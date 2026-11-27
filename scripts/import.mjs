@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { parseArgs } from 'node:util';
 import {
   computeCatchupWindow,
@@ -28,6 +29,7 @@ import {
 import { FX_LOOKBACK_DAYS } from '../packages/ingest/src/fx.ts';
 import { assertIntegrity } from './integrity-checks.mjs';
 import { buildAnomalyReport, formatAnomalyReport } from './anomaly-report.mjs';
+import { LEGACY_OCDS_IDS_TABLE, readLegacyOcdsContractIds } from './ocds-legacy-contract-ids.mjs';
 
 // Per-refresh anomaly report (#100): cross-row outliers the per-row value_flag can't see. OBSERVES
 // only — wrapped so a detector bug or an odd corpus can never fail the import (contrast assertIntegrity,
@@ -298,8 +300,9 @@ function validateDeriveMode(mode) {
 // with no contracts but populated tenders, bidders or authorities is exactly the state a half-failed
 // run leaves behind, and the narrow-window rebuild would then wipe those too while the guard waved
 // it through. The list comes out of normalize-raw.sql itself (see @full-clear there).
-function assertDeriveWindowSafe(mode, from) {
+function assertDeriveWindowSafe(mode, from, { cleanupStaging = true } = {}) {
   if (mode !== 'full') return;
+  if (fullDeriveIsSafe({ windowFrom: from, feedStart: DEFAULT_FROM, hasCorpus: true })) return;
   const tables = fullClearTables(readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8'));
   if (tables.length === 0)
     throw new Error(
@@ -317,7 +320,9 @@ function assertDeriveWindowSafe(mode, from) {
       `!! refusing --derive=full: could not read the corpus. Every table normalize-raw.sql clears ` +
         `(${tables.join(', ')}) must be answerable before a rebuild may drop it.`,
     );
-    execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+    if (cleanupStaging) {
+      execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+    }
     process.exit(1);
   }
   const populated = Object.entries(row)
@@ -335,7 +340,9 @@ function assertDeriveWindowSafe(mode, from) {
       `   Use --derive=slice for an incremental refresh, or reload the whole feed with ` +
       `--from=${DEFAULT_FROM}.`,
   );
-  execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+  if (cleanupStaging) {
+    execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+  }
   process.exit(1);
 }
 
@@ -425,6 +432,23 @@ async function runWorkBackfill() {
     }
   }
 
+  const windowFrom = plan ? plan.from : String(cli.from || DEFAULT_FROM);
+  if (!cli['no-ship']) {
+    // Shipping replaces every served table wholesale, so a partial window over a populated target
+    // drops earlier corpus rows (including retained unpriced signing evidence). Check the served
+    // target before deleting the caller's work DB or starting any load.
+    assertDeriveWindowSafe('full', windowFrom, { cleanupStaging: false });
+  }
+
+  const legacyFile = cli['ocds-legacy-ids'];
+  if (legacyFile === true) throw new Error('--ocds-legacy-ids requires a JSON file path');
+  const legacyIds =
+    typeof legacyFile === 'string'
+      ? JSON.parse(readFileSync(resolve(legacyFile), 'utf8'))
+      : cli['no-ship']
+        ? []
+        : readLegacyOcdsContractIds(d1);
+  if (!Array.isArray(legacyIds)) throw new Error('Expected an array of OCDS URL reservations');
   const workDir = dirname(workDb);
   mkdirSync(workDir, { recursive: true });
   if (existsSync(workDb)) rmSync(workDb, { force: true });
@@ -435,6 +459,19 @@ async function runWorkBackfill() {
     .filter((name) => /^\d+.*\.sql$/.test(name))
     .sort();
   for (const migration of migrations) sqliteFile(workDb, resolve(migrationsDir, migration));
+  if (legacyIds.length > 0) {
+    const db = new DatabaseSync(workDb);
+    try {
+      db.exec('BEGIN');
+      const insert = db.prepare(
+        `INSERT INTO ${LEGACY_OCDS_IDS_TABLE} (id, document_number) VALUES (?, ?)`,
+      );
+      for (const { id, document_number } of legacyIds) insert.run(id, document_number);
+      db.exec('COMMIT');
+    } finally {
+      db.close();
+    }
+  }
   sqliteFile(workDb, resolve(root, 'scripts/work-staging-schema.sql'));
 
   const loadFlags = plan ? rangeFlags(plan.from, plan.to) : explicitRangeFlags();

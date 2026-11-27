@@ -282,6 +282,77 @@ describe('releaseToContracts', () => {
 });
 
 describe('releaseToAmendments', () => {
+  it.each([
+    'С допълнителното споразумение се заменя приложение. Техническа грешка в стойността на договора.',
+    'Страните удължават срока. Техническа грешка в стойността на договора.',
+    'Промяната е на основание член 116. Техническа грешка в стойността на договора.',
+    'Не е установена техническа грешка в стойността на договора.',
+    'Няма техническа грешка в стойността на договора.',
+    'Техническа грешка в стойността на договора не е установена.',
+  ])('keeps update text without affirmative signing correction evidence (%s)', (description) => {
+    expect(
+      releaseToAmendments(
+        {
+          ...release,
+          tag: ['contractUpdate'],
+          contracts: [{ id: 'TEST', amendments: [{ description }] }],
+        },
+        meta,
+      ),
+    ).toMatchObject([{ signing_correction: 0 }]);
+  });
+
+  it('recognizes a structured amendment without prose and gives structured changes precedence', () => {
+    const changes = [{ property: 'period/endDate', former_value: '2026-05-01' }];
+    const structured = { id: 'TEST-AMENDMENT', date: '2026-05-20', changes };
+    const rows = releaseToAmendments(
+      {
+        ...release,
+        tag: ['contractUpdate'],
+        contracts: [
+          { id: 'TEST-STRUCTURED', amendments: [structured] },
+          {
+            id: 'TEST-TERM',
+            amendments: [{ changes, description: 'Техническа грешка в стойността на договора.' }],
+          },
+        ],
+      },
+      meta,
+    );
+    expect(rows).toMatchObject([
+      { signing_correction: 0, description: null, value_after: null },
+      { signing_correction: 0, value_after: null },
+    ]);
+  });
+
+  it.each([
+    ['2026-05-20T11:14:15.00012300+02:00', '2026-05-20T09:14:15.000123Z'],
+    ['2026-05-20T99:14:15Z', null],
+    ['2026-05-20T09:14:15', null],
+    [undefined, null],
+  ])('retains the source timestamp for signing corrections (%s)', (date, published_at) => {
+    const rows = releaseToAmendments(
+      {
+        ...release,
+        date,
+        tag: ['contractUpdate'],
+        contracts: [
+          {
+            id: 'TEST-TIMESTAMP',
+            amendments: [
+              {
+                description: 'Поправя се техническа грешка в стойността на договора.',
+                changes: [{ property: '/value/amount' }],
+              },
+            ],
+          },
+        ],
+      },
+      meta,
+    );
+    expect(rows).toMatchObject([{ signing_correction: 1, published_at }]);
+  });
+
   it('drops amendment rows without a contract number', () => {
     const rows = releaseToAmendments(
       {
@@ -336,9 +407,52 @@ describe('releaseToAmendments', () => {
   });
 
   it('captures a null tender_ext_id when the release has no tender.id', () => {
-    const rows = releaseToAmendments({ ...release, tag: ['contractUpdate'] }, meta);
+    const rows = releaseToAmendments({ ...release, tag: ['contractAmendment'] }, meta);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.tender_ext_id).toBeNull();
+  });
+
+  it('reads technical signing evidence from a contract update and keeps explicit annex evidence', () => {
+    const technical = { rationale: 'Очевидна фактическа грешка в стойността на договора.' };
+    const [correction, annex] = releaseToAmendments(
+      {
+        ...release,
+        tag: ['contractUpdate'],
+        contracts: [
+          { id: 'SIGNING', value: { amount: 720, currency: 'EUR' }, amendments: [technical] },
+          {
+            id: 'ANNEX',
+            amendments: [{ ...technical, description: 'Сключено е допълнително споразумение.' }],
+          },
+          { id: 'METADATA' },
+        ],
+      },
+      meta,
+    );
+    expect(correction).toMatchObject({
+      signing_correction: 1,
+      value_before: 720,
+      value_after: null,
+    });
+    expect(annex).toMatchObject({ signing_correction: 0, value_after: null });
+    expect(releaseToAmendments({ ...release, tag: ['contractUpdate'] }, meta)).toMatchObject([
+      { metadata_only: 1, document_number: release.id },
+    ]);
+    for (const update of [{ id: undefined }, { ocid: undefined }]) {
+      expect(releaseToAmendments({ ...release, ...update, tag: ['contractUpdate'] }, meta)).toEqual(
+        [],
+      );
+    }
+    expect(
+      releaseToContracts(
+        {
+          ...release,
+          tag: ['contract', 'contractUpdate'],
+          contracts: [{ id: 'CORRECTION', amendments: [technical] }, { id: 'ORIGINAL' }],
+        },
+        meta,
+      ).map((c) => c.contract_number),
+    ).toEqual(['ORIGINAL']);
   });
 });
 
@@ -718,7 +832,7 @@ describe('branch completion — parties, lots, catch-up window', () => {
 });
 
 describe('branch completion — amendments, empty/full party + lot shapes', () => {
-  it('releaseToAmendments reads the last amendment and nulls when none/idless', () => {
+  it('releaseToAmendments reads the last contractual amendment and ignores metadata-only updates', () => {
     const rows = releaseToAmendments(
       {
         tag: ['contractUpdate'],
@@ -728,19 +842,18 @@ describe('branch completion — amendments, empty/full party + lot shapes', () =
             id: 'c1',
             amendments: [{ description: 'първо' }, { description: 'финал', rationale: 'причина' }],
           },
-          { id: 'c2' }, // no amendments → amd null → description/reason null
+          { id: 'c2' }, // no amendment evidence
           { title: 'no id' }, // idless → skipped
         ],
       },
       meta,
     );
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       contract_number: 'c1',
       description: 'финал',
       reason: 'причина',
     });
-    expect(rows[1]).toMatchObject({ contract_number: 'c2', description: null, reason: null });
   });
 
   it('releaseToParties returns [] for a release with no parties', () => {

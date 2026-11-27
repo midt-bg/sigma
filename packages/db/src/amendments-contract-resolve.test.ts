@@ -82,6 +82,8 @@ beforeEach(() => {
   readScript(db, valueSuspectMigration);
   readScript(db, provenanceMigration);
   readScript(db, resolve(root, 'packages/db/migrations/0029_contract_value_evidence.sql'));
+  readScript(db, resolve(root, 'packages/db/migrations/0030_ocds_signing_evidence.sql'));
+  readScript(db, resolve(root, 'packages/db/migrations/0031_contract_signing_corrections.sql'));
   readScript(db, workStagingSchema);
 });
 
@@ -468,34 +470,34 @@ describe('#306 amendment→contract value-anchor resolver', () => {
     ).toEqual([{ contract_number: '45001' }]); // unchanged → no blank-vs-blank match
   });
 
-  it('does NOT resurrect an OCDS twin: resolver runs before the prefer-EOP dedup (review todorkolev #1 blocker)', () => {
-    // Contract Д-226 already has an OCDS annex on it. An EOP annex carries the unlinked internal number
-    // 148846 and value_before = signing (5000). Because the resolver runs BEFORE the #286 prefer-EOP DELETE,
-    // the EOP annex is moved onto Д-226 first, the OCDS twin is then dropped, and annex_count = 1. If the
+  it('does NOT resurrect an OCDS twin: resolver runs before the prefer-EOP dedup', () => {
+    // Contract TEST-FILING-TWIN already has an OCDS annex on it. An EOP annex carries the unlinked internal number
+    // TEST-ANNEX-TWIN and value_before = signing (5000). Because the resolver runs BEFORE the #286 prefer-EOP filter,
+    // the EOP annex is moved onto TEST-FILING-TWIN first, the OCDS twin is then dropped, and annex_count = 1. If the
     // order were reversed the twin would survive and annex_count would be 2 (the twin-dedup #303 gate would
     // then hard-fail the whole derive).
     sqlite(
       db,
       `INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency) VALUES
-         ('eop:contracts:2026-03-05','2026-03-05','00090-2020-0001','Д-226',5000,'BGN');
+         ('eop:contracts:2026-03-05','2026-03-05','99990-2020-0001','TEST-FILING-TWIN',5000,'BGN');
        INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
-         ('ocds:annexes:2026-03-05','2026-03-05','00090-2020-0001','Д-226','2026-03-05','ocds-e82gsb-1',5000,NULL,'BGN'),
-         ('eop:annexes:2026-03-05','2026-03-05','00090-2020-0001','148846','2026-03-05','148846-1',5000,4500,'BGN');`,
+         ('ocds:annexes:2026-03-05','2026-03-05','99990-2020-0001','TEST-FILING-TWIN','2026-03-05','TEST-OCDS-TWIN-NOTICE',5000,NULL,'BGN'),
+         ('eop:annexes:2026-03-05','2026-03-05','99990-2020-0001','TEST-ANNEX-TWIN','2026-03-05','TEST-EOP-TWIN-NOTICE',5000,4500,'BGN');`,
     );
     runFullDerive(db);
 
-    // Exactly one annex survives on Д-226 (the EOP one), and it drives current_value.
+    // Exactly one annex survives on TEST-FILING-TWIN (the EOP one), and it drives current_value.
     expect(
       sqliteJson<{ annex_count: number; current_value: number }>(
         db,
-        "SELECT annex_count, current_value FROM raw_contracts WHERE contract_number='Д-226'",
+        "SELECT annex_count, current_value FROM raw_contracts WHERE contract_number='TEST-FILING-TWIN'",
       ),
     ).toEqual([{ annex_count: 1, current_value: 4500 }]);
-    // No twin duplication: exactly one row lands on Д-226 for this procedure.
+    // No twin duplication: exactly one row lands on TEST-FILING-TWIN for this procedure.
     expect(
       sqliteJson<{ n: number }>(
         db,
-        "SELECT COUNT(*) AS n FROM raw_amendments WHERE unp='00090-2020-0001' AND contract_number='Д-226'",
+        "SELECT COUNT(*) AS n FROM raw_amendment_publications WHERE unp='99990-2020-0001' AND contract_number='TEST-FILING-TWIN'",
       ),
     ).toEqual([{ n: 1 }]);
   });
@@ -635,7 +637,7 @@ describe('#306 amendment→contract value-anchor resolver', () => {
   // The EOP annex is published under ANNEX-T1, a number no contract carries, and the resolver moves it onto
   // FILING-T1 by value. The OCDS release of the same annex arrives keyed by its OCID and still carries
   // ANNEX-T1; derive-amendments.sql recovers its УНП through the tender.id bridge, AFTER the resolver ran.
-  // It now meets its EOP twin only through contract_number_raw, and the prefer-EOP DELETE must match it there.
+  // It now meets its EOP twin only through contract_number_raw, and the prefer-EOP filter must match it there.
   describe('prefer-EOP dedup on the annex-side number', () => {
     const twinFixture = `
       INSERT INTO raw_tenders (source, fetched_at, unp, tender_id) VALUES
@@ -659,7 +661,7 @@ describe('#306 amendment→contract value-anchor resolver', () => {
     const ocdsRows = () =>
       sqliteJson<{ unp: string; contract_number: string }>(
         db,
-        "SELECT unp, contract_number FROM raw_amendments WHERE source LIKE 'ocds:%' ORDER BY unp, contract_number",
+        "SELECT unp, contract_number FROM raw_amendment_publications WHERE source LIKE 'ocds:%' ORDER BY unp, contract_number",
       );
     const rollup = () =>
       sqliteJson<{
