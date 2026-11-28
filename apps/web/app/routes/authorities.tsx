@@ -145,7 +145,13 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
           lede="Всяка институция, възложила поне един договор. Подреди ги по обща стойност на договорите, по брой договори или по средна стойност. Филтрите остават в адреса."
         />
         <div className="split">
-          <FilterRail groups={groups} sort={sort} clearHref="/authorities" csvHref={csvHref} />
+          <FilterRail
+            groups={groups}
+            sort={sort}
+            clearHref="/authorities"
+            csvHref={csvHref}
+            globalCounts
+          />
           <section id="results" tabIndex={-1}>
             <ListControls
               base={sp}

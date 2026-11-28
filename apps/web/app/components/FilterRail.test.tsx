@@ -8,6 +8,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider, useSearchParams } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { count } from '@sigma/shared';
 import { FilterRail, type FilterGroup } from './FilterRail';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -38,7 +39,12 @@ const year: GroupSpec = {
   ],
 };
 
-async function render(groups: GroupSpec[], url: string, csvHref?: string) {
+async function render(
+  groups: GroupSpec[],
+  url: string,
+  csvHref?: string,
+  { globalCounts = false }: { globalCounts?: boolean } = {},
+) {
   function Rail() {
     const [sp] = useSearchParams();
     return (
@@ -47,6 +53,7 @@ async function render(groups: GroupSpec[], url: string, csvHref?: string) {
         sort={sp.get('sort') ?? 'date-desc'}
         clearHref="/contracts"
         csvHref={csvHref}
+        globalCounts={globalCounts}
       />
     );
   }
@@ -267,5 +274,69 @@ describe('FilterRail', () => {
       open: false,
     });
     expect(box('sector', '72').checked).toBe(false);
+  });
+});
+
+// The list pages read their option counts from precomputed national rows (facet_counts / the rollups), never
+// from the current selection — the cost a live count per option would put on D1. They are right for the whole
+// list only, so the rail labels them as such and leaves them out once a search or a filter narrows it.
+describe('FilterRail — national counts', () => {
+  const value: GroupSpec = {
+    key: 'value',
+    label: 'Стойност',
+    type: 'radio',
+    allCount: 1205,
+    options: [{ value: 'lt100k', label: 'Под 100 хил. €', count: 900 }],
+  };
+  const counts = () =>
+    [...container.querySelectorAll('aside label .muted.small')].map((e) => e.textContent);
+  const note = () =>
+    container.querySelector('aside form > input[name="sort"] + p.small.muted')?.textContent ?? '';
+  const search = '/contracts?q=%D1%81%D0%BD%D1%8F%D0%B3';
+
+  it('shows them on the whole list, labelled as the totals in the database', async () => {
+    await render([year, value], '/contracts', undefined, { globalCounts: true });
+    // Options in order, the radio group's „all" option before its own options.
+    expect(counts()).toEqual([1200, 5, 1205, 900].map((n) => count(n)));
+    expect(note()).toBe('Числата до филтрите са общо в базата.');
+  });
+
+  it('leaves them out for a search, and says why', async () => {
+    await render([year, value], search, undefined, { globalCounts: true });
+    expect(counts()).toEqual([]);
+    expect(note()).toBe(
+      'Броят до филтрите е общо в базата, затова не се показва при търсене или избран филтър.',
+    );
+  });
+
+  it('leaves them out for combined filters and for a scope without a control, and brings them back on clear', async () => {
+    await render([year, value], '/contracts?year=2024&value=lt100k', undefined, {
+      globalCounts: true,
+    });
+    expect(counts()).toEqual([]);
+    expect(
+      container.querySelector<HTMLAnchorElement>('aside a[href="/contracts"]')?.textContent,
+    ).toBe('Изчисти филтрите');
+
+    await act(async () => {
+      await router.navigate('/contracts');
+    });
+    expect(counts()).toHaveLength(4);
+
+    await act(async () => {
+      await router.navigate('/contracts?bids=1');
+    });
+    expect(counts()).toEqual([]);
+  });
+
+  it('treats an empty value as no filter', async () => {
+    await render([year], '/contracts?q=&year=', undefined, { globalCounts: true });
+    expect(counts()).toHaveLength(2);
+  });
+
+  it('keeps counts that follow the selection, on a rail without national counts', async () => {
+    await render([year], `${search}&year=2024`);
+    expect(counts()).toHaveLength(2);
+    expect(note()).toBe('');
   });
 });
