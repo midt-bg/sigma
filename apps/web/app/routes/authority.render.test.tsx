@@ -32,6 +32,7 @@ const authority: AuthorityDetail = {
   periodFirst: '2021-01-01',
   periodLast: '2025-06-30',
   suspect: 0,
+  missingValue: 0,
   frameworkAgreements: 0,
   frameworkCeilingEur: 0,
   topContractors: [],
@@ -246,6 +247,7 @@ const fullData = {
     settlement: null,
     avgBids: null,
     suspect: 3,
+    missingValue: 1,
     frameworkAgreements: 2,
     frameworkCeilingEur: 2_000_000,
     sectors: [
@@ -289,6 +291,10 @@ describe('/authorities/:eik — the profile', () => {
     const facts = container.querySelector('dl')!.textContent;
     expect(facts).toContain('Вероятно грешна или липсваща стойност3 договора');
     expect(facts).toContain('Рамкови споразумения2 · таван');
+    // 20 summed contracts; the list behind them also has the 2 agreements and the 1 contract with no value.
+    expect(facts).toContain(
+      'Брой договори20със стойност; в списъка са 23 — и 2 рамкови споразумения и 1 без стойност',
+    );
     expect(facts).toContain('2 изпълнители');
     expect(facts).toContain('в т.ч. 1 — на лице от самата институция');
     expect(facts).toContain('няма данни'); // no seat
@@ -311,6 +317,16 @@ describe('/authorities/:eik — the profile', () => {
     const block = section('single-offer')!.textContent;
     expect(block).toContain('Няма договори с известен брой оферти.');
     expect(block).toContain('Няма класифицирани договори по тип процедура.');
+  });
+});
+
+describe('/authorities/:eik — the contract count', () => {
+  it('adds no note when the count is the whole contracts list', async () => {
+    await mount(baseData);
+
+    const facts = container.querySelector('dl')!.textContent;
+    expect(facts).toContain('Брой договори20Период');
+    expect(facts).not.toContain('в списъка са');
   });
 });
 

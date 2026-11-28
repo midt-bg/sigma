@@ -630,6 +630,8 @@ describe('getCompany', () => {
     expect(d.avgBids).toBe(2.3); // 2.34 rounded to 1dp
     // the list's badge for the company: 4 value_low rows (summed) + 3 with no usable value
     expect(d.suspect).toBe(7);
+    // The 3 with no value are in the contracts list but not in the summed count, like the agreement.
+    expect(d.missingValue).toBe(3);
     // A framework agreement is disclosed apart, with its ceiling — not as an unconfirmed value.
     expect(d.frameworkAgreements).toBe(1);
     expect(d.frameworkCeilingEur).toBe(500_000);
@@ -706,6 +708,7 @@ describe('getCompany', () => {
     expect(d.legalForm).toBeNull();
     expect(d.bids).toEqual({ one: 0, two: 0, three: 0, fourPlus: 0, unknown: 0 });
     expect(d.suspect).toBe(0);
+    expect(d.missingValue).toBe(0);
     expect(d.frameworkAgreements).toBe(0);
     expect(d.frameworkCeilingEur).toBe(0);
     expect(d.sectorSharePct).toBeNull();
@@ -780,6 +783,7 @@ describe('getAuthority', () => {
     expect(d.euSharePct).toBeCloseTo(0.25);
     expect(d.avgBids).toBe(3.2); // 3.16 → 3.2
     expect(d.suspect).toBe(7); // 5 value_low + 2 with no usable value
+    expect(d.missingValue).toBe(2); // in the list, not in the summed count
     expect(d.frameworkAgreements).toBe(2);
     expect(d.frameworkCeilingEur).toBe(1_000_000);
     expect(d.topContractors[0]).toMatchObject({ slug: '1', wonEur: 120000, contracts: 8 });
@@ -887,6 +891,7 @@ describe('getAuthority', () => {
     const d = (await getAuthority(db, 'auth:123456789'))!;
     expect(d.avgBids).toBeNull();
     expect(d.suspect).toBe(0);
+    expect(d.missingValue).toBe(0);
     expect(d.frameworkAgreements).toBe(0);
     expect(d.frameworkCeilingEur).toBe(0);
     expect(d.sectors).toHaveLength(6); // 7 valid sectors → 6 shown + tail

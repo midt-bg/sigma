@@ -59,6 +59,7 @@ const richCompany: CompanyDetail = {
   periodFirst: '2021-01-01',
   periodLast: '2025-04-03',
   suspect: 2,
+  missingValue: 0,
   frameworkAgreements: 0,
   frameworkCeilingEur: 0,
   topAuthorities: [
@@ -341,6 +342,7 @@ describe('/companies/:eik — procurement profile', () => {
       euSharePct: 0,
       avgBids: null,
       suspect: 0,
+      missingValue: 0,
       frameworkAgreements: 1,
       frameworkCeilingEur: 1_000_000,
       topAuthorities: [],
@@ -369,6 +371,26 @@ describe('/companies/:eik — procurement profile', () => {
     expect(container.textContent).toContain('не са обединение');
     expect(container.textContent).toContain('Рамкови споразумения');
     expect(container.textContent).toMatch(/1 · таван 1\sмлн/);
+  });
+
+  it('says which rows of its contracts list the summed count leaves out', async () => {
+    // 8 ordinary contracts with a value, plus 3 framework agreements (a ceiling, no value) the list also shows.
+    await mount({
+      ...baseData,
+      company: { ...richCompany, frameworkAgreements: 3, frameworkCeilingEur: 900_000 },
+    });
+
+    const facts = container.querySelector('dl')!.textContent;
+    expect(facts).toContain(
+      'Брой договори8със стойност; в списъка са 11 — и 3 рамкови споразумения',
+    );
+    expect(facts).not.toContain('без стойност');
+  });
+
+  it('adds no note when the summed count is the whole contracts list', async () => {
+    await mount(baseData);
+
+    expect(container.querySelector('dl')!.textContent).not.toContain('в списъка са');
   });
 
   it('quotes a consortium membership note when the source has no structured member list', async () => {
