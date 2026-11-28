@@ -6,6 +6,7 @@ import type { Route } from './+types/home';
 import { PageHeader } from '../components/PageHeader';
 import { SmartSearch } from '../components/SmartSearch';
 import { TotalsStrip } from '../components/TotalsStrip';
+import { EmptyDataNotice } from '../components/EmptyDataNotice';
 import { RankedBars } from '../components/RankedBars';
 import { SingleOfferPortion } from '../components/SingleOfferPortion';
 import { Abbr, NewTabLink, OwnershipChip } from '../components/ui';
@@ -93,6 +94,22 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     singleOffer,
     partialStartYear,
   } = loaderData;
+  // No totals means nothing is loaded; zeros and empty leaderboards would read as real findings.
+  if (totals.contracts === 0) {
+    return (
+      <main id="main">
+        <PageHeader
+          kicker="Обществени поръчки"
+          title={
+            <>
+              Къде отиват <em>парите</em> на държавата?
+            </>
+          }
+        />
+        <EmptyDataNotice />
+      </main>
+    );
+  }
   const endYear = coverageEndYear(totals.asOf);
   const range = coverageRange(endYear);
   return (
