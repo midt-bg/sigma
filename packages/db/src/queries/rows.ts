@@ -24,6 +24,9 @@ const TYPE_LABELS: Record<string, string> = {
   друго: 'друго',
 };
 
+/** The authority type groups the site names — what an `?type=` value can be and still mean something. */
+export const AUTHORITY_TYPE_GROUPS: readonly string[] = Object.keys(TYPE_LABELS);
+
 export function typeLabel(typeGroup: string | null): string | null {
   if (!typeGroup) return null;
   return TYPE_LABELS[typeGroup] ?? typeGroup;

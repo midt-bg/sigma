@@ -10,7 +10,9 @@ import {
 import type { Route } from './+types/contracts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { FilterRail, type FilterGroup } from '../components/FilterRail';
+import { FilterRail } from '../components/FilterRail';
+import { ActiveFilterNotes } from '../components/ActiveFilterNotes';
+import { activeFilterState } from '../lib/active-filters';
 import { ListControls } from '../components/ListControls';
 import { Pagination } from '../components/Pagination';
 import { Abbr, Callout } from '../components/ui';
@@ -94,7 +96,8 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
   const filterBidderName = fBidder ? (result.items[0]?.bidderDisplayName ?? null) : null;
   const busy = useNavigation().state !== 'idle';
 
-  const groups: FilterGroup[] = [
+  // The rail as the list applies it, and what the address asks for that the rail would not show.
+  const { groups, hidden, ignored } = activeFilterState(sp, [
     buildSectorGroup(
       facets.sectors.map((s) => ({ value: s.value, label: s.label, count: s.count })),
       getMulti(sp, 'sector'),
@@ -130,7 +133,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
         { value: 'national', label: 'Само без финансиране от ЕС' },
       ],
     },
-  ];
+  ]);
 
   const startRank = leaderboardRankOffset(nav.page, PAGE_SIZE.contracts);
 
@@ -233,6 +236,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
               </p>
             )}
 
+            <ActiveFilterNotes hidden={hidden} ignored={ignored} />
             {result.items.length === 0 ? (
               <p className="muted">
                 Няма резултати за избраните филтри. <Link to="/contracts">Изчисти филтрите</Link>
