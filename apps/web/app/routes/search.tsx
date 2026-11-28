@@ -10,6 +10,7 @@ import { kindLabel } from '../lib/search-labels';
 import { Abbr, Callout, Chip, OwnershipChip } from '../components/ui';
 import { cached } from '../lib/cache';
 import { personName } from '../lib/person-name';
+import { cyrillicSuggestion } from '../lib/search-transliteration';
 
 export function meta({ data }: Route.MetaArgs) {
   const q = data?.results.query ? data.typed : '';
@@ -128,6 +129,8 @@ export default function Search({ loaderData }: Route.ComponentProps) {
   const hasQuery = results.query.trim().length > 0;
   // Shown when the searched terms differ from the typed text by more than letter case.
   const rewritten = hasQuery && typed.toLocaleLowerCase('bg') !== results.query;
+  // A Cyrillic reading of a Latin query, offered only when that query found nothing.
+  const suggestion = hasQuery && results.empty ? cyrillicSuggestion(typed) : null;
 
   // What the search covers — a description, shown as the lede on the empty-query and no-results
   // states (never as a claim that matches were found). On a query that did match, the lede leads
@@ -170,6 +173,16 @@ export default function Search({ loaderData }: Route.ComponentProps) {
           <p className="muted">
             Нищо не намерихме за „{results.query}“. Пробвай с име, <Abbr>ЕИК</Abbr> или{' '}
             <Abbr>УНП</Abbr>.
+          </p>
+        )}
+        {/* Only offered, never searched in place of the query: a Latin word may be a real foreign name. */}
+        {suggestion && (
+          <p className="search-suggestion">
+            Търси{' '}
+            <Link to={`/search?q=${encodeURIComponent(suggestion)}`} lang="bg">
+              „{suggestion}“
+            </Link>
+            ?
           </p>
         )}
 
@@ -240,7 +253,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
             <li>
               Главни и малки букви, както и ударенията, нямат значение. Латинска буква в дума на
               кирилица (например „мoст“ с латинско „o“) се разпознава; дума изцяло на латиница се
-              търси както е написана.
+              търси както е написана, а когато нищо не излезе, предлагаме същата дума на кирилица.
             </li>
             <li>
               Търси се по начало на дума — <code>стр</code> намира „<u>стр</u>оителство“ и „

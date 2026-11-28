@@ -199,4 +199,62 @@ describe('/search', () => {
       expect(title.title).toBe('Търсене: „Мост“ — СИГМА');
     });
   });
+
+  // A query typed in Latin that found nothing gets a Cyrillic reading to click — never searched in its place,
+  // since the Latin word may be a real foreign name.
+  describe('Cyrillic suggestion', () => {
+    const suggestion = () =>
+      [...el.querySelectorAll('main p')].find((p) => p.textContent?.startsWith('Търси „')) ?? null;
+    const empty = async (_db: unknown, query: string): Promise<SearchResults> => ({
+      query,
+      groups: [],
+      empty: true,
+    });
+
+    it('offers the Cyrillic search when a Latin query found nothing, and keeps the typed one', async () => {
+      search.mockClear();
+      search.mockImplementation(empty);
+      await renderUrl('/search?q=zoraluma');
+      // One search, of what was typed — the Cyrillic reading is not searched in its place.
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(search).toHaveBeenLastCalledWith(expect.anything(), 'zoraluma');
+      expect(el.querySelector<HTMLInputElement>('#page-query')!.value).toBe('zoraluma');
+      expect(el.textContent).toContain('Нищо не намерихме за „zoraluma“.');
+      expect(suggestion()!.textContent).toBe('Търси „зоралума“?');
+      const a = suggestion()!.querySelector('a')!;
+      expect(a.getAttribute('href')).toBe(`/search?q=${encodeURIComponent('зоралума')}`);
+      expect(a.getAttribute('lang')).toBe('bg');
+    });
+
+    it('reads the letter groups and keeps a number as typed', async () => {
+      search.mockImplementation(empty);
+      await renderUrl('/search?q=Shtastie+Zhivot+Chisto+2024');
+      expect(suggestion()!.textContent).toBe('Търси „щастие живот чисто 2024“?');
+    });
+
+    it('offers nothing when the Latin query found something', async () => {
+      search.mockResolvedValue({
+        query: 'zoraluma',
+        groups: [group('company', 'Компании', [hit({ title: 'ZORALUMA TEST LTD' })])],
+        empty: false,
+      });
+      await renderUrl('/search?q=zoraluma');
+      expect(el.querySelector('.results-group')).not.toBeNull();
+      expect(suggestion()).toBeNull();
+    });
+
+    it.each([
+      ['a Cyrillic query', 'няма такова'],
+      ['an ЕИК', '103267194'],
+      ['an УНП', '00044-2023-0018'],
+      ['a number', '2024'],
+      ['an address', 'www.example.bg'],
+      ['a letter with no reading', 'quantum'],
+    ])('offers nothing for %s', async (_label, q) => {
+      search.mockImplementation(empty);
+      await renderUrl(`/search?q=${encodeURIComponent(q)}`);
+      expect(el.textContent).toContain('Нищо не намерихме');
+      expect(suggestion()).toBeNull();
+    });
+  });
 });
